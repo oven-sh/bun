@@ -1,19 +1,22 @@
 use core::cell::Cell;
 use core::mem;
-use std::rc::Rc;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, JsError};
 use bun_string::String as BunString;
 use bun_wyhash::hash;
 
 use super::postgres_request as PostgresRequest;
+use super::postgres_sql_connection;
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
+use super::postgres_sql_statement::Status as StatementStatus;
 use super::Signature;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
+use bun_sql::shared::ConnectionFlags;
 use super::error_jsc::postgres_error_to_js;
+use super::command_tag_jsc::CommandTagJsc;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -27,11 +30,11 @@ pub use js::to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLQuery {
-    pub statement: Option<Rc<PostgresSQLStatement>>,
+    pub statement: Option<*mut PostgresSQLStatement>,
     pub query: BunString,
     pub cursor_name: BunString,
 
-    pub this_value: JsRef,
+    this_value: JsRef,
 
     pub status: Status,
 
@@ -57,43 +60,30 @@ impl Default for PostgresSQLQuery {
     }
 }
 
-// packed struct(u8) — not all-bool (result_mode is an enum), so manual bit accessors.
-#[repr(transparent)]
-#[derive(Clone, Copy, Default)]
-pub struct Flags(u8);
+// PORT NOTE: Zig used `packed struct(u8)`. Ported as a plain struct with public
+// fields because `PostgresSQLConnection.rs` reads/writes these directly
+// (`req.flags.simple`, `req.flags.binary = ...`, `req.flags.result_mode`).
+// The packing is not load-bearing on the Rust side.
+#[derive(Clone, Copy)]
+pub struct Flags {
+    pub is_done: bool,
+    pub binary: bool,
+    pub bigint: bool,
+    pub simple: bool,
+    pub pipelined: bool,
+    pub result_mode: PostgresSQLQueryResultMode,
+}
 
-impl Flags {
-    const IS_DONE: u8 = 1 << 0;
-    const BINARY: u8 = 1 << 1;
-    const BIGINT: u8 = 1 << 2;
-    const SIMPLE: u8 = 1 << 3;
-    const PIPELINED: u8 = 1 << 4;
-    // bits 5..=6: result_mode (PostgresSQLQueryResultMode, 2 bits)
-    // bit 7: padding
-
-    #[inline] pub fn is_done(self) -> bool { self.0 & Self::IS_DONE != 0 }
-    #[inline] pub fn set_is_done(&mut self, v: bool) { if v { self.0 |= Self::IS_DONE } else { self.0 &= !Self::IS_DONE } }
-    #[inline] pub fn binary(self) -> bool { self.0 & Self::BINARY != 0 }
-    #[inline] pub fn set_binary(&mut self, v: bool) { if v { self.0 |= Self::BINARY } else { self.0 &= !Self::BINARY } }
-    #[inline] pub fn bigint(self) -> bool { self.0 & Self::BIGINT != 0 }
-    #[inline] pub fn set_bigint(&mut self, v: bool) { if v { self.0 |= Self::BIGINT } else { self.0 &= !Self::BIGINT } }
-    #[inline] pub fn simple(self) -> bool { self.0 & Self::SIMPLE != 0 }
-    #[inline] pub fn set_simple(&mut self, v: bool) { if v { self.0 |= Self::SIMPLE } else { self.0 &= !Self::SIMPLE } }
-    #[inline] pub fn pipelined(self) -> bool { self.0 & Self::PIPELINED != 0 }
-    #[inline] pub fn set_pipelined(&mut self, v: bool) { if v { self.0 |= Self::PIPELINED } else { self.0 &= !Self::PIPELINED } }
-    #[inline] pub fn result_mode(self) -> PostgresSQLQueryResultMode {
-        // PORT NOTE: Zig backed this with `enum(u2)` inside a packed struct, so any
-        // 2-bit pattern is representable. Rust `#[repr(u8)]` enum with discriminants
-        // 0/1/2 makes 3 instant UB via transmute — use a checked match instead.
-        match (self.0 >> 5) & 0b11 {
-            0 => PostgresSQLQueryResultMode::Objects,
-            1 => PostgresSQLQueryResultMode::Values,
-            2 => PostgresSQLQueryResultMode::Raw,
-            _ => PostgresSQLQueryResultMode::Objects,
+impl Default for Flags {
+    fn default() -> Self {
+        Self {
+            is_done: false,
+            binary: false,
+            bigint: false,
+            simple: false,
+            pipelined: false,
+            result_mode: PostgresSQLQueryResultMode::Objects,
         }
-    }
-    #[inline] pub fn set_result_mode(&mut self, m: PostgresSQLQueryResultMode) {
-        self.0 = (self.0 & !(0b11 << 5)) | ((m as u8 & 0b11) << 5);
     }
 }
 
@@ -120,15 +110,31 @@ impl Status {
     }
 }
 
-impl PostgresSQLQuery {
-    /// Raw-pointer view of the statement for callers (PostgresSQLConnection) that
-    /// mutate it in place. Mirrors Zig `?*PostgresSQLStatement`.
-    /// SAFETY: caller must not outlive the Rc nor alias with another &mut.
-    #[inline]
-    pub fn statement_ptr(&self) -> Option<*mut PostgresSQLStatement> {
-        self.statement.as_ref().map(|rc| Rc::as_ptr(rc) as *mut PostgresSQLStatement)
+// ──────────────────────────────────────────────────────────────────────────
+// Local helpers — intrusive ref/deref for `*mut PostgresSQLStatement`.
+// `PostgresSQLStatement` exposes `pub ref_count: Cell<u32>`; the canonical
+// `IntrusiveRc` wrapper is not used at these callsites (see PostgresSQLStatement.rs
+// header note), so bump the count directly to mirror Zig `stmt.ref()`/`stmt.deref()`.
+// ──────────────────────────────────────────────────────────────────────────
+#[inline]
+unsafe fn stmt_ref(stmt: *mut PostgresSQLStatement) {
+    // SAFETY: `stmt` points to a live boxed statement (caller invariant).
+    let rc = unsafe { &(*stmt).ref_count };
+    rc.set(rc.get() + 1);
+}
+#[inline]
+unsafe fn stmt_deref(stmt: *mut PostgresSQLStatement) {
+    // SAFETY: `stmt` points to a live boxed statement; on 0 the box is freed.
+    let rc = unsafe { &(*stmt).ref_count };
+    let n = rc.get() - 1;
+    rc.set(n);
+    if n == 0 {
+        // SAFETY: produced by `Box::into_raw` below or in PostgresSQLConnection.
+        drop(unsafe { Box::from_raw(stmt) });
     }
+}
 
+impl PostgresSQLQuery {
     // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
     // TODO(port): these are IntrusiveRc inc/dec; deref_ runs deinit (Drop + Box::from_raw) at 0.
     pub fn ref_(&self) {
@@ -153,6 +159,18 @@ impl PostgresSQLQuery {
             // SAFETY: last reference; `this` originated from `Box::into_raw` in `call`.
             drop(unsafe { Box::from_raw(this) });
         }
+    }
+
+    /// `&mut self` adapter over [`deref_`] for callers that already hold a
+    /// mutable borrow (PostgresSQLConnection request-queue cleanup paths).
+    ///
+    /// # Safety
+    /// The caller must not use `self` after this returns if the call dropped the
+    /// last reference. PostgresSQLConnection only invokes this on requests it is
+    /// removing from its queue.
+    pub fn deref(&mut self) {
+        // SAFETY: see method-level note; provenance is widened from `&mut self`.
+        unsafe { Self::deref_(self as *mut Self) }
     }
 
     pub fn get_target(&self, global_object: &JSGlobalObject, clean_target: bool) -> Option<JSValue> {
@@ -182,7 +200,7 @@ impl PostgresSQLQuery {
 
     pub fn on_write_fail(
         &mut self,
-        err: AnyPostgresError,
+        err: bun_core::Error,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
@@ -204,7 +222,11 @@ impl PostgresSQLQuery {
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
         let function = vm.rare_data().postgresql_context.on_query_reject_fn.get().unwrap();
         let event_loop = vm.event_loop();
-        let js_err = postgres_error_to_js(global_object, None, err);
+        // PORT NOTE: Zig narrowed `err` to `AnyPostgresError`. The Rust call chain
+        // funnels through `bun_core::Error`, so build the JS error generically via
+        // throw+take (the only no-FFI-extern path that yields a `JSValue` here).
+        let _ = global_object.throw_error(err, "failed to write query");
+        let js_err = global_object.take_exception(JsError::Thrown);
         event_loop.run_callback(function, global_object, this_value, &[
             target_value,
             js_err.to_error().unwrap_or(js_err),
@@ -271,7 +293,7 @@ impl PostgresSQLQuery {
             (*this_ptr).status = if is_last { Status::Success } else { Status::PartialResponse };
         }
         let tag = CommandTag::init(command_tag_str);
-        let js_tag = match tag.to_js_tag(global_object) {
+        let js_tag: JSValue = match tag.to_js_tag(global_object) {
             Ok(v) => v,
             Err(e) => return unsafe { (*this_ptr).on_js_error(global_object.take_exception(e), global_object) },
         };
@@ -301,7 +323,7 @@ impl PostgresSQLQuery {
             if connection.is_empty() {
                 JSValue::UNDEFINED
             } else {
-                PostgresSQLConnection::js::queries_get_cached(connection).unwrap_or(JSValue::UNDEFINED)
+                postgres_sql_connection::js::queries_get_cached(connection).unwrap_or(JSValue::UNDEFINED)
             },
             JSValue::from(is_last),
         ]);
@@ -310,7 +332,7 @@ impl PostgresSQLQuery {
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
     pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut PostgresSQLQuery> {
         let _ = callframe;
-        global_this.throw("PostgresSQLQuery cannot be constructed directly", &[])
+        Err(global_this.throw(format_args!("PostgresSQLQuery cannot be constructed directly")))
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -324,44 +346,46 @@ impl PostgresSQLQuery {
         let arguments = callframe.arguments();
         let mut args = crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
         // ArgumentsSlice has Drop.
-        let Some(query) = args.next_eat() else {
-            return global_this.throw("query must be a string", &[]);
+        let Some(query) = args.next() else {
+            return Err(global_this.throw(format_args!("query must be a string")));
         };
-        let Some(values) = args.next_eat() else {
-            return global_this.throw("values must be an array", &[]);
+        let Some(values) = args.next() else {
+            return Err(global_this.throw(format_args!("values must be an array")));
         };
 
         if !query.is_string() {
-            return global_this.throw("query must be a string", &[]);
+            return Err(global_this.throw(format_args!("query must be a string")));
         }
 
         if values.js_type() != crate::jsc::JSType::Array {
-            return global_this.throw("values must be an array", &[]);
+            return Err(global_this.throw(format_args!("values must be an array")));
         }
 
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
+        let pending_value: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
+        let columns: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
+        let js_bigint: JSValue = args.next().unwrap_or(JSValue::FALSE);
+        let js_simple: JSValue = args.next().unwrap_or(JSValue::FALSE);
 
         let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
         let simple = js_simple.is_boolean() && js_simple.as_boolean();
         if simple {
             if values.get_length(global_this)? > 0 {
-                return global_this.throw_invalid_arguments("simple query cannot have parameters", &[]);
+                return Err(global_this.throw_invalid_arguments("simple query cannot have parameters"));
             }
-            if query.get_length(global_this)? >= i32::MAX as usize {
-                return global_this.throw_invalid_arguments("query is too long", &[]);
+            if query.get_length(global_this)? >= i32::MAX as u64 {
+                return Err(global_this.throw_invalid_arguments("query is too long"));
             }
         }
         if !pending_value.js_type().is_array_like() {
-            return global_this.throw_invalid_argument_type("query", "pendingValue", "Array");
+            return Err(global_this.throw_value(global_this.ERR_INVALID_ARG_TYPE(
+                format_args!("The \"query\" argument's \"pendingValue\" must be of type Array"),
+            )));
         }
 
         let ptr = Box::into_raw(Box::new(PostgresSQLQuery::default()));
 
         // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps it in the JSCell.
-        let this_value = unsafe { (*ptr).to_js(global_this) };
+        let this_value = js::to_js(ptr, global_this);
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
@@ -369,11 +393,10 @@ impl PostgresSQLQuery {
             *ptr = PostgresSQLQuery {
                 query: query.to_bun_string(global_this)?,
                 this_value: JsRef::init_weak(this_value),
-                flags: {
-                    let mut f = Flags::default();
-                    f.set_bigint(bigint);
-                    f.set_simple(simple);
-                    f
+                flags: Flags {
+                    bigint,
+                    simple,
+                    ..Flags::default()
                 },
                 ..PostgresSQLQuery::default()
             };
@@ -390,15 +413,14 @@ impl PostgresSQLQuery {
 
     pub fn push(&mut self, global_this: &JSGlobalObject, value: JSValue) {
         // TODO(port): Zig source references `this.pending_value` which is not a field on this
-        // struct — likely dead/broken code in the original. Preserved as-is.
-        let Some(mut pending_value) = self.pending_value.get() else { return };
-        pending_value.push(global_this, value);
+        // struct — likely dead/broken code in the original. Preserved as a no-op.
+        let _ = (global_this, value);
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
     pub fn do_done(this: &mut Self, global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_object;
-        this.flags.set_is_done(true);
+        this.flags.is_done = true;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -414,15 +436,24 @@ impl PostgresSQLQuery {
     pub fn set_mode_from_js(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let js_mode = callframe.argument(0);
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
-            return global_object.throw_invalid_argument_type("setMode", "mode", "Number");
+            return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
+                format_args!("The \"setMode\" argument's \"mode\" must be of type Number"),
+            )));
         }
 
         let mode = js_mode.coerce::<i32>(global_object)?;
         // std.meta.intToEnum — bounds-checked enum cast.
-        let Some(result_mode) = PostgresSQLQueryResultMode::from_i32(mode) else {
-            return global_object.throw_invalid_argument_type_value("mode", "Number", js_mode);
+        let result_mode = match mode {
+            0 => PostgresSQLQueryResultMode::Objects,
+            1 => PostgresSQLQueryResultMode::Values,
+            2 => PostgresSQLQueryResultMode::Raw,
+            _ => {
+                return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
+                    format_args!("The \"mode\" argument must be of type Number"),
+                )));
+            }
         };
-        this.flags.set_result_mode(result_mode);
+        this.flags.result_mode = result_mode;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -442,15 +473,20 @@ impl PostgresSQLQuery {
         // coercion of this reborrow.
         let this = unsafe { &mut *this_ptr };
         let arguments = callframe.arguments();
-        let Some(connection) = arguments[0].as_::<PostgresSQLConnection>() else {
-            return global_object.throw("connection must be a PostgresSQLConnection", &[]);
+        let Some(connection_ptr) = postgres_sql_connection::js::from_js(arguments[0]) else {
+            return Err(global_object.throw(format_args!("connection must be a PostgresSQLConnection")));
         };
+        // SAFETY: `connection_ptr` is the live m_ctx payload for arguments[0]; the JS
+        // wrapper is on-stack so GC cannot finalize it for the duration of this call.
+        let connection: &mut PostgresSQLConnection = unsafe { &mut *connection_ptr };
 
         connection.poll_ref.ref_(global_object.bun_vm());
         let query = arguments[1];
 
         if !query.is_object() {
-            return global_object.throw_invalid_argument_type("run", "query", "Query");
+            return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
+                format_args!("The \"run\" argument's \"query\" must be of type Query"),
+            )));
         }
 
         let this_value = callframe.this();
@@ -460,35 +496,35 @@ impl PostgresSQLQuery {
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();
-        if this.flags.simple() {
+        if this.flags.simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
-            // TODO(port): PostgresSQLStatement is intrusively refcounted; LIFETIMES.tsv maps
-            // the field to Option<Rc<...>>, but it is also stored as a raw *mut in
-            // connection.statements. Phase B: reconcile (likely IntrusiveRc).
-            let stmt = Rc::new(PostgresSQLStatement {
+            // PostgresSQLStatement is intrusively refcounted; allocate a fresh box and
+            // hand ownership to `this.statement` (count = 1).
+            let stmt: *mut PostgresSQLStatement = Box::into_raw(Box::new(PostgresSQLStatement {
                 signature: Signature::empty(),
-                status: PostgresSQLStatement::Status::Parsing,
+                status: StatementStatus::Parsing,
                 ..Default::default()
-            });
+            }));
             // Query is simple and it's the only owner of the statement
-            this.statement = Some(stmt.clone());
+            this.statement = Some(stmt);
 
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
                     // fail to run do cleanup
                     this.statement = None;
-                    drop(stmt);
+                    // SAFETY: `stmt` is the sole owner just created above.
+                    drop(unsafe { Box::from_raw(stmt) });
                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                     unsafe { Self::deref_(this_ptr) };
 
                     if !global_object.has_exception() {
-                        return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to execute query"), err));
+                        return global_object.throw_error(err, "failed to execute query");
                     }
                     return Err(JsError::Thrown);
                 }
-                connection.flags.set_is_ready_for_query(false);
+                connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                 connection.nonpipelinable_requests += 1;
                 this.status = Status::Running;
             } else {
@@ -497,11 +533,12 @@ impl PostgresSQLQuery {
             if let Err(_) = connection.requests.write_item(this_ptr) {
                 // fail to run do cleanup
                 this.statement = None;
-                drop(stmt);
+                // SAFETY: `stmt` is the sole owner just created above.
+                drop(unsafe { Box::from_raw(stmt) });
                 // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                 unsafe { Self::deref_(this_ptr) };
 
-                return global_object.throw_out_of_memory();
+                return Err(global_object.throw_out_of_memory());
             }
 
             this.this_value.upgrade(global_object);
@@ -522,7 +559,7 @@ impl PostgresSQLQuery {
             binding_value,
             columns_value,
             connection.prepared_statement_id,
-            connection.flags.use_unnamed_prepared_statements(),
+            connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -538,12 +575,12 @@ impl PostgresSQLQuery {
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
         'enqueue: {
-            // TODO(port): connection_entry_value is a *mut into connection.statements value slot;
-            // holding it across other &mut connection borrows below trips borrowck. Phase B:
-            // reshape to re-lookup by signature_hash, or use raw NonNull with SAFETY note.
-            let mut connection_entry_value: Option<*mut Rc<PostgresSQLStatement>> = None;
+            // PORT NOTE: `connection_entry_value` is a *mut into connection.statements value slot;
+            // holding a `&mut` across other &mut connection borrows below trips borrowck, so
+            // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
+            let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
             let signature_hash: u64 = hash(&signature.name);
-            if !connection.flags.use_unnamed_prepared_statements() {
+            if !connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                 let entry = match connection.statements.get_or_put(signature_hash) {
                     Ok(e) => e,
                     Err(err) => {
@@ -551,55 +588,65 @@ impl PostgresSQLQuery {
                         return global_object.throw_error(err, "failed to allocate statement");
                     }
                 };
-                connection_entry_value = Some(entry.value_ptr);
+                connection_entry_value = Some(entry.value_ptr as *mut *mut PostgresSQLStatement);
                 if entry.found_existing {
                     // SAFETY: entry.value_ptr is valid while connection.statements is not mutated.
-                    let stmt = unsafe { (*connection_entry_value.unwrap()).clone() };
-                    this.statement = Some(stmt.clone());
+                    let stmt: *mut PostgresSQLStatement = unsafe { *connection_entry_value.unwrap() };
+                    this.statement = Some(stmt);
+                    // SAFETY: `stmt` is the live map entry.
+                    unsafe { stmt_ref(stmt) };
                     drop(signature);
 
-                    match stmt.status {
-                        PostgresSQLStatement::Status::Failed => {
+                    // SAFETY: `stmt` is live (just ref'd).
+                    match unsafe { (*stmt).status } {
+                        StatementStatus::Failed => {
                             this.statement = None;
-                            let error_response = stmt.error_response.as_ref().unwrap().to_js(global_object)?;
-                            drop(stmt);
+                            // SAFETY: `stmt` is live; `error_response` is `Some` when status == Failed.
+                            let error_response = unsafe { (*stmt).error_response.as_ref() }
+                                .unwrap()
+                                .to_js(global_object)?;
+                            // SAFETY: drop the ref we took above.
+                            unsafe { stmt_deref(stmt) };
                             // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                             unsafe { Self::deref_(this_ptr) };
-                            return global_object.throw_value(error_response);
+                            return Err(global_object.throw_value(error_response));
                         }
-                        PostgresSQLStatement::Status::Prepared => {
+                        StatementStatus::Prepared => {
                             if !connection.has_query_running() || connection.can_pipeline() {
-                                this.flags.set_binary(this.statement.as_ref().unwrap().fields.len() > 0);
+                                // SAFETY: `stmt` is live.
+                                this.flags.binary = unsafe { !(*stmt).fields.is_empty() };
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
+                                // SAFETY: `stmt` is live; exclusive write access on the JS thread.
                                 if let Err(err) = PostgresRequest::bind_and_execute(
                                     global_object,
-                                    this.statement.as_ref().unwrap(),
+                                    unsafe { &mut *stmt },
                                     binding_value,
                                     columns_value,
                                     writer,
                                 ) {
                                     // fail to run do cleanup
                                     this.statement = None;
-                                    drop(stmt);
+                                    // SAFETY: drop the ref we took above.
+                                    unsafe { stmt_deref(stmt) };
                                     // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                                     unsafe { Self::deref_(this_ptr) };
 
                                     if !global_object.has_exception() {
-                                        return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to bind and execute query"), err));
+                                        return global_object.throw_error(err, "failed to bind and execute query");
                                     }
                                     return Err(JsError::Thrown);
                                 }
-                                connection.flags.set_is_ready_for_query(false);
+                                connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                                 this.status = Status::Binding;
-                                this.flags.set_pipelined(true);
+                                this.flags.pipelined = true;
                                 connection.pipelined_requests += 1;
 
                                 did_write = true;
                             }
                         }
-                        PostgresSQLStatement::Status::Parsing | PostgresSQLStatement::Status::Pending => {}
+                        StatementStatus::Parsing | StatementStatus::Pending => {}
                     }
 
                     break 'enqueue;
@@ -620,24 +667,29 @@ impl PostgresSQLQuery {
                         &mut signature,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(signature_hash);
+                            let _ = connection.statements.remove(&signature_hash);
                         }
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
-                            drop(stmt);
+                            // SAFETY: `stmt` was previously ref'd for `this.statement`.
+                            unsafe { stmt_deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref_(this_ptr) };
                         if !global_object.has_exception() {
-                            return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to prepare and query"), err));
+                            return Err(global_object.throw_value(postgres_error_to_js(
+                                global_object,
+                                Some(b"failed to prepare and query"),
+                                err,
+                            )));
                         }
                         return Err(JsError::Thrown);
                     }
-                    connection.flags.set_is_ready_for_query(false);
+                    connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                     this.status = Status::Binding;
                     did_write = true;
-                    connection.flags.set_waiting_to_prepare(true);
-                } else if !connection.flags.use_unnamed_prepared_statements() {
+                    connection.flags.set(ConnectionFlags::WAITING_TO_PREPARE, true);
+                } else if !connection.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                     // Named prepared statements: send Parse+Describe+Sync now and wait
                     // for ParameterDescription before sending Bind+Execute in advance().
                     bun_core::scoped_log!(Postgres, "writeQuery");
@@ -649,32 +701,41 @@ impl PostgresSQLQuery {
                         writer,
                     ) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(signature_hash);
+                            let _ = connection.statements.remove(&signature_hash);
                         }
                         drop(signature);
                         if let Some(stmt) = this.statement.take() {
-                            drop(stmt);
+                            // SAFETY: `stmt` was previously ref'd for `this.statement`.
+                            unsafe { stmt_deref(stmt) };
                         }
                         // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
                         unsafe { Self::deref_(this_ptr) };
                         if !global_object.has_exception() {
-                            return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to write query"), err));
+                            return Err(global_object.throw_value(postgres_error_to_js(
+                                global_object,
+                                Some(b"failed to write query"),
+                                err,
+                            )));
                         }
                         return Err(JsError::Thrown);
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if connection_entry_value.is_some() {
-                            let _ = connection.statements.remove(signature_hash);
+                            let _ = connection.statements.remove(&signature_hash);
                         }
                         drop(signature);
                         if !global_object.has_exception() {
-                            return global_object.throw_value(postgres_error_to_js(global_object, Some("failed to flush"), err));
+                            return Err(global_object.throw_value(postgres_error_to_js(
+                                global_object,
+                                Some(b"failed to flush"),
+                                err,
+                            )));
                         }
                         return Err(JsError::Thrown);
                     }
-                    connection.flags.set_is_ready_for_query(false);
+                    connection.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                     did_write = true;
-                    connection.flags.set_waiting_to_prepare(true);
+                    connection.flags.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.
                 // advance() will send Parse+Describe+Bind+Execute atomically via
@@ -684,34 +745,34 @@ impl PostgresSQLQuery {
                 // we only have connection_entry_value if we are using named prepared statements
                 if let Some(entry_value) = connection_entry_value {
                     connection.prepared_statement_id += 1;
-                    // TODO(port): Zig sets ref_count = .initExactRefs(2) (one for this.statement,
-                    // one for the connection.statements map). With Rc that's two clones below.
-                    let stmt = Rc::new(PostgresSQLStatement {
+                    // Zig sets ref_count = .initExactRefs(2) (one for this.statement,
+                    // one for the connection.statements map).
+                    let stmt = Box::into_raw(Box::new(PostgresSQLStatement {
                         signature,
-                        status: if did_write { PostgresSQLStatement::Status::Parsing } else { PostgresSQLStatement::Status::Pending },
+                        ref_count: Cell::new(2),
+                        status: if did_write { StatementStatus::Parsing } else { StatementStatus::Pending },
                         ..Default::default()
-                    });
-                    this.statement = Some(stmt.clone());
+                    }));
+                    this.statement = Some(stmt);
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
                     // not been mutated since `get_or_put`. This arm is reached only when
-                    // `!entry.found_existing`, so the slot is uninitialized — use `ptr::write`
-                    // (no drop of prior contents) instead of `*entry_value = stmt`, which would
-                    // run `Drop` on a garbage `Rc`.
-                    unsafe { entry_value.write(stmt) };
+                    // `!entry.found_existing`; the slot was default-initialised to null by
+                    // `get_or_put`, so a plain store is fine.
+                    unsafe { *entry_value = stmt };
                 } else {
-                    let stmt = Rc::new(PostgresSQLStatement {
+                    let stmt = Box::into_raw(Box::new(PostgresSQLStatement {
                         signature,
-                        status: if did_write { PostgresSQLStatement::Status::Parsing } else { PostgresSQLStatement::Status::Pending },
+                        status: if did_write { StatementStatus::Parsing } else { StatementStatus::Pending },
                         ..Default::default()
-                    });
+                    }));
                     this.statement = Some(stmt);
                 }
             }
         }
 
         if let Err(_) = connection.requests.write_item(this_ptr) {
-            return global_object.throw_out_of_memory();
+            return Err(global_object.throw_out_of_memory());
         }
         this.this_value.upgrade(global_object);
 
@@ -737,10 +798,14 @@ impl PostgresSQLQuery {
     }
 }
 
+// Suppress dead-code on `AnyPostgresError` import (kept for Phase B narrowing).
+#[allow(dead_code)]
+const _: Option<AnyPostgresError> = None;
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/PostgresSQLQuery.zig (539 lines)
 //   confidence: medium
-//   todos:      10
-//   notes:      Intrusive RefCount + Rc<PostgresSQLStatement> (per LIFETIMES.tsv) conflict — Phase B should pick IntrusiveRc; do_run holds *mut into connection.statements across &mut connection (borrowck reshape needed); deref_ takes *mut Self and on_* scopeguards/do_run now route all access through the derived raw ptr (SB-safe) — Phase B IntrusiveRc should subsume.
+//   todos:      9
+//   notes:      statement field switched to *mut (matches PreparedStatementsMap + PostgresSQLConnection accessors); Flags is a plain struct (callers field-access directly); on_write_fail accepts bun_core::Error to match callers (Zig had AnyPostgresError); deref_ takes *mut Self and on_* scopeguards/do_run route all access through derived raw ptr (SB-safe).
 // ──────────────────────────────────────────────────────────────────────────

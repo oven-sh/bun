@@ -22,8 +22,8 @@ use bun_string::{self as strings, String as BunString};
 // High-tier deps (CLI command-line, JS lexer/printer, Jest pretty-format) —
 // gated; bodies that reference them are gated below.
 // TODO(port): bun_runtime / bun_js_parser cycle.
- use bun_runtime::cli::Command as CLI;
- use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
+#[cfg(any())] use bun_runtime::cli::Command as CLI;
+#[cfg(any())] use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
 /// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
@@ -428,7 +428,7 @@ fn message_with_type_and_level_(
     // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
     // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
     // the test-runner crate split lands.
-    
+    #[cfg(any())]
     if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
@@ -3047,6 +3047,7 @@ pub mod formatter {
                 }
                 Tag::String => {
                     // This is called from the '%s' formatter, so it can actually be any value
+                    use crate::StringJsc as _;
                     let str: BunString = BunString::from_js(value, self.global_this)?;
                     self.add_for_new_line(str.length());
 

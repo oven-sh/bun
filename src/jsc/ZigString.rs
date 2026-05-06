@@ -1094,7 +1094,9 @@ impl Slice {
 impl Drop for Slice {
     fn drop(&mut self) {
         // Does nothing if the slice is not allocated
-        self.allocator.free(self.ptr, self.len as usize);
+        // SAFETY: ptr/len are kept in sync by all constructors.
+        self.allocator
+            .free(unsafe { slice::from_raw_parts(self.ptr, self.len as usize) });
     }
 }
 } // mod _slice_struct

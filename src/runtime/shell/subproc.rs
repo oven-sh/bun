@@ -12,23 +12,44 @@ use bun_dotenv::Map as DotEnvMap;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{
     self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
-    SystemError,
 };
+use bun_ptr::RefPtr;
 use crate::api::bun::subprocess as JscSubprocess;
-use crate::webcore::{self, Blob, FileSink, ReadableStream};
+use crate::webcore::{self, blob, Blob, FileSink, ReadableStream};
 use crate::shell::states::cmd::Cmd as ShellCmd;
-use crate::shell::io_writer::IOWriter;
+use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
 use bun_spawn::{self, Status};
-use crate::api::bun::process::{self as bun_process, Process, Rusage, SpawnOptions};
+use crate::api::bun::process::{
+    self as bun_process, Process, ProcessExitOwner, Rusage, SignalCodeExt, SpawnOptions,
+};
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::{EnumSet, EnumSetType};
 use strum::IntoStaticStr;
 
 use crate::shell::util::{self, OutKind};
-use crate::api::bun_spawn::stdio::Stdio;
+use crate::api::bun_spawn::stdio::{self, Stdio};
+
+/// Local helper: `OutKind` → tag-name string for logs (Zig `@tagName`).
+#[inline]
+fn out_kind_str(k: OutKind) -> &'static str {
+    match k {
+        OutKind::Stdout => "stdout",
+        OutKind::Stderr => "stderr",
+    }
+}
+
+/// Local helper: `ReadState` → tag-name string for logs.
+#[inline]
+fn read_state_str(s: ReadState) -> &'static str {
+    match s {
+        ReadState::Progress => "progress",
+        ReadState::Eof => "eof",
+        _ => "drained",
+    }
+}
 
 pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;

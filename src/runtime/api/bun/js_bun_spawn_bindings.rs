@@ -1376,7 +1376,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !IS_SYNC {
         if !subprocess.process.has_exited() {
-            jsc_vm.on_subprocess_spawn(&subprocess.process);
+            jsc_vm.on_subprocess_spawn(
+                std::sync::Arc::as_ptr(&subprocess.process) as *mut core::ffi::c_void,
+            );
         }
         return Ok(out);
     }

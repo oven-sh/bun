@@ -487,6 +487,79 @@ pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR
 // Windows does not have permissions
 pub const DEFAULT_PERMISSION: Mode = 0;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local extension shims for upstream methods not yet on `bun_jsc::JSValue` /
+// `NonNull<AbortSignal>`. Bodies mirror `src/jsc/JSValue.zig` exactly so the
+// `.zig` spec stays the source of truth; swap to direct upstream calls once
+// `bun_jsc` grows them.
+// ──────────────────────────────────────────────────────────────────────────
+
+trait JSValueNodeFsExt {
+    fn get_boolean_strict(self, ctx: &JSGlobalObject, name: &'static str) -> JsResult<Option<bool>>;
+    fn is_string_literal(self) -> bool;
+}
+impl JSValueNodeFsExt for JSValue {
+    /// `JSValue.getBooleanStrict` (JSValue.zig:1873) — missing/undefined → `None`;
+    /// non-boolean → `ERR_INVALID_ARG_TYPE`.
+    fn get_boolean_strict(self, ctx: &JSGlobalObject, name: &'static str) -> JsResult<Option<bool>> {
+        match self.get(ctx, name)? {
+            None => Ok(None),
+            Some(v) => {
+                if v.is_boolean() {
+                    Ok(Some(v.to_boolean()))
+                } else {
+                    Err(ctx.throw_invalid_argument_type_value(name, "boolean", v))
+                }
+            }
+        }
+    }
+    /// `JSValue.isStringLiteral` (JSValue.zig:1048) — exact `JSType::String`
+    /// (not `StringObject`/`DerivedStringObject`).
+    #[inline]
+    fn is_string_literal(self) -> bool {
+        self.is_cell() && self.js_type() == bun_jsc::JSType::String
+    }
+}
+
+/// Forward `&self` AbortSignal methods through the `NonNull` wrapper used as
+/// [`AbortSignalRef`] so call sites keep the `signal.unref()` Zig spelling.
+trait AbortSignalRefExt {
+    fn pending_activity_ref(self);
+    fn pending_activity_unref(self);
+    fn unref(self);
+    fn aborted(self) -> bool;
+}
+impl AbortSignalRefExt for NonNull<AbortSignal> {
+    #[inline] fn pending_activity_ref(self) { unsafe { self.as_ref() }.pending_activity_ref() }
+    #[inline] fn pending_activity_unref(self) { unsafe { self.as_ref() }.pending_activity_unref() }
+    #[inline] fn unref(self) { unsafe { self.as_ref() }.unref() }
+    #[inline] fn aborted(self) -> bool { unsafe { self.as_ref() }.aborted() }
+}
+
+/// `JSValue.createObject2` — not yet surfaced on `bun_jsc::JSValue`; forward
+/// to the C++ binding directly (JSValue.zig:536).
+fn jsvalue_create_object_2(
+    global: &JSGlobalObject,
+    key1: &ZigString,
+    key2: &ZigString,
+    value1: JSValue,
+    value2: JSValue,
+) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn JSC__JSValue__createObject2(
+            global: *const JSGlobalObject,
+            key1: *const ZigString,
+            key2: *const ZigString,
+            value1: JSValue,
+            value2: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: `global`/keys borrowed for the call; `fromJSHostCall` semantics.
+    let v = unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) };
+    if global.has_exception() { return Err(JsError::Thrown); }
+    Ok(v)
+}
+
 /// All async FS functions are run in a thread pool, but some implementations may
 /// decide to do something slightly different. For example, reading a file has
 /// an extra stack buffer in the async case.

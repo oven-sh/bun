@@ -882,12 +882,12 @@ pub fn step_group(
         };
 
         if all_failed {
-            group_log::log(
+            group_log::log(format_args!(
                 "stepGroup: all sequences failed, skipping to failure_skip_to group",
-            );
+            ));
             this.group_index = failure_skip_to;
         } else {
-            group_log::log("stepGroup: not all sequences failed, advancing to next group");
+            group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));
             this.group_index += 1;
         }
     }

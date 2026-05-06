@@ -1259,7 +1259,7 @@ impl PathLike {
     ) -> JsResult<PathLike> {
         // TODO(port): narrow error set
         if will_be_async {
-            let mut sliced = str.to_thread_safe_slice()?;
+            let mut sliced = BunStringSliceExt::to_thread_safe_slice(str)?;
             // errdefer sliced.deinit() — Drop handles this.
 
             // Validate the UTF-8 byte length after conversion, since the path

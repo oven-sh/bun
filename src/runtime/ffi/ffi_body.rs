@@ -23,12 +23,13 @@ use bun_sys::{self, Fd};
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
 /// Compile-time `&'static ZStr` from a byte literal. The literal need not be
-/// NUL-terminated; we tack one on by emitting a fresh `[u8; N+1]` static.
+/// NUL-terminated; we tack one on by emitting a fresh `[u8; N+1]` const and
+/// rvalue-promoting it to `'static` via a `&'static` borrow.
 macro_rules! zstr {
     ($lit:literal) => {{
         const __SRC: &[u8] = $lit;
         const __N: usize = __SRC.len();
-        const __BUF: [u8; __N + 1] = {
+        const __BUF: &[u8; __N + 1] = &{
             let mut out = [0u8; __N + 1];
             let mut i = 0;
             while i < __N {
@@ -37,7 +38,7 @@ macro_rules! zstr {
             }
             out
         };
-        // SAFETY: `__BUF[__N] == 0` and `__BUF` is `'static`.
+        // SAFETY: `__BUF[__N] == 0` and `__BUF` has `'static` storage.
         unsafe { ::bun_str::ZStr::from_raw(__BUF.as_ptr(), __N) }
     }};
 }

@@ -11,12 +11,10 @@ impl ConfigVersion {
     pub const CURRENT: ConfigVersion = ConfigVersion::V1;
 
     pub fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
-        let version: f64 = {
-            let bun_js_parser::ast::expr::Data::ENumber(e_number) = &expr.data else {
-                return None;
-            };
-            e_number.value
+        let ExprData::ENumber(e_number) = &expr.data else {
+            return None;
         };
+        let version: f64 = e_number.value;
 
         if version == 0.0 {
             return Some(ConfigVersion::V0);

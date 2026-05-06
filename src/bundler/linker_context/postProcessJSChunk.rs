@@ -1209,11 +1209,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         analyze_transpiled_module::VarKind::Lexical
                     };
                     for decl in s.decls.slice() {
-                        // TODO(port): renamer threading — Zig passes `r` (Renamer) by value;
-                        // Rust `ChunkRenamer` lives on the chunk and isn't reachable here
-                        // without a back-reference. Defer until Phase B borrowck pass.
-                        let _ = (mi as *mut _, decl, var_kind);
-                        todo!("blocked_on: add_binding_vars_to_module_info renamer threading");
+                        add_binding_vars_to_module_info(mi, decl.binding, var_kind, &mut r, &c.graph.symbols);
                     }
                 }
                 _ => {}

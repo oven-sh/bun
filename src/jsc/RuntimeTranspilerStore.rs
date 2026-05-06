@@ -914,11 +914,11 @@ impl TranspilerJob {
 
 // TODO(port): placeholder re-exports for types referenced by tag matching above; Phase B
 // resolves these against their real crates. All four are only used inside the
-// ``-gated `run()` body so they are gated likewise.
- use crate::resolved_source::Tag as ResolvedSourceTag;
- use bun_bundler::parse_result::AlreadyBundled;
- use crate::runtime_transpiler_cache::OutputCode;
- use crate::virtual_machine::BunWatcher;
+// `#[cfg(any())]`-gated `run()` body so they are gated likewise.
+#[cfg(any())] use crate::resolved_source::Tag as ResolvedSourceTag;
+#[cfg(any())] use bun_bundler::parse_result::AlreadyBundled;
+#[cfg(any())] use crate::runtime_transpiler_cache::OutputCode;
+#[cfg(any())] use crate::virtual_machine::BunWatcher;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

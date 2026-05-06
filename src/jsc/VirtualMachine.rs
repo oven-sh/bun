@@ -1986,22 +1986,15 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:255 `initRequestBodyValue`.
-    pub fn init_request_body_value(
-        &mut self,
-        body: bun_runtime::webcore::Body::Value,
-    ) -> *mut bun_runtime::webcore::Body::Value::HiveRef {
-        // TODO(b2-cycle): `body_value_hive_allocator` is a `()` placeholder;
-        // the real allocator lives inside `runtime_state` (high tier). Reach
-        // it via the opaque pointer once `RuntimeHooks` exposes a slot.
-        bun_runtime::webcore::Body::Value::HiveRef::init(
-            body,
-            // SAFETY: `runtime_state` is the boxed high-tier state; the hook
-            // contract guarantees the body-hive allocator is the first field.
-            unsafe {
-                &mut *(self.runtime_state
-                    as *mut bun_runtime::webcore::Body::Value::HiveAllocator)
-            },
-        )
+    ///
+    /// TODO(b2-cycle): real signature is
+    /// `(body: bun_runtime::webcore::Body::Value) -> *mut Body::Value::HiveRef`,
+    /// but `bun_runtime` is a forward-dep on `bun_jsc` (cycle). The
+    /// `body_value_hive_allocator` lives inside `runtime_state` (high tier);
+    /// callers in `bun_runtime` must construct the `HiveRef` directly until the
+    /// `RuntimeHooks` slot lands.
+    pub fn init_request_body_value(&mut self, _body: *mut c_void) -> *mut c_void {
+        todo!("blocked_on: bun_runtime::webcore::Body::Value (b2-cycle)")
     }
 
     /// Spec VirtualMachine.zig:279 `uvLoop`.

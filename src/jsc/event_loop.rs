@@ -1064,35 +1064,43 @@ impl EventLoop {
         }
     }
 
-    pub fn enqueue_task_concurrent_batch(&self, batch: ConcurrentTask::QueueBatch) {
+    pub fn enqueue_task_concurrent_batch(
+        &self,
+        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+    ) {
         if cfg!(debug_assertions) {
-            if self.vm().has_terminated {
+            // SAFETY: vm() returns the live owning VM; field read only.
+            if unsafe { (*self.vm()).has_terminated } {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
-        self.concurrent_tasks.push_batch(batch.front.unwrap(), batch.last.unwrap());
+        self.concurrent_tasks.push_batch(batch.front, batch.last);
         self.wakeup();
     }
+}
 
-    /// Testing API to expose event loop state
-    #[bun_jsc::host_fn]
-    pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let vm = global_object.bun_vm();
-        let event_loop = vm.event_loop;
-        let result = JSValue::create_empty_object(global_object, 3);
-        result.put(global_object, ZigString::static_(b"activeTasks"), JSValue::js_number(vm.active_tasks));
-        result.put(
-            global_object,
-            ZigString::static_(b"concurrentRef"),
-            JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst)),
-        );
-        #[cfg(windows)]
-        let num_polls: i32 = i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles).unwrap();
-        #[cfg(not(windows))]
-        let num_polls: i32 = uws::Loop::get().num_polls;
-        result.put(global_object, ZigString::static_(b"numPolls"), JSValue::js_number(num_polls));
-        Ok(result)
-    }
+/// Testing API to expose event loop state
+#[bun_jsc::host_fn]
+pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = global_object.bun_vm();
+    // SAFETY: bun_vm() returns the live owning VM for this global.
+    let vm_ref = unsafe { &*vm };
+    // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
+    let event_loop = unsafe { &*vm_ref.event_loop() };
+    let result = JSValue::create_empty_object(global_object, 3);
+    result.put(global_object, b"activeTasks", JSValue::js_number(vm_ref.active_tasks as f64));
+    result.put(
+        global_object,
+        b"concurrentRef",
+        JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
+    );
+    #[cfg(windows)]
+    let num_polls: i32 = i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles).unwrap();
+    #[cfg(not(windows))]
+    // SAFETY: uws::Loop::get() returns a live process-global loop.
+    let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
+    result.put(global_object, b"numPolls", JSValue::js_number(num_polls as f64));
+    Ok(result)
 }
 
 extern "C" fn noop_forever_timer(_: *mut uws::Timer) {

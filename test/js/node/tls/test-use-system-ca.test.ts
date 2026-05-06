@@ -75,11 +75,14 @@ describe("--use-system-ca", () => {
 const probe = `const tls = require("tls"); console.log(tls.getCACertificates("default").length);`;
 
 async function defaultCertCount(args: string[], extraEnv: Record<string, string | undefined> = {}, cwd?: string) {
+  // Default to a fresh empty tempdir so callers without an explicit `cwd` don't
+  // pick up an ambient bunfig.toml from the test runner's working directory.
+  const probeCwd = cwd ?? tempDirWithFiles("bunfig-ca-empty", {});
   const env = { ...bunEnv, NODE_USE_SYSTEM_CA: undefined, ...extraEnv };
   await using proc = spawn({
     cmd: [bunExe(), ...args, "-e", probe],
     env: env as Record<string, string>,
-    cwd,
+    cwd: probeCwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -142,24 +145,15 @@ describe.concurrent("bunfig.toml CA", () => {
     expect(bunfigCount).toBe(baselineCount);
   });
 
-  test(`CA = "openssl" in bunfig.toml is accepted`, async () => {
+  test(`CA = "openssl" in bunfig.toml matches --use-openssl-ca`, async () => {
     const dir = tempDirWithFiles("bunfig-ca-openssl", {
       "bunfig.toml": `CA = "openssl"\n`,
-      "index.ts": `console.log("OK");`,
     });
 
-    await using proc = spawn({
-      cmd: [bunExe(), "index.ts"],
-      env: bunEnv,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("OK");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    const bunfigCount = await defaultCertCount([], {}, dir);
+    const flagCount = await defaultCertCount(["--use-openssl-ca"]);
+    // bunfig "openssl" and the CLI flag should both land on the same store.
+    expect(bunfigCount).toBe(flagCount);
   });
 
   test(`CLI --use-bundled-ca overrides bunfig CA = "system"`, async () => {

@@ -74,44 +74,40 @@ impl GarbageCollectionController {
         self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-         // TODO(b2-blocked): bun_jsc::EventLoop.debug.track_last_fn_name, bun_transpiler::Transpiler.env
+        #[cfg(debug_assertions)]
         {
-            #[cfg(debug_assertions)]
-            {
-                // TODO(port): env_var accessor return type (bool vs Option) — verify in Phase B
-                if env_var::BUN_TRACK_LAST_FN_NAME.get() {
-                    vm.event_loop().debug.track_last_fn_name = true;
-                }
+            if env_var::BUN_TRACK_LAST_FN_NAME.get().unwrap_or(false) {
+                // SAFETY: vm.event_loop() returns the live event loop owned by `vm`.
+                unsafe { (*vm.event_loop()).debug.track_last_fn_name = true };
             }
-
-            let mut gc_timer_interval: i32 = 1000;
-            if let Some(timer) = vm.transpiler.env.get(b"BUN_GC_TIMER_INTERVAL") {
-                if let Some(parsed) = parse_int_i32(timer) {
-                    if parsed > 0 {
-                        gc_timer_interval = parsed;
-                    }
-                }
-            }
-            self.gc_timer_interval = gc_timer_interval;
-
-            if let Some(val) = vm.transpiler.env.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS") {
-                if let Some(parsed) = parse_int_c_int(val) {
-                    if parsed >= 0 {
-                        // SAFETY: single-threaded init; mirrors Zig assignment to extern var
-                        unsafe {
-                            crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
-                        }
-                    }
-                }
-            }
-
-            self.disabled = vm.transpiler.env.has(b"BUN_GC_TIMER_DISABLE");
         }
-        // TODO(b2-blocked): the env-var reads above are gated until
-        // `vm.transpiler.env` (bun_transpiler::Transpiler / bun_dotenv::Map) un-gates.
-        // Default the interval so the timer arms at the spec default.
-        let gc_timer_interval: i32 = 1000;
+
+        // SAFETY: `transpiler.env` is the process-global env loader allocated during
+        // VM construction; it outlives this controller and is read-only here.
+        let env = unsafe { &*vm.transpiler.env };
+
+        let mut gc_timer_interval: i32 = 1000;
+        if let Some(timer) = env.get(b"BUN_GC_TIMER_INTERVAL") {
+            if let Some(parsed) = parse_int_i32(timer) {
+                if parsed > 0 {
+                    gc_timer_interval = parsed;
+                }
+            }
+        }
         self.gc_timer_interval = gc_timer_interval;
+
+        if let Some(val) = env.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS") {
+            if let Some(parsed) = parse_int_c_int(val) {
+                if parsed >= 0 {
+                    // SAFETY: single-threaded init; mirrors Zig assignment to extern var
+                    unsafe {
+                        crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
+                    }
+                }
+            }
+        }
+
+        self.disabled = env.has(b"BUN_GC_TIMER_DISABLE");
 
         if !self.disabled {
             // SAFETY: gc_repeating_timer was just created above and is non-null

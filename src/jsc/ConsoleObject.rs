@@ -2148,7 +2148,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
             slice_: &[u8],
-            global: &JSGlobalObject,
+            global: &'a JSGlobalObject,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -2442,6 +2442,13 @@ pub mod formatter {
     
     impl<'w> WrappedWriter<'w> {
         pub const IS_WRAPPED_WRITER: bool = true;
+
+        /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
+        /// `estimated_line_length` so callers don't need a second `&mut self`
+        /// on the parent `Formatter` while a `WrappedWriter` is live.
+        pub fn add_for_new_line(&mut self, len: usize) {
+            *self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
 
         pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
             if self.ctx.write_fmt(args).is_err() {

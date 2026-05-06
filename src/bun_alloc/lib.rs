@@ -34,6 +34,8 @@ pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
+    pub const NO_RESIZE: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool =
+        |_, _, _, _, _| false;
     pub const NO_REMAP: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8 =
         |_, _, _, _, _| core::ptr::null_mut();
 }
@@ -93,9 +95,6 @@ impl StdAllocator {
     }
 }
 
-/// CYCLEBREAK hook: `bun_string::String::is_wtf_allocator`. Installed by
-/// bun_string at init; vtable-identity check against the WTF deallocator.
-pub static mut IS_WTF_ALLOCATOR: fn(&'static AllocatorVTable) -> bool = |_| false;
 
 /// `std.heap.FixedBufferAllocator` — bump allocator over a caller-owned buffer.
 pub struct FixedBufferAllocator<'a> {
@@ -519,11 +518,46 @@ pub type WTFStringImpl = *mut WTFStringImplStruct;
 
 impl WTFStringImplStruct {
     const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    /// The bottom bit in the ref count indicates a static (immortal) string.
+    const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
+    /// This allows us to ref / deref without disturbing the static string flag.
+    const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
     #[inline] pub fn length(&self) -> u32 { self.m_length }
     #[inline]
     pub fn is_8bit(&self) -> bool {
         (self.m_hash_and_flags & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
+    }
+    #[inline]
+    pub fn byte_length(&self) -> usize {
+        if self.is_8bit() { self.m_length as usize } else { (self.m_length as usize) * 2 }
+    }
+    #[inline]
+    pub fn ref_count(&self) -> u32 { self.m_ref_count / Self::S_REF_COUNT_INCREMENT }
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        self.m_ref_count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+    }
+    #[inline]
+    pub fn has_at_least_one_ref(&self) -> bool {
+        // WTF::StringImpl::hasAtLeastOneRef
+        self.m_ref_count > 0
+    }
+    #[inline]
+    pub fn ref_(self: *mut Self) {
+        debug_assert!(unsafe { (*self).has_at_least_one_ref() });
+        // SAFETY: FFI — `Bun__WTFStringImpl__ref` increments the WTF refcount.
+        unsafe { Bun__WTFStringImpl__ref(self) }
+    }
+    #[inline]
+    pub fn deref(self: *mut Self) {
+        debug_assert!(unsafe { (*self).has_at_least_one_ref() });
+        // SAFETY: FFI — `Bun__WTFStringImpl__deref` decrements (and may free) the WTF impl.
+        unsafe { Bun__WTFStringImpl__deref(self) }
+    }
+    #[inline]
+    pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
+        StdAllocator { ptr: self.cast(), vtable: StringImplAllocator::VTABLE_PTR }
     }
     #[inline]
     pub fn latin1_slice(&self) -> &[u8] {
@@ -547,6 +581,54 @@ impl WTFStringImplStruct {
     }
 }
 
+unsafe extern "C" {
+    fn Bun__WTFStringImpl__ref(this: WTFStringImpl);
+    fn Bun__WTFStringImpl__deref(this: WTFStringImpl);
+}
+
+/// Port of `bun.String.StringImplAllocator` (src/string/wtf.zig).
+///
+/// A `std.mem.Allocator` vtable whose `ptr` is a `WTFStringImpl`; `alloc` bumps
+/// the refcount, `free` derefs. Hoisted into `bun_alloc` (which already owns
+/// `AllocatorVTable` and the `WTFStringImplStruct` layout) so the
+/// `is_wtf_allocator` vtable-identity check is a local pointer compare — no
+/// upward dependency on `bun_string` and no runtime fn-ptr hook.
+pub mod StringImplAllocator {
+    use super::{Alignment, AllocatorVTable, WTFStringImpl, WTFStringImplStruct};
+
+    unsafe fn alloc(ptr: *mut core::ffi::c_void, len: usize, _: Alignment, _: usize) -> *mut u8 {
+        let this: WTFStringImpl = ptr.cast();
+        // SAFETY: vtable contract — `ptr` is the `WTFStringImpl` passed to
+        // `ref_count_allocator`.
+        let len_ = unsafe { (*this).byte_length() };
+        if len_ != len {
+            // we don't actually allocate, we just reference count
+            return core::ptr::null_mut();
+        }
+        WTFStringImplStruct::ref_(this);
+        // we should never actually allocate
+        // SAFETY: m_ptr.latin1 valid for byte_length bytes.
+        unsafe { (*this).m_ptr.latin1 as *mut u8 }
+    }
+
+    unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
+        let this: WTFStringImpl = ptr.cast();
+        // SAFETY: see `alloc`.
+        debug_assert!(unsafe { (*this).m_ptr.latin1 } == buf.as_ptr());
+        debug_assert!(unsafe { (*this).m_length as usize } == buf.len());
+        WTFStringImplStruct::deref(this);
+    }
+
+    pub static VTABLE: AllocatorVTable = AllocatorVTable {
+        alloc,
+        resize: AllocatorVTable::NO_RESIZE,
+        remap: AllocatorVTable::NO_REMAP,
+        free,
+    };
+
+    pub const VTABLE_PTR: &'static AllocatorVTable = &VTABLE;
+}
+
 /// Port of `bun.String.StringImpl` — `extern union`.
 #[repr(C)]
 pub union StringImpl {
@@ -567,6 +649,13 @@ pub struct String {
 
 impl String {
     pub const NAME: &'static str = "BunString";
+
+    /// Port of `bun.String.isWTFAllocator` — vtable-identity check against
+    /// [`StringImplAllocator::VTABLE`].
+    #[inline]
+    pub fn is_wtf_allocator(allocator: StdAllocator) -> bool {
+        core::ptr::eq(allocator.vtable, StringImplAllocator::VTABLE_PTR)
+    }
 
     pub const EMPTY: String = String {
         tag: Tag::Empty,

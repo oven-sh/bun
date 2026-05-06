@@ -40,10 +40,7 @@ impl NullableAllocator {
     #[inline]
     pub fn is_wtf_allocator(&self) -> bool {
         let Some(a) = self.get() else { return false };
-        // CYCLEBREAK: `bun_string::String::is_wtf_allocator` — vtable-identity
-        // hook installed by bun_string at init.
-        // SAFETY: single-threaded init; written once.
-        unsafe { (crate::IS_WTF_ALLOCATOR)(a.vtable) }
+        crate::String::is_wtf_allocator(a)
     }
 
     #[inline]
@@ -55,8 +52,7 @@ impl NullableAllocator {
 
     pub fn free(&self, bytes: &[u8]) {
         if let Some(allocator) = self.get() {
-            // SAFETY: see `is_wtf_allocator`.
-            if unsafe { (crate::IS_WTF_ALLOCATOR)(allocator.vtable) } {
+            if crate::String::is_wtf_allocator(allocator) {
                 // avoid calling `std.mem.Allocator.free` as it sets the memory to undefined
                 // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
                 // WTF deallocator treats it as opaque (Zig passes `[]u8`).
@@ -82,5 +78,5 @@ const _: () = assert!(
 //   source:     src/bun_alloc/NullableAllocator.zig (48 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      Ported against `StdAllocator` (Zig `std.mem.Allocator` struct shape) instead of `&dyn Allocator`; is_wtf_allocator routed through CYCLEBREAK hook installed by bun_string.
+//   notes:      Ported against `StdAllocator` (Zig `std.mem.Allocator` struct shape) instead of `&dyn Allocator`; is_wtf_allocator is a local vtable-identity check against `StringImplAllocator::VTABLE` (hoisted into bun_alloc to break the bun_alloc→bun_string dep cycle without a fn-ptr hook).
 // ──────────────────────────────────────────────────────────────────────────

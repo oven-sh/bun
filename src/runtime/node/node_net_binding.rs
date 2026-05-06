@@ -31,6 +31,7 @@ mod _impl {
 use super::*;
 
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_uws as uws;
 
 use crate::node::util::validators;
 use crate::api::{Listener, TCPSocket, TLSSocket};

@@ -1220,12 +1220,19 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail) -> JsResult<()> {
+    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
             return self_.global_object.throw_stack_overflow();
         }
+        // SAFETY: `detail` borrows from `src_text`, which outlives every
+        // `CallbackStackEntry` (the stack is fully drained before `src_text`
+        // is dropped). The `RendererImpl` trait erases the concrete lifetime,
+        // so we widen it to `'static` for storage on the stack — same pattern
+        // as `ParseStackEntry` above.
+        let detail: md::SpanDetail<'static> =
+            unsafe { core::mem::transmute::<md::SpanDetail<'_>, md::SpanDetail<'static>>(detail) };
         self_.stack.push(CallbackStackEntry {
             detail,
             ..Default::default()
@@ -1453,7 +1460,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
     }
 
-    fn create_span_meta(&self, span_type: md::SpanType, detail: &md::SpanDetail) -> JsResult<Option<JSValue>> {
+    fn create_span_meta(&self, span_type: md::SpanType, detail: &md::SpanDetail<'_>) -> JsResult<Option<JSValue>> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {

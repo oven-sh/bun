@@ -6,8 +6,8 @@ use bun_aio::KeepAlive;
 use bun_core::Error;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
-    ZigString,
 };
+use bun_string::ZigString;
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
 use bun_jsc::event_loop::EventLoop;

@@ -3467,6 +3467,19 @@ pub fn openat_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), path.len()) };
     openat(dir, z, flags, perm)
 }
+/// sys.zig:1705 `openatOSPath` — `openat` taking a platform-native path
+/// (`OSPathSliceZ` = `ZStr` on POSIX, `WStr` on Windows). On POSIX this is
+/// identical to `openat`; on Windows it routes through the NT openat path.
+#[cfg(not(windows))]
+#[inline]
+pub fn openat_os_path(dirfd: Fd, file_path: &bun_paths::OSPathSliceZ, flags: i32, perm: Mode) -> Maybe<Fd> {
+    openat(dirfd, file_path, flags, perm)
+}
+#[cfg(windows)]
+#[inline]
+pub fn openat_os_path(dirfd: Fd, file_path: &bun_paths::OSPathSliceZ, flags: i32, perm: Mode) -> Maybe<Fd> {
+    openat_windows(dirfd, file_path.as_slice(), flags, perm)
+}
 /// `mkdiratZ` — `mkdirat` with already-NUL-terminated path. Same as `mkdirat`.
 #[inline]
 pub fn mkdirat_z(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {

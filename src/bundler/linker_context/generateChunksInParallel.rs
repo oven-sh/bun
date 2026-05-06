@@ -100,15 +100,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut batch = ThreadPoolLib::Batch::default();
             // PERF(port): was c.allocator().alloc — using Vec on global mimalloc
-            let mut tasks: Vec<LinkerContext::PrepareCssAstTask> = Vec::with_capacity(total_count);
+            let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             // SAFETY: we fully initialize `total_count` slots below before scheduling.
             unsafe { tasks.set_len(total_count) };
             let mut i: usize = 0;
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
-                    tasks[i] = LinkerContext::PrepareCssAstTask {
+                    tasks[i] = PrepareCssAstTask {
                         task: ThreadPoolLib::Task {
-                            callback: LinkerContext::prepare_css_asts_for_chunk,
+                            callback: prepare_css_asts_for_chunk,
                         },
                         chunk: chunk as *mut Chunk,
                         linker: c as *mut LinkerContext,
@@ -177,7 +177,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
                             #[cfg(feature = "debug_logs")]
                             {
-                                bun_output::scoped_log!(
+                                bun_core::scoped_log!(
                                     PartRanges,
                                     "Part Range: {} {} ({}..{})",
                                     bstr::BStr::new(
@@ -255,7 +255,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.parse_graph.pool.worker_pool.each_ptr(
                 chunk_contexts[0],
-                generate_chunk,
+                LinkerContext::generate_chunk,
                 chunks_to_do,
             )?;
 
@@ -305,7 +305,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut rel_path: Vec<u8> = Vec::new();
             write!(&mut rel_path, "{}", chunk.template).expect("write to Vec<u8>");
-            path::platform_to_posix_in_place(&mut rel_path);
+            path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
             if path_names_map.get_or_put(&rel_path)?.found_existing {
                 // collect all duplicates in a list

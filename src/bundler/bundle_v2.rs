@@ -989,13 +989,13 @@ pub mod api {
         pub struct Plugin {
             _opaque: [u8; 0],
         }
-        extern "C" {
+        unsafe extern "C" {
             #[link_name = "JSBundlerPlugin__anyMatchesCrossingBoundaries"]
-            fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const bun_fs::Path, is_on_load: bool) -> bool;
+            fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool;
         }
         impl Plugin {
             #[inline]
-            pub fn has_any_matches(&self, path: &bun_fs::Path, is_on_load: bool) -> bool {
+            pub fn has_any_matches(&self, path: &crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool {
                 // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
                 unsafe { JSBundlerPlugin__anyMatches(self, path, is_on_load) }
             }

@@ -511,8 +511,8 @@ pub fn post_process_js_chunk(
             false
         });
 
-    let sources: &[Logger::Source] = c.parse_graph.input_files.items(.source);
-    let targets: &[options::Target] = c.parse_graph.ast.items(.target);
+    let sources: &[Logger::Source] = c.parse_graph.input_files.items_source();
+    let targets: &[options::Target] = c.parse_graph.ast.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
         let is_runtime = source_index == Index::runtime().value();
@@ -652,7 +652,7 @@ pub fn post_process_js_chunk(
             }
             {
                 let input =
-                    &c.parse_graph.input_files.items(.source)[chunk.entry_point.source_index as usize].path;
+                    &c.parse_graph.input_files.items_source()[chunk.entry_point.source_index as usize].path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.allocator is an arena in Zig
                 js_printer::quote_for_json(input.pretty, &mut buf, true);
@@ -725,27 +725,27 @@ fn add_binding_vars_to_module_info(
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
     r: renamer::Renamer,
-    symbols: &js_ast::Symbol::Map,
+    symbols: &js_ast::symbol::Map,
 ) {
     match binding.data {
-        Binding::Data::BIdentifier(b) => {
+        BindingData::BIdentifier(b) => {
             let name = r.name_for_symbol(symbols.follow(b.r#ref));
             if !name.is_empty() {
                 let Ok(str_id) = mi.str(name) else { return };
                 let _ = mi.add_var(str_id, var_kind);
             }
         }
-        Binding::Data::BArray(b) => {
+        BindingData::BArray(b) => {
             for item in b.items.iter() {
                 add_binding_vars_to_module_info(mi, item.binding, var_kind, r, symbols);
             }
         }
-        Binding::Data::BObject(b) => {
+        BindingData::BObject(b) => {
             for prop in b.properties.iter() {
                 add_binding_vars_to_module_info(mi, prop.value, var_kind, r, symbols);
             }
         }
-        Binding::Data::BMissing => {}
+        BindingData::BMissing => {}
     }
 }
 
@@ -761,7 +761,7 @@ pub fn generate_entry_point_tail_js(
     r: renamer::Renamer,
     mut module_info: Option<&mut ModuleInfo>,
 ) -> CompileResult {
-    let flags: JSMeta::Flags = c.graph.meta.items(.flags)[source_index as usize];
+    let flags: JSMeta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
     let mut stmts: Vec<Stmt> = Vec::new();
     let ast: JSAst = c.graph.ast.get(source_index);

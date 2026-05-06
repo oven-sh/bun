@@ -3,12 +3,18 @@ use bun_js_parser as js_ast;
 use bun_js_parser::{Part, Symbol};
 use bun_logger as Logger;
 use bun_options_types::ImportRecord;
-use bun_renamer as renamer;
+use crate::bun_renamer as renamer;
 
-use crate::linker_context::{debug, ChunkMeta, LinkerContext};
+use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap};
+use crate::LinkerContext;
 use crate::{
-    Chunk, CrossChunkImport, Index, JSMeta, Ref, RefImportData, ResolvedExports, StableRef,
+    chunk, Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index,
+    IndexInt, JSMeta, Ref, RefImportData, ResolvedExports, StableRef,
 };
+
+macro_rules! debug {
+    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
+}
 
 pub fn compute_cross_chunk_dependencies(
     c: &mut LinkerContext,
@@ -22,9 +28,9 @@ pub fn compute_cross_chunk_dependencies(
     // these must be global allocator
     let mut chunk_metas: Vec<ChunkMeta> = (0..chunks.len())
         .map(|_| ChunkMeta {
-            imports: ChunkMeta::Map::default(),
-            exports: ChunkMeta::Map::default(),
-            dynamic_imports: ArrayHashMap::<Index::Int, ()>::default(),
+            imports: ChunkMetaMap::default(),
+            exports: ChunkMetaMap::default(),
+            dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
     // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
@@ -35,19 +41,22 @@ pub fn compute_cross_chunk_dependencies(
         let mut cross_chunk_dependencies = CrossChunkDependencies {
             chunks,
             chunk_meta: &mut chunk_metas,
-            parts: c.graph.ast.items(.parts),
-            import_records: c.graph.ast.items(.import_records),
-            flags: c.graph.meta.items(.flags),
-            entry_point_chunk_indices: c.graph.files.items(.entry_point_chunk_index),
-            imports_to_bind: c.graph.meta.items(.imports_to_bind),
-            wrapper_refs: c.graph.ast.items(.wrapper_ref),
-            exports_refs: c.graph.ast.items(.exports_ref),
-            sorted_and_filtered_export_aliases: c.graph.meta.items(.sorted_and_filtered_export_aliases),
-            resolved_exports: c.graph.meta.items(.resolved_exports),
+            parts: c.graph.ast.items_parts(),
+            import_records: c.graph.ast.items_import_records_mut(),
+            flags: c.graph.meta.items_flags(),
+            entry_point_chunk_indices: c.graph.files.items_entry_point_chunk_index(),
+            imports_to_bind: c.graph.meta.items_imports_to_bind(),
+            wrapper_refs: c.graph.ast.items_wrapper_ref(),
+            exports_refs: c.graph.ast.items_exports_ref(),
+            sorted_and_filtered_export_aliases: c
+                .graph
+                .meta
+                .items_sorted_and_filtered_export_aliases(),
+            resolved_exports: c.graph.meta.items_resolved_exports(),
             ctx: c,
             symbols: &mut c.graph.symbols,
         };
-        // TODO(port): the field initializers above borrow `c` immutably (via .items()) and
+        // TODO(port): the field initializers above borrow `c` immutably (via .items_*()) and
         // mutably (ctx, symbols) at the same time; Phase B will need to restructure (e.g.
         // split-borrow `c.graph` first, or pass raw column pointers as Zig does).
 
@@ -75,15 +84,15 @@ pub struct CrossChunkDependencies<'a> {
     parts: &'a [BabyList<Part>],
     import_records: &'a mut [BabyList<ImportRecord>],
     flags: &'a [JSMeta::Flags],
-    entry_point_chunk_indices: &'a [Index::Int],
+    entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    // TODO(port): verify column element type from LinkerGraph.meta — Zig: []const []const string
-    sorted_and_filtered_export_aliases: &'a [&'a [&'a [u8]]],
+    // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
+    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
     resolved_exports: &'a [ResolvedExports],
-    ctx: &'a LinkerContext,
-    symbols: &'a mut Symbol::Map,
+    ctx: &'a LinkerContext<'a>,
+    symbols: &'a mut js_ast::ast::symbol::Map,
 }
 
 impl<'a> CrossChunkDependencies<'a> {
@@ -97,22 +106,19 @@ impl<'a> CrossChunkDependencies<'a> {
         // Go over each file in this chunk
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             // TODO: make this switch
-            if chunk.content == .css {
+            if matches!(chunk.content, chunk::Content::Css(_)) {
                 continue;
             }
-            if chunk.content != .javascript {
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            // TODO(port): `chunk.content` is a tagged union; replace the two checks above with
-            // `match chunk.content { Content::Javascript(..) => {}, _ => continue }` once the
-            // Chunk::Content enum is ported.
 
             // Go over each part in this file that's marked for inclusion in this chunk
-            let parts = deps.parts[source_index].slice();
-            let import_records = deps.import_records[source_index].slice_mut();
-            let imports_to_bind = &deps.imports_to_bind[source_index];
-            let wrap = deps.flags[source_index].wrap;
-            let wrapper_ref = deps.wrapper_refs[source_index];
+            let parts = deps.parts[source_index as usize].slice();
+            let import_records = deps.import_records[source_index as usize].slice_mut();
+            let imports_to_bind = &deps.imports_to_bind[source_index as usize];
+            let wrap = deps.flags[source_index as usize].wrap;
+            let wrapper_ref = deps.wrapper_refs[source_index as usize];
             let _chunks = deps.chunks;
 
             for part in parts.iter() {
@@ -134,7 +140,7 @@ impl<'a> CrossChunkDependencies<'a> {
                             _chunks[other_chunk_index as usize].unique_key.clone();
                         // TODO(port): Zig assigns the slice by pointer (no copy); decide
                         // ownership of `path.text` vs `unique_key` in Phase B.
-                        import_record.source_index = Index::invalid();
+                        import_record.source_index = Index::INVALID;
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all
@@ -164,12 +170,12 @@ impl<'a> CrossChunkDependencies<'a> {
                         let mut symbol = deps.symbols.get_const(ref_to_use).unwrap();
 
                         // Ignore unbound symbols
-                        if symbol.kind == Symbol::Kind::Unbound {
+                        if symbol.kind == js_ast::ast::symbol::Kind::Unbound {
                             continue;
                         }
 
                         // Ignore symbols that are going to be replaced by undefined
-                        if symbol.import_item_status == Symbol::ImportItemStatus::Missing {
+                        if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                             continue;
                         }
 
@@ -213,17 +219,16 @@ impl<'a> CrossChunkDependencies<'a> {
         }
 
         // Include the exports if this is an entry point chunk
-        if chunk.content == .javascript {
-            // TODO(port): tagged-union check; see note above.
+        if matches!(chunk.content, chunk::Content::Javascript(_)) {
             if chunk.entry_point.is_entry_point {
                 let flags = deps.flags[chunk.entry_point.source_index as usize];
                 if flags.wrap != JSMeta::Wrap::Cjs {
                     let resolved_exports =
                         &deps.resolved_exports[chunk.entry_point.source_index as usize];
-                    let sorted_and_filtered_export_aliases = deps
-                        .sorted_and_filtered_export_aliases
-                        [chunk.entry_point.source_index as usize];
-                    for alias in sorted_and_filtered_export_aliases {
+                    let sorted_and_filtered_export_aliases =
+                        &deps.sorted_and_filtered_export_aliases
+                            [chunk.entry_point.source_index as usize];
+                    for alias in sorted_and_filtered_export_aliases.iter() {
                         let export_ = resolved_exports.get(alias).unwrap();
                         let mut target_ref = export_.data.import_ref;
 
@@ -291,8 +296,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // iterate by index and re-borrow per access.
     debug_assert_eq!(chunks.len(), chunk_metas.len());
     for chunk_index in 0..chunks.len() {
-        if chunks[chunk_index].content != .javascript {
-            // TODO(port): tagged-union check on Chunk::Content
+        if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
             continue;
         }
 
@@ -323,12 +327,12 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     }
 
                     {
-                        let js = &mut chunks[chunk_index].content.javascript;
+                        let js = chunks[chunk_index].content.javascript_mut();
                         let entry = js
                             .imports_from_other_chunks
-                            .get_or_put_value(other_chunk_index, CrossChunkImport::Item::List::default())?;
-                        entry.value_ptr.push(CrossChunkImport::Item {
-                            ref_: import_ref,
+                            .get_or_put_value(other_chunk_index, CrossChunkImportItemList::default())?;
+                        entry.value_ptr.push(CrossChunkImportItem {
+                            r#ref: import_ref,
                             ..Default::default()
                         })?;
                         // TODO(port): `entry.value_ptr.append(allocator, ...)` — BabyList append
@@ -353,17 +357,19 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             let entry_point_id = chunks[chunk_index].entry_point.entry_point_id;
             for other_chunk_index in 0..chunks.len() {
                 if other_chunk_index == chunk_index
-                    || chunks[other_chunk_index].content != .javascript
+                    || !matches!(
+                        chunks[other_chunk_index].content,
+                        chunk::Content::Javascript(_)
+                    )
                 {
-                    // TODO(port): tagged-union check on Chunk::Content
                     continue;
                 }
 
                 if chunks[other_chunk_index].entry_bits.is_set(entry_point_id) {
-                    let js = &mut chunks[chunk_index].content.javascript;
+                    let js = chunks[chunk_index].content.javascript_mut();
                     let _ = js.imports_from_other_chunks.get_or_put_value(
                         other_chunk_index as u32,
-                        CrossChunkImport::Item::List::default(),
+                        CrossChunkImportItemList::default(),
                     );
                 }
             }
@@ -384,12 +390,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             for (&dynamic_chunk_index, item) in
                 dynamic_chunk_indices.iter().zip(new_imports.iter_mut())
             {
-                *item = Chunk::CrossChunkImportItem {
+                *item = chunk::ChunkImport {
                     import_kind: bun_options_types::ImportKind::Dynamic,
                     chunk_index: dynamic_chunk_index,
                 };
-                // TODO(port): verify type name `Chunk::CrossChunkImportItem` matches the
-                // element type of `chunk.cross_chunk_imports`.
             }
         }
     }
@@ -409,12 +413,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
         debug_assert_eq!(chunks.len(), chunk_metas.len());
         for (chunk, chunk_meta) in chunks.iter_mut().zip(chunk_metas.iter_mut()) {
-            if chunk.content != .javascript {
-                // TODO(port): tagged-union check on Chunk::Content
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
 
-            let repr = &mut chunk.content.javascript;
+            let repr = chunk.content.javascript_mut();
 
             match c.options.output_format {
                 OutputFormat::Esm => {
@@ -435,7 +438,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         .iter()
                         .zip(clause_items.slice_mut().iter_mut())
                     {
-                        let ref_ = stable_ref.ref_;
+                        let ref_ = stable_ref.r#ref;
                         let alias = if c.options.minify_identifiers {
                             r.next_minified_name()?
                         } else {
@@ -486,14 +489,13 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // be embedded in the generated import statements.
     {
         debug!("Generating cross-chunk imports");
-        let mut list = CrossChunkImport::List::default();
+        let mut list: Vec<CrossChunkImport> = Vec::new();
         // defer list.deinit() — handled by Drop
         for chunk in chunks.iter_mut() {
-            if chunk.content != .javascript {
-                // TODO(port): tagged-union check on Chunk::Content
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let repr = &mut chunk.content.javascript;
+            let repr = chunk.content.javascript_mut();
             let mut cross_chunk_prefix_stmts = BabyList::<js_ast::Stmt>::default();
 
             CrossChunkImport::sorted_cross_chunk_imports(
@@ -523,7 +525,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         for item in cross_chunk_import.sorted_import_items.slice() {
                             clauses.push(js_ast::ClauseItem {
                                 name: js_ast::LocRef {
-                                    ref_: item.ref_,
+                                    ref_: item.r#ref,
                                     loc: Logger::Loc::EMPTY,
                                 },
                                 alias: item.export_alias,
@@ -533,7 +535,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                         }
 
-                        cross_chunk_imports.push(Chunk::CrossChunkImportItem {
+                        cross_chunk_imports.push(chunk::ChunkImport {
                             import_kind: bun_options_types::ImportKind::Stmt,
                             chunk_index: cross_chunk_import.chunk_index,
                         });
@@ -566,13 +568,14 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
-// TODO(port): `OutputFormat` enum location — Zig accesses via `c.options.output_format`.
-use crate::options::OutputFormat;
+// `bun.options.Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
+// alias to keep callsites parallel with the Zig `c.options.output_format`.
+use crate::options::Format as OutputFormat;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker_context/computeCrossChunkDependencies.zig (459 lines)
 //   confidence: medium
-//   todos:      23
-//   notes:      heavy borrowck reshaping (index-based loops), Chunk::Content tagged-union checks left as placeholders, parallel `walk` aliasing needs UnsafeCell, AST node allocs via c.allocator() (&'bump Bump) — thread 'bump in Phase B
+//   todos:      21
+//   notes:      heavy borrowck reshaping (index-based loops), Chunk::Content tagged-union checks via matches!/javascript_mut(), parallel `walk` aliasing needs UnsafeCell, AST node allocs via c.allocator() (&'bump Bump) — thread 'bump in Phase B
 // ──────────────────────────────────────────────────────────────────────────

@@ -392,7 +392,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.dispatch_abrupt_close(ErrorCode::Ended);
 
         // For the socket.
-        self.deref();
+        // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
+        // release of the socket's I/O-layer ref.
+        unsafe { Self::deref(self) };
     }
 
     pub fn terminate(&mut self, code: ErrorCode) {
@@ -1639,7 +1641,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
         unsafe { (*out.as_ptr()).did_abrupt_close(code) };
-        self.deref();
+        // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
+        // caller's ref guard (see cancel/handle_close).
+        unsafe { Self::deref(self) };
     }
 
     fn dispatch_close(&mut self, code: u16, reason: &mut bun_string::String) {
@@ -1650,7 +1654,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: out is a valid CppWebSocket*
         unsafe { (*out.as_ptr()).did_close(code, reason) };
-        self.deref();
+        // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
+        // caller's ref guard.
+        unsafe { Self::deref(self) };
     }
 
     pub extern "C" fn close(this: *mut Self, code: u16, reason: *const ZigString) {
@@ -1811,7 +1817,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `ws_ref` above (Zig's `@field(owner, "tcp") = ...` equivalent).
             |owner, sock| unsafe { core::ptr::addr_of_mut!((*owner).tcp).write(sock) },
         ) {
-            ws_ref.deref();
+            // SAFETY: `ws` is the `Box::into_raw` allocation just created
+            // above; sole owner on this failure path.
+            unsafe { Self::deref(ws) };
             return core::ptr::null_mut();
         }
 
@@ -2017,7 +2025,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         // This is only called by outgoing_websocket.
         if this.outgoing_websocket.is_some() {
             this.outgoing_websocket = None;
-            this.deref();
+            // SAFETY: `this: &mut Self` → `*mut Self`; allocation kept live by
+            // the local `r#ref()` guard above.
+            unsafe { Self::deref(this) };
         }
 
         if !this.tcp.is_closed() {

@@ -77,7 +77,7 @@ static TABLES: std::sync::LazyLock<[Option<&'static VTable>; SOCKET_KIND_COUNT]>
 #[inline]
 fn vt(s: *mut us_socket_t) -> &'static VTable {
     // SAFETY: `s` is non-null — loop.c only dispatches live sockets.
-    let s = unsafe { &*s };
+    let s = unsafe { &mut *s };
     let kind = s.kind();
     match kind {
         SocketKind::Invalid => {
@@ -101,7 +101,7 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
 #[inline]
 fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
     // SAFETY: `c` is non-null — loop.c only dispatches live connecting sockets.
-    let c = unsafe { &*c };
+    let c = unsafe { &mut *c };
     let kind = c.kind();
     match kind {
         SocketKind::Invalid => {

@@ -178,7 +178,9 @@ impl HotReloadEvent {
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
                             // SAFETY: server_graph keys not mutated between lookup and here.
-                            self.append_file(unsafe { &*source_file_path });
+                            // PORT NOTE: inlined `append_file` body for disjoint borrow
+                            // (`self.dirs.keys()` is held immutably across this loop).
+                            let _ = self.files.get_or_put(unsafe { &*source_file_path });
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
                             // rebuild a new linked list for unaffected files

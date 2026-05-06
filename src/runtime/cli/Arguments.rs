@@ -1060,7 +1060,7 @@ pub fn load_config<const CMD: Command::Tag>(
                     // SAFETY: process-global Log; see `load_bunfig` note.
                     let log = unsafe { &mut *ctx.log };
                     if log.has_any() {
-                        let _ = log.print(Output::error_writer());
+                        let _ = log.print(Output::error_writer() as *mut _);
                     }
                     if log.has_any() {
                         Output::print_error("\n");
@@ -1127,7 +1127,7 @@ pub fn load_config<const CMD: Command::Tag>(
         // SAFETY: process-global Log; see `load_bunfig` note.
         let log = unsafe { &mut *ctx.log };
         if log.has_any() {
-            let _ = log.print(Output::error_writer());
+            let _ = log.print(Output::error_writer() as *mut _);
         }
         if log.has_any() {
             Output::print_error("\n");

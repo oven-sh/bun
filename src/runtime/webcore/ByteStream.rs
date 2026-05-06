@@ -5,13 +5,10 @@ use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong};
 
 use crate::webcore::streams::{self, BufferAction};
-use crate::webcore::Blob;
 use crate::webcore::Pipe;
-use crate::webcore::ReadableStream;
+use crate::webcore::{blob, readable_stream};
 
 type ByteList = BabyList<u8>;
-type BlobSize = <Blob as crate::webcore::Blob>::SizeType;
-// TODO(port): `Blob::SizeType` is a `u64` newtype in Zig (`webcore.Blob.SizeType`). Phase B: import the real alias.
 
 bun_output::declare_scope!(ByteStream, visible);
 

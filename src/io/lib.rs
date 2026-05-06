@@ -1167,7 +1167,7 @@ impl EventLoopHandle {
 /// Opaque pointer to a `bun_aio::FilePoll` (T3). Stored in `PollOrFd::Poll`.
 pub type FilePollPtr = *mut c_void;
 
-/// Subset of `bun_aio::FilePoll::Flags` that io inspects.
+/// Subset of `bun_aio::FilePoll::Flags` that io inspects/mutates.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FilePollFlag {
@@ -1175,6 +1175,8 @@ pub enum FilePollFlag {
     Nonblocking,
     Hup,
     WasEverRegistered,
+    Socket,
+    Fifo,
 }
 
 /// Which edge to register on (mirrors `bun_aio::Pollable::{Readable,Writable}`

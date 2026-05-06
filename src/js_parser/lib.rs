@@ -1703,8 +1703,8 @@ pub mod defines_full_draft {
 
         pub fn init_static_string(str_: &'static E::String) -> DefineData {
             DefineData {
-                // Zig `@constCast` — Expr.Data stores *mut; the static is never mutated.
-                value: expr::Data::EString(str_ as *const _ as *mut _),
+                // Zig `@constCast` — Expr.Data stores StoreRef (NonNull); the static is never mutated.
+                value: expr::Data::EString(StoreRef::from_static(str_)),
                 flags: DefineDataFlags::CAN_BE_REMOVED_IF_UNUSED,
                 ..Default::default()
             }

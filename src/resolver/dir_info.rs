@@ -227,31 +227,48 @@ impl DirInfo {
 // `est_key_len` is unused on the inner shape. COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
-/// Resolver-side extension trait so the body can call BSSMap methods that are
-/// still gated in `bun_alloc::_bss_gated`. Type-only shims.
-// TODO(b2-blocked): bun_alloc::BSSMapInner — un-gate `get_or_put`/`put`/`remove`.
+/// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
+/// the resolver's error type (`bun_core::Error`) and pointer-return shape, plus
+/// `values_mut` which has no inherent equivalent. The four name-colliding
+/// methods are shadowed by inherent methods under dot-syntax (Rust resolves
+/// inherent before trait), so the bodies below delegate without recursing.
 pub trait HashMapExt {
     fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
-    fn put(&mut self, result: &crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error>;
+    fn put(&mut self, result: &mut crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error>;
     fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
 impl HashMapExt for HashMap {
-    fn get_or_put(&mut self, _key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
-        unimplemented!("BSSMap::get_or_put (Phase B)")
+    #[inline]
+    fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+        // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
+        self.get_or_put(key).map_err(Into::into)
     }
-    fn put(&mut self, _result: &crate::__phase_a_body::allocators::Result, _value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error> {
-        unimplemented!("BSSMap::put (Phase B)")
+    #[inline]
+    fn put(&mut self, result: &mut crate::__phase_a_body::allocators::Result, value: DirInfo) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+        // Spec bun_alloc.zig:615 `put(self: *Self, result: *Result, value) !*ValueType` —
+        // `result.index` is written back, so `&mut`. Inherent returns `&mut DirInfo`;
+        // erase to `*mut` so callers can hold it across later `&mut HashMap` re-borrows
+        // without Stacked-Borrows invalidation.
+        self.put(result, value).map(|v| v as *mut DirInfo).map_err(Into::into)
     }
-    fn mark_not_found(&mut self, _result: crate::__phase_a_body::allocators::Result) {
-        unimplemented!("BSSMap::mark_not_found (Phase B)")
+    #[inline]
+    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {
+        // Inherent `BSSMapInner::mark_not_found` (inherent > trait); not recursive.
+        self.mark_not_found(result)
     }
-    fn remove(&mut self, _key: &[u8]) -> bool {
-        unimplemented!("BSSMap::remove (Phase B)")
+    #[inline]
+    fn remove(&mut self, key: &[u8]) -> bool {
+        // Inherent `BSSMapInner::remove` (inherent > trait); not recursive.
+        self.remove(key)
     }
+    #[inline]
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo> {
-        unimplemented!("BSSMap::values_mut (Phase B)")
+        // Spec resolver.zig:602 `for (r.dir_cache.values()) |*di|` — backing_buf slice
+        // only (overflow_list excluded, matching Zig `BSSMapType` which exposes no
+        // overflow iterator). Inherent `values()` already returns `&mut [DirInfo]`.
+        self.values().iter_mut()
     }
 }
 

@@ -126,10 +126,13 @@ pub fn resp_value_to_js_with_options(
             for entry in entries.iter_mut() {
                 let js_key =
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
-                let key_str = js_key.to_bun_string(global)?;
+                // Zig: `js_obj.putMayBeIndex(global, &key_str, value)` — no Rust binding yet,
+                // so route through `put_to_property_key` which performs the same
+                // index-vs-string property dispatch on the JSValue key.
+                let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
-                js_obj.put_may_be_index(global, &key_str, js_value)?;
+                JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;
             }
             Ok(js_obj)
         }
@@ -171,7 +174,7 @@ pub fn resp_value_to_js_with_options(
                 .ok()
                 .and_then(|s| s.parse::<i64>().ok())
             {
-                Ok(JSValue::js_number(int))
+                Ok(JSValue::js_number(int as f64))
             } else {
                 // If it doesn't fit in an i64, return as string
                 bun_string_jsc::create_utf8_for_js(global, str)

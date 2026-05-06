@@ -624,7 +624,38 @@ pub use bin::Bin;
 pub use repository::Repository;
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct ExtractTarball;
-#[derive(Default)] pub struct NetworkTask;
+impl ExtractTarball {
+    /// Stub for `ExtractTarball.run` (src/install/extract_tarball.zig). Real
+    /// body lives in the gated `extract_tarball.rs`; this signature lets
+    /// `PackageManagerTask` type-check until that module is un-gated.
+    pub fn run(
+        &self,
+        _log: &mut bun_logger::Log,
+        _bytes: &[u8],
+    ) -> Result<ExtractData, bun_core::Error> {
+        Err(bun_core::err!("ExtractTarballNotPorted"))
+    }
+}
+/// Stub for `NetworkTask` — only the fields `PackageManagerTask::callback`
+/// reads are exposed. Full struct lives in the gated `NetworkTask.rs`.
+#[derive(Default)] pub struct NetworkTask {
+    pub response_buffer: bun_string::MutableString,
+    pub response: NetworkTaskResponseStub,
+    pub callback: NetworkTaskCallbackStub,
+}
+/// Owned subset of `bun_http::HTTPClientResult` (the real one borrows the body
+/// slice so cannot be `'static` here).
+#[derive(Default)] pub struct NetworkTaskResponseStub {
+    pub metadata: Option<bun_http::HTTPResponseMetadata>,
+    pub fail: Option<bun_core::Error>,
+}
+#[derive(Default)] pub struct NetworkTaskCallbackStub {
+    pub package_manifest: NetworkTaskManifestCallbackStub,
+}
+#[derive(Default)] pub struct NetworkTaskManifestCallbackStub {
+    pub loaded_manifest: Option<npm::PackageManifest>,
+    pub is_extended_manifest: bool,
+}
 #[derive(Default)] pub struct TarballStream;
 #[derive(Default)] pub struct PackageManager {
     pub options: PackageManagerOptionsStub,

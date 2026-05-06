@@ -12,6 +12,7 @@ use bun_collections::ByteList;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 use crate::webcore::streams;
 
+#[derive(Copy, Clone)]
 pub struct ReadableStream {
     pub value: JSValue,
     pub ptr: Source,

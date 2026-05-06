@@ -993,7 +993,7 @@ pub mod fs {
             // SAFETY: EntryStore-owned pointer, valid for lifetime of store; read-only
             // borrow here only to compare basename — never overlaps a writer.
             let basename = unsafe { &*result_ptr }.base();
-            if !strings::eql_long::<true>(basename, query_) {
+            if !strings::eql_long(basename, query_, true) {
                 return Some(EntryLookup {
                     entry: result_ptr,
                     diff_case: Some(DifferentCase {
@@ -2965,8 +2965,8 @@ mod strings {
     #[inline]
     pub fn char_is_any_slash(c: u8) -> bool { c == b'/' || c == b'\\' }
     #[inline]
-    pub fn eql_long(a: &[u8], b: &[u8], _check_len: bool) -> bool {
-        bun_string::strings::eql_long::<true>(a, b)
+    pub fn eql_long(a: &[u8], b: &[u8], check_len: bool) -> bool {
+        bun_string::strings::eql_long(a, b, check_len)
     }
     #[inline]
     pub fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {

@@ -1707,7 +1707,8 @@ impl PostgresSQLConnection {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
-                                                req.on_write_fail(err, self.global(), self.get_queries_array());
+                                                // TODO(port): map bun_core::Error → AnyPostgresError precisely
+                                                req.on_write_fail(AnyPostgresError::InvalidQueryBinding, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
                                                 unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -1717,7 +1718,7 @@ impl PostgresSQLConnection {
                                                 req.status = QueryStatus::Fail;
                                                 offset += 1;
                                             }
-                                            debug!("bind and execute failed: {}", <&'static str>::from(err));
+                                            debug!("bind and execute failed: {}", err);
                                             continue;
                                         }
                                     }
@@ -1848,14 +1849,14 @@ impl PostgresSQLConnection {
                                     // Named prepared statements: send Parse+Describe first, wait for
                                     // ParameterDescription, then send Bind+Execute in a second phase.
                                     // This is safe because named statements persist on the connection.
-                                    let mut connection_writer = self.writer();
+                                    let connection_writer = self.writer();
                                     debug!("writing query");
                                     // write query and wait for it to be prepared
                                     if let Err(err) = PostgresRequest::write_query(
                                         query_str.slice(),
                                         &statement.signature.prepared_statement_name,
                                         &statement.signature.fields,
-                                        &mut connection_writer,
+                                        connection_writer,
                                     ) {
                                         if let Some(err_) = self.global().try_take_exception() {
                                             req.on_js_error(err_, self.global());

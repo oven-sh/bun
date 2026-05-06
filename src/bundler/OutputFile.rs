@@ -238,10 +238,10 @@ impl Value {
                 )
             }
             Value::Pending(_) => unreachable!(),
-            other => todo!(
-                "OutputFile.Value.toBunString: handle .{}",
-                <&'static str>::from(other.kind())
-            ),
+            // Zig: `else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)})`
+            // — an intentional shipped runtime panic for `.move`/`.copy`/`.saved`,
+            // not a Phase-A placeholder.
+            other => bun_core::todo_panic!("handle .{}", <&'static str>::from(other.kind())),
         }
     }
 

@@ -844,5 +844,5 @@ impl ImportsIterator<'_> {
 //   source:     src/js_parser/runtime.zig (534 lines)
 //   confidence: medium
 //   todos:      18
-//   notes:      render()/render_backend() template substitution + codegen_embed/build_options wiring deferred; ALL_SORTED hand-computed (add test); comptime-string-key Imports accessors became runtime lookups; init_bundler_feature_flags returns *const (caller-owned).
+//   notes:      codegen_embed/build_options wiring deferred; ALL_SORTED hand-computed (add test); comptime-string-key Imports accessors became runtime lookups; init_bundler_feature_flags returns *const (caller-owned).
 // ──────────────────────────────────────────────────────────────────────────

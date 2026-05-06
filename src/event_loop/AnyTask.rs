@@ -19,6 +19,17 @@ pub struct AnyTask {
     pub callback: fn(*mut c_void) -> JsResult<()>,
 }
 
+impl Default for AnyTask {
+    fn default() -> Self {
+        // Zig: field defaults to `= undefined`; provide a sentinel that panics
+        // if run before being overwritten.
+        Self {
+            ctx: None,
+            callback: |_| unreachable!("AnyTask.callback was undefined"),
+        }
+    }
+}
+
 impl AnyTask {
     pub fn task(&mut self) -> Task {
         Task::init(self)

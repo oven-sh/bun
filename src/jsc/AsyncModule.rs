@@ -287,7 +287,7 @@ mod _gated_impl {
             // PORT NOTE: reshaped for borrowck — Zig iterated copies and
             // compacted in place; Rust uses retain_mut and lets Drop free
             // removed modules.
-            let vm_ptr: *mut VirtualMachine = self.vm();
+            let vm_ptr: *mut VirtualMachine = this.vm();
             this.map.retain_mut(|module| {
                 let root_dependency_ids =
                     module.parse_result.pending_imports.items_root_dependency_id();
@@ -611,7 +611,7 @@ mod _gated_impl {
                 global_this: global_object,
                 arena: opts.arena,
                 poll_ref: KeepAlive::default(),
-                any_task: AnyTask::default(),
+                any_task: AnyTask::AnyTask::default(),
             })
         }
 
@@ -633,7 +633,16 @@ mod _gated_impl {
             // task queue until on_done reclaims it via Box::from_raw; we hold
             // the only reference here.
             unsafe {
-                (*clone).any_task = AnyTask::new::<AsyncModule, { Self::on_done }>(clone);
+                // PORT NOTE: Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
+                // Rust cannot take a fn as const generic, so hand-write the shim
+                // (option (b) in event_loop/AnyTask.rs).
+                (*clone).any_task = AnyTask::AnyTask {
+                    ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
+                    callback: |p| {
+                        Self::on_done(p.cast());
+                        Ok(())
+                    },
+                };
                 jsc_vm.enqueue_task(Task::init(&mut (*clone).any_task));
             }
         }

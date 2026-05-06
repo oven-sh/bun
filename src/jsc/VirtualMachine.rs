@@ -2076,7 +2076,11 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:369 `mimeType`.
     pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType::MimeType> {
-        self.rare_data().mime_type_from_string(str_)
+        // Body delegates to RareData::mime_type_from_string, which is currently
+        // gated behind `#[cfg(any())] mod _accessor_body` in rare_data.rs
+        // (depends on MimeType::create_hash_table). Stub until that lands.
+        let _ = (self.rare_data(), str_);
+        todo!("blocked_on: RareData::mime_type_from_string")
     }
 
     /// Spec VirtualMachine.zig:498 `loadExtraEnvAndSourceCodePrinter`.

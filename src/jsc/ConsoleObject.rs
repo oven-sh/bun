@@ -4072,21 +4072,23 @@ pub mod formatter {
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
                 // PERF(port): was comptime bool dispatch on single_line — profile in Phase B
+                let global_this = self.global_this;
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         MapIteratorCtx::<C, false, true>::for_each)?;
-                    if self.failed { return Ok(()); }
-                    if iter.count > 0 { let _ = writer_.write_all(b" "); }
+                    let count = iter.count;
+                    if iter.formatter.failed { return Ok(()); }
+                    if count > 0 { let _ = writer_.write_all(b" "); }
                 } else {
                     let mut iter = MapIteratorCtx::<C, false, false> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         MapIteratorCtx::<C, false, false>::for_each)?;
-                    if self.failed { return Ok(()); }
+                    if iter.formatter.failed { return Ok(()); }
                 }
             }
             if !self.single_line {
@@ -4178,21 +4180,23 @@ pub mod formatter {
                 self.depth = self.depth.saturating_add(1);
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
+                let global_this = self.global_this;
                 if self.single_line {
                     let mut iter = SetIteratorCtx::<C, true> {
                         formatter: self, writer: writer_, is_first: true,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         SetIteratorCtx::<C, true>::for_each)?;
-                    if self.failed { return Ok(()); }
-                    if !iter.is_first { let _ = writer_.write_all(b" "); }
+                    let is_first = iter.is_first;
+                    if iter.formatter.failed { return Ok(()); }
+                    if !is_first { let _ = writer_.write_all(b" "); }
                 } else {
                     let mut iter = SetIteratorCtx::<C, false> {
                         formatter: self, writer: writer_, is_first: true,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         SetIteratorCtx::<C, false>::for_each)?;
-                    if self.failed { return Ok(()); }
+                    if iter.formatter.failed { return Ok(()); }
                 }
             }
             if !self.single_line {
@@ -4242,11 +4246,19 @@ pub mod formatter {
                 }
             };
 
+            // PORT NOTE: Zig `@tagName(event_type)`. `EventType` is a transparent
+            // u8 newtype (non-exhaustive enum), so there is no derived `From<EventType>
+            // for &str`; only the two arms above can reach here.
+            let event_tag_name: &'static str = match event_type {
+                EventType::MessageEvent => "MessageEvent",
+                EventType::ErrorEvent => "ErrorEvent",
+                _ => unreachable!(),
+            };
             let _ = write!(
                 writer_,
                 "{}{}{} {{\n",
                 pf!("<r><cyan>"),
-                <&'static str>::from(event_type),
+                event_tag_name,
                 pf!("<r>")
             );
             {
@@ -4263,13 +4275,13 @@ pub mod formatter {
                     let _ = write!(
                         writer_,
                         "{}type: {}\"{}\"{}{},{} ",
-                        pf!("<r>"), pf!("<green>"), event_type.label(), pf!("<r>"), pf!("<d>"), pf!("<r>")
+                        pf!("<r>"), pf!("<green>"), bstr::BStr::new(event_type.label()), pf!("<r>"), pf!("<d>"), pf!("<r>")
                     );
                 } else {
                     let _ = write!(
                         writer_,
                         "{}type: {}\"{}\"{}{},{}\n",
-                        pf!("<r>"), pf!("<green>"), event_type.label(), pf!("<r>"), pf!("<d>"), pf!("<r>")
+                        pf!("<r>"), pf!("<green>"), bstr::BStr::new(event_type.label()), pf!("<r>"), pf!("<d>"), pf!("<r>")
                     );
                 }
 

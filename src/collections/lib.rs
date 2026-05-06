@@ -123,6 +123,17 @@ impl<K, V, C> HashMap<K, V, C> {
     pub fn deinit(&mut self) {
         self.inner = std::collections::HashMap::default();
     }
+
+    /// Zig `lockPointers` — debug-mode pointer-stability assertion. The std
+    /// `HashMap` backing has no such mode; no-op stub kept so the Zig
+    /// lock/unlock bracketing translates without `#[cfg]` noise at every call
+    /// site (see `SavedSourceMap`).
+    #[inline]
+    pub fn lock_pointers(&self) {}
+
+    /// Zig `unlockPointers` — see [`lock_pointers`].
+    #[inline]
+    pub fn unlock_pointers(&self) {}
 }
 
 impl<K, V, C> HashMap<K, V, C>

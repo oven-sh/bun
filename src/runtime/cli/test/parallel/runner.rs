@@ -226,8 +226,9 @@ pub fn run_as_coordinator(
     }
 
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
-    vm.run_with_api_lock(|| coord.drive());
+    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
+    // SAFETY: see vm_ptr note above.
+    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
 
     if ctx.test_options.reporters.junit {
         if let Some(outfile) = &ctx.test_options.reporter_outfile {

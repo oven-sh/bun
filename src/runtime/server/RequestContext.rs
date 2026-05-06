@@ -2885,7 +2885,7 @@ where
                         self.finish_running_error_handler(err, status);
                         return;
                     } else if let Some(promise) = result.as_any_promise() {
-                        self.process_on_error_promise(result, promise, value, status);
+                        Self::process_on_error_promise(self, result, promise, value, status);
                         return;
                     // SAFETY: sole `&mut Response` for this cell in scope;
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)

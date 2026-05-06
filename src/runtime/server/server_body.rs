@@ -3165,7 +3165,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: &mut Ctx::Resp,
     ) {
         // SAFETY: server backref outlives user_route
-        let server = unsafe { &mut *(user_route.server as *mut Self) };
+        let server_ptr = user_route.server as *mut Self;
+        let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
         let mut should_deinit_context = false;
@@ -3180,6 +3181,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
         ) else { return };
 
+        // SAFETY: `server_ptr` outlives `prepared`; reborrow to break the
+        // exclusive lifetime tie between `prepared` and `server`.
+        let server = unsafe { &mut *server_ptr };
         let server_request_list = Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
         let call_route = if Ctx::IS_H3 { Bun__ServerRouteList__callRouteH3 } else { Bun__ServerRouteList__callRoute };
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
@@ -3219,32 +3223,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
-        let ctx = prepared.ctx;
-
-        let _detach_guard = scopeguard::guard((), |_| {
-            // uWS request will not live longer than this function
-            prepared.request_object.request_context.detach_request();
-        });
-
-        ctx.on_response(self, prepared.js_request, response_value);
-        // Reference in the stack here in case it is not for whatever reason
-        prepared.js_request.ensure_still_alive();
-
-        ctx.defer_deinit_until_callback_completes = None;
-
-        if *should_deinit_context {
-            ctx.deinit();
-            return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
-
-        // The request is asynchronous, and all information from `req` must be copied
-        // since the provided uws.Request will be re-used for future requests (stack allocated).
-        ctx.to_async(req, prepared.request_object);
+        let _ = (should_deinit_context, prepared, req, response_value);
+        // TODO(port): Ctx::{on_response,deinit,should_render_missing,render_missing,to_async}
+        // require `ThisServer: ServerLike + TransportFor<SSL,H3>: Transport +
+        // Self: NativePromiseContextType` bounds that don't hold for the
+        // generic `NewServer<SSL,DEBUG>` parameter yet.
+        todo!("blocked_on: server::ServerLike impl for NewServer<SSL,DEBUG>")
     }
 
     pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
@@ -3336,31 +3320,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 prepared.request_object.request_context.detach_request();
             }
         });
-        let original_state = ctx.defer_deinit_until_callback_completes;
-        let mut should_deinit_context = false;
-        ctx.defer_deinit_until_callback_completes = Some(&mut should_deinit_context);
-        ctx.on_response(self, prepared.js_request, response_value);
-        ctx.defer_deinit_until_callback_completes = original_state;
-
+        let _ = (ctx, response_value, is_stack, req);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
-
-        if should_deinit_context {
-            ctx.deinit();
-            return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
-
-        // The request is asynchronous, and all information from `req` must be copied
-        // since the provided uws.Request will be re-used for future requests (stack allocated).
-        match req {
-            SavedRequestUnion::Stack(r) => ctx.to_async(unsafe { &mut *r }, prepared.request_object),
-            SavedRequestUnion::Saved(_) => {} // info already copied
-        }
+        todo!("blocked_on: server::ServerLike impl for NewServer<SSL,DEBUG> (RequestContext::on_response/deinit)")
     }
 
     pub fn prepare_js_request_context(
@@ -3404,9 +3367,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         let request_body_length: Option<usize> = 'request_body_length: {
-            if http::Method::which(req.method()).unwrap_or(http::Method::OPTIONS).has_request_body() {
+            if http::Method::which(ReqLike::method(req)).unwrap_or(http::Method::OPTIONS).has_request_body() {
                 let len: usize = 'brk: {
-                    if let Some(content_length) = req.header(b"content-length") {
+                    if let Some(content_length) = ReqLike::header(req, b"content-length") {
                         // Parse ASCII decimal directly off the byte slice — header bytes are not
                         // guaranteed UTF-8, and PORTING.md forbids from_utf8 on network bytes.
                         break 'brk bun_str::strings::parse_int::<usize>(content_length, 10).unwrap_or(0);
@@ -3447,8 +3410,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             #[cfg(debug_assertions)]
             unsafe { (*self.vm.event_loop()).debug.exit() };
         });
-        req.set_yield(false);
-        resp.timeout(self.config.idle_timeout);
+        ReqLike::set_yield(req, false);
+        RespLike::timeout(resp, self.config.idle_timeout);
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
@@ -3475,7 +3438,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             &mut *raw
         }; // bun.handleOom — aborts on OOM
-        ctx.create(self, req, resp, should_deinit_context, method);
+        // TODO(port): ctx.create(self, req, resp, should_deinit_context, method) needs
+        // `ThisServer: ServerLike` bound — see handle_request_for.
+        let _ = ctx;
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
         unsafe { (*self.vm.jsc_vm).deprecated_report_extra_memory(mem::size_of::<Ctx>()) };
         let _ = (should_deinit_context, method);

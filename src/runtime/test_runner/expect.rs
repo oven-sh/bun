@@ -1704,7 +1704,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
 
         // fallback
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        writer.write_str(Output::pretty_fmt("<green>...args<r>", self.colors))
+        write!(writer, "{}", Output::pretty_fmt_rt("<green>...args<r>", self.colors))
     }
 }
 

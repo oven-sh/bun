@@ -4478,7 +4478,8 @@ impl NodeFS {
 
     pub fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
-            ZStr::from_static(b"\\\\.\\NUL\0")
+            // SAFETY: literal is NUL-terminated; len excludes the sentinel.
+            unsafe { ZStr::from_raw(b"\\\\.\\NUL\0".as_ptr(), b"\\\\.\\NUL".len()) }
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };

@@ -15,7 +15,7 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::BabyList;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, SysErrorJsc, SystemError,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsRef, JsResult, Strong, SysErrorJsc, SystemError,
 };
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
@@ -29,6 +29,47 @@ use crate::node::{StringOrBuffer, BlobOrStringOrBuffer};
 use crate::socket::SSLConfig;
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
+
+// ── Local shims (Phase D) ────────────────────────────────────────────────
+// `JSGlobalObject.rs` impl block is `#[cfg(any())]`-gated upstream, so
+// `throw_not_enough_arguments` is unreachable as an inherent method.
+trait JSGlobalObjectSocketExt {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsError;
+}
+impl JSGlobalObjectSocketExt for JSGlobalObject {
+    fn throw_not_enough_arguments(
+        &self,
+        name_: &str,
+        expected: usize,
+        got: usize,
+    ) -> JsError {
+        self.throw_invalid_arguments(format_args!(
+            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
+        ))
+    }
+}
+
+// `uws::NewSocketHandler::from_duplex` (uws_sys/socket.zig:308) not yet
+// surfaced in `bun_uws` — shim it locally over the type-erased
+// `InternalSocket::UpgradedDuplex(*mut c_void)` variant.
+trait SocketHandlerFromDuplex {
+    fn from_duplex(duplex: &mut UpgradedDuplex<'static>) -> Self;
+}
+impl<const SSL: bool> SocketHandlerFromDuplex for uws::NewSocketHandler<SSL> {
+    #[inline]
+    fn from_duplex(duplex: &mut UpgradedDuplex<'static>) -> Self {
+        Self {
+            socket: uws::InternalSocket::UpgradedDuplex(
+                duplex as *mut UpgradedDuplex<'static> as *mut c_void,
+            ),
+        }
+    }
+}
 
 // ── BoringSSL FFI not yet surfaced in `bun_boringssl_sys` — declared locally
 // (mirrors `extern fn`s in `boringssl.zig`).
@@ -3214,17 +3255,17 @@ pub fn js_upgrade_duplex_to_tls(
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let args = callframe.arguments_old(2);
-    if args.len() < 2 {
-        return global.throw("Expected 2 arguments", ());
+    let args = callframe.arguments_old::<2>();
+    if args.len < 2 {
+        return Err(global.throw("Expected 2 arguments"));
     }
-    let duplex = args.ptr()[0];
+    let duplex = args.ptr[0];
     // TODO: do better type checking
     if duplex.is_empty_or_undefined_or_null() {
-        return global.throw("Expected a Duplex instance", ());
+        return Err(global.throw("Expected a Duplex instance"));
     }
 
-    let opts = args.ptr()[1];
+    let opts = args.ptr[1];
     if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
         return global.throw("Expected options object", ());
     }
@@ -3279,13 +3320,14 @@ pub fn js_upgrade_duplex_to_tls(
     };
     if !sc_js.is_empty() {
         let Some(sc) = SecureContext::from_js(sc_js) else {
-            return global.throw_invalid_argument_type_value(
+            return Err(global.throw_invalid_argument_type_value(
                 "secureContext",
                 "SecureContext",
                 sc_js,
-            );
+            ));
         };
-        *owned_ctx = Some(sc.borrow());
+        // SAFETY: `from_js` returns a live `*mut SecureContext`.
+        *owned_ctx = Some(unsafe { (*sc).borrow() });
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -3301,7 +3343,7 @@ pub fn js_upgrade_duplex_to_tls(
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {
-        return global.throw("Expected \"tls\" option", ());
+        return Err(global.throw("Expected \"tls\" option"));
     }
     let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
@@ -3316,9 +3358,9 @@ pub fn js_upgrade_duplex_to_tls(
     // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
     // without affecting markInactive lifecycle (which requires a Listener parent).
     handlers_taken.mode = if is_server {
-        SocketMode::DuplexServer
+        crate::socket::SocketMode::DuplexServer
     } else {
-        SocketMode::Client
+        crate::socket::SocketMode::Client
     };
     // Zig: `bun.default_allocator.create(Handlers)` — client-mode `Handlers`
     // is a standalone heap allocation that `Handlers::mark_inactive` later
@@ -3333,16 +3375,14 @@ pub fn js_upgrade_duplex_to_tls(
         owned_ssl_ctx: None,
         connection: None,
         protos: socket_config.and_then(|cfg| {
-            cfg.protos.map(|p| {
-                // SAFETY: protos is NUL-terminated C string from SSLConfig.
-                Box::<[u8]>::from(unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes())
-            })
+            cfg.protos
+                .as_ref()
+                .map(|p| Box::<[u8]>::from(p.as_bytes()))
         }),
         server_name: socket_config.and_then(|cfg| {
-            cfg.server_name.map(|sn| {
-                // SAFETY: server_name is NUL-terminated C string from SSLConfig.
-                Box::<[u8]>::from(unsafe { core::ffi::CStr::from_ptr(sn) }.to_bytes())
-            })
+            cfg.server_name
+                .as_ref()
+                .map(|sn| Box::<[u8]>::from(sn.as_bytes()))
         }),
         flags: Flags::default(),
         this_value: JsRef::empty(),
@@ -3370,7 +3410,8 @@ pub fn js_upgrade_duplex_to_tls(
         upgrade: unsafe { core::mem::zeroed() },
         // SAFETY: `tls` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
         tls: Some(unsafe { IntrusiveRc::from_raw(tls) }),
-        vm: global.bun_vm(),
+        // SAFETY: `bun_vm()` returns the live per-global VM; lives for the program.
+        vm: unsafe { &*global.bun_vm() },
         // TODO(port): in-place init — Zig `undefined`, assigned below after we
         // have `duplex_context`. `zeroed()` is UB if `AnyTask` has fn-ptr fields;
         // Phase B: same MaybeUninit two-phase init as `upgrade`.
@@ -3437,7 +3478,9 @@ pub fn js_upgrade_duplex_to_tls(
 
     tls_ref.socket = SocketHandler::<true>::from_duplex(&mut dc.upgrade);
     tls_ref.mark_active();
-    tls_ref.poll_ref.ref_(global.bun_vm());
+    tls_ref.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(
+        bun_aio::posix_event_loop::AllocatorType::Js,
+    ));
 
     dc.start_tls();
 
@@ -3453,11 +3496,11 @@ pub fn js_upgrade_duplex_to_tls(
 pub fn js_is_named_pipe_socket(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old(3);
-    if arguments.len() < 1 {
-        return global.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len());
+    let arguments = callframe.arguments_old::<3>();
+    if arguments.len < 1 {
+        return Err(global.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len));
     }
-    let socket = arguments.ptr()[0];
+    let socket = arguments.ptr[0];
     if let Some(this) = socket.as_::<TCPSocket>() {
         return Ok(JSValue::from(this.socket.is_named_pipe()));
     } else if let Some(this) = socket.as_::<TLSSocket>() {
@@ -3470,17 +3513,17 @@ pub fn js_is_named_pipe_socket(global: &JSGlobalObject, callframe: &CallFrame) -
 pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old(3);
-    if arguments.len() < 1 {
-        return global.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len());
+    let arguments = callframe.arguments_old::<3>();
+    if arguments.len < 1 {
+        return Err(global.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len));
     }
-    let socket = arguments.ptr()[0];
+    let socket = arguments.ptr[0];
     if let Some(this) = socket.as_::<TCPSocket>() {
-        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len));
+        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len as f64));
     } else if let Some(this) = socket.as_::<TLSSocket>() {
-        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len));
+        return Ok(JSValue::js_number(this.buffered_data_for_node_net.len as f64));
     }
-    Ok(JSValue::js_number(0))
+    Ok(JSValue::js_number(0.0))
 }
 
 #[bun_jsc::host_fn]
@@ -3501,15 +3544,15 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
         };
         if rc != 0 {
             let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
-            return global.throw_value(err.to_js(global)?);
+            return Err(global.throw_value(err.to_js(global)));
         }
 
-        let _ = sys::Fd::from_native(fds_[0]).update_nonblocking(true);
-        let _ = sys::Fd::from_native(fds_[1]).update_nonblocking(true);
+        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
+        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
 
         let array = JSValue::create_empty_array(global, 2)?;
-        array.put_index(global, 0, JSValue::js_number(fds_[0]))?;
-        array.put_index(global, 1, JSValue::js_number(fds_[1]))?;
+        array.put_index(global, 0, JSValue::js_number(fds_[0] as f64))?;
+        array.put_index(global, 1, JSValue::js_number(fds_[1] as f64))?;
         Ok(array)
     }
 }
@@ -3519,16 +3562,16 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
     let arguments = callframe.arguments();
 
     if arguments.len() < 3 {
-        return global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len());
+        return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
     }
 
-    let Some(socket) = arguments.ptr()[0].as_::<TCPSocket>() else {
-        return global.throw("Expected a SocketTCP instance", ());
+    let Some(socket) = arguments[0].as_::<TCPSocket>() else {
+        return Err(global.throw("Expected a SocketTCP instance"));
     };
 
-    let is_for_send_buffer = arguments.ptr()[1].to_int32() == 1;
-    let is_for_recv_buffer = arguments.ptr()[1].to_int32() == 2;
-    let buffer_size = arguments.ptr()[2].to_int32();
+    let is_for_send_buffer = arguments[1].to_int32() == 1;
+    let is_for_recv_buffer = arguments[1].to_int32() == 2;
+    let buffer_size = arguments[2].to_int32();
     let file_descriptor = socket.socket.fd();
 
     #[cfg(unix)]
@@ -3555,11 +3598,11 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
         };
         if is_for_send_buffer {
             if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_SNDBUF) {
-                return global.throw_value(err.to_js(global)?);
+                return Err(global.throw_value(err.to_js(global)));
             }
         } else if is_for_recv_buffer {
             if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_RCVBUF) {
-                return global.throw_value(err.to_js(global)?);
+                return Err(global.throw_value(err.to_js(global)));
             }
         }
     }

@@ -1376,7 +1376,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !IS_SYNC {
         if !subprocess.process.has_exited() {
-            jsc_vm.on_subprocess_spawn(
+            // SAFETY: jsc_vm_ptr points to the live thread VM.
+            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(
                 std::sync::Arc::as_ptr(&subprocess.process) as *mut core::ffi::c_void,
             );
         }

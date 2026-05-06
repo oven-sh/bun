@@ -176,7 +176,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         }
         y += 1;
     }
-    Ok(codecs::Decoded { rgba: out, width: h.width, height: h.height })
+    Ok(codecs::Decoded { rgba: out, width: h.width, height: h.height, icc_profile: None })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

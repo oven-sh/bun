@@ -32,6 +32,7 @@ bun_clap.workspace = true
 bun_collections.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
+bun_hash.workspace = true
 bun_http.workspace = true
 # TODO(b1): bun_http_jsc has a forward-dep on bun_jsc; cannot depend on it here (cycle). Gate usages.
 bun_install.workspace = true

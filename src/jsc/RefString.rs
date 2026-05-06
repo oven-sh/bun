@@ -7,18 +7,17 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_str::wtf::StringImpl;
-// TODO(port): confirm exact path — Zig's `bun.WTF.StringImpl` is the WTF-backed
-// refcounted string impl; likely re-exported from `bun_str` (or `bun_jsc::wtf`).
-use bun_str::StringJsc as _; // extension trait providing `.to_js()` on `bun_str::String`
+use bun_string::wtf::StringImpl;
+// Zig's `bun.WTF.StringImpl` is the WTF-backed refcounted string impl,
+// re-exported from `bun_string::wtf`.
+use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_string::String`
 
 pub type Hash = u32;
 
 /// `std.HashMap(Hash, *RefString, bun.IdentityContext(Hash), 80)`
-// TODO(port): `bun.IdentityContext` is an identity hasher (key is already a hash).
-// Use `bun_collections::IdentityHasher` (or equivalent) once available; the `80`
+// `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
-pub type Map = bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityHasher>;
+pub type Map = bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
@@ -38,13 +37,12 @@ pub struct RefString {
 
 impl RefString {
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        bun_str::String::init(self.impl_).to_js(global)
+        bun_string::String::init(self.impl_).to_js(global)
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
-        // TODO(port): Zig uses `std.hash.XxHash32.hash(0, input)`. Map to the
-        // ported xxhash32 (e.g. `bun_hash::xxhash32(0, input)`); placeholder name.
-        bun_hash::xxhash32(0, input)
+        // Zig: `std.hash.XxHash32.hash(0, input)`.
+        bun_hash::XxHash32::hash(0, input)
     }
 
     pub fn slice(&self) -> &[u8] {

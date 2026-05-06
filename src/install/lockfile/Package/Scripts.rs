@@ -419,6 +419,7 @@ pub enum PrintFormat {
     Untrusted,
 }
 
+#[derive(Clone)]
 pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub first_index: u8,

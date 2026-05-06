@@ -213,6 +213,27 @@ impl<K, V, C> HashMap<K, V, C> {
         Ok(())
     }
 
+    /// Zig `ensureUnusedCapacity` — reserve room for `additional` further
+    /// inserts beyond the current `len()`.
+    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), bun_alloc::AllocError>
+    where
+        K: Eq + core::hash::Hash,
+    {
+        self.inner.reserve(additional);
+        Ok(())
+    }
+
+    /// Zig `fetchRemove` — remove `key` and return the removed `{key, value}`
+    /// pair (Zig `?KV`). Backed by `std::HashMap::remove_entry`.
+    pub fn fetch_remove(&mut self, key: K) -> Option<hash_map::KV<K, V>>
+    where
+        K: Eq + core::hash::Hash,
+    {
+        self.inner
+            .remove_entry(&key)
+            .map(|(k, v)| hash_map::KV { key: k, value: v })
+    }
+
     /// Zig `lockPointers` — debug-mode pointer-stability assertion. The std
     /// `HashMap` backing has no such mode; no-op stub kept so the Zig
     /// lock/unlock bracketing translates without `#[cfg]` noise at every call
@@ -251,6 +272,27 @@ where
                 value_ptr: v.insert(V::default()),
             }),
         }
+    }
+
+    /// Zig `getOrPutContext`: same as [`get_or_put`] but threads an explicit
+    /// hash context. The Rust backing ignores the context (hashing is on `K`),
+    /// so this is a thin alias kept for call-site parity with Zig.
+    #[inline]
+    pub fn get_or_put_context<Ctx>(
+        &mut self,
+        key: K,
+        _ctx: Ctx,
+    ) -> Result<hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    where
+        V: Default,
+    {
+        self.get_or_put(key)
+    }
+
+    /// Zig `contains` — `std::HashMap` spells this `contains_key`.
+    #[inline]
+    pub fn contains(&self, key: &K) -> bool {
+        self.inner.contains_key(key)
     }
 
     /// Zig `putNoClobber`: insert asserting the key is new.

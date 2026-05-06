@@ -226,6 +226,33 @@ pub mod resolution {
     }
 
     impl Resolution {
+        /// Port of `Resolution.init(.{ .root = {} })` (src/install/resolution.zig).
+        #[inline]
+        pub fn init_root() -> Self {
+            Self { tag: Tag::Root, _padding: [0; 7], value: Value::default() }
+        }
+
+        /// Port of `Resolution.init(.{ .symlink = s })`.
+        #[inline]
+        pub fn init_symlink(s: bun_semver::String) -> Self {
+            Self {
+                tag: Tag::Symlink,
+                _padding: [0; 7],
+                value: Value { symlink: s, ..Default::default() },
+            }
+        }
+
+        /// Port of `Resolution.fromPnpmLockfile` (src/install/resolution.zig).
+        /// Real body lives in `resolution_real::ResolutionType::from_pnpm_lockfile`;
+        /// this stub bridges until the stub/real `Resolution` types unify.
+        pub fn from_pnpm_lockfile(
+            _key: &[u8],
+            _entry: &crate::pnpm::PackagesEntry,
+            _string_buf: &mut bun_semver::semver_string::Buf,
+        ) -> Result<Self, bun_core::Error> {
+            todo!("blocked_on: resolution stub/real unify (reconciler-6) — from_pnpm_lockfile")
+        }
+
         /// Port of `Resolution.init` (src/install/resolution.zig). Constructs a
         /// `Resolution` with the given tagged value (Zig used a tagged-union
         /// init; here `Value` is a flat struct so the tag selects which field
@@ -276,19 +303,19 @@ pub mod resolution {
             match self.tag {
                 Tag::Npm => {
                     self.value.npm.version.eql(rhs.value.npm.version)
-                        && self.value.npm.url.eql(&rhs.value.npm.url, lhs_buf, rhs_buf)
+                        && self.value.npm.url.eql(rhs.value.npm.url, lhs_buf, rhs_buf)
                 }
-                Tag::Folder => self.value.folder.eql(&rhs.value.folder, lhs_buf, rhs_buf),
+                Tag::Folder => self.value.folder.eql(rhs.value.folder, lhs_buf, rhs_buf),
                 Tag::LocalTarball => {
-                    self.value.local_tarball.eql(&rhs.value.local_tarball, lhs_buf, rhs_buf)
+                    self.value.local_tarball.eql(rhs.value.local_tarball, lhs_buf, rhs_buf)
                 }
                 Tag::RemoteTarball => {
-                    self.value.remote_tarball.eql(&rhs.value.remote_tarball, lhs_buf, rhs_buf)
+                    self.value.remote_tarball.eql(rhs.value.remote_tarball, lhs_buf, rhs_buf)
                 }
                 Tag::Workspace => {
-                    self.value.workspace.eql(&rhs.value.workspace, lhs_buf, rhs_buf)
+                    self.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf)
                 }
-                Tag::Symlink => self.value.symlink.eql(&rhs.value.symlink, lhs_buf, rhs_buf),
+                Tag::Symlink => self.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
                 Tag::Git => self.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
                 Tag::Github => self.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
                 Tag::Root | Tag::Uninitialized | Tag::SingleFileModule => true,

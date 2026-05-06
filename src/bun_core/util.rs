@@ -248,6 +248,15 @@ impl ZStr {
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
         unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u8] as *mut ZStr) }
     }
+    /// Wrap a `&'static [u8]` literal that already includes the trailing
+    /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
+    /// `len()` per the type invariant. Panics in debug if no trailing NUL.
+    #[inline]
+    pub const fn from_static(s: &'static [u8]) -> &'static ZStr {
+        debug_assert!(!s.is_empty() && s[s.len() - 1] == 0);
+        // SAFETY: caller-supplied literal ends in NUL; lifetime is 'static.
+        unsafe { Self::from_raw(s.as_ptr(), s.len() - 1) }
+    }
     #[inline] pub const fn as_bytes(&self) -> &[u8] { &self.0 }
     #[inline] pub const fn len(&self) -> usize { self.0.len() }
     #[inline] pub const fn is_empty(&self) -> bool { self.0.is_empty() }

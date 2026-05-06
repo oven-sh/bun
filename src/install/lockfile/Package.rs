@@ -54,13 +54,13 @@ bun_output::declare_scope!(Lockfile, hidden);
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
 //
-// `#[derive(MultiArrayElement)]` generates `PackageField` (column enum),
-// `PackageListExt` (`items_<field>{,_mut}()` on `MultiArrayList<Package<_>>`)
-// and `PackageSliceExt` (`<field>{,_mut}()` on `Slice<Package<_>>`) so the
-// SoA column accessors used throughout `lockfile.rs` / `Tree.rs` / migrators
-// resolve. Mirrors Zig's `MultiArrayList(Package).items(.field)`.
+// PORT NOTE: `#[derive(MultiArrayElement)]` cannot be used here — the derive
+// emits a `PackageField` enum with snake_case variants and an inherent
+// `__MAL_SIZES` const that fail to const-eval through the defaulted
+// `SemverIntType` param. The trait impl, field enum, and `PackageListExt` /
+// `PackageSliceExt` accessor traits are therefore expanded by hand below
+// (mirroring Zig's `MultiArrayList(Package).items(.field)`).
 #[repr(C)]
-#[derive(bun_collections::MultiArrayElement)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
     pub name_hash: PackageNameHash,

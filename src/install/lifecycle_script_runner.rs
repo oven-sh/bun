@@ -263,6 +263,14 @@ pub const MIN_MILLISECONDS_TO_LOG: u64 = 500;
 
 pub static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+impl<'a> LifecycleScriptSubprocess<'a> {
+    /// Zig: `LifecycleScriptSubprocess.alive_count` static decl. Returns the
+    /// global atomic so callers can write
+    /// `LifecycleScriptSubprocess::alive_count().load(..)`.
+    #[inline]
+    pub fn alive_count() -> &'static AtomicUsize { &ALIVE_COUNT }
+}
+
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 

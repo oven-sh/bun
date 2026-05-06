@@ -364,26 +364,24 @@ pub fn migrate_npm_lockfile<'a>(
         let pkg: &E::Object = pkg;
 
         if pkg.get(b"link").is_some() {
-            id_map.insert(
+            id_map.put_assume_capacity(
                 pkg_path,
                 IdMapValue {
                     old_json_index: i as u32,
                     new_package_id: PACKAGE_ID_IS_LINK,
                 },
             );
-            // PERF(port): was assume_capacity
             continue;
         }
         if let Some(x) = pkg.get(b"inBundle") {
             if matches!(x.data, ExprData::EBoolean(b) if b.value) {
-                id_map.insert(
+                id_map.put_assume_capacity(
                     pkg_path,
                     IdMapValue {
                         old_json_index: i as u32,
                         new_package_id: PACKAGE_ID_IS_BUNDLED,
                     },
                 );
-                // PERF(port): was assume_capacity
                 continue;
             }
         }
@@ -393,14 +391,13 @@ pub fn migrate_npm_lockfile<'a>(
             }
         }
 
-        id_map.insert(
+        id_map.put_assume_capacity(
             pkg_path,
             IdMapValue {
                 old_json_index: i as u32,
                 new_package_id: package_idx,
             },
         );
-        // PERF(port): was assume_capacity
         package_idx += 1;
 
         for dep_key in DEPENDENCY_KEYS {
@@ -476,7 +473,7 @@ pub fn migrate_npm_lockfile<'a>(
                 remain = &mut remain[version_str.len()..];
                 remain[..4].copy_from_slice(b".tgz");
 
-                resolved_urls.insert(pkg_path, resolved_url);
+                resolved_urls.put_assume_capacity(pkg_path, resolved_url);
             }
         }
     }
@@ -748,6 +745,8 @@ pub fn migrate_npm_lockfile<'a>(
             } else {
                 Integrity::default()
             },
+
+            ..lockfile::Meta::default()
         };
 
         // Instead of calling this.appendPackage, manually append
@@ -1017,6 +1016,7 @@ pub fn migrate_npm_lockfile<'a>(
                             if found.new_package_id == PACKAGE_ID_IS_LINK {
                                 // it is a workspace package, resolve from the "link": true entry to the real entry.
                                 let ExprData::EObject(ref_pkg) = &packages_properties[found.old_json_index as usize].value.as_ref().unwrap().data else { unreachable!() };
+                                let ref_pkg: &E::Object = ref_pkg;
                                 // the `else` here is technically possible to hit
                                 let resolved_v = ref_pkg.get(b"resolved").ok_or(err!("LockfileWorkspaceMissingResolved"))?;
                                 let resolved = resolved_v.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
@@ -1066,6 +1066,7 @@ pub fn migrate_npm_lockfile<'a>(
 
                                 let res = 'resolved: {
                                     let ExprData::EObject(dep_pkg) = &packages_properties[found.old_json_index as usize].value.as_ref().unwrap().data else { unreachable!() };
+                                    let dep_pkg: &E::Object = dep_pkg;
                                     let dep_resolved: &[u8] = 'dep_resolved: {
                                         if let Some(resolved) = dep_pkg.get(b"resolved") {
                                             let dep_resolved = resolved.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
@@ -1237,6 +1238,7 @@ pub fn migrate_npm_lockfile<'a>(
                                         let ExprData::EObject(meta_obj) = &meta.data else {
                                             return Err(err!("InvalidNPMLockfile"));
                                         };
+                                        let meta_obj: &E::Object = meta_obj;
                                         if let Some(optional) = meta_obj.get(b"optional") {
                                             let ExprData::EBoolean(b) = optional.data else {
                                                 return Err(err!("InvalidNPMLockfile"));

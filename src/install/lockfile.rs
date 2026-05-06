@@ -504,51 +504,52 @@ impl Lockfile {
         log: &mut logger::Log,
     ) -> LoadResult<'a> {
         if cfg!(debug_assertions) {
-            debug_assert!(FileSystem::instance_loaded());
+            // Zig: `bun.assert(FileSystem.instance_loaded);` — vtable singleton must
+            // already be installed. The opaque `bun_sys::fs::FileSystem` has no
+            // `instance_loaded()` (it asserts internally on `instance()`); just touch
+            // the singleton in debug to preserve the early-trip invariant.
+            let _ = FileSystem::instance();
         }
 
         let mut lockfile_format = LockfileFormat::Text;
-        let file = 'file: {
-            match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0).unwrap_result() {
+        let file: File = 'file: {
+            match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0) {
                 Ok(f) => break 'file f,
                 Err(text_open_err) => {
-                    if text_open_err != err!("ENOENT") {
+                    if text_open_err.errno != sys::SystemErrno::ENOENT {
                         return LoadResult::Err(LoadResultErr {
                             step: LoadStep::OpenFile,
-                            value: text_open_err.into(),
-                            lockfile_path: ZStr::from_static("bun.lock\0"),
+                            value: BunError::from(text_open_err),
+                            lockfile_path: zstr!("bun.lock"),
                             format: LockfileFormat::Text,
                         });
                     }
 
                     lockfile_format = LockfileFormat::Binary;
 
-                    match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0).unwrap_result() {
+                    match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0) {
                         Ok(f) => break 'file f,
                         Err(binary_open_err) => {
-                            if binary_open_err != err!("ENOENT") {
+                            if binary_open_err.errno != sys::SystemErrno::ENOENT {
                                 return LoadResult::Err(LoadResultErr {
                                     step: LoadStep::OpenFile,
-                                    value: binary_open_err.into(),
-                                    lockfile_path: ZStr::from_static("bun.lockb\0"),
+                                    value: BunError::from(binary_open_err),
+                                    lockfile_path: zstr!("bun.lockb"),
                                     format: LockfileFormat::Binary,
                                 });
                             }
 
                             if ATTEMPT_LOADING_FROM_OTHER_LOCKFILE {
                                 if let Some(pm) = manager {
-                                    let migrate_result =
-                                        migration::detect_and_load_other_lockfile(
-                                            self, dir, pm, log,
-                                        );
-
-                                    if matches!(migrate_result, LoadResult::Ok(_)) {
-                                        // lockfile_format = .text — note: local mutation has no
-                                        // observable effect after return; preserved for parity.
-                                        let _ = LockfileFormat::Text;
-                                    }
-
-                                    return migrate_result;
+                                    // TODO(port): `migration::detect_and_load_other_lockfile`
+                                    // is currently typed against the stub `crate::lockfile::
+                                    // Lockfile`/`LoadResult`. Once the stub module is retired
+                                    // (reconciler-6) this `todo!()` collapses to a direct call.
+                                    let _ = (dir, pm, log);
+                                    return todo!(
+                                        "blocked_on: migration::detect_and_load_other_lockfile \
+                                         retyping to lockfile_real::Lockfile (reconciler-6)"
+                                    );
                                 }
                             }
 
@@ -559,32 +560,33 @@ impl Lockfile {
             }
         };
 
-        let buf = match file.read_to_end().unwrap_result() {
-            Ok(b) => b,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ReadFile,
-                    value: e.into(),
-                    lockfile_path: if lockfile_format == LockfileFormat::Text {
-                        ZStr::from_static("bun.lock\0")
-                    } else {
-                        ZStr::from_static("bun.lockb\0")
-                    },
-                    format: lockfile_format,
-                });
-            }
+        let read_result = file.read_to_end();
+        let buf = if let Some(e) = read_result.err {
+            return LoadResult::Err(LoadResultErr {
+                step: LoadStep::ReadFile,
+                value: BunError::from(e),
+                lockfile_path: if lockfile_format == LockfileFormat::Text {
+                    zstr!("bun.lock")
+                } else {
+                    zstr!("bun.lockb")
+                },
+                format: lockfile_format,
+            });
+        } else {
+            read_result.bytes
         };
 
         if lockfile_format == LockfileFormat::Text {
-            let source = logger::Source::init_path_string(b"bun.lock", &buf);
+            let source = logger::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
-            let json = match JSON::parse_package_json_utf8(&source, log) {
+            let bump = bumpalo::Bump::new();
+            let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
                 Err(e) => {
                     return LoadResult::Err(LoadResultErr {
                         step: LoadStep::ParseFile,
                         value: e,
-                        lockfile_path: ZStr::from_static("bun.lock\0"),
+                        lockfile_path: zstr!("bun.lock"),
                         format: lockfile_format,
                     });
                 }
@@ -593,13 +595,13 @@ impl Lockfile {
             if let Err(e) =
                 TextLockfile::parse_into_binary_lockfile(self, json, &source, log, manager)
             {
-                if e == err!("OutOfMemory") {
+                if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::ParseFile,
-                    value: e,
-                    lockfile_path: ZStr::from_static("bun.lock\0"),
+                    value: BunError::from(e),
+                    lockfile_path: zstr!("bun.lock"),
                     format: lockfile_format,
                 });
             }
@@ -615,59 +617,16 @@ impl Lockfile {
             });
         }
 
-        let result = self.load_from_bytes(manager.as_deref_mut(), buf, log);
         // TODO(port): borrowck — `self` is reborrowed inside `result` via &'a mut Lockfile.
         // PORT NOTE: reshaped for borrowck — the debug round-trip block below mutates `self`
-        // through `result.ok.lockfile` which already holds the &mut.
-
-        if let LoadResult::Ok(ok) = &result {
-            if bun_core::env_var::BUN_DEBUG_TEST_TEXT_LOCKFILE.get() && manager.is_some() {
-                // Convert the loaded binary lockfile into a text lockfile in memory, then
-                // parse it back into a binary lockfile.
-
-                let mut writer_buf: Vec<u8> = Vec::new();
-
-                if let Err(e) = TextLockfile::Stringifier::save_from_binary(
-                    ok.lockfile,
-                    &result,
-                    &manager.as_ref().unwrap().options,
-                    &mut writer_buf,
-                ) {
-                    Output::panic(
-                        format_args!("failed to convert binary lockfile to text lockfile: {}", e.name()),
-                    );
-                }
-
-                let text_lockfile_bytes = writer_buf;
-
-                let source = logger::Source::init_path_string(b"bun.lock", &text_lockfile_bytes);
-                initialize_store();
-                let json = match JSON::parse_package_json_utf8(&source, log) {
-                    Ok(j) => j,
-                    Err(e) => Output::panic(format_args!(
-                        "failed to print valid json from binary lockfile: {}",
-                        e.name()
-                    )),
-                };
-
-                if let Err(e) = TextLockfile::parse_into_binary_lockfile(
-                    ok.lockfile, // TODO(port): borrowck — was `this` in Zig; aliases ok.lockfile
-                    json,
-                    &source,
-                    log,
-                    manager,
-                ) {
-                    Output::panic(format_args!(
-                        "failed to parse text lockfile converted from binary lockfile: {}",
-                        e.name()
-                    ));
-                }
-
-                bun_core::analytics::Features::text_lockfile_inc();
-            }
-        }
-
-        result
+        // through `result.ok.lockfile` which already holds the &mut. The `BUN_DEBUG_TEST_
+        // TEXT_LOCKFILE` round-trip path (lockfile.zig:364-406) needs simultaneous access
+        // to `manager` (already moved into the call above for `Option<&mut PackageManager>`)
+        // and the `&mut Lockfile` inside `result`. Restoring it requires the
+        // `manager.as_deref_mut()` reborrow which today's `Option<&mut PackageManager>`
+        // surface forbids. Until reconciler-6, the debug round-trip is omitted.
+        // TODO(port): re-enable BUN_DEBUG_TEST_TEXT_LOCKFILE round-trip once borrowck reshape lands.
+        self.load_from_bytes(manager, buf, log)
     }
 
     pub fn load_from_bytes<'a>(
@@ -694,7 +653,7 @@ impl Lockfile {
                 return LoadResult::Err(LoadResultErr {
                     step: LoadStep::ParseFile,
                     value: e,
-                    lockfile_path: ZStr::from_static("bun.lockb\0"),
+                    lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
             }
@@ -818,7 +777,7 @@ impl Lockfile {
                     if update.package_id == invalid_package_id {
                         debug_assert_eq!(root_deps.len(), old_resolutions.len());
                         for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name()) {
+                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
                                 if old_resolution as usize >= old.packages.len() {
                                     continue;
                                 }
@@ -875,7 +834,7 @@ impl Lockfile {
                         for (dep, &old_resolution) in
                             root_deps.iter_mut().zip(old_resolutions.iter())
                         {
-                            if dep.name_hash == SemverStringBuilder::string_hash(update.name()) {
+                            if dep.name_hash == SemverStringBuilder::string_hash(update.name) {
                                 if old_resolution as usize >= old.packages.len() {
                                     continue;
                                 }
@@ -1564,10 +1523,10 @@ impl Lockfile {
                     if UPDATE_OS_CPU {
                         let pkg_meta = &mut pkg_metas.as_mut().unwrap()[i];
                         // Update os/cpu metadata if not already set
-                        if pkg_meta.os == Npm::OperatingSystem::All {
+                        if pkg_meta.os == Npm::OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;
                         }
-                        if pkg_meta.arch == Npm::Architecture::All {
+                        if pkg_meta.arch == Npm::Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
                         }
                     }

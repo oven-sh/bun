@@ -1671,6 +1671,19 @@ impl DynamicBitSet {
         self.unmanaged.capacity()
     }
 
+    /// Zig spelling of `capacity()` (`.bit_length`).
+    #[inline(always)]
+    pub fn bit_length(&self) -> usize {
+        self.unmanaged.capacity()
+    }
+
+    /// Copy all set/unset bits from `self` into `other` (which must have
+    /// `bit_length >= self.bit_length`). Port of `DynamicBitSet.copyInto`.
+    #[inline]
+    pub fn copy_into(&self, other: &mut Self) {
+        other.unmanaged.copy_into(&self.unmanaged);
+    }
+
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
     pub fn is_set(&self, index: usize) -> bool {

@@ -29,6 +29,8 @@ impl Compression {
 /// `.classes.ts` payload (`{ data, count, compress }`) — re-export from the
 /// un-gated body so callers see `crate::api::archive::Archive` directly.
 pub use _jsc_gated::Archive;
+/// Task types consumed by `crate::dispatch` (concurrent-task tag dispatch).
+pub use _jsc_gated::{AsyncTask, BlobTask, ExtractTask, FilesTask, WriteTask};
 
 /// Reject empty paths, absolute paths, Windows drive letters, and any `..` component.
 pub fn is_safe_path(pathname: &[u8]) -> bool {

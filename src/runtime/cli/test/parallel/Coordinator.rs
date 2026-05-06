@@ -17,8 +17,7 @@ use super::frame::{self, Frame};
 use super::worker::Worker;
 use crate::test_command::CommandLineReporter;
 
-// TODO(port): verify crate path for bun.PathString (bun_fs vs bun_core)
-use bun_fs::PathString;
+use bun_paths::PathString;
 // TODO(port): verify crate path for bun.spawn.Status
 use bun_spawn::Status as SpawnStatus;
 

@@ -10,7 +10,7 @@ use bun_install::{PackageID, PackageManager};
 use bun_semver as semver;
 use bun_str::strings;
 
-use crate::command::{self, Command};
+use crate::command;
 use crate::package_manager_command::PackageManagerCommand;
 
 pub struct WhyCommand;

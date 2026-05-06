@@ -7661,6 +7661,7 @@ pub struct LowerUsingDeclarationsContext {
 //   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
 //   • `DeclaredSymbolList`/`BabyList` API has no allocator param in this port
 //   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
+#[cfg(any())] // reconciler-6: re-gate (r#ref→ref_, DeclaredSymbolList::push, BabyList allocator-param, generate_temp_ref gated)
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
         p: &mut P<'a, T, J, S_>,

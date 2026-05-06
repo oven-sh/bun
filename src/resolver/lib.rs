@@ -2090,14 +2090,14 @@ trait FdExt: Sized {
     fn close(self);
     fn cast(self) -> bun_sys::RawFd;
     fn native(self) -> bun_sys::RawFd;
-    fn get_fd_path<'b>(self, buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error>;
+    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> core::result::Result<&'b [u8], ::bun_core::Error>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline] fn close(self) { let _ = ::bun_sys::close(self); }
     #[inline] fn cast(self) -> bun_sys::RawFd { ::bun_sys::Fd::native(self) }
     #[inline] fn native(self) -> bun_sys::RawFd { ::bun_sys::Fd::native(self) }
-    #[inline] fn get_fd_path<'b>(self, buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> {
-        bun_sys::get_fd_path(self, buf)
+    #[inline] fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> core::result::Result<&'b [u8], ::bun_core::Error> {
+        ::bun_sys::get_fd_path(self, buf).map(|s| &*s).map_err(Into::into)
     }
 }
 trait FdZero { const ZERO: ::bun_sys::Fd; }
@@ -5904,7 +5904,16 @@ impl<'a> Resolver<'a> {
                 );
 
                 let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                while let Ok(Some(_value)) = dir_iterator.next().unwrap() {
+                // PORT NOTE: Zig `while (dir_iterator.next().unwrap()) |entry|` —
+                // `.unwrap()` was on the inner `Maybe(?Entry)`; the Rust `WrappedIterator::next`
+                // is already flattened to `Result<Option<IteratorResult>>`, so the `.unwrap()`
+                // moved to `?`-style break-on-error.
+                loop {
+                    let _value = match dir_iterator.next() {
+                        Ok(Some(v)) => v,
+                        Ok(None) => break,
+                        Err(_) => break,
+                    };
                     new_entry
                         .add_entry(
                             // SAFETY: see block-wide note above.

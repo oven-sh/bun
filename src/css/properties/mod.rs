@@ -232,10 +232,9 @@ pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
 // Zig: `css.DefineEnumProperty(@This())` provides eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. In Rust the domain protocol is a trait + derive.
-// TODO(port): wire `#[derive(css::DefineEnumProperty)]` proc-macro (parse/to_css over
-// kebab-case tag names) in Phase B; until then this is a plain data enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
+// `From<Self> for &'static str` + inherent `parse`/`to_css`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum CSSWideKeyword {
     /// The property's initial value.
     Initial,

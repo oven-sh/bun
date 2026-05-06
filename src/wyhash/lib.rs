@@ -1,6 +1,16 @@
 //
-// this file is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
+// `Wyhash11` is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
+// (the older 32-byte-round, 5-prime variant kept in src/wyhash/wyhash.zig).
 //
+// `Wyhash` is the current `std.hash.Wyhash` (final4 variant, 48-byte rounds, 4 secrets) ported
+// from vendor/zig/lib/std/hash/wyhash.zig — used by RuntimeTranspilerCache, `bun.hash()`, router.
+//
+// THESE ARE DIFFERENT ALGORITHMS. They produce different outputs for the same input.
+//
+
+// ════════════════════════════════════════════════════════════════════════════
+// Wyhash11 (legacy, 32-byte rounds, 5 primes)
+// ════════════════════════════════════════════════════════════════════════════
 
 const PRIMES: [u64; 5] = [
     0xa0761d6478bd642f,
@@ -213,23 +223,277 @@ impl core::hash::Hasher for Wyhash11 {
     fn finish(&self) -> u64 {
         // `final_` mutates `state`; clone so `Hasher::finish(&self)` stays
         // semantically pure (matches std contract).
-        let mut s = self.state.clone();
+        let mut s = self.state;
         s.final_(&self.buf[0..self.buf_len])
     }
 }
 
-/// `bun.hash(bytes)` — std `Wyhash` with seed 0. PORTING.md: this is **not**
-/// `Wyhash11` (different algorithm).
-// TODO(b2): currently routes to Wyhash11 since std Wyhash isn't ported. Swap
-// once `std.hash.Wyhash` lands here (or use `wyhash` crate for parity).
+// ════════════════════════════════════════════════════════════════════════════
+// Wyhash (std.hash.Wyhash — final4 variant, 48-byte rounds, 4 secrets)
+// Ported from vendor/zig/lib/std/hash/wyhash.zig
+// ════════════════════════════════════════════════════════════════════════════
+
+/// `std.hash.Wyhash` — the wyhash final4 variant. Used by `bun.hash()`,
+/// `RuntimeTranspilerCache`, the router, and Zig's std `HashMap` autocontext.
+///
+/// NOT interchangeable with [`Wyhash11`].
+#[derive(Clone, Copy)]
+pub struct Wyhash {
+    a: u64,
+    b: u64,
+    state: [u64; 3],
+    total_len: usize,
+
+    buf: [u8; 48],
+    buf_len: usize,
+}
+
+impl Wyhash {
+    const SECRET: [u64; 4] = [
+        0xa0761d6478bd642f,
+        0xe7037ed1a0b428db,
+        0x8ebc6af09c88c6e3,
+        0x589965cc75374cc3,
+    ];
+
+    pub fn init(seed: u64) -> Wyhash {
+        let s0 = seed ^ Self::mix(seed ^ Self::SECRET[0], Self::SECRET[1]);
+        Wyhash {
+            a: 0, // Zig: undefined
+            b: 0, // Zig: undefined
+            state: [s0, s0, s0],
+            total_len: 0,
+            buf: [0; 48], // Zig: undefined
+            buf_len: 0,
+        }
+    }
+
+    // This is subtly different from other hash function update calls. Wyhash requires the last
+    // full 48-byte block to be run through final1 if is exactly aligned to 48-bytes.
+    pub fn update(&mut self, input: &[u8]) {
+        self.total_len += input.len();
+
+        if input.len() <= 48 - self.buf_len {
+            self.buf[self.buf_len..self.buf_len + input.len()].copy_from_slice(input);
+            self.buf_len += input.len();
+            return;
+        }
+
+        let mut i: usize = 0;
+
+        if self.buf_len > 0 {
+            i = 48 - self.buf_len;
+            self.buf[self.buf_len..48].copy_from_slice(&input[0..i]);
+            let buf = self.buf;
+            self.round(&buf);
+            self.buf_len = 0;
+        }
+
+        while i + 48 < input.len() {
+            self.round(input[i..i + 48].try_into().unwrap());
+            i += 48;
+        }
+
+        let remaining_bytes = &input[i..];
+        if remaining_bytes.len() < 16 && i >= 48 {
+            let rem = 16 - remaining_bytes.len();
+            // self.buf[self.buf.len - rem ..] = input[i - rem .. i]
+            self.buf[48 - rem..48].copy_from_slice(&input[i - rem..i]);
+        }
+        self.buf[0..remaining_bytes.len()].copy_from_slice(remaining_bytes);
+        self.buf_len = remaining_bytes.len();
+    }
+
+    pub fn final_(&self) -> u64 {
+        let input: &[u8] = &self.buf[0..self.buf_len];
+        let mut new_self = self.shallow_copy(); // ensure idempotency
+
+        if self.total_len <= 16 {
+            new_self.small_key(input);
+        } else {
+            let mut scratch: [u8; 16] = [0; 16];
+            let (input, offset) = if self.buf_len < 16 {
+                let rem = 16 - self.buf_len;
+                scratch[0..rem].copy_from_slice(&self.buf[48 - rem..48]);
+                scratch[rem..rem + self.buf_len].copy_from_slice(&self.buf[0..self.buf_len]);
+                // Same as input but with additional bytes preceding start in case of a short buffer
+                (&scratch[..], rem)
+            } else {
+                (input, 0usize)
+            };
+
+            new_self.final0();
+            new_self.final1(input, offset);
+        }
+
+        new_self.final2()
+    }
+
+    // Copies the core wyhash state but not any internal buffers.
+    #[inline]
+    fn shallow_copy(&self) -> Wyhash {
+        Wyhash {
+            a: self.a,
+            b: self.b,
+            state: self.state,
+            total_len: self.total_len,
+            buf: [0; 48], // Zig: undefined
+            buf_len: 0,   // Zig: undefined
+        }
+    }
+
+    #[inline]
+    fn small_key(&mut self, input: &[u8]) {
+        debug_assert!(input.len() <= 16);
+
+        if input.len() >= 4 {
+            let end = input.len() - 4;
+            let quarter = (input.len() >> 3) << 2;
+            self.a = (Self::read4(&input[0..]) << 32) | Self::read4(&input[quarter..]);
+            self.b = (Self::read4(&input[end..]) << 32) | Self::read4(&input[end - quarter..]);
+        } else if !input.is_empty() {
+            self.a = (u64::from(input[0]) << 16)
+                | (u64::from(input[input.len() >> 1]) << 8)
+                | u64::from(input[input.len() - 1]);
+            self.b = 0;
+        } else {
+            self.a = 0;
+            self.b = 0;
+        }
+    }
+
+    #[inline]
+    fn round(&mut self, input: &[u8; 48]) {
+        // Zig: inline for (0..3) |i| — manually unrolled.
+        let a0 = Self::read8(&input[0..]);
+        let b0 = Self::read8(&input[8..]);
+        self.state[0] = Self::mix(a0 ^ Self::SECRET[1], b0 ^ self.state[0]);
+
+        let a1 = Self::read8(&input[16..]);
+        let b1 = Self::read8(&input[24..]);
+        self.state[1] = Self::mix(a1 ^ Self::SECRET[2], b1 ^ self.state[1]);
+
+        let a2 = Self::read8(&input[32..]);
+        let b2 = Self::read8(&input[40..]);
+        self.state[2] = Self::mix(a2 ^ Self::SECRET[3], b2 ^ self.state[2]);
+    }
+
+    #[inline]
+    fn read4(data: &[u8]) -> u64 {
+        u64::from(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+    }
+
+    #[inline]
+    fn read8(data: &[u8]) -> u64 {
+        u64::from_le_bytes([
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        ])
+    }
+
+    #[inline]
+    fn mum_(a: &mut u64, b: &mut u64) {
+        let x = (*a as u128).wrapping_mul(*b as u128);
+        *a = x as u64; // @truncate
+        *b = (x >> 64) as u64; // @truncate
+    }
+
+    #[inline]
+    fn mix(a_: u64, b_: u64) -> u64 {
+        let mut a = a_;
+        let mut b = b_;
+        Self::mum_(&mut a, &mut b);
+        a ^ b
+    }
+
+    #[inline]
+    fn final0(&mut self) {
+        self.state[0] ^= self.state[1] ^ self.state[2];
+    }
+
+    // input_lb must be at least 16-bytes long (in shorter key cases the small_key function will be
+    // used instead). We use an index into a slice for comptime processing as opposed to if we
+    // used pointers.
+    #[inline]
+    fn final1(&mut self, input_lb: &[u8], start_pos: usize) {
+        debug_assert!(input_lb.len() >= 16);
+        debug_assert!(input_lb.len() - start_pos <= 48);
+        let input = &input_lb[start_pos..];
+
+        let mut i: usize = 0;
+        while i + 16 < input.len() {
+            self.state[0] = Self::mix(
+                Self::read8(&input[i..]) ^ Self::SECRET[1],
+                Self::read8(&input[i + 8..]) ^ self.state[0],
+            );
+            i += 16;
+        }
+
+        self.a = Self::read8(&input_lb[input_lb.len() - 16..]);
+        self.b = Self::read8(&input_lb[input_lb.len() - 8..]);
+    }
+
+    #[inline]
+    fn final2(&mut self) -> u64 {
+        self.a ^= Self::SECRET[1];
+        self.b ^= self.state[0];
+        Self::mum_(&mut self.a, &mut self.b);
+        Self::mix(
+            self.a ^ Self::SECRET[0] ^ (self.total_len as u64),
+            self.b ^ Self::SECRET[1],
+        )
+    }
+
+    pub fn hash(seed: u64, input: &[u8]) -> u64 {
+        let mut this = Wyhash::init(seed);
+
+        if input.len() <= 16 {
+            this.small_key(input);
+        } else {
+            let mut i: usize = 0;
+            if input.len() >= 48 {
+                while i + 48 < input.len() {
+                    this.round(input[i..i + 48].try_into().unwrap());
+                    i += 48;
+                }
+                this.final0();
+            }
+            this.final1(input, i);
+        }
+
+        this.total_len = input.len();
+        this.final2()
+    }
+}
+
+// Allow `Wyhash` to be used with `core::hash::Hash::hash` (e.g., as the state
+// for std/HashMap-style hashing). Mirrors Zig's `std.hash_map` AutoContext.
+impl core::hash::Hasher for Wyhash {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        // `final_` already operates on a shallow copy → idempotent on `&self`.
+        self.final_()
+    }
+}
+
+/// `bun.hash(bytes)` — `std.hash.Wyhash` with seed 0.
 #[inline]
 pub fn hash(bytes: &[u8]) -> u64 {
-    Wyhash11::hash(0, bytes)
+    Wyhash::hash(0, bytes)
 }
 
 #[inline]
 pub fn hash32(bytes: &[u8]) -> u32 {
     hash(bytes) as u32 // @truncate
+}
+
+/// `bun.hashWithSeed(seed, bytes)` — `std.hash.Wyhash` with explicit seed.
+#[inline]
+pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
+    Wyhash::hash(seed, bytes)
 }
 
 /// `std.hash.int` — integer-to-integer hashing (same width in, same width out).
@@ -281,10 +545,137 @@ impl HashInt for u64 {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Run https://github.com/wangyi-fudan/wyhash/blob/77e50f267fbc7b8e2d09f2d455219adb70ad4749/test_vector.cpp directly.
+    struct TestVector {
+        seed: u64,
+        expected: u64,
+        input: &'static [u8],
+    }
+
+    const VECTORS: &[TestVector] = &[
+        TestVector { seed: 0, expected: 0x0409638ee2bde459, input: b"" },
+        TestVector { seed: 1, expected: 0xa8412d091b5fe0a9, input: b"a" },
+        TestVector { seed: 2, expected: 0x32dd92e4b2915153, input: b"abc" },
+        TestVector { seed: 3, expected: 0x8619124089a3a16b, input: b"message digest" },
+        TestVector { seed: 4, expected: 0x7a43afb61d7f5f40, input: b"abcdefghijklmnopqrstuvwxyz" },
+        TestVector { seed: 5, expected: 0xff42329b90e50d58, input: b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" },
+        TestVector { seed: 6, expected: 0xc39cab13b115aad3, input: b"12345678901234567890123456789012345678901234567890123456789012345678901234567890" },
+    ];
+
+    #[test]
+    fn test_vectors() {
+        for e in VECTORS {
+            assert_eq!(
+                e.expected,
+                Wyhash::hash(e.seed, e.input),
+                "input={:?}",
+                std::str::from_utf8(e.input).unwrap()
+            );
+        }
+    }
+
+    // Returns a verification code, the same as used by SMHasher.
+    //
+    // Hash keys of the form {0}, {0,1}, {0,1,2}... up to N=255, using 256-N as seed.
+    // First four-bytes of the hash, interpreted as little-endian is the verification code.
+    fn smhasher(hash_fn: impl Fn(u64, &[u8]) -> u64) -> u32 {
+        const HASH_SIZE: usize = core::mem::size_of::<u64>();
+        let mut buf = [0u8; 256];
+        let mut buf_all = [0u8; 256 * HASH_SIZE];
+
+        for i in 0..256usize {
+            buf[i] = i as u8;
+            let h = hash_fn((256 - i) as u64, &buf[0..i]);
+            buf_all[i * HASH_SIZE..(i + 1) * HASH_SIZE].copy_from_slice(&h.to_le_bytes());
+        }
+
+        hash_fn(0, &buf_all[..]) as u32
+    }
+
+    #[test]
+    fn test_smhasher() {
+        assert_eq!(smhasher(Wyhash::hash), 0xBD5E840C);
+    }
+
+    #[test]
+    fn test_iterative_api() {
+        // Sum(1..32) = 528
+        let buf = [0u8; 528];
+        let mut len: usize = 0;
+        let seed = 0;
+
+        let mut hasher = Wyhash::init(seed);
+        for i in 1..32usize {
+            let r = Wyhash::hash(seed, &buf[0..len + i]);
+            hasher.update(&buf[len..len + i]);
+            let f1 = hasher.final_();
+            let f2 = hasher.final_();
+            assert_eq!(f1, f2, "iterative hash was not idempotent at i={i}");
+            assert_eq!(f1, r, "iterative hash did not match direct at i={i}");
+            len += i;
+        }
+    }
+
+    #[test]
+    fn test_iterative_maintains_last_sixteen() {
+        // "Z" ** 48 ++ "01234567890abcdefg"
+        let mut input = [0u8; 48 + 18];
+        for b in &mut input[..48] {
+            *b = b'Z';
+        }
+        input[48..].copy_from_slice(b"01234567890abcdefg");
+        let seed = 0;
+
+        for i in 0..17usize {
+            let payload = &input[0..input.len() - i];
+            let non_iterative_hash = Wyhash::hash(seed, payload);
+
+            let mut wh = Wyhash::init(seed);
+            wh.update(payload);
+            let iterative_hash = wh.final_();
+
+            assert_eq!(non_iterative_hash, iterative_hash, "i={i}");
+        }
+    }
+
+    #[test]
+    fn test_iterative_chunked_matches_oneshot() {
+        // Exercise the buf-carryover paths in update() across many split points.
+        let mut data = [0u8; 200];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        for total in [0usize, 1, 3, 15, 16, 17, 47, 48, 49, 95, 96, 97, 150, 200] {
+            let direct = Wyhash::hash(42, &data[..total]);
+            for first in 0..=total {
+                let mut h = Wyhash::init(42);
+                h.update(&data[..first]);
+                h.update(&data[first..total]);
+                assert_eq!(direct, h.final_(), "total={total} first={first}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_wyhash_is_not_wyhash11() {
+        // Guard against the historical mix-up: these are different algorithms.
+        assert_ne!(Wyhash::hash(0, b"abc"), Wyhash11::hash(0, b"abc"));
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/wyhash/wyhash.zig (180 lines)
+//   source:     src/wyhash/wyhash.zig (Wyhash11), vendor/zig/lib/std/hash/wyhash.zig (Wyhash)
 //   confidence: high
 //   todos:      0
-//   notes:      `final` renamed `final_` (Rust keyword); read_bytes uses const-generic match (only 1/2/4/8 used)
+//   notes:      `final` renamed `final_` (Rust keyword); `Wyhash` matches upstream
+//               final4 test vectors + SMHasher 0xBD5E840C
 // ──────────────────────────────────────────────────────────────────────────

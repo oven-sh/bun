@@ -40,7 +40,9 @@ gated_rule!(import, {
         pub loc: super::Location,
     }
     impl ImportRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/import.rs un-gate")
+        }
     }
     /// `layer(...) supports(...) <media>` tail of an `@import`.
     #[derive(Default)]
@@ -60,7 +62,9 @@ gated_rule!(layer, {
         pub loc: super::Location,
     }
     impl LayerStatementRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/layer.rs un-gate")
+        }
     }
     /// `@layer name { ... }` block form.
     pub struct LayerBlockRule<R> {
@@ -69,7 +73,9 @@ gated_rule!(layer, {
         pub loc: super::Location,
     }
     impl<R> LayerBlockRule<R> {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/layer.rs un-gate")
+        }
     }
 });
 pub mod style;
@@ -89,7 +95,9 @@ gated_rule!(custom_media, {
         pub loc: super::Location,
     }
     impl CustomMediaRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/custom_media.rs un-gate")
+        }
     }
 });
 gated_rule!(namespace, {
@@ -97,7 +105,9 @@ gated_rule!(namespace, {
     #[derive(Default)]
     pub struct NamespaceRule;
     impl NamespaceRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/namespace.rs un-gate")
+        }
     }
 });
 gated_rule!(unknown, {
@@ -111,7 +121,9 @@ gated_rule!(unknown, {
         pub loc: super::Location,
     }
     impl UnknownAtRule {
-        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+        pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+            todo!("blocked_on: rules/unknown.rs un-gate")
+        }
     }
 });
 pub mod document;
@@ -218,22 +230,28 @@ impl<R> Default for CssRuleList<R> {
 // gated on its own blockers (DeclarationBlock::to_css_block, enum_property
 // derive, properties::{font,custom} payloads, …). Until those un-gate one by
 // one, the dispatch in `CssRule::to_css` needs *some* inherent method to call.
-// These shims are intentionally inert — they emit nothing. When a leaf file
-// drops its `#[cfg(any())]`, the compiler reports a duplicate `to_css` here;
-// delete that line.
+// The shim panics rather than returning `Ok(())` because emitting zero bytes
+// and reporting success is a silent no-op (PORTING.md §Forbidden) — the rule
+// would round-trip to an empty string while `CssRuleList::to_css` still emits
+// inter-rule newlines around it. When a leaf file drops its `#[cfg(any())]`,
+// the compiler reports a duplicate `to_css` here; delete that line.
 macro_rules! to_css_shim {
     ($( $(#[$m:meta])* $ty:ty ),* $(,)?) => {$(
         $(#[$m])*
         impl $ty {
             #[allow(clippy::unused_self)]
-            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+                todo!(concat!("blocked_on: ", stringify!($ty), "::to_css — leaf module gated"))
+            }
         }
     )*};
     (generic: $( $(#[$m:meta])* $ty:ident ),* $(,)?) => {$(
         $(#[$m])*
         impl<R> $ty<R> {
             #[allow(clippy::unused_self)]
-            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> { Ok(()) }
+            pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+                todo!(concat!("blocked_on: ", stringify!($ty), "::to_css — leaf module gated"))
+            }
         }
     )*};
 }

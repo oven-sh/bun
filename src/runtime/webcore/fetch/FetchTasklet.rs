@@ -740,7 +740,7 @@ impl FetchTasklet {
                 if !x509.is_null() {
                     let global_object = self.global_this;
                     let _x509_guard = scopeguard::guard(x509, |x| x.free());
-                    let js_cert = match X509::to_js(x509, global_object) {
+                    let js_cert = match X509::to_js(unsafe { &mut *x509 }, global_object) {
                         Ok(v) => v,
                         Err(e) => {
                             match e {

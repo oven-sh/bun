@@ -742,14 +742,14 @@ impl JunitReporter {
         let zpath = unsafe { bun_str::ZStr::from_raw(junit_path_buf.as_ptr(), path.len()) };
         match File::openat(Fd::cwd(), zpath, bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC, 0o664) {
             bun_sys::Result::Err(err) => {
-                Output::err(bun_core::err!("JUnitReportFailed"), format_args!("Failed to write JUnit report to {}\n{}", bstr::BStr::new(path), err));
+                Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
             }
             bun_sys::Result::Ok(fd) => {
                 let _close = scopeguard::guard((), |_| { let _ = fd.close(); });
-                match File::write_all(fd, &self.contents) {
+                match File::write_all(&fd, &self.contents) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(err) => {
-                        Output::err(bun_core::err!("JUnitReportFailed"), format_args!("Failed to write JUnit report to {}\n{}", bstr::BStr::new(path), err));
+                        Output::err(bun_core::err!("JUnitReportFailed"), "Failed to write JUnit report to {}\n{}", (bstr::BStr::new(path), err));
                     }
                 }
             }

@@ -249,10 +249,14 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 bun_sys::Result::Ok(()) => {
                     #[cfg(unix)]
                     {
-                        let poll = self.writer.handle.poll;
-                        poll.flags.insert(bun_aio::PollFlag::Socket);
+                        // Zig: `const poll = this.writer.handle.poll; poll.flags.insert(.socket);`
+                        // `handle` is `PollOrFd` (enum) in Rust; flag mutation goes
+                        // through the FilePoll vtable shim.
+                        if let Some(poll) = self.writer.handle.get_poll() {
+                            poll.set_flag(bun_io::FilePollFlag::Socket);
+                        }
                     }
-                    bun_sys::Result::SUCCESS
+                    bun_sys::Result::Ok(())
                 }
             }
         }
@@ -261,10 +265,15 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     pub fn on_write(&mut self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
-            "StaticPipeWriter(0x{:x}) onWrite(amount={} {:?})",
+            "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
             self as *const _ as usize,
             amount,
-            status
+            // Local stringify — `WriteStatus` (upstream bun_io) has no `Debug` impl.
+            match status {
+                WriteStatus::EndOfFile => "end_of_file",
+                WriteStatus::Drained => "drained",
+                WriteStatus::Pending => "pending",
+            }
         );
         let len = self.buffer.len();
         // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
@@ -307,7 +316,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         #[cfg(not(windows))]
         {
-            self.event_loop.loop_()
+            self.event_loop.r#loop()
         }
     }
 

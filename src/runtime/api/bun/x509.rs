@@ -42,12 +42,9 @@ pub fn is_safe_alt_name(name: &[u8], utf8: bool) -> bool {
 }
 
 pub fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-    // TODO(port): @src() has no direct Rust equivalent; from_js_host_call may take Location::caller() or drop it
-    bun_jsc::from_js_host_call(
-        global_object,
-        Bun__X509__toJSLegacyEncoding,
-        (cert as *mut X509, global_object),
-    )
+    bun_jsc::from_js_host_call(global_object, || unsafe {
+        Bun__X509__toJSLegacyEncoding(cert as *mut X509, global_object)
+    })
 }
 
 pub fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {

@@ -163,6 +163,10 @@ pub extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) 
 /// survive.
 pub struct DeferredDerefTask;
 
+impl Taskable for DeferredDerefTask {
+    const TAG: bun_jsc::TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
+}
+
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
@@ -179,11 +183,14 @@ impl DeferredDerefTask {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
-        let marker = DeferredDerefTask;
-        let mut task = Task::init(&marker);
-        // Zig: @truncate(addr | @intFromEnum(tag)) → set_uintptr stores into the
-        // 49-bit _ptr field; truncation to u49 happens inside set_uintptr.
-        task.set_uintptr(addr | (tag as usize));
+        // Zig stamped the discriminant via `Task.init(&marker)` then overwrote
+        // the packed `_ptr` bitfield with `setUintptr(@truncate(addr | tag))`.
+        // The Rust `Task` is a plain `{ tag, ptr }` pair (no bitfield packing),
+        // so build it directly — dispatch unpacks via `task.ptr as usize`.
+        let task = Task::new(
+            <DeferredDerefTask as Taskable>::TAG,
+            (addr | (tag as usize)) as *mut (),
+        );
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         unsafe { (*vm.event_loop()).enqueue_task(task) };

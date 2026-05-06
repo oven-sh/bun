@@ -423,6 +423,40 @@ pub struct HotReloadEvent {
     pub timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
     pub contention_indicator: core::sync::atomic::AtomicU32,
+    #[cfg(debug_assertions)]
+    pub debug_mutex: bun_threading::Mutex,
+}
+
+impl bun_event_loop::Taskable for HotReloadEvent {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+}
+
+impl HotReloadEvent {
+    pub fn init_empty(owner: *const DevServer) -> HotReloadEvent {
+        HotReloadEvent {
+            owner,
+            concurrent_task: Default::default(),
+            files: Default::default(),
+            dirs: Default::default(),
+            extra_files: Vec::new(),
+            timer: std::time::Instant::now(),
+            contention_indicator: core::sync::atomic::AtomicU32::new(0),
+            #[cfg(debug_assertions)]
+            debug_mutex: bun_threading::Mutex::default(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        (self.files.count() + self.dirs.count()) == 0
+    }
+
+    pub fn reset(&mut self) {
+        #[cfg(debug_assertions)]
+        self.debug_mutex.unlock();
+        self.files.clear_retaining_capacity();
+        self.dirs.clear_retaining_capacity();
+        self.extra_files.clear();
+    }
 }
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s

@@ -106,6 +106,9 @@ pub(crate) mod bun_progress {
         /// `bun.Output`, so this is a no-op here (matches the
         /// `supports_ansi_escape_codes == false` path in std.Progress).
         pub fn refresh(&mut self) {}
+        /// Zig: `std.Progress.maybeRefresh()` — debounced repaint. Same no-op
+        /// rationale as `refresh()`.
+        pub fn maybe_refresh(&mut self) {}
     }
     impl Node {
         /// Zig: `Node.start(name, estimated_total_items) *Node` — spawn a
@@ -1073,6 +1076,16 @@ pub mod package_manager {
             DefaultNoProgress,
             VerboseNoProgress,
         }
+        impl LogLevel {
+            #[inline]
+            pub fn is_verbose(self) -> bool {
+                matches!(self, LogLevel::VerboseNoProgress | LogLevel::Verbose)
+            }
+            #[inline]
+            pub fn show_progress(self) -> bool {
+                matches!(self, LogLevel::Default | LogLevel::Verbose)
+            }
+        }
         /// Port of `Options.openGlobalDir` (src/install/PackageManager/PackageManagerOptions.zig).
         /// Resolution order matches Zig: `$BUN_INSTALL_GLOBAL_DIR` → explicit arg →
         /// `$BUN_INSTALL/install/global` → `{$XDG_CACHE_HOME,$HOME}/.bun/install/global`.
@@ -1132,6 +1145,15 @@ pub mod package_manager {
             Entry(&'a mut MapEntry),
             ReadErr(bun_core::Error),
             ParseErr(bun_core::Error),
+        }
+        impl<'a> GetResult<'a> {
+            pub fn unwrap(self) -> Result<&'a mut MapEntry, bun_core::Error> {
+                match self {
+                    GetResult::Entry(entry) => Ok(entry),
+                    GetResult::ReadErr(err) => Err(err),
+                    GetResult::ParseErr(err) => Err(err),
+                }
+            }
         }
         #[derive(Default)]
         pub struct WorkspacePackageJSONCache {
@@ -2609,13 +2631,30 @@ impl Aligner {
         Ok(to_write)
     }
 
+    /// Runtime-alignment variant of [`Aligner::write`] for call sites that
+    /// compute `align_of::<T>()` at the caller (Zig passed `comptime Type`;
+    /// Rust callers without a nameable `T` pass the alignment as a value).
+    pub fn write_with_align<W: bun_io::Write>(
+        align: usize,
+        writer: &mut W,
+        pos: u64,
+    ) -> bun_io::Result<usize> {
+        let to_write = Self::skip_amount_with_align(align, pos as usize);
+
+        let remainder: &[u8] =
+            &ALIGNMENT_BYTES_TO_REPEAT_BUFFER[0..to_write.min(ALIGNMENT_BYTES_TO_REPEAT_BUFFER.len())];
+        writer.write_all(remainder)?;
+
+        Ok(to_write)
+    }
+
     #[inline]
     pub fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    pub fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         // std.mem.alignForward(usize, pos, align) - pos
         pos.next_multiple_of(align) - pos
     }

@@ -183,6 +183,13 @@ impl<T> OrderedArraySet<T> {
         })
     }
 
+    /// Infallible alias for `init_capacity` (Zig `initCapacity` + `bun.handleOom`).
+    pub fn with_capacity(n: usize) -> Self {
+        Self {
+            list: Vec::with_capacity(n),
+        }
+    }
+
     // `deinit` → handled by `Drop` on `Vec<T>`; nothing to write.
 
     pub fn slice(&self) -> &[T] {
@@ -278,6 +285,7 @@ pub mod entry {
     pub type List = MultiArrayList<Entry>;
     pub type Dependencies = OrderedArraySet<DependenciesItem>;
 
+    #[derive(MultiArrayElement)]
     pub struct Entry {
         // Used to get dependency name for destination path and peers
         // for store path
@@ -315,6 +323,25 @@ pub mod entry {
         pub scripts: core::cell::UnsafeCell<Option<*mut package::scripts::List>>,
     }
 
+    impl Default for Entry {
+        fn default() -> Self {
+            Self {
+                node_id: super::node::Id::INVALID,
+                dependencies: Dependencies::EMPTY,
+                // Zig default: `.empty`
+                parents: Vec::new(),
+                // Zig default: `.init(.link_package)` — `Step::LinkPackage as u32 == 0`.
+                step: core::sync::atomic::AtomicU32::new(0),
+                hoisted: false,
+                peer_hash: PeerHash::NONE,
+                // Zig default: `0`
+                entry_hash: 0,
+                // Zig default: `null`
+                scripts: core::cell::UnsafeCell::new(None),
+            }
+        }
+    }
+
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PeerHash(u64);
@@ -339,11 +366,12 @@ pub mod entry {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            use super::node::NodeListExt as _;
             let store = self.store;
             let entries = store.entries.slice();
-            // TODO(port): MultiArrayList Slice column accessors — assumed `.items_<field>()`.
-            let entry_peer_hashes = entries.items_peer_hash();
-            let entry_node_ids = entries.items_node_id();
+            // derive(MultiArrayElement)-generated SliceExt accessors: `.peer_hash()`, `.node_id()`.
+            let entry_peer_hashes = entries.peer_hash();
+            let entry_node_ids = entries.node_id();
 
             let peer_hash = entry_peer_hashes[self.entry_id.get() as usize];
             let node_id = entry_node_ids[self.entry_id.get() as usize];
@@ -533,37 +561,48 @@ pub mod entry {
         }
     }
 
-    pub fn debug_print_list(list: &List, lockfile: &mut Lockfile) {
+    // PORT NOTE: the Zig body references stale Entry fields (`pkg_id`,
+    // `dep_name`, `parent_id`) not present on the current `Entry` struct —
+    // dead debug code that Zig's lazy compilation never instantiates. Rust
+    // typechecks dead code, so this is rewritten against the real shape:
+    // resolve `pkg_id` via `nodes[entry.node_id].pkg_id`.
+    pub fn debug_print_list(list: &List, nodes: &super::node::List, lockfile: &mut Lockfile) {
+        use super::node::NodeListExt as _;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         let pkgs = lockfile.packages.slice();
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
+        let entries = list.slice();
+        let entry_node_ids = entries.node_id();
+        let entry_dependencies = entries.dependencies();
+        let node_pkg_ids = nodes.items_pkg_id();
+
         for entry_id in 0..list.len() {
-            let entry = list.get(entry_id);
-            // TODO(port): references stale Entry fields (pkg_id, dep_name, parent_id) not present
-            // on the current `Entry` struct — likely dead debug code that Zig never instantiates.
-            let entry_pkg_name = pkg_names[entry.pkg_id as usize].slice(string_buf);
+            let node_id = entry_node_ids[entry_id];
+            let pkg_id = node_pkg_ids[node_id.get() as usize];
+            let entry_pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
             bun_output::scoped_log!(
                 Store,
-                "entry ({}): '{}@{}'\n  dep_name: {}\n  pkg_id: {}\n  parent_id: {:?}\n  ",
+                "entry ({}): '{}@{}'\n  node_id: {}\n  pkg_id: {}\n  ",
                 entry_id,
                 BStr::new(entry_pkg_name),
-                pkg_resolutions[entry.pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                BStr::new(entry.dep_name.slice(string_buf)),
-                entry.pkg_id,
-                entry.parent_id,
+                pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
+                node_id.get(),
+                pkg_id,
             );
 
-            bun_output::scoped_log!(Store, "  dependencies ({}):\n", entry.dependencies.len());
-            for dep_entry_id in entry.dependencies.slice() {
-                let dep_entry = list.get(dep_entry_id.get() as usize);
+            let deps = &entry_dependencies[entry_id];
+            bun_output::scoped_log!(Store, "  dependencies ({}):\n", deps.len());
+            for dep_item in deps.slice() {
+                let dep_node_id = entry_node_ids[dep_item.entry_id.get() as usize];
+                let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
                 bun_output::scoped_log!(
                     Store,
                     "    {}@{}\n",
-                    BStr::new(pkg_names[dep_entry.pkg_id as usize].slice(string_buf)),
-                    pkg_resolutions[dep_entry.pkg_id as usize]
+                    BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
+                    pkg_resolutions[dep_pkg_id as usize]
                         .fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 );
             }

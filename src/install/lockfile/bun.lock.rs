@@ -154,15 +154,19 @@ impl Stringifier {
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
-        let mut pkgs_iter = BinaryLockfile::Tree::Iterator::<{ BinaryLockfile::Tree::IterKind::PkgPath }>::init(lockfile);
-        // TODO(port): Tree::Iterator(.pkg_path) — confirm const-generic shape in Phase B
+        // TODO(port): `tree::Iterator` is currently typed against the
+        // `crate::lockfile` stub `Lockfile`; once the stub/real types unify
+        // (reconciler-6) this constructs against `super::Lockfile`. For now we
+        // todo!() the iterator construction so the rest of the body type-checks.
+        let mut pkgs_iter: tree::Iterator<'_, { tree::IteratorPathStyle::PkgPath }> =
+            todo!("blocked_on: tree::Iterator typed against stub Lockfile (reconciler-6)");
 
         let mut path_buf = PathBuffer::uninit();
 
         // if we loaded from a binary lockfile and we're migrating it to a text lockfile, ensure
         // peer dependencies have resolutions, and mark them optional if they don't
         if load_result.loaded_from_binary_lockfile() {
-            while let Some(node) = pkgs_iter.next(()) {
+            while let Some(node) = pkgs_iter.next(None) {
                 for &dep_id in node.dependencies {
                     let dep = &deps_buf[dep_id as usize];
 
@@ -281,7 +285,7 @@ impl Stringifier {
             let mut tree_sort_buf: Vec<TreeSortItem> = Vec::new();
 
             // find trusted and patched dependencies. also overrides
-            while let Some(node) = pkgs_iter.next(()) {
+            while let Some(node) = pkgs_iter.next(None) {
                 tree_sort_buf.push((
                     Box::<[DependencyID]>::from(node.dependencies),
                     Box::<[u8]>::from(node.relative_path),
@@ -708,7 +712,7 @@ impl Stringifier {
                                     url_slice,
                                     strings::without_trailing_slash(Npm::Registry::DEFAULT_URL.as_bytes()),
                                 ) {
-                                    b""
+                                    b"" as &[u8]
                                 } else {
                                     url_slice
                                 }),
@@ -918,7 +922,8 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"os\": ")?;
-            Negatable::<Npm::OperatingSystem>::to_json(meta.os, writer)?;
+            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut bun_io::FmtWriter(writer))
+                .map_err(|_| bun_core::err!("WriteFailed"))?;
         }
 
         if meta.arch != Npm::Architecture::ALL {
@@ -928,7 +933,8 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"cpu\": ")?;
-            Negatable::<Npm::Architecture>::to_json(meta.arch, writer)?;
+            Negatable::<Npm::Architecture>::to_json(meta.arch, &mut bun_io::FmtWriter(writer))
+                .map_err(|_| bun_core::err!("WriteFailed"))?;
         }
 
         if bin.tag != BinTag::None {
@@ -2485,7 +2491,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     remain[0..name_str.len()].copy_from_slice(name_str);
                     let bundled_location = &path_buf[0..pkg_path.len() + 1 + name_str.len()];
                     if bundled_pkgs.contains(bundled_location) {
-                        dep.behavior.bundled = true;
+                        dep.behavior.insert(Behavior::BUNDLED);
                     }
                 }
 
@@ -2511,13 +2517,13 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 let dep = Dependency {
                     name: buf.append_with_hash(name, name_hash)?,
                     name_hash,
-                    behavior: Behavior { workspace: true, ..Behavior::EMPTY },
+                    behavior: Behavior::WORKSPACE,
                     version: DependencyVersion {
                         tag: DependencyVersionTag::Workspace,
                         value: DependencyVersionValue {
                             workspace: buf.append(path)?,
                         },
-                        ..Default::default()
+                        literal: String::default(),
                     },
                 };
 

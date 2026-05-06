@@ -429,6 +429,50 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         None
     }
 
+    /// Zig `ArrayHashMap.sort` — stable in-place sort of keys/values/hashes by
+    /// a caller-supplied index comparator. The closure receives borrows of the
+    /// key and value slices so it can compare on either without re-borrowing
+    /// `self`.
+    pub fn sort(&mut self, mut less_than: impl FnMut(&[K], &[V], usize, usize) -> bool) {
+        let len = self.keys.len();
+        if len < 2 {
+            return;
+        }
+        let mut perm: Vec<usize> = (0..len).collect();
+        {
+            let keys = &self.keys[..];
+            let values = &self.values[..];
+            perm.sort_by(|&a, &b| {
+                if less_than(keys, values, a, b) {
+                    core::cmp::Ordering::Less
+                } else if less_than(keys, values, b, a) {
+                    core::cmp::Ordering::Greater
+                } else {
+                    core::cmp::Ordering::Equal
+                }
+            });
+        }
+        // Apply permutation in-place via cycle-following swaps.
+        let mut visited = vec![false; len];
+        for start in 0..len {
+            if visited[start] || perm[start] == start {
+                continue;
+            }
+            let mut i = start;
+            while !visited[i] {
+                visited[i] = true;
+                let j = perm[i];
+                if j == start {
+                    break;
+                }
+                self.keys.swap(i, j);
+                self.values.swap(i, j);
+                self.hashes.swap(i, j);
+                i = j;
+            }
+        }
+    }
+
     fn gop_at(&mut self, index: usize, found_existing: bool) -> GetOrPutResult<'_, K, V> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.

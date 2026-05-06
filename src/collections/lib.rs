@@ -247,6 +247,12 @@ where
         debug_assert!(prev.is_none(), "putNoClobber: key already present");
         Ok(())
     }
+
+    /// Zig `put`: insert or overwrite.
+    pub fn put(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+        self.inner.insert(key, value);
+        Ok(())
+    }
 }
 
 impl<'a, K, V, C> IntoIterator for &'a HashMap<K, V, C> {

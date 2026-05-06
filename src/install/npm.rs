@@ -281,7 +281,7 @@ pub mod registry {
     
     pub type BodyPool = ObjectPool<MutableString, true, 8>;
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96

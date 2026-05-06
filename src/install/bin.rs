@@ -624,9 +624,9 @@ impl<'a> NamesIterator<'a> {
 
                 let base = path::basename(current_string.slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(self.buf.as_mut_slice(), &base[2..])));
+                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
                 }
-                Ok(Some(strings::copy(self.buf.as_mut_slice(), base)))
+                Ok(Some(strings::copy(&mut self.buf[..], base)))
             }
             _ => Ok(None),
         }
@@ -821,7 +821,7 @@ impl<'a> Linker<'a> {
         if let Some(seen) = self.seen.as_deref() {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-            if seen.contains(abs_dest.as_bytes()) {
+            if seen.contains_key(abs_dest.as_bytes()) {
                 return;
             }
         }
@@ -834,10 +834,9 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
-            let entry = seen.get_or_put(abs_dest.as_bytes());
-            if !entry.found_existing {
-                *entry.key_ptr = Box::<[u8]>::from(abs_dest.as_bytes());
-            }
+            // PORT NOTE: StringHashMap::get_or_put boxes the key on insert; the
+            // Zig wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
+            let _ = seen.get_or_put(abs_dest.as_bytes());
         }
 
         bun_core::analytics::Features::binlinks_inc();
@@ -880,13 +879,13 @@ impl<'a> Linker<'a> {
         // any error here is ignored
         let chunk_len = 'brk: {
             let Ok(bin_for_reading) =
-                sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0).unwrap()
+                sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0)
             else {
                 return;
             };
             let _close = scopeguard::guard((), |_| bin_for_reading.close());
 
-            let Ok(read) = bin_for_reading.read_all(&mut shebang_buf).unwrap() else {
+            let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
                 return;
             };
             break 'brk read;
@@ -945,6 +944,7 @@ impl<'a> Linker<'a> {
                 };
                 // PORT NOTE: reshaped for borrowck — content borrows the boxed slice we own
                 // TODO(port): the Zig aliased the same buffer; here we duplicate the reference
+                let original_contents = original_contents.into_boxed_slice();
                 break 'brk (
                     // SAFETY: content_to_free outlives content within this fn body
                     unsafe { core::slice::from_raw_parts(original_contents.as_ptr(), original_contents.len()) },
@@ -957,7 +957,7 @@ impl<'a> Linker<'a> {
         let _ = &content_to_free; // freed on drop
 
         // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
-        let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target).unwrap() else {
+        let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target) else {
             return;
         };
         let original_mode: Mode = Mode::try_from(original_stat.mode).unwrap();
@@ -980,8 +980,7 @@ impl<'a> Linker<'a> {
                 tmppath,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 original_mode,
-            )
-            .unwrap() else {
+            ) else {
                 return;
             };
             let _close = scopeguard::guard((), |_| tmpfile.close());
@@ -989,18 +988,17 @@ impl<'a> Linker<'a> {
             // Write the corrected shebang (without \r)
             if tmpfile
                 .write_all(&chunk_without_newline[0..chunk_without_newline.len() - 1])
-                .unwrap()
                 .is_err()
             {
                 return;
             }
-            if tmpfile.write_all(b"\n").unwrap().is_err() {
+            if tmpfile.write_all(b"\n").is_err() {
                 return;
             }
 
             // Write the rest of the file (after the newline)
             if content.len() > newline + 1 {
-                if tmpfile.write_all(&content[newline + 1..]).unwrap().is_err() {
+                if tmpfile.write_all(&content[newline + 1..]).is_err() {
                     return;
                 }
             }
@@ -1012,7 +1010,6 @@ impl<'a> Linker<'a> {
                 Mode::try_from(original_stat.mode & 0o777).unwrap(),
                 0,
             )
-            .unwrap()
             .is_err()
             {
                 return;
@@ -1022,7 +1019,7 @@ impl<'a> Linker<'a> {
         // Atomic replace: rename temp file to original
         match sys::renameat(Fd::cwd(), tmppath, Fd::cwd(), abs_target) {
             sys::Result::Ok(()) => {
-                **scopeguard::ScopeGuard::into_inner(unlink_guard) = false;
+                *scopeguard::ScopeGuard::into_inner(unlink_guard) = false;
             }
             sys::Result::Err(_) => {}
         }
@@ -1071,7 +1068,7 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.save();
                     self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ = sys::make_path(Fd::cwd(), self.node_modules_path.slice());
+                    let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
                     node_modules_path_save.restore();
 
                     match sys::File::openat_os_path(
@@ -1190,14 +1187,14 @@ impl<'a> Linker<'a> {
 
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
-                if err.get_errno() != sys::Errno::EXIST && err.get_errno() != sys::Errno::NOENT {
+                if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.to_zig_err());
                     Self::chmod_on_ok(&self.err, abs_target);
                     return;
                 }
 
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
-                if err.get_errno() == sys::Errno::NOENT {
+                if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.to_zig_err());
                         Self::chmod_on_ok(&self.err, abs_target);
@@ -1207,7 +1204,7 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.save();
                     self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ = sys::make_path(Fd::cwd(), self.node_modules_path.slice());
+                    let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
                     node_modules_path_save.restore();
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
@@ -1227,7 +1224,7 @@ impl<'a> Linker<'a> {
                 }
 
                 // beyond this error can only be `.EXIST`
-                debug_assert!(err.get_errno() == sys::Errno::EXIST);
+                debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
             sys::Result::Ok(()) => {
                 Self::chmod_on_ok(&self.err, abs_target);
@@ -1280,7 +1277,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    fn resolve_bin_target(&self, package_dir: &[u8], target: &[u8], bin_name: &[u8]) -> &ZStr {
+    fn resolve_bin_target<'b>(&self, package_dir: &'b [u8], target: &[u8], bin_name: &[u8]) -> &'b ZStr {
         // TODO(port): path.joinAbsStringZ uses a threadlocal buffer; the returned &ZStr
         // borrows that. Phase B must ensure no re-entry between calls below.
         let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
@@ -1471,12 +1468,12 @@ impl<'a> Linker<'a> {
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
-                            if err == bun_core::err!("ENOENT") {
+                            if err.get_errno() == sys::Errno::ENOENT {
                                 // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err.into());
+                            self.err = Some(err.to_zig_err());
                             return;
                         }
                     };

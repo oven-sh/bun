@@ -1860,7 +1860,9 @@ pub fn init(
 
         manager
             .options
-            .load(ctx.log, env, cli, ctx.install, subcommand)?;
+            // SAFETY: ctx.log is the process-lifetime CLI log set by
+            // create_context_data(); single-threaded init region.
+            .load(unsafe { &mut *ctx.log }, env, Some(cli), ctx.install.as_deref(), subcommand)?;
     }
 
     let mut ca: Vec<Box<ZStr>> = Vec::new();
@@ -2158,7 +2160,7 @@ pub fn init_with_runtime_once(
 
     match manager
         .options
-        .load(log, env, cli, bun_install, Subcommand::Install)
+        .load(log, env, Some(cli), bun_install, Subcommand::Install)
     {
         Ok(()) => {}
         Err(e) => {

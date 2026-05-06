@@ -79,6 +79,18 @@ impl Dependency {
         is_tarball(dependency)
     }
 
+    /// Zig: `Dependency.unscopedPackageName`. Strips a leading `@scope/` if present.
+    pub fn unscoped_package_name(name: &[u8]) -> &[u8] {
+        if name.is_empty() || name[0] != b'@' {
+            return name;
+        }
+        let name_ = &name[1..];
+        match bun_str::strings::index_of_char(name_, b'/') {
+            Some(i) => &name_[i as usize + 1..],
+            None => name,
+        }
+    }
+
     /// Forwards to the module-level `parse_with_optional_tag`
     /// (Zig: `Dependency.parseWithOptionalTag`).
     #[inline]

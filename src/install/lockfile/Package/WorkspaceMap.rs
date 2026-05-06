@@ -1,4 +1,4 @@
-use bun_collections::ArrayHashMap;
+use bun_collections::StringArrayHashMap;
 use bun_logger as logger;
 use bun_paths as path;
 use bun_paths::resolve_path;
@@ -10,7 +10,7 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 use bstr::BStr;
 
 use crate::package_manager::workspace_package_json_cache::{WorkspacePackageJSONCache, GetJSONOptions};
-use crate::lockfile::StringBuilder;
+use crate::lockfile_real::StringBuilder;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -18,8 +18,9 @@ pub struct WorkspaceMap {
     map: Map,
 }
 
-type Map = ArrayHashMap<Box<[u8]>, Entry>;
+type Map = StringArrayHashMap<Entry>;
 
+#[derive(Default)]
 pub struct Entry {
     pub name: Box<[u8]>,
     pub version: Option<Box<[u8]>>,
@@ -70,9 +71,10 @@ impl WorkspaceMap {
         Ok(())
     }
 
-    pub fn sort(&mut self, sort_ctx: impl FnMut(usize, usize) -> bool) {
-        // TODO(port): ArrayHashMap::sort signature — Zig takes ctx with lessThan(a_idx, b_idx)
-        self.map.sort(sort_ctx);
+    pub fn sort(&mut self, mut sort_ctx: impl FnMut(usize, usize) -> bool) {
+        // ArrayHashMap::sort hands us key/value slices; this wrapper exposes the
+        // Zig-shaped (a_idx, b_idx) -> bool surface.
+        self.map.sort(|_keys, _values, a, b| sort_ctx(a, b));
     }
 }
 
@@ -87,7 +89,7 @@ fn process_workspace_name(
     let workspace_json = json_cache
         .get_with_path(
             log,
-            abs_package_json_path,
+            abs_package_json_path.as_bytes(),
             GetJSONOptions {
                 init_reset_store: false,
                 guess_indentation: true,
@@ -96,21 +98,25 @@ fn process_workspace_name(
         )
         .unwrap()?;
 
+    // Scratch arena for `as_string_cloned` (Zig threaded the heap allocator);
+    // results are immediately boxed so the bump can drop at scope exit.
+    let scratch = Arena::new();
+
     let name_expr = workspace_json
         .root
         .get(b"name")
         .ok_or(bun_core::err!("MissingPackageName"))?;
     let name = name_expr
-        .as_string_cloned()?
+        .as_string_cloned(&scratch)?
         .ok_or(bun_core::err!("MissingPackageName"))?;
 
     let entry = Entry {
-        name,
+        name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
-                if let Some(version) = version_expr.as_string_cloned()? {
-                    break 'brk Some(version);
+                if let Some(version) = version_expr.as_string_cloned(&scratch)? {
+                    break 'brk Some(Box::<[u8]>::from(version));
                 }
             }
             break 'brk None;

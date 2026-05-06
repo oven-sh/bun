@@ -2,7 +2,6 @@ use bun_str::{strings, ZStr};
 use bun_core::{env_var, Output};
 use bun_logger as logger;
 use bun_paths::{self as Path, PathBuffer};
-use bun_http::AsyncHTTP;
 use bun_url::URL;
 // TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
@@ -831,7 +830,8 @@ impl Options {
             } else {
                 LogLevel::Default
             };
-            PackageManager::set_verbose_install(false);
+            // SAFETY: main-thread CLI option load — single writer.
+            unsafe { super::VERBOSE_INSTALL = false; }
         }
 
         // If the lockfile is frozen, don't save it to disk.
@@ -841,7 +841,7 @@ impl Options {
         }
 
         // PORT NOTE: moved from `defer { ... }` after scope assignment (see note above).
-        self.did_override_default_scope = self.scope.url_hash != Npm::registry::DEFAULT_URL_HASH;
+        self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
         Ok(())
     }

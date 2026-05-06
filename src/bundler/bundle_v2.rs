@@ -4562,7 +4562,7 @@ impl<'a> BundleV2<'a> {
                     let mut file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary.clone();
                     let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                        Fs::Path::init(path_primary.text.clone()).loader(&transpiler.options.loaders).unwrap_or(Loader::File)
+                        Fs::Path::init(path_primary.text).loader(&transpiler.options.loaders).unwrap_or(Loader::File)
                     });
                     import_record.loader = Some(import_record_loader);
 

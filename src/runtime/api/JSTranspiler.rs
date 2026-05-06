@@ -1523,8 +1523,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = JscZigString::init(b"path");
-    let kind_label = JscZigString::init(b"kind");
+    let path_label = ZigString::static_(b"path");
+    let kind_label = ZigString::static_(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1552,13 +1552,8 @@ fn named_imports_to_js(
         array.ensure_still_alive();
         let path = JscZigString::init(record.path.text.as_ref()).to_js(global);
         let kind = JscZigString::init(record.kind.label()).to_js(global);
-        let _ = (path_label, kind_label, path, kind);
-        // TODO(port): `JSValue::create_object2` — bun_jsc lacks this helper.
-        let entry: JSValue = todo!("blocked_on: bun_jsc::JSValue::create_object2");
-        #[allow(unreachable_code)]
-        {
-            array.put_index(global, i, entry)?;
-        }
+        let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
+        array.put_index(global, i, entry)?;
         i += 1;
     }
 

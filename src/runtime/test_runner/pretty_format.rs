@@ -1890,7 +1890,7 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = crate::timer::TimeoutObject::from_js(value) {
+                    } else if let Some(timer) = value.as_::<crate::timer::TimeoutObject>() {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan).
                         let timer = unsafe { &*timer };
@@ -1934,7 +1934,7 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(immediate) =
-                        crate::timer::ImmediateObject::from_js(value)
+                        value.as_::<crate::timer::ImmediateObject>()
                     {
                         // SAFETY: see TimeoutObject branch above.
                         let immediate = unsafe { &*immediate };

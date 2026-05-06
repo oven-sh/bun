@@ -1478,6 +1478,11 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 // PORT STATUS
 //   source:     src/install/PackageManager/install_with_manager.zig (1204 lines)
 //   confidence: medium
-//   todos:      13
-//   notes:      Output::pretty multi-arg fmt needs a real API; @field/Scripts.names reflection stubbed via list_mut(i); heavy borrowck reshaping expected around manager.lockfile aliases; load_result.ok() accessor assumed.
+//   notes:      Output::pretty multi-arg fmt needs a real API; heavy borrowck
+//               reshaping around manager.lockfile aliases routes through raw
+//               ptrs (Zig *T semantics). Compile depends on the
+//               lockfile::Lockfile / lockfile_real::Lockfile unification
+//               (reconciler-6) for Package::parse / Diff::generate /
+//               OverrideMap::clone — same pre-existing constraint as the
+//               needs_new_lockfile branch's root.parse() call.
 // ──────────────────────────────────────────────────────────────────────────

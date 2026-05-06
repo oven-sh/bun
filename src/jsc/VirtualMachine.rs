@@ -2769,10 +2769,14 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1586 `clearRefString`.
     ///
-    /// TODO(b2-cycle): `crate::ref_string::RefString` is gated (RefString.rs
-    /// not yet un-gated in lib.rs); param is type-erased until then.
-    pub fn clear_ref_string(_: *mut c_void, _ref_string: *mut c_void) {
-        todo!("blocked_on: crate::ref_string::RefString")
+    /// SAFETY: `ref_string` was allocated by `ref_counted_string_with_was_new`
+    /// on this thread's VM and is currently in `ref_strings`; called from
+    /// `RefString::destroy` (the WTF external-string finalizer).
+    pub unsafe fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
+        // SAFETY: per fn contract.
+        let hash = unsafe { (*ref_string).hash };
+        // SAFETY: `get()` is the live per-thread VM.
+        unsafe { (*VirtualMachine::get()).ref_strings.remove(&hash) };
     }
 
     /// Spec VirtualMachine.zig:1590 `refCountedResolvedSource`.
@@ -2788,41 +2792,98 @@ impl VirtualMachine {
             return ResolvedSource {
                 source_code: bun_string::String::init(b""),
                 specifier,
-                // PORT NOTE: Zig `String.createIfDifferent` (reuse `specifier`
-                // when equal); `bun_string::String` has no such method yet, so
-                // unconditionally allocate. PERF(port): revisit.
-                source_url: bun_string::String::init(source_url),
+                source_url: create_if_different(&specifier, source_url),
                 allocator: core::ptr::null_mut(),
                 source_code_needs_deref: false,
                 ..Default::default()
             };
         }
-        let _source = if ADD_DOUBLE_REF {
+        // PORT NOTE: Zig `refCountedString(code, hash_, !add_double_ref)` —
+        // const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
+        let source = if ADD_DOUBLE_REF {
             self.ref_counted_string::<false>(code, hash_)
         } else {
             self.ref_counted_string::<true>(code, hash_)
         };
-        // TODO(b2-cycle): `crate::ref_string::RefString` is gated; the real
-        // body derefs `_source` to read `.impl_` and bump refcounts. Restore
-        // once `ref_string` module is un-gated in lib.rs.
-        let _ = (specifier, source_url);
-        todo!("blocked_on: crate::ref_string::RefString")
+        // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
+        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
+        // external-string finalizer.
+        let source_ref = unsafe { &*source };
+        if ADD_DOUBLE_REF {
+            source_ref.ref_();
+            source_ref.ref_();
+        }
+
+        ResolvedSource {
+            source_code: bun_string::String::adopt_wtf_impl(source_ref.impl_),
+            specifier,
+            source_url: create_if_different(&specifier, source_url),
+            allocator: source.cast::<c_void>(),
+            source_code_needs_deref: false,
+            ..Default::default()
+        }
     }
 
+    /// Spec VirtualMachine.zig:1615 `refCountedStringWithWasNew`.
     fn ref_counted_string_with_was_new<const DUPE: bool>(
         &mut self,
         new: &mut bool,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut c_void {
+    ) -> *mut crate::ref_string::RefString {
+        use crate::ref_string::RefString;
+        use std::collections::hash_map::Entry;
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
-        // TODO(b2-cycle): `crate::ref_string::{RefString, Callback}` are gated
-        // (RefString.rs not yet un-gated in lib.rs). Full body — hash lookup,
-        // `String::create_external`, map insert — restored once available.
-        let _ = (new, input_, hash_, DUPE);
-        let _ = &self.ref_strings_mutex;
-        todo!("blocked_on: crate::ref_string::RefString")
+        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
+        self.ref_strings_mutex.lock();
+        // PORT NOTE: Zig `defer unlock()` — model with a drop-guard so the
+        // early-return `Occupied` arm releases too.
+        let _unlock = scopeguard::guard(&self.ref_strings_mutex, |m| m.unlock());
+
+        match self.ref_strings.entry(hash) {
+            Entry::Occupied(o) => {
+                *new = false;
+                *o.get()
+            }
+            Entry::Vacant(v) => {
+                // Spec :1624-1626 — dupe the input bytes when `DUPE`, otherwise
+                // adopt the caller's allocation (caller transferred ownership).
+                let (ptr, len) = if DUPE {
+                    let buf = Box::<[u8]>::from(input_);
+                    let len = buf.len();
+                    (Box::into_raw(buf).cast::<u8>(), len)
+                } else {
+                    (input_.as_ptr(), input_.len())
+                };
+                let ref_ = Box::into_raw(Box::new(RefString {
+                    ptr,
+                    len,
+                    hash,
+                    // Filled in just below — `create_external` needs the
+                    // `*mut RefString` ctx pointer first.
+                    impl_: core::ptr::null_mut(),
+                    ctx: NonNull::new((self as *mut VirtualMachine).cast()),
+                    on_before_deinit: Some(VirtualMachine::clear_ref_string),
+                }));
+                // SAFETY: `ref_` is the unique live `*mut RefString` (just
+                // boxed); `(ptr, len)` is its owned latin-1 buffer. The
+                // external-string finalizer (`free_ref_string`) is called by
+                // WTF on the JS thread when the impl refcount hits zero, with
+                // `ref_` as ctx.
+                let s = bun_string::String::create_external::<*mut RefString>(
+                    unsafe { core::slice::from_raw_parts(ptr, len) },
+                    true,
+                    ref_,
+                    free_ref_string,
+                );
+                // SAFETY: see above.
+                unsafe { (*ref_).impl_ = s.leak_wtf_impl() };
+                v.insert(ref_);
+                *new = true;
+                ref_
+            }
+        }
     }
 
     /// Spec VirtualMachine.zig:1650 `refCountedString`.
@@ -2830,7 +2891,7 @@ impl VirtualMachine {
         &mut self,
         input_: &[u8],
         hash_: Option<u32>,
-    ) -> *mut c_void {
+    ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
         self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)

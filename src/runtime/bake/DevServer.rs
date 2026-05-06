@@ -4044,9 +4044,8 @@ pub fn finalize_bundle(
         Output::flush();
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(_agent) = unsafe { dev.inspector() } {
-            let _ = (dev.inspector_server_id, ms_elapsed as f64);
-            todo!("blocked_on: bun_jsc::debugger::BunFrontendDevServerAgent::notify_bundle_complete");
+        if let Some(agent) = unsafe { dev.inspector() } {
+            agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
         }
     }
 
@@ -4595,8 +4594,7 @@ impl DevServer<'_> {
             // Zig's `BunString.initLatin1OrASCIIView`.
             let s = BunString::borrow_utf8(failures_encoded);
             let _deref = scopeguard::guard((), |_| s.deref());
-            let _ = (&s, &agent, self.inspector_server_id);
-            todo!("blocked_on: bun_jsc::debugger::BunFrontendDevServerAgent::notify_bundle_failed");
+            agent.notify_bundle_failed(self.inspector_server_id, &s);
         }
         Ok(())
     }

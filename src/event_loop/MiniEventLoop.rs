@@ -499,8 +499,10 @@ mod mini_ctx {
         false
     }
     unsafe fn increment_pending_unref_counter(_: *mut ()) {
-        // Zig MiniVM.incrementPendingUnrefCounter: `@panic("FIXME TODO")`.
-        unimplemented!("FIXME TODO");
+        // Zig spec body (`MiniVM.incrementPendingUnrefCounter`): `@panic("FIXME TODO")`.
+        // This is the REAL ported body — Mini has no pending_unref_counter; the
+        // upstream Zig deliberately panics if reached.
+        panic!("FIXME TODO");
     }
     unsafe fn ref_concurrently(_: *mut ()) {
         // Zig has NO Mini-side `refConcurrently` — `KeepAlive::refConcurrently`
@@ -508,12 +510,13 @@ mod mini_ctx {
         // calling with a Mini loop is a Zig compile error. Preserve that
         // invariant here rather than non-atomically mutating the uws PosixLoop
         // counters from off-thread (data race) and omitting `wakeup()`.
-        unimplemented!("FIXME TODO");
+        // PORTING.md: Zig compile-error path → `unreachable!()` (not a stub).
+        unreachable!("KeepAlive::refConcurrently is JS-VM-only (Zig type error on Mini)");
     }
     unsafe fn unref_concurrently(_: *mut ()) {
         // See `ref_concurrently` — Zig `KeepAlive::unrefConcurrently` only
-        // accepts `*jsc.VirtualMachine`; unreachable for Mini.
-        unimplemented!("FIXME TODO");
+        // accepts `*jsc.VirtualMachine`; statically impossible for Mini.
+        unreachable!("KeepAlive::unrefConcurrently is JS-VM-only (Zig type error on Mini)");
     }
     unsafe fn after_event_loop_callback(owner: *mut ()) -> Option<OpaqueCallback> {
         unsafe { (*cast(owner)).after_event_loop_callback }

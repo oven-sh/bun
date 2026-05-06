@@ -129,37 +129,46 @@ pub mod expect {
             ZigFormatter::new(f, self)
         }
         #[inline]
-        fn jest_deep_equals(self, _other: JSValue, _global: &JSGlobalObject) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::jest_deep_equals")
+        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+            JSValue::jest_deep_equals(self, other, global)
         }
         #[inline]
-        fn jest_strict_deep_equals(self, _other: JSValue, _global: &JSGlobalObject) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::jest_strict_deep_equals")
+        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+            JSValue::jest_strict_deep_equals(self, other, global)
         }
         #[inline]
-        fn jest_deep_match(self, _other: JSValue, _global: &JSGlobalObject, _replace_props: bool) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::jest_deep_match")
+        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool> {
+            JSValue::jest_deep_match(self, other, global, replace_props)
         }
         #[inline]
         fn is_reg_exp(self) -> bool {
             self.is_cell() && self.js_type() == bun_jsc::JSType::RegExpObject
         }
         #[inline]
-        fn as_big_int_compare(self, _other: JSValue, _global: &JSGlobalObject) -> BigIntCompare {
-            // TODO(port): bind `JSBigInt::compareToDouble` / `compare`.
-            todo!("blocked_on: bun_jsc::JSValue::as_big_int_compare")
+        fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
+            // Trait kept the Phase-A `(other, global)` ordering; the upstream
+            // inherent is `(global, other)` — adapt here so 75 matcher
+            // call-sites stay untouched.
+            use bun_jsc::ComparisonResult as R;
+            match JSValue::as_big_int_compare(self, global, other) {
+                R::Equal => BigIntCompare::Equal,
+                R::Undefined => BigIntCompare::Undefined,
+                R::GreaterThan => BigIntCompare::GreaterThan,
+                R::LessThan => BigIntCompare::LessThan,
+                R::InvalidComparison => BigIntCompare::Undefined,
+            }
         }
         #[inline]
-        fn values(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            todo!("blocked_on: bun_jsc::JSValue::values (Object.values)")
+        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            JSValue::values(self, global)
         }
         #[inline]
-        fn keys(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            todo!("blocked_on: bun_jsc::JSValue::keys (Object.keys)")
+        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            JSValue::keys(self, global)
         }
         #[inline]
-        fn is_instance_of(self, _global: &JSGlobalObject, _constructor: JSValue) -> JsResult<bool> {
-            todo!("blocked_on: bun_jsc::JSValue::is_instance_of")
+        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
+            JSValue::is_instance_of(self, global, constructor)
         }
         #[inline]
         fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {

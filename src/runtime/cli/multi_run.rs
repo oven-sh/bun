@@ -251,7 +251,7 @@ struct State<'a> {
     shell_bin: Box<[u8]>,
     aborted: bool,
     no_exit_on_error: bool,
-    env: &'a DotEnvLoader,
+    env: &'a DotEnvLoader<'a>,
     use_colors: bool,
 }
 

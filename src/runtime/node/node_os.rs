@@ -959,7 +959,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
 }
 
 #[cfg(windows)]
-fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSValue> {
     let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
     let mut count: c_int = 0;
     // SAFETY: valid out-pointers

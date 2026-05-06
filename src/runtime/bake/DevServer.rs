@@ -5665,10 +5665,10 @@ fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
 }
 
 // Type aliases referenced throughout (Phase B will resolve to real paths)
-use crate::dev_server::route_bundle;
-use crate::dev_server::serialized_failure;
-use crate::dev_server::source_map_store;
-use crate::dev_server::incremental_graph;
+use crate::bake::dev_server::route_bundle;
+use crate::bake::dev_server::serialized_failure;
+use crate::bake::dev_server::source_map_store;
+use crate::bake::dev_server::incremental_graph;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
 

@@ -172,17 +172,9 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
 }
 pub type WeakRef = bun_ptr::WeakPtr<Response>;
 
-// TODO(port): BodyMixin(@This()) is a comptime type fn that generates getText/
-// getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
-// getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
-// In Rust this is a trait with default methods; Response implements it and the
-// codegen wires the JS getters to the trait methods.
-impl BodyMixin for Response {}
-
 // Wire the cached `body` JS slot accessor so `PendingValue::is_disturbed` can
 // short-circuit on a JS-side stream that was already read (Zig:
 // `T.js.bodyGetCached(this_value)`).
-// TODO(b2-blocked): bun_jsc::* — JSValue, generated `js::body_get_cached`.
 
 impl crate::webcore::body::BodyOwnerJs for Response {
     fn body_get_cached(this_value: JSValue) -> Option<JSValue> {
@@ -190,12 +182,16 @@ impl crate::webcore::body::BodyOwnerJs for Response {
     }
 }
 
+// BodyMixin(@This()) is a comptime type fn that generates getText/
+// getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
+// getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
+// In Rust this is a trait with default methods; Response implements it and the
+// codegen wires the JS getters to the trait methods.
+//
 // Override `get_body_readable_stream` so the BodyMixin default methods
 // (get_text/get_json/etc.) actually see the cached stream. The trait default
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
-// TODO(b2-blocked): merge with the stub `impl BodyMixin for Response {}` above
-// once the gated `BodyMixin` trait replaces the stub.
 
 impl BodyMixin for Response {
     fn get_body_value(&mut self) -> &mut BodyValue {

@@ -1038,6 +1038,52 @@ mod posix_impl {
         check_p!(unsafe { libc::renameat(from_dir.native(), from.as_ptr(), to_dir.native(), to.as_ptr()) }, Tag::rename, from);
         Ok(())
     }
+    /// `renameat2(2)` (Linux) / `renameatx_np` (macOS). FreeBSD and any other
+    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set,
+    /// matching `bun.sys.renameat2` (sys.zig:2503).
+    pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()> {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: FFI; all pointers/fds valid for the duration of the call.
+            check_p!(
+                unsafe {
+                    libc::syscall(
+                        libc::SYS_renameat2,
+                        from_dir.native() as libc::c_long,
+                        from.as_ptr(),
+                        to_dir.native() as libc::c_long,
+                        to.as_ptr(),
+                        flags.int() as libc::c_long,
+                    )
+                },
+                Tag::rename, from
+            );
+            return Ok(());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn renameatx_np(
+                    fromfd: libc::c_int, from: *const libc::c_char,
+                    tofd: libc::c_int, to: *const libc::c_char,
+                    flags: libc::c_uint,
+                ) -> libc::c_int;
+            }
+            // SAFETY: FFI; all pointers/fds valid for the duration of the call.
+            check_p!(
+                unsafe { renameatx_np(from_dir.native(), from.as_ptr(), to_dir.native(), to.as_ptr(), flags.int()) },
+                Tag::rename, from
+            );
+            return Ok(());
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            if flags.int() != 0 {
+                return Err(Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes()));
+            }
+            renameat(from_dir, from, to_dir, to)
+        }
+    }
     pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         check_p!(unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) }, Tag::unlink, path); Ok(())
     }

@@ -2512,9 +2512,8 @@ impl<AtRule> StyleSheet<AtRule> {
 
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
 // B-2 round 6: un-gated. Method *signatures* are real so cross-crate dependents
-// (`bun_css_jsc::testing_impl`) type-check; method *bodies* that bottom out on
-// still-gated leaves are inline-``-gated with a `todo!()` fallback
-// noting the blocking module. Un-gate each body as its leaf lands.
+// (`bun_css_jsc::testing_impl`) type-check; method *bodies* are ported with
+// `// PORT NOTE:` borrowck reshapes where Zig aliased pointers.
 mod stylesheet_impl { use super::*;
 
 impl<AtRule> StyleSheet<AtRule> {

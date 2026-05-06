@@ -680,8 +680,10 @@ pub extern "C" fn Bun__runVirtualModule(
 //   notes:      Keystone-C un-gate. ModuleLoader struct + FetchFlags +
 //               reset_arena + HardcodedModule re-export real.
 //               transpile_source_code / fetch_builtin_module /
-//               Bun__transpileFile / Bun__fetchBuiltinModule un-gated as
-//               §Dispatch shims over `LoaderHooks` (bun_runtime installs the
-//               body). Bun__transpileVirtualModule / Bun__runVirtualModule
-//               still gated. Full Phase-A draft @ 5410a51d85^.
+//               Bun__transpileFile / Bun__fetchBuiltinModule /
+//               Bun__transpileVirtualModule un-gated as §Dispatch shims over
+//               `LoaderHooks` (bun_runtime installs the body).
+//               Bun__getDefaultLoader / Bun__runVirtualModule ported inline.
+//               resolveEmbeddedFile moved to bun_runtime::jsc_hooks.
+//               Full Phase-A draft @ 5410a51d85^.
 // ──────────────────────────────────────────────────────────────────────────

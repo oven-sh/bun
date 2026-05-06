@@ -488,11 +488,13 @@ impl JSValue {
     }
     /// `JSValue.attachAsyncStackFromPromise(global, promise)` — append the
     /// promise's await-chain frames to this error's stack.
+    ///
+    /// `this` is the error value (must be a `JSError` or `Exception` cell);
+    /// no-op otherwise — see `bindings.cpp:Bun__attachAsyncStackFromPromise`.
     pub fn attach_async_stack_from_promise(self, global: &JSGlobalObject, promise: &JSPromise) {
-        let _ = (global, promise);
-        // Silently dropping async stack frames is a wrong implementation in
-        // live code — fail loudly until the C++ shim is wired.
-        todo!("JSValue::attach_async_stack_from_promise — JSC__JSValue__attachAsyncStackFromPromise FFI not yet declared")
+        // SAFETY: `global` is live; `promise` is a valid GC cell (caller holds
+        // a reference). C++ side null-checks the error cast and promise stack.
+        unsafe { Bun__attachAsyncStackFromPromise(global, self, promise) }
     }
     pub fn get_unix_timestamp(self) -> f64 {
         // SAFETY: pure FFI; `self` must be a JSDate cell (caller-checked).

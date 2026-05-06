@@ -1395,10 +1395,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 path.import_tag =
                                     bun_options_types::ImportRecordTag::BakeResolveToSsrGraph;
                             } else {
+                                let r = p.lexer.range();
                                 p.lexer.add_range_error(
-                                    p.lexer.range(),
-                                    "'bunBakeGraph' can only be set to 'ssr'",
-                                    format_args!(""),
+                                    r,
+                                    format_args!("'bunBakeGraph' can only be set to 'ssr'"),
                                     true,
                                 )?;
                             }

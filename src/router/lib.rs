@@ -2265,7 +2265,8 @@ mod tests {
             // `b1_stubs::logger::Log` carries no buffered messages to flush.
             let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = unsafe { &*log }
+                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2337,7 +2338,8 @@ mod tests {
             let mut log = bun_logger::Log::init();
             let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = unsafe { &*log }
+                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
             });
 
             let opts = bun_resolver::options::BundleOptions {

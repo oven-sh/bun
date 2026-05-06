@@ -558,6 +558,50 @@ unsafe extern "system" {
     pub fn SetCurrentDirectoryW(
         lpPathName: LPCWSTR,
     ) -> BOOL;
+
+    pub fn GetCurrentDirectoryW(
+        nBufferLength: DWORD,
+        lpBuffer: LPWSTR,
+    ) -> DWORD;
+
+    pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
+
+    pub fn CreateFileW(
+        lpFileName: LPCWSTR,
+        dwDesiredAccess: DWORD,
+        dwShareMode: DWORD,
+        lpSecurityAttributes: *mut SECURITY_ATTRIBUTES,
+        dwCreationDisposition: DWORD,
+        dwFlagsAndAttributes: DWORD,
+        hTemplateFile: HANDLE,
+    ) -> HANDLE;
+
+    pub fn SetFilePointerEx(
+        hFile: HANDLE,
+        liDistanceToMove: LARGE_INTEGER,
+        lpNewFilePointer: *mut LARGE_INTEGER,
+        dwMoveMethod: DWORD,
+    ) -> BOOL;
+}
+
+/// `SYSTEM_INFO` (`sysinfoapi.h`).
+#[repr(C)]
+pub struct SYSTEM_INFO {
+    pub wProcessorArchitecture: WORD,
+    pub wReserved: WORD,
+    pub dwPageSize: DWORD,
+    pub lpMinimumApplicationAddress: *mut c_void,
+    pub lpMaximumApplicationAddress: *mut c_void,
+    pub dwActiveProcessorMask: usize,
+    pub dwNumberOfProcessors: DWORD,
+    pub dwProcessorType: DWORD,
+    pub dwAllocationGranularity: DWORD,
+    pub wProcessorLevel: WORD,
+    pub wProcessorRevision: WORD,
+}
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
 
 #[link(name = "advapi32")]

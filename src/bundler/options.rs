@@ -471,18 +471,15 @@ pub static NODE_BUILTINS_MAP: phf::Set<&'static [u8]> = phf::phf_set! {
 
 pub use bun_options_types::BundlePackage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModuleType {
-    Unknown,
-    Cjs,
-    Esm,
-}
+// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::BundleEnums::ModuleType`.
+// Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
+// (which also re-exports the BundleEnums def) are the *same* nominal type — kills the
+// `to_parser_module_type` shim in transpiler.rs.
+pub use bun_options_types::BundleEnums::ModuleType;
 
-// PORT NOTE: hoisted from `impl ModuleType` — Rust forbids `static` in inherent impls.
-pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = phf::phf_map! {
-    b"commonjs" => ModuleType::Cjs,
-    b"module" => ModuleType::Esm,
-};
+// Kept for callers that reference the module-level static name; forwards to the
+// canonical const map on the upstream enum.
+pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
 
 // PORT NOTE: `EnumSetType` derives Copy/Clone/PartialEq/Eq itself; explicit
 // duplicates removed to avoid E0119.

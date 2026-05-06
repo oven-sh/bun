@@ -6342,13 +6342,13 @@ pub mod parse_utility {
     /// NOTE: `input` should live as long as the returned value. Otherwise,
     /// strings in the returned parsed value will point to undefined memory.
     pub fn parse_string<T>(
+        allocator: &Bump,
         input: &[u8],
         parse_one: fn(&mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
         // I hope this is okay
         let mut import_records = BabyList::<ImportRecord>::default();
-        let arena = Bump::new();
-        let mut i = ParserInput::new(input, &arena);
+        let mut i = ParserInput::new(input, allocator);
         let mut parser = Parser::new(&mut i, Some(&mut import_records), ParserOpts::default(), None);
         let result = parse_one(&mut parser)?;
         parser.expect_exhausted()?;

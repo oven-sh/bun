@@ -2718,7 +2718,7 @@ pub mod mock {
         Ok(unsafe { JSMockFunction__getReturns_raw(value) })
     }
 
-    pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator> {
+    pub fn jest_mock_iterator(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSArrayIterator<'_>> {
         let returns: JSValue = JSMockFunction__getReturns(global_this, value)?;
         if !returns.js_type().is_array() {
             let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);

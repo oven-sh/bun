@@ -1,10 +1,14 @@
 //! Binary lockfile (bun.lockb) serializer/deserializer.
 //! Port of `src/install/lockfile/bun.lockb.zig` (`const Serializer = @This();`).
 
-use bun_core::{ConfigVersion, Error};
-use bun_install::lockfile::{
-    Lockfile, PackageIndex, Stream, StringPool, ALIGNMENT_BYTES_TO_REPEAT_BUFFER,
-};
+use bun_core::Error;
+// PORT NOTE: `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
+// `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
+// `bun_install::lockfile::*` path is the stub surface and lacks these items.
+use super::{package_index as PackageIndex, Lockfile, Stream, StringPool};
+use crate::config_version::ConfigVersion;
+use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use bun_install::{
     Dependency, PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash, PatchedDep,
 };
@@ -75,7 +79,7 @@ impl<'a> StreamType<'a> {
 
 pub fn save(
     this: &mut Lockfile,
-    options: &PackageManager::Options,
+    options: &PackageManagerOptions,
     bytes: &mut Vec<u8>,
     total_size: &mut usize,
     end_pos: &mut usize,

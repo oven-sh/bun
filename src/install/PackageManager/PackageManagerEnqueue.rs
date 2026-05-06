@@ -16,7 +16,8 @@ use bun_install::{
 };
 use crate::{dependency, ManifestLoad};
 use crate::lockfile_real as Lockfile;
-use crate::lockfile_real::package::Package;
+use crate::lockfile_real::PackageIndexEntry;
+use crate::lockfile::package::Package;
 use bun_install::NetworkTask;
 use crate::package_manager_real::{FailFn, PackageManager, SuccessFn, TaskCallbackList};
 use crate::package_manager_task as Task;
@@ -289,7 +290,7 @@ pub fn enqueue_parse_npm_package(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
-        *task = Task {
+        *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
             tag: Task::Tag::PackageManifest,

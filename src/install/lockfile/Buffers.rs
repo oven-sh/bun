@@ -5,8 +5,12 @@ use bun_core::Output;
 use bun_logger as logger;
 use bun_str::strings;
 
+// PORT NOTE: `use super::{self as lockfile, ...}` is rejected by rustc (E0432:
+// "no `super` in the root" — rust-lang/rust#48067), so the parent-module alias
+// is hoisted to its own `use super as lockfile;` line.
+use super as lockfile;
 use super::{
-    self as lockfile, assert_no_uninitialized_padding, DependencyIDList, DependencyList,
+    assert_no_uninitialized_padding, tree, DependencyIDList, DependencyList,
     ExternalStringBuffer, Lockfile, PackageIDList, Stream, StringBuffer, Tree,
 };
 use crate::{
@@ -16,7 +20,7 @@ use crate::package_manager_real::package_manager_options::Options as PackageMana
 
 #[derive(Default)]
 pub struct Buffers {
-    pub trees: Tree::List,
+    pub trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
     /// Should be the same length as `dependencies`

@@ -661,13 +661,13 @@ struct VersionInfo {
     yarn_idx: usize,
 }
 
-pub fn migrate_yarn_lockfile(
-    this: &mut Lockfile,
+pub fn migrate_yarn_lockfile<'a>(
+    this: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut logger::Log,
     data: &[u8],
     dir: Fd,
-) -> Result<LoadResult, Error> {
+) -> Result<LoadResult<'a>, Error> {
     // TODO(port): narrow error set
     // todo yarn v2+ support
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {

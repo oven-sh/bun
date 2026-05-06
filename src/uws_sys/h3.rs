@@ -351,14 +351,30 @@ impl Response {
         // SAFETY: self is a live FFI handle; None clears the callback
         unsafe { c::uws_h3_res_on_aborted(self, None, ptr::null_mut()) }
     }
-    pub fn on_timeout<UD>(&mut self, handler: fn(&mut UD, &mut Response), ud: *mut UD) {
-        // TODO(port): comptime-fn trampoline — see note on `for_each_header`.
-        let _ = handler;
-        unsafe extern "C" fn cb<UD>(_r: *mut Response, _p: *mut c_void) {
-            unimplemented!("TODO(port): comptime handler trampoline");
+    pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
+    where
+        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+    {
+        const { assert!(core::mem::size_of::<H>() == 0, "handler must be a fn item or capture-less closure") };
+        unsafe extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
+        where
+            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        {
+            if p.is_null() {
+                // null should always be treated as a no-op, there's no case where it should have any effect.
+                return;
+            }
+            // SAFETY: H is a ZST (asserted at compile time above).
+            let handler: H = unsafe { core::mem::zeroed() };
+            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            let res = unsafe { &mut *r };
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            let ud = unsafe { &mut *p.cast::<UD>() };
+            // PERF(port): was @call(.always_inline)
+            handler(ud, res);
         }
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ud forwarded opaquely
-        unsafe { c::uws_h3_res_on_timeout(self, Some(cb::<UD>), ud.cast()) }
+        unsafe { c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast()) }
     }
     pub fn clear_timeout(&mut self) {
         // SAFETY: self is a live FFI handle; None clears the callback

@@ -19,6 +19,7 @@ use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use crate::mysql::protocol::signature::Signature;
 use crate::shared::query_binding_iterator::QueryBindingIterator;
+use crate::jsc::js_error_to_mysql;
 
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
@@ -111,14 +112,15 @@ impl MySQLQuery {
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<Vec<Value>, AnyMySQLError> {
-        let mut iter = QueryBindingIterator::init(binding_value, columns_value, global_object)?;
+        let mut iter = QueryBindingIterator::init(binding_value, columns_value, global_object)
+            .map_err(js_error_to_mysql)?;
 
         let mut i: u32 = 0;
         let len = param_types.len();
         let mut params: Vec<Value> = Vec::with_capacity(len);
         // errdefer { for params[0..i] deinit; free(params) } — deleted: `Vec<Value>` drops on `?`.
 
-        while let Some(js_value) = iter.next()? {
+        while let Some(js_value) = iter.next().map_err(js_error_to_mysql)? {
             if i as usize >= len {
                 // The binding array yielded more values than the prepared statement
                 // expects. This can happen when the user-supplied array is mutated (e.g.
@@ -226,7 +228,7 @@ impl MySQLQuery {
             columns_value,
             result: Ok(()),
         };
-        MarkedArgumentBuffer::run(&mut ctx as *mut _ as *mut c_void, run::<C>);
+        MarkedArgumentBuffer::run(&mut ctx, run::<C>);
         ctx.result
     }
 
@@ -314,12 +316,11 @@ impl MySQLQuery {
             // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
             // `Box::into_raw` yields a heap allocation with intrusive ref_count == 1
             // (the `Default` impl sets `ref_count = Cell::new(1)`).
-            let stmt = Box::into_raw(Box::new(MySQLStatement {
-                signature: Signature::empty(),
-                status: my_sql_statement::Status::Parsing,
-                ..Default::default()
-            }));
-            self.statement = stmt;
+            // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
+            let mut stmt = Box::new(MySQLStatement::default());
+            stmt.signature = Signature::empty();
+            stmt.status = my_sql_statement::Status::Parsing;
+            self.statement = Box::into_raw(stmt);
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
 
@@ -359,11 +360,8 @@ impl MySQLQuery {
             let entry = match connection.get_statement_from_signature_hash(bun_wyhash::hash(&signature.name)) {
                 Ok(e) => e,
                 Err(err) => {
-                    return Err(global_object
-                        .throw_error(err, "failed to allocate statement")
-                        .err()
-                        .unwrap()
-                        .into());
+                    let _ = global_object.throw_error(err, "failed to allocate statement");
+                    return Err(bun_core::err!("JSError"));
                 }
             };
 
@@ -375,7 +373,8 @@ impl MySQLQuery {
                     // SAFETY: same as above.
                     let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
                     // If the statement failed, we need to throw the error
-                    return Err(global_object.throw_value(error_response).into());
+                    let _ = global_object.throw_value(error_response);
+                    return Err(bun_core::err!("JSError"));
                 }
                 // Zig: `this.#statement = stmt; stmt.ref();`
                 self.statement = stmt;
@@ -387,13 +386,13 @@ impl MySQLQuery {
             } else {
                 // Zig: `bun.new(MySQLStatement, .{ .ref_count = .initExactRefs(2), ... })`
                 // — one ref for `self.statement`, one for the map entry.
-                let stmt = Box::into_raw(Box::new(MySQLStatement {
-                    signature,
-                    status: my_sql_statement::Status::Pending,
-                    statement_id: 0,
-                    ref_count: core::cell::Cell::new(2),
-                    ..Default::default()
-                }));
+                // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
+                let mut stmt = Box::new(MySQLStatement::default());
+                stmt.signature = signature;
+                stmt.status = my_sql_statement::Status::Pending;
+                stmt.statement_id = 0;
+                stmt.ref_count = core::cell::Cell::new(2);
+                let stmt = Box::into_raw(stmt);
                 self.statement = stmt;
                 *entry.value_ptr = stmt;
             }
@@ -408,7 +407,8 @@ impl MySQLQuery {
                 // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
                 let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
                 // If the statement failed, we need to throw the error
-                return Err(global_object.throw_value(error_response).into());
+                let _ = global_object.throw_value(error_response);
+                return Err(bun_core::err!("JSError"));
             }
             my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
@@ -420,13 +420,11 @@ impl MySQLQuery {
                         self.bind_and_execute(writer, stmt, global_object, binding_value, columns_value)
                     {
                         if !global_object.has_exception() {
-                            return Err(global_object
-                                .throw_value(mysql_error_to_js(
-                                    global_object,
-                                    Some(b"failed to bind and execute query"),
-                                    err,
-                                ))
-                                .into());
+                            let _ = global_object.throw_value(mysql_error_to_js(
+                                global_object,
+                                Some(b"failed to bind and execute query"),
+                                err,
+                            ));
                         }
                         return Err(bun_core::err!("JSError"));
                     }
@@ -445,11 +443,8 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        return Err(global_object
-                            .throw_error(err, "failed to prepare query")
-                            .err()
-                            .unwrap()
-                            .into());
+                        let _ = global_object.throw_error(err, "failed to prepare query");
+                        return Err(bun_core::err!("JSError"));
                     }
                     // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
                     unsafe { (*stmt).status = my_sql_statement::Status::Parsing };

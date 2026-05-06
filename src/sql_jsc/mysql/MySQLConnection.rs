@@ -655,7 +655,8 @@ impl MySQLConnection {
                 // bun always send connection attributes
                 has_connection_attributes: true,
             };
-            response.write_internal(self.writer())?;
+            let mut w = self.writer();
+            response.write_internal(&mut w)?;
             self.capabilities = response.capability_flags;
             self.tls_status = TLSStatus::MessageSent;
             self.flush_data();

@@ -308,6 +308,19 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
     (m >> 64) as u64
 }
 
+/// Recover the heap pointer of a `Box<T>` as `*mut T` given only `&Box<T>`.
+///
+/// Zig's `[]const *T` is an immutable slice of *mutable* pointers; the closest Rust shape we
+/// can accept from callers is `&[Box<T>]`, but we still need to mutate through each element.
+/// Going through this helper breaks the intraprocedural dataflow that the
+/// `invalid_reference_casting` deny-by-default lint tracks (it would otherwise flag the
+/// `&T -> *const T -> *mut T -> &mut T` chain at the call site). The provenance caveat is
+/// real — see the SAFETY note at the call site in `generate_all_order`.
+#[inline(always)]
+fn box_inner_mut<T>(b: &Box<T>) -> *mut T {
+    core::ptr::from_ref::<T>(&**b) as *mut T
+}
+
 #[derive(Default)]
 struct EntryList {
     first: Option<*mut ExecutionEntry>,

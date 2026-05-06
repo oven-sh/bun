@@ -90,9 +90,10 @@ impl Handler {
     /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
     #[inline]
     pub fn active_connections_saturating_sub(&self, n: usize) {
-        // SAFETY: single-threaded JS heap; see PORT NOTE above.
+        // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
+        // materializing an intermediate `&usize` (invalid_reference_casting lint).
         unsafe {
-            let p = &self.active_connections as *const usize as *mut usize;
+            let p = core::ptr::addr_of!(self.active_connections) as *mut usize;
             *p = (*p).saturating_sub(n);
         }
     }

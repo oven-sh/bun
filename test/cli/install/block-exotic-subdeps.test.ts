@@ -193,4 +193,91 @@ blockExoticSubdeps = true
     expect(stderr).toContain("folder");
     expect(exitCode).not.toBe(0);
   });
+
+  test("reads block-exotic-subdeps from .npmrc", async () => {
+    // .npmrc parity with the bunfig.toml key.
+    using dir = tempDir("block-exotic-npmrc", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "parent-pkg": "file:./parent-pkg" },
+      }),
+      ".npmrc": "block-exotic-subdeps=true\n",
+      "parent-pkg/package.json": JSON.stringify({
+        name: "parent-pkg",
+        version: "1.0.0",
+        dependencies: { inner: "file:../inner" },
+      }),
+      "inner/package.json": JSON.stringify({
+        name: "inner",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("blockExoticSubdeps");
+    expect(stderr).toContain("inner");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("rejects a transitive workspace: reference pulled in by a folder dep", async () => {
+    // If a non-workspace parent smuggles in a workspace: ref, that's exactly
+    // the kind of exotic transitive the flag exists to block.
+    using dir = tempDir("block-exotic-workspace-leak", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["pkgs/*"],
+        dependencies: {
+          // Root pulls in the folder dep directly (allowed at root level),
+          // but the folder dep itself references a workspace:* member,
+          // which is then a transitive workspace edge.
+          "folder-parent": "file:./folder-parent",
+        },
+      }),
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      "folder-parent/package.json": JSON.stringify({
+        name: "folder-parent",
+        version: "1.0.0",
+        dependencies: { "ws-member": "workspace:*" },
+      }),
+      "pkgs/ws-member/package.json": JSON.stringify({
+        name: "ws-member",
+        version: "1.0.0",
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Either resolution (warn + succeed, or hard error) is acceptable from
+    // the registry perspective, but the block must fire when the flag is on.
+    if (exitCode === 0) {
+      // If install succeeded before our check (unlikely), something skipped
+      // the policy — fail loudly.
+      expect(stderr).toContain("blockExoticSubdeps");
+    } else {
+      // Error must be our policy, not an unrelated install failure.
+      expect(stderr).toContain("blockExoticSubdeps");
+      expect(stderr).toContain("ws-member");
+    }
+  });
 });

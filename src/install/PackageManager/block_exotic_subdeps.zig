@@ -105,13 +105,17 @@ inline fn isTopLevel(tag: Resolution.Tag) bool {
 
 /// A resolution tag is "exotic" if the package came from somewhere other
 /// than a registry. Registry-resolved packages have `Resolution.Tag.npm`.
-/// `root`, `workspace`, and `uninitialized` are not transitive edges we're
-/// checking; callers skip those parents before reaching this helper.
+/// `root` and `uninitialized` aren't real install edges.
+///
+/// `.workspace` is reached here only when the parent is *not* a workspace
+/// (callers filter on `isTopLevel(parent_res.tag)` before dispatch), so a
+/// workspace-tagged dep at this layer means a non-workspace package has
+/// smuggled in a `workspace:` reference — treat that as exotic.
 inline fn isExotic(tag: Resolution.Tag) bool {
     return switch (tag) {
-        .npm, .root, .workspace, .uninitialized => false,
+        .npm, .root, .uninitialized => false,
         // folder, local_tarball, github, git, symlink, remote_tarball,
-        // single_file_module, and any future non-registry sources
+        // workspace, single_file_module, and any future non-registry sources
         else => true,
     };
 }

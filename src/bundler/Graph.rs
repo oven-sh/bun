@@ -16,7 +16,7 @@ pub use bun_js_parser::Index;
 pub use bun_js_parser::Ref;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
-type IndexInt = u32;
+pub type IndexInt = u32;
 
 pub struct Graph {
     // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
@@ -119,6 +119,62 @@ pub struct InputFile {
 // above as `InputFileListExt` / `InputFileSliceExt`. The previous hand-written
 // `InputFileListExt` trait is subsumed by the derive output (same name,
 // superset of methods).
+//
+// The derive emits `InputFileSliceExt` with bare `field()`/`field_mut()`
+// names on `Slice<InputFile>`, but ported call sites (bundle_v2.rs et al.)
+// uniformly use the Zig-shaped `items_<field>()` spelling regardless of
+// whether they hold the list or a cached `.slice()`. Bridge that here by
+// also implementing the `items_*` trait for the slice view.
+impl InputFileListExt for bun_collections::multi_array_list::Slice<InputFile> {
+    #[inline] fn items_source(&self) -> &[logger::Source] {
+        unsafe { self.items::<logger::Source>(InputFileField::source) }
+    }
+    #[inline] fn items_source_mut(&mut self) -> &mut [logger::Source] {
+        unsafe { self.items_mut::<logger::Source>(InputFileField::source) }
+    }
+    #[inline] fn items_secondary_path(&self) -> &[Box<[u8]>] {
+        unsafe { self.items::<Box<[u8]>>(InputFileField::secondary_path) }
+    }
+    #[inline] fn items_secondary_path_mut(&mut self) -> &mut [Box<[u8]>] {
+        unsafe { self.items_mut::<Box<[u8]>>(InputFileField::secondary_path) }
+    }
+    #[inline] fn items_loader(&self) -> &[options::Loader] {
+        unsafe { self.items::<options::Loader>(InputFileField::loader) }
+    }
+    #[inline] fn items_loader_mut(&mut self) -> &mut [options::Loader] {
+        unsafe { self.items_mut::<options::Loader>(InputFileField::loader) }
+    }
+    #[inline] fn items_side_effects(&self) -> &[SideEffects] {
+        unsafe { self.items::<SideEffects>(InputFileField::side_effects) }
+    }
+    #[inline] fn items_side_effects_mut(&mut self) -> &mut [SideEffects] {
+        unsafe { self.items_mut::<SideEffects>(InputFileField::side_effects) }
+    }
+    #[inline] fn items_additional_files(&self) -> &[BabyList<AdditionalFile>] {
+        unsafe { self.items::<BabyList<AdditionalFile>>(InputFileField::additional_files) }
+    }
+    #[inline] fn items_additional_files_mut(&mut self) -> &mut [BabyList<AdditionalFile>] {
+        unsafe { self.items_mut::<BabyList<AdditionalFile>>(InputFileField::additional_files) }
+    }
+    #[inline] fn items_unique_key_for_additional_file(&self) -> &[Box<[u8]>] {
+        unsafe { self.items::<Box<[u8]>>(InputFileField::unique_key_for_additional_file) }
+    }
+    #[inline] fn items_unique_key_for_additional_file_mut(&mut self) -> &mut [Box<[u8]>] {
+        unsafe { self.items_mut::<Box<[u8]>>(InputFileField::unique_key_for_additional_file) }
+    }
+    #[inline] fn items_content_hash_for_additional_file(&self) -> &[u64] {
+        unsafe { self.items::<u64>(InputFileField::content_hash_for_additional_file) }
+    }
+    #[inline] fn items_content_hash_for_additional_file_mut(&mut self) -> &mut [u64] {
+        unsafe { self.items_mut::<u64>(InputFileField::content_hash_for_additional_file) }
+    }
+    #[inline] fn items_flags(&self) -> &[InputFileFlags] {
+        unsafe { self.items::<InputFileFlags>(InputFileField::flags) }
+    }
+    #[inline] fn items_flags_mut(&mut self) -> &mut [InputFileFlags] {
+        unsafe { self.items_mut::<InputFileFlags>(InputFileField::flags) }
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +182,32 @@ bitflags::bitflags! {
         const IS_PLUGIN_FILE = 1 << 0;
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
+    }
+}
+
+impl Default for Graph {
+    fn default() -> Self {
+        Self {
+            // Self-referential arena pointer; real value wired in
+            // `BundleV2::init` before any use (Graph.zig has `= undefined`).
+            pool: NonNull::dangling(),
+            heap: ThreadLocalArena::new(),
+            entry_points: Vec::new(),
+            entry_point_original_names: IndexStringMap::default(),
+            input_files: MultiArrayList::default(),
+            ast: MultiArrayList::default(),
+            pending_items: 0,
+            deferred_pending: 0,
+            build_graphs: EnumMap::default(),
+            server_component_boundaries: server_component_boundary::List::default(),
+            html_imports: HtmlImports::default(),
+            estimated_file_loader_count: 0,
+            css_file_count: 0,
+            additional_output_files: Vec::new(),
+            kit_referenced_server_data: false,
+            kit_referenced_client_data: false,
+            has_any_secondary_paths: false,
+        }
     }
 }
 

@@ -108,16 +108,10 @@ impl bundler::JSBundlerPlugin {
         }
     }
 }
-impl bundler::FileMap {
-    /// CYCLEBREAK FORWARD_DECL: the real map (`StringHashMap<Box<[u8]>>`) lives
-    /// in T6 `jsc::api::JSBundler::FileMap`. The bundler-side opaque carries no
-    /// storage, so a lookup through it is always a miss until T6 wires the
-    /// concrete type through `BundleV2.file_map`.
-    #[inline]
-    pub(crate) fn get(&self, _specifier: &[u8]) -> Option<&'static [u8]> {
-        None
-    }
-}
+// PORT NOTE: `FileMap::get` now lives on the real `JSBundler::FileMap` in
+// bundle_v2.rs (no longer an opaque CYCLEBREAK forward-decl). The placeholder
+// always-miss `get` shim that used to sit here has been removed so the two
+// inherent impls don't collide.
 
 // ───────────────────────────────────────────────────────────────────────────
 // ContentsOrFd
@@ -718,7 +712,17 @@ fn get_ast(
                 log,
                 source,
             )? {
-                Ok(JSAst::init(res.ast))
+                // PORT NOTE: Zig's `js_parser.Result` is a bare-union whose
+                // `.ast` field is read unconditionally. The Rust port models it
+                // as an enum; `Cached`/`AlreadyBundled` are runtime-loader
+                // states that never reach the bundler's `getAST`, so unwrap.
+                match res {
+                    bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(ast)),
+                    bun_js_parser::Result::Cached
+                    | bun_js_parser::Result::AlreadyBundled(_) => {
+                        unreachable!("bundler parse never yields Cached/AlreadyBundled")
+                    }
+                }
             } else if module_type == options::ModuleType::Esm {
                 get_empty_ast::<E::Undefined>(log, transpiler, ParserOptions::default(), bump, source)
             } else {
@@ -1182,9 +1186,8 @@ fn get_code_for_parse_task_without_plugins(
             let ctx = unsafe { &*task.ctx };
 
             // Check FileMap for in-memory files first
-            if let Some(file_map) = &ctx.file_map {
-                // SAFETY: `file_map` is a live BACKREF for the bundle pass.
-                if let Some(file_contents) = unsafe { file_map.as_ref() }.get(file_path.text) {
+            if let Some(file_map) = ctx.file_map {
+                if let Some(file_contents) = file_map.get(file_path.text) {
                     break 'brk Ok(CacheEntry {
                         contents: crate::cache::Contents::SharedBuffer {
                             ptr: file_contents.as_ptr(),
@@ -1373,13 +1376,19 @@ fn get_code_for_parse_task(
 // OnBeforeParsePlugin
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct OnBeforeParsePlugin<'a> {
+pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
     task: &'a mut ParseTask,
     log: &'a mut Log,
-    transpiler: &'a mut Transpiler<'a>,
-    resolver: &'a mut Resolver<'a>,
+    // PORT NOTE: split borrow lifetime `'a` from data lifetime `'b` so callers
+    // (e.g. `get_code_for_parse_task`) don't have to satisfy the invariant
+    // `&'a mut Transpiler<'a>` shape, which would force every argument's
+    // lifetime to unify (and, with `'static` Worker-owned transpilers, demand
+    // `'static` borrows of stack locals). Zig has no lifetimes; this is a
+    // Rust-side relaxation only.
+    transpiler: &'a mut Transpiler<'b>,
+    resolver: &'a mut Resolver<'b>,
     bump: &'a Bump,
-    file_path: &'a mut Fs::Path<'a>,
+    file_path: &'a mut Fs::Path<'b>,
     loader: &'a mut Loader,
     deferred_error: Option<AnyError>,
     // Raw pointer (Zig: `*i32`). Must stay raw — `fetch_source_code` and
@@ -1404,7 +1413,7 @@ const _: () = {
 #[repr(C)]
 pub struct OnBeforeParseArguments {
     pub struct_size: usize,
-    pub context: *mut OnBeforeParsePlugin<'static>, // FFI (LIFETIMES.tsv)
+    pub context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
     pub path_ptr: *const u8,
     pub path_len: usize,
     pub namespace_ptr: *const u8,
@@ -1687,7 +1696,7 @@ pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>) -> i32 {
+pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_, '_>) -> i32 {
     // SAFETY: called from C++ with valid ptr. Read via raw pointers (mirrors
     // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
     // overlapping references would be UB, and a `&mut`-derived `*mut` would
@@ -1719,7 +1728,7 @@ pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>
 // `bun_bundler_jsc::JSBundler::Plugin` re-export. Also references the gated
 // `fetch_source_code` callback above.
 
-impl<'a> OnBeforeParsePlugin<'a> {
+impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
     pub fn run(
         &mut self,
         // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
@@ -1782,7 +1791,7 @@ impl<'a> OnBeforeParsePlugin<'a> {
         // no parent-`&mut` use pops its SharedRW tag before the FFI callbacks
         // (`fetch_source_code` / `log_fn`) dereference it. Reuse the same raw
         // for the `ctx` argument instead of re-deriving from `&mut self`.
-        let self_ptr = self as *mut _ as *mut OnBeforeParsePlugin<'static>;
+        let self_ptr = self as *mut _ as *mut OnBeforeParsePlugin<'static, 'static>;
         args.context = self_ptr;
         let count = plugin.call_on_before_parse_plugins(
             self_ptr.cast(),
@@ -2403,7 +2412,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     let r#loop = unsafe { (*worker.ctx).linker.r#loop };
     worker.unget();
     if let Some(mini) = r#loop {
-        let mini = mini.cast::<bun_event_loop::MiniEventLoop>();
+        let mini = mini.cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
         // SAFETY: erased BACKREF to a live MiniEventLoop for the bundle pass.
         unsafe {
             (*mini.as_ptr()).enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(

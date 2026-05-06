@@ -223,31 +223,33 @@ impl Flags {
     pub const BUILD: usize = 0;
 }
 
-pub struct Group<'a> {
+pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub tail: Option<NonNull<List>>,
-    /// Borrows the caller's source buffer for the lifetime of the parse result
-    /// (Zig stored a borrowed slice). Never `'static` — see PORTING.md
-    /// §Forbidden patterns re: lifetime-extend.
-    pub input: &'a [u8],
+    /// Borrowed view into the caller's source buffer (Zig: `input: string = ""`).
+    /// Stored as a raw fat pointer per PORTING.md §`[]const u8` struct-field
+    /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
+    /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
+    /// `json_stringify`; caller must keep the source buffer alive for that call.
+    pub input: *const [u8],
 
     pub flags: FlagsBitSet,
 }
 
-impl Default for Group<'static> {
+impl Default for Group {
     fn default() -> Self {
         Self {
             head: List::default(),
             tail: None,
-            input: b"",
+            input: b"" as *const [u8],
             flags: FlagsBitSet::init_empty(),
         }
     }
 }
 
 pub struct GroupFormatter<'a> {
-    group: &'a Group<'a>,
+    group: &'a Group,
     buf: &'a [u8],
 }
 

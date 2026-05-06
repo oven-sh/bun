@@ -2709,7 +2709,7 @@ impl GitHandler {
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { THREAD.take() }.unwrap().join();
+        let _ = unsafe { (*(&raw mut THREAD)).take() }.unwrap().join();
         outcome
     }
 

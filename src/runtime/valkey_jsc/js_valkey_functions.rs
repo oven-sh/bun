@@ -1255,7 +1255,7 @@ impl JSValkeyClient {
                 let value_str = value_js.to_bun_string(global)?;
                 // PERF(port): was assume_capacity
                 args.push(value_str.to_utf8());
-                drop(value_str);
+                value_str.deref();
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)

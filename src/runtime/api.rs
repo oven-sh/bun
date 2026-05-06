@@ -41,10 +41,12 @@ pub use crate::crypto;
 // minimal struct shape locally so dependents (`bun_jsc`, `bun_js_parser_jsc`)
 // can name the type.
 // TODO(b2-blocked): bun_jsc::build_message — reconcile defs once bun_jsc is green.
+#[repr(C)]
 pub struct BuildMessage {
     pub msg: bun_logger::Msg,
     pub logged: bool,
 }
+#[repr(C)]
 pub struct ResolveMessage {
     pub msg: bun_logger::Msg,
     pub referrer: Option<bun_logger::fs::Path>,

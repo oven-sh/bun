@@ -1940,33 +1940,10 @@ impl NetworkSink {
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
-    // NOTE: `start` / `connect` / `to_sink` / `flush` / `finalize` / `detach_writable`
-    // / `finalize_and_destroy` / `abort` are intentionally NOT defined in this impl
-    // block. A previous stub `detach_writable` here did `self.task.take()` without
-    // calling the intrusive `deref()` on the `MultiPartUpload`, leaking one refcount
-    // per teardown (PORTING.md §Forbidden: silent no-op for real Zig logic). The
-    // correct implementations live in the `impl NetworkSink` block below and are
-    // un-gated together with `bun_s3::MultiPartUpload`.
-
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
-        // TODO(port): JSSink.createObject — codegen-provided
-    }
-
-    pub const NAME: &'static str = "NetworkSink";
-}
-
-// TODO(b2-blocked): the methods below dereference `self.task` as
-// `*mut MultiPartUpload` and call `part_size_in_bytes()` / `path()` /
-// `write_bytes()` / `is_queue_empty()` on it. `bun_s3::MultiPartUpload` is
-// currently an opaque `c_void` stub (see top of file); un-gate once
-// `crate::webcore::s3::multipart::MultiPartUpload` is wired.
-
-impl NetworkSink {
     fn get_high_water_mark(&self) -> BlobSizeType {
         if let Some(task) = self.task {
             // SAFETY: task is ref-counted, alive while held
-            return unsafe { task.as_ref() }.part_size_in_bytes();
+            return unsafe { task.as_ref() }.part_size_in_bytes() as BlobSizeType;
         }
         self.high_water_mark
     }
@@ -1974,7 +1951,7 @@ impl NetworkSink {
     pub fn path(&self) -> Option<&[u8]> {
         if let Some(task) = self.task {
             // SAFETY: task is ref-counted, alive while held
-            return Some(unsafe { task.as_ref() }.path());
+            return Some(&unsafe { task.as_ref() }.path);
         }
         None
     }

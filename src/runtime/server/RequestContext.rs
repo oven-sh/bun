@@ -3364,14 +3364,15 @@ where
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let loop_ = vm.event_loop();
-                loop_.enter();
-                let _exit = scopeguard::guard((), |_| loop_.exit());
+                // SAFETY: event_loop() returns a live raw ptr.
+                unsafe { (*loop_).enter() };
+                let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
                 // Reject the pending body first so endRequestStreaming()
                 // below (via this.endWithoutBody) doesn't substitute a
                 // generic ConnectionClosed. toErrorInstance handles
                 // .Locked itself (rejects the promise, deinits the
                 // readable, calls onReceiveValue).
-                let _ = body.value.to_error_instance(
+                let _ = body.to_error_instance(
                     Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     )),

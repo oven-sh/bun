@@ -77,7 +77,7 @@ impl SecurityScanResults {
 pub fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
-    log_level: bun_install::package_manager::options::LogLevel,
+    log_level: crate::package_manager_real::options::LogLevel,
     security_scanner_pkg_id: PackageID,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
@@ -97,9 +97,9 @@ pub fn do_partial_install_of_security_scanner(
     let packages_to_install: Option<&[PackageID]> = Some(&[security_scanner_pkg_id]);
 
     let summary = match manager.options.node_linker {
-        bun_install::package_manager::options::NodeLinker::Hoisted
+        crate::package_manager_real::options::NodeLinker::Hoisted
         // TODO
-        | bun_install::package_manager::options::NodeLinker::Auto => {
+        | crate::package_manager_real::options::NodeLinker::Auto => {
             HoistedInstall::install_hoisted_packages(
                 manager,
                 ctx,
@@ -109,7 +109,7 @@ pub fn do_partial_install_of_security_scanner(
                 packages_to_install,
             )?
         }
-        bun_install::package_manager::options::NodeLinker::Isolated => {
+        crate::package_manager_real::options::NodeLinker::Isolated => {
             IsolatedInstall::install_isolated_packages(
                 manager,
                 ctx,
@@ -410,8 +410,8 @@ pub fn prompt_for_warnings() -> bool {
     ));
     Output::flush();
 
-    // TODO(port): Zig used std.fs.File.stdin().readerStreaming(); use bun_sys stdin reader.
-    let mut reader = bun_sys::stdin_reader();
+    // TODO(port): Zig used std.fs.File.stdin().readerStreaming(); use bun_core stdin reader.
+    let mut reader = bun_core::output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
         Output::pretty(format_args!("\n<red>Installation cancelled.<r>\n"));
@@ -790,7 +790,7 @@ fn attempt_security_scan_with_retry(
     original_cwd: &[u8],
     is_retry: bool,
 ) -> Result<ScanAttemptResult, Error> {
-    if manager.options.log_level == bun_install::package_manager::options::LogLevel::Verbose {
+    if manager.options.log_level == crate::package_manager_real::options::LogLevel::Verbose {
         Output::pretty_errorln(format_args!(
             "<d>[SecurityProvider]<r> Running at '{}'",
             BStr::new(security_scanner)
@@ -818,7 +818,7 @@ fn attempt_security_scan_with_retry(
     let security_scanner_pkg_id = finder.find_in_root_dependencies();
     // Suppress JavaScript error output unless in verbose mode
     let suppress_error_output =
-        manager.options.log_level != bun_install::package_manager::options::LogLevel::Verbose;
+        manager.options.log_level != crate::package_manager_real::options::LogLevel::Verbose;
 
     let mut collector = PackageCollector::init(manager);
 
@@ -1116,7 +1116,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn finish_spawn(
         &mut self,
         // TODO(port): `spawned: anytype` — concrete type is platform-dependent SpawnResult.
-        spawned: &mut spawn::Spawned,
+        spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
         json_stdio_result: StdioResult,
     ) -> Result<(), Error> {
@@ -1453,7 +1453,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // if we got here then we got a result message so we can continue like normal
         let duration = bun_core::time::milli_timestamp() - start_time;
 
-        if self.manager.options.log_level == bun_install::package_manager::options::LogLevel::Verbose {
+        if self.manager.options.log_level == crate::package_manager_real::options::LogLevel::Verbose {
             match status {
                 Status::Exited(exit) => {
                     if exit.code == 0 {
@@ -1483,7 +1483,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
             }
         } else if self.manager.options.log_level
-            != bun_install::package_manager::options::LogLevel::Silent
+            != crate::package_manager_real::options::LogLevel::Silent
             && duration >= 1000
         {
             let maybe_hourglass = if Output::enable_ansi_colors_stderr() {

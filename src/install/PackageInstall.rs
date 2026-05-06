@@ -9,7 +9,8 @@ use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, WPathBuffer, 
 use bun_semver::String as SemverString;
 use bun_str::{strings, MutableString, ZStr};
 use bun_sys::{self as sys, walker_skippable, Dir, EntryKind, Fd, OpenDirOptions};
-use bun_threading::{ThreadPool, WaitGroup, WorkPoolTask};
+use bun_threading::{ThreadPool, WaitGroup};
+use bun_threading::work_pool::Task as WorkPoolTask;
 
 use crate::{
     bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution, BuntagHashBuf, Lockfile,

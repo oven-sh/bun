@@ -39,8 +39,12 @@ impl From<ToFileSystemPathError> for bun_core::Error {
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
         // TODO(port): lifetime — DOMURL is a GC-owned C++ cell; no Rust-expressible lifetime. Phase B revisit.
-        // SAFETY: FFI call; `vm` is a live JSC VM borrow. Returned pointer is null or a valid GC cell.
-        unsafe { WebCore__DOMURL__cast_(value, vm as *const VM as *mut VM).as_mut() }
+        // SAFETY: FFI call; `vm` is a live JSC VM borrow whose opaque bytes are
+        // wrapped in `UnsafeCell`, so `VM::as_mut_ptr` yields a `*mut VM` with
+        // write provenance (no `&T as *const T as *mut T` laundering). The C++
+        // side ignores the `vm` argument (`WebCoreCast` only inspects `value`).
+        // Returned pointer is null or a valid GC cell uniquely materialized here.
+        unsafe { WebCore__DOMURL__cast_(value, vm.as_mut_ptr()).as_mut() }
     }
 
     pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {

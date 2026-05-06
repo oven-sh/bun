@@ -2388,7 +2388,7 @@ impl<'a> LinkerContext<'a> {
     pub fn scan_css_imports(
         &mut self,
         file_source_index: u32,
-        file_import_records: &mut [ImportRecord],
+        file_import_records: &[ImportRecord],
         css_asts: *mut [Option<*mut core::ffi::c_void>],
         sources: &[Source],
         loaders: &[Loader],
@@ -2396,7 +2396,7 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
         // the duration of `scanImportsAndExports`; we only test `is_none()`.
         let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe { &*css_asts };
-        for record in file_import_records.iter_mut() {
+        for record in file_import_records.iter() {
             if record.source_index.is_valid() {
                 // Other file is not CSS
                 if css_asts[record.source_index.get() as usize].is_none() {

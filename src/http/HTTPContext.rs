@@ -878,7 +878,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 // callback, same as addMemoryBackToPool().
                 if let Some(rp) = pooled.proxy_tunnel.take() {
                     // SAFETY: pool owns one strong ref while parked.
-                    unsafe { (*rp.as_ptr()).deref() };
+                    unsafe { ProxyTunnel::deref(rp.as_ptr()) };
                 }
                 pooled.target_hostname = Box::default();
                 if let Some(s) = pooled.h2_session.take() {

@@ -203,15 +203,18 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     if decoded_data.is_empty() {
         return;
     }
-    // SAFETY: see on_open.
-    let this = unsafe { &mut *ctx };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onData decoded {}", decoded_data.len());
+    // SAFETY: see on_open. `&mut HTTPClient` is disjoint from the caller's
+    // `&mut SSLWrapper` (HTTPClient holds the tunnel only by pointer). NLL
+    // ends this borrow before any reentrant call below that re-derives
+    // `&mut *ctx` (close → on_close, progress_update).
+    let this = unsafe { &mut *ctx };
     let Some(proxy_nn) = this.proxy_tunnel else { return };
-    // SAFETY: live intrusive-refcounted tunnel.
-    let proxy = unsafe { &mut *proxy_nn.as_ptr() };
-    proxy.ref_();
+    let proxy_ptr = proxy_nn.as_ptr();
+    // SAFETY: live intrusive-refcounted tunnel; raw field projection only.
+    unsafe { ref_raw(proxy_ptr) };
     let _guard = scopeguard::guard(proxy_nn, |p| {
-        // SAFETY: balances the ref_ above.
+        // SAFETY: balances the ref_raw above.
         unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
     match this.state.response_stage {
@@ -223,13 +226,17 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
-                    proxy.close(err);
+                    // `this` is dead (NLL); reenter via raw ptr so on_close's
+                    // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
+                    // SAFETY: tunnel pinned by ref_raw above.
+                    unsafe { ProxyTunnel::close_raw(proxy_ptr, err) };
                     return;
                 }
             };
 
             if report_progress {
-                progress_update_for_proxy_socket(this, proxy);
+                // SAFETY: `this` dead; progress_update reborrows via raw ptrs.
+                unsafe { progress_update_for_proxy_socket(ctx, proxy_ptr) };
                 return;
             }
         }
@@ -241,26 +248,29 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
-                    proxy.close(err);
+                    // SAFETY: see Body arm.
+                    unsafe { ProxyTunnel::close_raw(proxy_ptr, err) };
                     return;
                 }
             };
 
             if report_progress {
-                progress_update_for_proxy_socket(this, proxy);
+                // SAFETY: see Body arm.
+                unsafe { progress_update_for_proxy_socket(ctx, proxy_ptr) };
                 return;
             }
         }
         HTTPStage::ProxyHeaders => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData proxy_headers");
-            match proxy.socket {
-                Socket::Ssl(socket) => {
-                    let ctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
-                    this.handle_on_data_headers::<true>(decoded_data, ctx, socket);
+            // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+            match unsafe { &*addr_of!((*proxy_ptr).socket) } {
+                &Socket::Ssl(socket) => {
+                    let hctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
+                    this.handle_on_data_headers::<true>(decoded_data, hctx, socket);
                 }
-                Socket::Tcp(socket) => {
-                    let ctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
-                    this.handle_on_data_headers::<false>(decoded_data, ctx, socket);
+                &Socket::Tcp(socket) => {
+                    let hctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
+                    this.handle_on_data_headers::<false>(decoded_data, hctx, socket);
                 }
                 Socket::None => {}
             }
@@ -268,7 +278,8 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
             this.state.pending_response = None;
-            proxy.close(err!(UnexpectedData));
+            // SAFETY: `this` dead (NLL); reenter via raw ptr.
+            unsafe { ProxyTunnel::close_raw(proxy_ptr, err!(UnexpectedData)) };
         }
     }
 }

@@ -47,12 +47,13 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     // PERF(port): was comptime monomorphization — profile in Phase B
     //
     // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
-    // `getZone`/`get_zone_runtime`. Leak the prefixed name (zones live forever).
+    // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
+    // 'static — `get_zone_runtime` owns the prefixed string in its OnceLock map,
+    // so pass a borrowed `&str` and let the map intern it.
     let mut prefixed = String::with_capacity(5 + name.len());
     prefixed.push_str("Bun__");
     prefixed.push_str(name);
-    let prefixed: &'static str = Box::leak(prefixed.into_boxed_str());
-    get_zone_runtime(prefixed).allocator()
+    get_zone_runtime(&prefixed).allocator()
 }
 
 /// Comptime-literal form of `named_allocator` — expands a per-name `OnceLock`.

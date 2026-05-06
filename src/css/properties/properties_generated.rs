@@ -374,7 +374,13 @@ impl PropertyIdTag {
 
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+//
+// PORT NOTE: do NOT `#[derive(PartialEq, Eq)]` here — the spec-correct
+// equality (Zig `PropertyId.eql`, properties_generated.zig:9195) ignores the
+// `Custom(CustomPropertyName)` payload and is hand-written below. A derived
+// impl would (a) conflict (E0119) and (b) diverge by comparing custom-name
+// bytes.
+#[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
     BackgroundImage,

@@ -289,35 +289,29 @@ impl PosixLoop {
 
 /// Replaces Zig `fn NewHandler(comptime UserType, comptime callback_fn) type`.
 /// Stores the loop ref and the C-ABI callback so it can be unregistered later.
-pub struct Handler<'a> {
-    pub loop_: &'a Loop,
+///
+/// Stores `*mut Loop` (not `&Loop`) to mirror Zig's freely-aliasing `loop: *Loop`
+/// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
+/// shared `&Loop` would make the `*const → *mut` cast UB when written through.
+pub struct Handler {
+    pub loop_: *mut Loop,
     ctx: *mut c_void,
     callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
 }
 
-impl<'a> Handler<'a> {
+impl Handler {
     pub fn remove_post(&self) {
-        // SAFETY: loop_ is a valid loop pointer; callback was previously registered
-        unsafe {
-            c::uws_loop_removePostHandler(
-                self.loop_ as *const Loop as *mut Loop,
-                self.ctx,
-                self.callback,
-            )
-        };
+        // SAFETY: loop_ was obtained from `&mut Loop` in add_*_handler and the
+        // C-allocated loop outlives this Handler; callback was previously registered.
+        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 
     pub fn remove_pre(&self) {
         // PORT NOTE: Zig also called `uws_loop_removePostHandler` here (likely a bug
         // upstream); preserving behavior verbatim.
-        // SAFETY: loop_ is a valid loop pointer; callback was previously registered
-        unsafe {
-            c::uws_loop_removePostHandler(
-                self.loop_ as *const Loop as *mut Loop,
-                self.ctx,
-                self.callback,
-            )
-        };
+        // SAFETY: loop_ was obtained from `&mut Loop` in add_*_handler and the
+        // C-allocated loop outlives this Handler; callback was previously registered.
+        unsafe { c::uws_loop_removePostHandler(self.loop_, self.ctx, self.callback) };
     }
 }
 

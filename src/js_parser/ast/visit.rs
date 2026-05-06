@@ -1664,6 +1664,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Ignore declarations if the scope is shadowed by a direct "eval" call.
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
+            // SAFETY: current_scope is a valid arena ptr for the parse.
             if !core::ptr::eq(p.current_scope, p.module_scope)
                 && !unsafe { &*p.current_scope }.contains_direct_eval
             {

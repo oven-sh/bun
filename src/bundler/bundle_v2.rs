@@ -2970,7 +2970,10 @@ impl<'a> BundleV2<'a> {
                     };
 
                     let target = targets[index];
-                    let asset_naming = &self.transpiler_for_target(target).options.asset_naming;
+                    // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                    // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                    // never touches `graph.input_files`.
+                    let asset_naming = unsafe { &(*self_ptr).transpiler_for_target(target).options.asset_naming };
                     if !asset_naming.is_empty() {
                         template.data = asset_naming.clone();
                     }

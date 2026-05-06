@@ -958,7 +958,12 @@ pub fn edit(
     };
     for request in updates.iter_mut() {
         if let Some(e_string) = request.e_string {
-            // SAFETY: e_string was set above to point at a live E::String inside an Expr we own
+            // SAFETY: `e_string` was captured above (L622/L649/L786) as the `*mut` payload of a
+            // `StoreRef<E::EString>` arena slot allocated via `Expr::allocate`. The arena is not
+            // reset between capture and this deref, so the slot is still live. The Expr tree only
+            // holds the slot via `StoreRef` (a Copy `NonNull`), and no `&mut` to the same slot is
+            // materialized elsewhere in this scope, so this is the sole mutable borrow — matches
+            // the Zig original which stores `?*E.String` for this deferred-write pattern.
             let e_string = unsafe { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag

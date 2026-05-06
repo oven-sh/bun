@@ -191,9 +191,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn mark_tagged_socket_as_dead(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
-            Handler::<SSL>::add_memory_back_to_pool(unsafe {
-                &mut *tagged.as_unchecked::<PooledSocket<SSL>>()
-            });
+            unsafe {
+                Handler::<SSL>::add_memory_back_to_pool(
+                    tagged.as_unchecked::<PooledSocket<SSL>>(),
+                );
+            }
         }
 
         if let Some(ctx) = socket.ext::<*mut c_void>() {

@@ -95,6 +95,8 @@ macro_rules! get_zone {
         })
     }};
 }
+#[allow(unused_imports)]
+pub(crate) use get_zone;
 
 /// Runtime fallback for `getZone` when the name is not a literal at the Rust call site.
 // TODO(port): Zig had no runtime path here (every `name` was comptime). This exists

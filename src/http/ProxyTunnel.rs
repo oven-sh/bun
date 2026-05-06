@@ -587,6 +587,17 @@ impl ProxyTunnel {
         self.shutdown();
     }
 
+    /// Raw-pointer entry for `close()` — used from on_data after the prior
+    /// `&mut self` borrow is dead, so the fresh `&mut *this` here does not
+    /// alias under Stacked Borrows.
+    ///
+    /// # Safety
+    /// `this` must point to a live, exclusively-accessible `ProxyTunnel`.
+    pub unsafe fn close_raw(this: *mut Self, err: Error) {
+        // SAFETY: caller contract.
+        unsafe { (*this).close(err) }
+    }
+
     pub fn shutdown(&mut self) {
         if let Some(wrapper) = &mut self.wrapper {
             // fast shutdown the connection

@@ -1605,13 +1605,13 @@ fn write_file_with_empty_source_to_destination(
                     let this = unsafe { Box::from_raw(opaque_this.cast::<Wrapper>()) };
                     let global = unsafe { &*this.global };
                     match result {
-                        S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0))?,
+                        S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0.0))?,
                         S3UploadResult::Failure(err) => {
-                            this.promise.reject(
-                                global,
-                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                                err.to_js_with_async_stack(global, this.store.get_path(), unsafe { this.promise.get() }),
-                            )?;
+                            // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                            let err_js = crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack(
+                                &err, global, this.store.get_path(), unsafe { this.promise.get() },
+                            );
+                            this.promise.reject(global, Ok(err_js))?;
                         }
                     }
                     Ok(())
@@ -1620,8 +1620,11 @@ fn write_file_with_empty_source_to_destination(
 
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
-            let proxy = ctx.bun_vm().transpiler.env.get_http_proxy(true, None, None);
-            let proxy_url = proxy.map(|p| p.href);
+            // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
+            let proxy_url: Option<&str> = {
+                let _ = ctx;
+                todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
+            };
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),

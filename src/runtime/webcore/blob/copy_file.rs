@@ -762,9 +762,9 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
 
-                if bun_sys::S::ISREG(stat.mode)
-                    || bun_sys::S::ISCHR(stat.mode)
-                    || bun_sys::S::ISSOCK(stat.mode)
+                if bun_sys::S::ISREG(stat.st_mode as _)
+                    || bun_sys::S::ISCHR(stat.st_mode as _)
+                    || bun_sys::S::ISSOCK(stat.st_mode as _)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
@@ -849,7 +849,7 @@ impl<'a> CopyFile<'a> {
 impl Drop for CopyFile<'_> {
     fn drop(&mut self) {
         // Zig deinit():
-        if let jsc::node::PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
+        if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
             if p.is_string() && self.system_error.is_none() {
                 // TODO(port): the Zig frees the path slice here. In Rust, ownership of
                 // `source_file_store.pathlike.path` should be encoded in the type so
@@ -880,9 +880,9 @@ pub enum TryWith {
 impl TryWith {
     pub const fn tag(self) -> bun_sys::Tag {
         match self {
-            TryWith::Sendfile => bun_sys::Tag::Sendfile,
-            TryWith::CopyFileRange => bun_sys::Tag::CopyFileRange,
-            TryWith::Splice => bun_sys::Tag::Splice,
+            TryWith::Sendfile => bun_sys::Tag::sendfile,
+            TryWith::CopyFileRange => bun_sys::Tag::copy_file_range,
+            TryWith::Splice => bun_sys::Tag::splice,
         }
     }
 }

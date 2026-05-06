@@ -1321,8 +1321,10 @@ impl<'a> SpawnArgs<'a> {
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
         self.override_env = true;
+        // PORT NOTE: `bun_collections::array_hash_map::Iter` doesn't impl
+        // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
-            .reserve_exact(env_iter.len().saturating_sub(self.env_array.len()));
+            .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
 
         if DISABLE_PATH_LOOKUP_FOR_ARV0 {
             // If the env object does not include a $PATH, it must disable path lookup for argv[0]

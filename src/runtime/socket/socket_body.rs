@@ -3323,11 +3323,11 @@ pub fn js_upgrade_duplex_to_tls(
 
     let opts = args.ptr[1];
     if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-        return global.throw("Expected options object", ());
+        return Err(global.throw("Expected options object"));
     }
 
     let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
-        global.throw_err("Expected \"socket\" option", ())
+        global.throw("Expected \"socket\" option")
     })?;
 
     let mut is_server = false;

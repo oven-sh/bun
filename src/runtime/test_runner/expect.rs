@@ -2412,7 +2412,7 @@ impl ExpectMatcherContext {
 }
 
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectMatcherUtils {}
 
 impl ExpectMatcherUtils {
@@ -2420,9 +2420,7 @@ impl ExpectMatcherUtils {
     pub extern "C" fn ExpectMatcherUtils_createSigleton(global_this: *const JSGlobalObject) -> JSValue {
         // SAFETY: called from C++ with valid global
         let global_this = unsafe { &*global_this };
-        let instance = Box::into_raw(Box::new(ExpectMatcherUtils {}));
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        unsafe { (*instance).to_js(global_this) }
+        ExpectMatcherUtils {}.to_js(global_this)
     }
 
     pub fn finalize(this: *mut Self) {

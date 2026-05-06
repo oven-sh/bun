@@ -802,7 +802,7 @@ impl<'a> Formatter<'a> {
         &mut self,
         writer_: &mut W,
         slice_: S,
-        global_this: &JSGlobalObject,
+        global_this: &'a JSGlobalObject,
     ) where
         S: AsRef<[u8]>,
         // TODO(port): Zig `Slice` is generic over u8/u16; this draft handles bytes only.

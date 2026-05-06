@@ -1256,9 +1256,9 @@ impl<'a> BlobReadChain<'a> {
                 let Some(this_value) = image.this_ref.try_get() else {
                     let _ = outer.reject(
                         global,
-                        global.create_error_instance(format_args!(
+                        Ok(global.create_error_instance(format_args!(
                             "Image: collected before read completed"
-                        )),
+                        ))),
                     );
                     drop(deliver);
                     return;
@@ -1271,9 +1271,9 @@ impl<'a> BlobReadChain<'a> {
                         // error it has already been dropped there.
                         let _ = outer.reject(
                             global,
-                            global.create_error_instance(format_args!(
+                            Ok(global.create_error_instance(format_args!(
                                 "Image: pipeline schedule failed"
-                            )),
+                            ))),
                         );
                         return;
                     }

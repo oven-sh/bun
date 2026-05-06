@@ -15,7 +15,7 @@ use crate::ffi::FFI;
 // ── Local JSValue extension shims (upstream `bun_jsc::JSValue` has not yet ──
 // ported `asPtrAddress` / `toUInt64NoTruncate` / `fromUInt64NoTruncate`).
 // TODO(port): move to <area>_sys / drop once bun_jsc grows these.
-#[allow(non_snake_case)]
+#[allow(non_snake_case, deprecated)]
 unsafe extern "C" {
     fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
     fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;

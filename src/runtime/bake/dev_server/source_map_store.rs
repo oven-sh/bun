@@ -67,6 +67,10 @@ pub struct SourceMapStore {
 }
 impl SourceMapStore {
     /// Full body in gated `../DevServer/SourceMapStore.rs` draft.
+    pub fn add_weak_ref(&mut self, _key: Key) {
+        // TODO(port): SourceMapStore.addWeakRef — full body in gated draft.
+    }
+
     pub fn remove_or_upgrade_weak_ref(&mut self, _key: Key, _mode: RemoveOrUpgradeMode) -> bool {
         todo!("blocked_on: SourceMapStore::remove_or_upgrade_weak_ref")
     }

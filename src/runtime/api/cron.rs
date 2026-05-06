@@ -1686,7 +1686,8 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     let _guard = scopeguard::guard((), |_| CronJob::release_pending_ref(this));
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
-    let vm = this_ref.global.bun_vm();
+    // SAFETY: `bun_vm()` returns the per-thread singleton.
+    let vm = unsafe { &*this_ref.global.bun_vm() };
     if let Some(js_this) = this_ref.this_value.try_get() {
         js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
     }

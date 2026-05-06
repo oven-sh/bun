@@ -62,7 +62,7 @@ pub struct Html {
     pub script_injection_offset: Option<ByteOffset>,
     pub bundled_html_text: Option<Box<[u8]>>,
     /// SHARED (LIFETIMES.tsv): deinit calls `cached_response.deref()`.
-    pub cached_response: Option<Arc<StaticRoute>>,
+    pub cached_response: Option<core::ptr::NonNull<StaticRoute>>,
 }
 
 pub enum Data {
@@ -117,7 +117,7 @@ pub struct RouteBundle {
     pub server_state: State,
     pub data: Data,
     /// SHARED (LIFETIMES.tsv): deinit calls `blob.deref()`.
-    pub client_bundle: Option<Arc<StaticRoute>>,
+    pub client_bundle: Option<core::ptr::NonNull<StaticRoute>>,
     pub client_script_generation: u32,
     pub active_viewers: u32,
 }

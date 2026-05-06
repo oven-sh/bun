@@ -193,27 +193,27 @@ impl BlobOrStringOrBuffer {
         let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
             Some(s) => s,
             None => {
-                let Some(blob) = value.as_::<Blob>() else {
+                let Some(blob_ptr) = value.as_::<Blob>() else {
                     return Ok(None);
                 };
+                // SAFETY: `as_::<Blob>` returns a live JSC-owned `*mut Blob`.
+                let blob = unsafe { &mut *blob_ptr };
                 if allow_file && blob.needs_to_read_file() {
-                    return global.throw_invalid_arguments("File blob cannot be used here", format_args!(""));
+                    return Err(global.throw_invalid_arguments("File blob cannot be used here"));
                 }
 
                 if is_async {
                     // For async/cross-thread usage, copy the blob data to an owned slice
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
-                    let owned_data: Box<[u8]> = Box::from(blob_data);
+                    let owned_data: Vec<u8> = blob_data.to_vec();
                     return Ok(Some(Self::StringOrBuffer(StringOrBuffer::EncodedSlice(
-                        ZigStringSlice::from_owned(owned_data),
+                        ZigStringSlice::init_owned(owned_data),
                     ))));
                 }
 
-                if let Some(store) = blob.store() {
-                    store.ref_count();
-                }
-                return Ok(Some(Self::Blob(blob.clone_raw())));
+                // `Blob::dupe()` clones the StoreRef (bumps refcount) and bit-copies fields.
+                return Ok(Some(Self::Blob(blob.dupe())));
             }
         };
 

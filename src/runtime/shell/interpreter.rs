@@ -428,7 +428,16 @@ impl Interpreter {
             }
             let mut parser = Parser::new(arena, lex_result, jsobjs)?;
             match parser.parse() {
-                Ok(ast) => Ok(ast),
+                // `bun_shell_parser::ast::Script<'arena>` → `shell::ast::Script`:
+                // the local `ast` module (see `shell/mod.rs`) is a lifetime-
+                // erased, layout-compatible mirror so state nodes can hold
+                // `*const ast::*` into the arena without threading `'arena`.
+                Ok(script) => Ok(unsafe {
+                    core::mem::transmute::<
+                        crate::shell::shell_body::ast::Script<'_>,
+                        ast::Script,
+                    >(script)
+                }),
                 Err(e) => {
                     *out_parse_err = Some(parser.combine_errors());
                     Err(e)

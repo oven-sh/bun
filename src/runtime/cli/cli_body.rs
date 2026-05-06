@@ -1197,7 +1197,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 
                 Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::flush();
-                Output::pretty("\n\n<b>Flags:<r>", format_args!(""));
+                Output::pretty(format_args!("\n\n<b>Flags:<r>"));
                 Output::flush();
                 clap::simple_help(arguments::TEST_ONLY_PARAMS);
                 Output::pretty(format_args!("\n\n"));

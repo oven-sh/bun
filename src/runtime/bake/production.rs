@@ -77,8 +77,13 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         Global::crash();
     }
 
-    let mut cwd_buf = bun_core::PathBuffer::uninit();
-    let cwd = match bun_core::getcwd(&mut cwd_buf) {
+    let mut cwd_buf = PathBuffer::uninit();
+    // SAFETY: `bun_paths::PathBuffer` and `bun_core::PathBuffer` are
+    // layout-identical `#[repr(C)]` newtypes over `[u8; MAX_PATH_BYTES]`;
+    // pointer cast is sound (see run_command.rs for the same shim).
+    let cwd = match bun_core::getcwd(unsafe {
+        &mut *(core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+    }) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             Output::err(err, "Could not query current working directory", ());

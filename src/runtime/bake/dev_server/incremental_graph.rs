@@ -159,6 +159,83 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &self.bundled_files.values()[index.get() as usize]
     }
 
+    /// `IncrementalGraph(side).getFileIndex(abs_path)` — path → `FileIndex` lookup.
+    #[inline]
+    pub fn get_file_index(&self, abs_path: &[u8]) -> Option<FileIndex<SIDE>> {
+        self.bundled_files
+            .get_index(abs_path)
+            .map(|i| FileIndex(i as u32))
+    }
+
+    /// `IncrementalGraph(side).traceImports` — full body in gated draft.
+    pub fn trace_imports(
+        &mut self,
+        _index: FileIndex<SIDE>,
+        _gts: &mut super::GraphTraceState,
+        _goal: super::TraceImportGoal,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::trace_imports body un-gate")
+    }
+
+    /// `IncrementalGraph(side).receiveChunk` — full body in gated draft.
+    pub fn receive_chunk(
+        &mut self,
+        _ctx: &mut crate::bake::dev_server_body::HotUpdateContext<'_>,
+        _index: bun_js_parser::ast::Index,
+        _content: ReceiveChunkContent,
+        _is_ssr_graph: bool,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::receive_chunk body un-gate")
+    }
+
+    /// `IncrementalGraph(side).processChunkDependencies` — full body in gated draft.
+    pub fn process_chunk_dependencies(
+        &mut self,
+        _ctx: &mut crate::bake::dev_server_body::HotUpdateContext<'_>,
+        _mode: ProcessMode,
+        _index: bun_js_parser::ast::Index,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::process_chunk_dependencies body un-gate")
+    }
+
+    /// `IncrementalGraph(.server).insertCssFileOnServer` — full body in gated draft.
+    pub fn insert_css_file_on_server(
+        &mut self,
+        _ctx: &mut crate::bake::dev_server_body::HotUpdateContext<'_>,
+        _index: bun_js_parser::ast::Index,
+        _key: &[u8],
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::insert_css_file_on_server body un-gate")
+    }
+
+    /// `IncrementalGraph(.client).htmlRouteBundleIndex` — looks up the
+    /// `RouteBundle.Index` stashed on a client HTML file. Full body in gated draft.
+    pub fn html_route_bundle_index(&self, index: FileIndex<SIDE>) -> route_bundle::Index {
+        self.bundled_files.values()[index.get() as usize]
+            .html_route_bundle_index
+            .expect("html_route_bundle_index on non-HTML file")
+    }
+
+    /// `IncrementalGraph(.server).takeJSBundle` — server-side overload (header
+    /// shape). Distinct name because the const-generic `SIDE` cannot select the
+    /// `TakeJSBundleOptions{Client,Server}` arg type.
+    pub fn take_js_bundle_server(
+        &mut self,
+        _opts: &TakeJSBundleOptionsServer,
+    ) -> Result<Vec<u8>, bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::take_js_bundle (server) body un-gate")
+    }
+
+    // ── per-bundle scratch accessors ────────────────────────────────────────
+    // The body draft stores `current_chunk_{parts,len,source_maps}` /
+    // `current_css_files` directly on the struct. The header shape carries
+    // none of that yet, so DevServer.rs reads through these accessors to keep
+    // the call sites real until those fields un-gate.
+    #[inline] pub fn current_chunk_parts_len(&self) -> usize { 0 }
+    #[inline] pub fn current_chunk_len(&self) -> usize { 0 }
+    #[inline] pub fn current_chunk_source_maps_is_empty(&self) -> bool { true }
+    #[inline] pub fn current_css_files(&self) -> Vec<u64> { Vec::new() }
+
     /// `IncrementalGraph(side).traceDependencies` — full body in gated draft.
     pub fn trace_dependencies(
         &mut self,

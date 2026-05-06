@@ -2327,39 +2327,42 @@ impl<'a> ValueBufferer<'a> {
         // un-commenting that call site needs no further work.
         stream.value.ensure_still_alive();
         let global_this = self.global;
-        let mut buffer_stream = Box::new(ArrayBufferJSSink {
+        // Stash the Box in `self.js_sink` first (so error paths / Drop find it),
+        // then re-borrow mutably through the slot for `assign_to_stream`.
+        self.js_sink = Some(Box::new(ArrayBufferJSSink {
             sink: ArrayBufferSink {
                 bytes: Default::default(),
                 next: None,
                 ..Default::default()
             },
-        });
-        // Stash the Box in `self.js_sink` first (so error paths / Drop find it),
-        // then re-borrow mutably through the slot for `assign_to_stream`.
-        self.js_sink = Some(buffer_stream);
+        }));
         // SAFETY: just inserted; `Some` guaranteed.
         let buffer_stream: &mut ArrayBufferJSSink =
             unsafe { self.js_sink.as_mut().unwrap_unchecked() };
-        let signal = &mut buffer_stream.sink.signal;
 
-        *signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
+        buffer_stream.sink.signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
-        signal.clear();
-        debug_assert!(signal.is_dead());
+        buffer_stream.sink.signal.clear();
+        debug_assert!(buffer_stream.sink.signal.is_dead());
+
+        // PORT NOTE: reshaped for borrowck — capture the `signal.ptr` slot as a raw
+        // pointer before passing `&mut buffer_stream.sink` to FFI (Zig aliased both).
+        let signal_ptr_slot: *mut *mut c_void =
+            (&mut buffer_stream.sink.signal.ptr) as *mut Option<NonNull<c_void>> as *mut *mut c_void;
 
         let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
             global_this,
             stream.value,
             &mut buffer_stream.sink,
-            (&mut signal.ptr) as *mut Option<NonNull<c_void>> as *mut *mut c_void,
+            signal_ptr_slot,
         );
 
         assignment_result.ensure_still_alive();
 
         // assert that it was updated
-        debug_assert!(!signal.is_dead());
+        debug_assert!(!buffer_stream.sink.signal.is_dead());
 
         if assignment_result.is_error() {
             return Err(bun_core::err!("PipeFailed"));

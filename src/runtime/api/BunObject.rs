@@ -567,23 +567,20 @@ mod static_adapters {
 
     pub fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::Listener::connect")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::Listener::connect(g, opts)
     }
 
     pub fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::Listener::listen")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::Listener::listen(g, opts)
     }
 
     pub fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::udp_socket::UDPSocket::udp_socket")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
     }
 
     pub fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {

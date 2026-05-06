@@ -1955,11 +1955,8 @@ pub fn write_file_with_source_destination(
                 ));
             }
         };
-        // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
-        let proxy_url: Option<&[u8]> = {
-            let _ = ctx;
-            todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
-        };
+        let proxy_owned = http_proxy_href(ctx);
+        let proxy_url = proxy_owned.as_deref();
         match &source_store.data {
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {

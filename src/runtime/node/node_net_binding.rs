@@ -102,9 +102,30 @@ pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
     )
 }
 
-pub use bun_jsc::codegen::JSSocketAddress::get_constructor as SocketAddress;
+// Zig: `pub const SocketAddress = bun.jsc.Codegen.JSSocketAddress.getConstructor;`
+// The per-class `JS${Type}` codegen modules are not yet emitted in Rust; bind the
+// `${Type}__getConstructor` externs directly (same symbols the `#[bun_jsc::JsClass]`
+// proc-macro wires up — see src/jsc_macros/lib.rs `get_ctor_sym`).
+#[allow(non_snake_case)]
+pub fn SocketAddress(global: &JSGlobalObject) -> JSValue {
+    unsafe extern "C" {
+        #[link_name = "SocketAddress__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+    // SAFETY: codegen'd C++ getter; global is a live JSGlobalObject.
+    unsafe { __get_constructor(global.as_mut_ptr()) }
+}
 
-pub use bun_jsc::codegen::JSBlockList::get_constructor as BlockList;
+// Zig: `pub const BlockList = jsc.Codegen.JSBlockList.getConstructor;`
+#[allow(non_snake_case)]
+pub fn BlockList(global: &JSGlobalObject) -> JSValue {
+    unsafe extern "C" {
+        #[link_name = "BlockList__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+    // SAFETY: codegen'd C++ getter; global is a live JSGlobalObject.
+    unsafe { __get_constructor(global.as_mut_ptr()) }
+}
 
 #[bun_jsc::host_fn]
 pub fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

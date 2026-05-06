@@ -100,11 +100,11 @@ impl FileSystemRouter {
         }
         let vm = global_this.bun_vm();
 
-        let mut root_dir_path: ZigString::Slice =
-            ZigString::Slice::from_utf8_never_free(vm.transpiler.fs.top_level_dir);
-        // `defer root_dir_path.deinit()` → Drop on ZigString::Slice
-        let mut origin_str: ZigString::Slice = ZigString::Slice::default();
-        let mut asset_prefix_slice: ZigString::Slice = ZigString::Slice::default();
+        let mut root_dir_path: ZigStringSlice =
+            ZigStringSlice::from_utf8_never_free(vm.transpiler.fs.top_level_dir);
+        // `defer root_dir_path.deinit()` → Drop on ZigStringSlice
+        let mut origin_str: ZigStringSlice = ZigStringSlice::default();
+        let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
         if let Some(style_val) = argument.get(global_this, "style")? {
@@ -133,7 +133,7 @@ impl FileSystemRouter {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = ZigString::Slice::from_utf8_never_free(
+                    root_dir_path = ZigStringSlice::from_utf8_never_free(
                         path::join_abs_string_buf(
                             Fs::FileSystem::instance().top_level_dir,
                             &mut out_buf,
@@ -435,7 +435,7 @@ impl FileSystemRouter {
             return global_this.throw_invalid_arguments("Expected string, Request or Response", ());
         }
 
-        let mut path: ZigString::Slice = 'brk: {
+        let mut path: ZigStringSlice = 'brk: {
             if argument.is_string() {
                 break 'brk argument.to_slice(global_this)?.clone_if_borrowed()?;
             }
@@ -455,7 +455,7 @@ impl FileSystemRouter {
         };
 
         if path.len() == 0 || (path.len() == 1 && path.ptr()[0] == b'/') {
-            path = ZigString::Slice::from_utf8_never_free(b"/");
+            path = ZigStringSlice::from_utf8_never_free(b"/");
         }
 
         if strings::has_prefix(path.slice(), b"http://")
@@ -463,7 +463,7 @@ impl FileSystemRouter {
             || strings::has_prefix(path.slice(), b"file://")
         {
             let prev_path = path;
-            path = ZigString::Slice::init_dupe(URL::parse(prev_path.slice()).pathname)?;
+            path = ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname)?;
         }
 
         let url_path = match URLPath::parse(path.slice()) {

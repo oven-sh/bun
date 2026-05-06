@@ -1222,7 +1222,7 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
 }
 
 struct RequestEnsureRouteBundledCtx<'a> {
-    dev: &'a mut DevServer,
+    dev: &'a mut DevServer<'a>,
     req: ReqOrSaved,
     resp: AnyResponse,
     kind: deferred_request::HandlerKind,
@@ -5230,7 +5230,7 @@ impl DevServer<'_> {
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest<'a> {
-    dev: &'a mut DevServer,
+    dev: &'a mut DevServer<'a>,
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
@@ -5316,7 +5316,7 @@ pub fn get_deinit_count_for_testing() -> usize {
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {
-    dev: &'a mut DevServer,
+    dev: &'a mut DevServer<'a>,
     global: &'a JSGlobalObject,
     promise: Option<jsc::JSPromiseStrong>,
     p: Option<*mut jsc::JSPromise>, // BORROW_FIELD: from sibling self.promise

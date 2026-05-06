@@ -371,31 +371,28 @@ pub fn to_throw(
         expected_value.get_class_name(global, &mut expected_class)?;
         result.get_class_name(global, &mut received_class)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-        // TODO(port): comptime string concat — requires get_signature to be const fn
-        let fmt = const_format::concatcp!(
-            get_signature("toThrow", "<green>expected<r>", false),
-            "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\n"
-        );
 
         if let Some(received_message) = received_message_opt {
-            let message_fmt = const_format::concatcp!(fmt, "Received message: <red>{}<r>\n");
             let received_message_fmt = received_message.to_fmt(&mut formatter);
 
             return global.throw_pretty(
-                message_fmt,
-                format_args!("{}{}{}", expected_class, received_class, received_message_fmt),
+                signature,
+                format_args!(
+                    "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+                    expected_class, received_class, received_message_fmt,
+                ),
             );
         }
 
         let received_fmt = result.to_fmt(&mut formatter);
-        let value_fmt = const_format::concatcp!(fmt, "Received value: <red>{}<r>\n");
 
         return global.throw_pretty(
-            value_fmt,
-            format_args!("{}{}{}", expected_class, received_class, received_fmt),
+            signature,
+            format_args!(
+                "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
+                expected_class, received_class, received_fmt,
+            ),
         );
-        #[allow(unreachable_code)]
-        let _ = signature;
     }
 
     // did not throw

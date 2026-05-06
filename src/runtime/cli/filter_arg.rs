@@ -49,12 +49,11 @@ pub fn get_candidate_package_patterns<'a>(
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], bun_core::Error> {
     // TODO(port): narrow error set
-    // TODO(port): exact module path for AST expr/stmt data stores in bun_js_parser
-    bun_js_parser::expr::data::Store::create();
-    bun_js_parser::stmt::data::Store::create();
+    bun_js_parser::ast::expr::data::Store::create();
+    bun_js_parser::ast::stmt::data::Store::create();
     let _store_guard = scopeguard::guard((), |_| {
-        bun_js_parser::expr::data::Store::reset();
-        bun_js_parser::stmt::data::Store::reset();
+        bun_js_parser::ast::expr::data::Store::reset();
+        bun_js_parser::ast::stmt::data::Store::reset();
     });
 
     let mut workdir = workdir_;

@@ -227,7 +227,7 @@ pub struct UDPSocketConfig {
     pub connect: Option<ConnectConfig>,
     pub port: u16,
     pub flags: i32,
-    pub binary_type: ArrayBuffer::BinaryType,
+    pub binary_type: BinaryType,
 }
 
 impl Default for UDPSocketConfig {
@@ -237,7 +237,7 @@ impl Default for UDPSocketConfig {
             connect: None,
             port: 0,
             flags: 0,
-            binary_type: ArrayBuffer::BinaryType::Buffer,
+            binary_type: BinaryType::Buffer,
         }
     }
 }
@@ -302,7 +302,7 @@ impl UDPSocketConfig {
                     ));
                 }
 
-                config.binary_type = match ArrayBuffer::BinaryType::from_js_value(global_this, value)? {
+                config.binary_type = match BinaryType::from_js_value(global_this, value)? {
                     Some(bt) => bt,
                     None => {
                         return global_this.throw_invalid_arguments(format_args!(

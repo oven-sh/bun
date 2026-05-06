@@ -22,8 +22,13 @@ use bun_which::which;
 use bun_clap as clap;
 
 use crate::Command;
-use crate::which_npm_client::NPMClient;
-use crate::create::SourceFileProjectGenerator;
+use crate::cli::which_npm_client::NPMClient;
+
+// PORT NOTE: `cli/create/` has no mod.rs yet; mount the generator directly here
+// so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
+// reaches back into `crate::cli::create_command::Example` via absolute path.
+#[path = "create/SourceFileProjectGenerator.rs"]
+pub mod SourceFileProjectGenerator;
 
 // TODO(port): mutable global PathBuffer — wrap appropriately for thread-safety in Phase B
 static mut BUN_PATH_BUF: PathBuffer = PathBuffer::ZEROED;

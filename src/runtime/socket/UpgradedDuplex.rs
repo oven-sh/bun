@@ -211,7 +211,7 @@ impl<'a> UpgradedDuplex<'a> {
             on_close_callback: Strong::empty(),
             event_loop_timer: EventLoopTimer {
                 next: bun_core::timespec::EPOCH,
-                tag: EventLoopTimer::Tag::UpgradedDuplex,
+                tag: EventLoopTimerTag::UpgradedDuplex,
                 ..Default::default()
             },
             current_timeout: 0,

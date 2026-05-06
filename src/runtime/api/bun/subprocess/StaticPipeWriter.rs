@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_aio::Loop as AsyncLoop;
@@ -13,12 +14,26 @@ use super::StdioKind;
 
 bun_output::declare_scope!(StaticPipeWriter, hidden);
 
+/// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
+///
+/// Zig's `NewStaticPipeWriter(comptime ProcessType)` duck-types
+/// `process.onCloseIO(.stdin)`; in Rust we require this trait so the
+/// generic `BufferedWriter<StaticPipeWriter<P>>` field can satisfy its
+/// `PosixBufferedWriterParent`/`WindowsBufferedWriterParent` bound for all `P`.
+///
+/// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
+/// the process — materializing `&mut P` while `&mut writer` is live would alias.
+pub trait StaticPipeWriterProcess {
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
+}
+
 /// Zig: `pub fn NewStaticPipeWriter(comptime ProcessType: type) type { return struct { ... } }`
 ///
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
 /// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
-// TODO(port): add `P: OnCloseIo` trait bound once that trait exists; left unbounded for Phase A.
-pub struct StaticPipeWriter<P> {
+pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// Intrusive refcount; `ref`/`deref` provided via `bun_ptr::IntrusiveRefCounted`.
     pub ref_count: Cell<u32>,
     pub writer: IOWriter<P>,

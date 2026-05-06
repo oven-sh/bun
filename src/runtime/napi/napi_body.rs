@@ -8,11 +8,14 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU8, Ordering};
 
 use bun_aio::KeepAlive;
 use bun_collections::LinearFifo;
+use bun_collections::linear_fifo::DynamicBuffer;
 use bun_jsc::{
     self as jsc, AnyTask, CallFrame, ConcurrentTask, Debugger, EventLoop, JSGlobalObject, JSPromise,
-    JSValue, Strong, Task, VirtualMachine,
+    JSPromiseStrong, JSValue, Strong, StrongOptional, Task, VirtualMachine,
 };
-use bun_threading::{Condvar, Mutex, WorkPool, WorkPoolTask};
+use bun_threading::Mutex;
+use bun_threading::Condition as Condvar;
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 bun_output::declare_scope!(napi, visible);
 

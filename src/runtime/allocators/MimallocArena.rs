@@ -300,8 +300,8 @@ fn aligned_alloc_size(ptr: *mut u8) -> usize {
     unsafe { mimalloc::mi_malloc_usable_size(ptr.cast()) }
 }
 
-unsafe fn vtable_alloc(ptr: *mut c_void, len: usize, alignment: Alignment, _: usize) -> *mut u8 {
-    let this = Borrowed::from_opaque(ptr);
+unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: Alignment, _: usize) -> *mut u8 {
+    let this = Borrowed::from_opaque(ctx);
     this.assert_thread_lock();
     match this.aligned_alloc(len, alignment) {
         Some(p) => p.as_ptr(),

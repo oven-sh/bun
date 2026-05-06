@@ -3,14 +3,13 @@ use core::mem::offset_of;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine};
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers};
-use bun_str::ZigString;
+use bun_str::zig_string::Slice as ZigStringSlice;
 use bun_sys::Fd;
 use bun_uws as uws;
 
 use super::Listener;
+use super::SSLConfig;
 use super::SocketMode;
-use crate::api::server::SSLConfig;
-// TODO(port): verify module paths for Listener / SocketMode / SSLConfig under bun_runtime
 
 bun_output::declare_scope!(Listener, visible);
 

@@ -334,9 +334,12 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
         // PERF(port): was assume_capacity
     }
 
+    // PORT NOTE: bun.pathLiteral inlined — bun_paths has no path_literal! macro yet.
+    const EVAL_SUFFIX: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
+    const STDIN_SUFFIX: &[u8] = if cfg!(windows) { b"\\[stdin]" } else { b"/[stdin]" };
     if !vm.main().is_empty()
-        && !strings::ends_with(vm.main(), bun_paths::path_literal!(b"/[eval]"))
-        && !strings::ends_with(vm.main(), bun_paths::path_literal!(b"/[stdin]"))
+        && !strings::ends_with(vm.main(), EVAL_SUFFIX)
+        && !strings::ends_with(vm.main(), STDIN_SUFFIX)
     {
         if vm.worker().is_some() && vm.worker().unwrap().eval_mode() {
             args_list.push(BunString::static_(b"[worker eval]"));
@@ -390,7 +393,7 @@ pub fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
-#[export_name = "Bun__Process__setCwd"]
+#[unsafe(export_name = "Bun__Process__setCwd")]
 pub fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
     if to.len() == 0 {
         return global_object

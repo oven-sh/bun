@@ -2266,8 +2266,7 @@ pub fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) ->
 }
 
 pub fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: bun_jsc::JsClass for crate::api::filesystem_router::FileSystemRouter")
+    jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(global_this)
 }
 
 pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2275,8 +2274,7 @@ pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: crate::api::jsonc_object::create (gated in _jsc_gated)")
+    crate::api::jsonc_object::create(global_this)
 }
 pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
@@ -2298,34 +2296,72 @@ pub fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JS
 }
 
 pub fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: bun_jsc::JsClass for crate::api::glob::Glob")
+    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
 }
 
 pub fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    // `crate::image` (mod.rs) keeps the `Image` body in a private `image_body` mod.
-    todo!("blocked_on: crate::image::Image (image_body mod is private)")
+    jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
 }
 
 pub fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: bun_jsc::JsClass for crate::webcore::s3_client::S3Client")
+    jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
 pub fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    // PORT NOTE (layering): `RareData::s3_default_client` body lives in
+    // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
+    // That can't compile in `bun_jsc`, so port the body here where the S3
+    // types are in scope and store the cached value through the public
+    // `RareData.s3_default_client: Strong` field.
+    use crate::webcore::s3_client::S3Client;
+    use bun_jsc::Strong;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let _ = unsafe { (*global_this.bun_vm()).rare_data() };
-    // RareData::s3_default_client(&mut self, &JSGlobalObject) lives in the
-    todo!("blocked_on: bun_jsc::rare_data::RareData::s3_default_client (gated _accessor_body)")
+    let vm = unsafe { &mut *global_this.bun_vm() };
+    let rare = vm.rare_data();
+    if let Some(v) = rare.s3_default_client.get() {
+        return v;
+    }
+    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
+    let env = unsafe { &mut *vm.transpiler.env };
+    let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
+        env.get_s3_credentials().clone(),
+        Default::default(),
+        None,
+        None,
+        None,
+        false,
+        global_this,
+    ) {
+        Ok(v) => v,
+        Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+        Err(err) => {
+            global_this.report_active_exception_as_unhandled(err);
+            return JSValue::UNDEFINED;
+        }
+    };
+    let client = S3Client {
+        credentials: aws_options.credentials.dupe(),
+        options: aws_options.options,
+        acl: aws_options.acl,
+        storage_class: aws_options.storage_class,
+    };
+    let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
+    js_client.ensure_still_alive();
+    rare.s3_default_client = Strong::create(js_client, global_this);
+    js_client
 }
 
 pub fn get_tls_default_ciphers(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // PORT NOTE: Zig's `RareData.tlsDefaultCiphers()` already returns a
-    // `jsc.JSValue`; the un-gated `bun_jsc::rare_data::RareData::
-    // tls_default_ciphers()` currently returns `Option<&ZStr>`.
-    let _ = global_this;
-    todo!("blocked_on: bun_jsc::rare_data::RareData::tls_default_ciphers() -> JSValue")
+    // PORT NOTE: BunObject.zig forwards to `rareData().tlsDefaultCiphers()`
+    // which (per rare_data.zig) returns `?[:0]const u8`; coerce to a JS string
+    // here, falling back to the compiled-in uWS default cipher list.
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let vm = unsafe { &mut *global_this.bun_vm() };
+    let bytes: &[u8] = match vm.rare_data().tls_default_ciphers() {
+        Some(c) => c,
+        None => bun_uws::get_default_ciphers().as_bytes(),
+    };
+    bun_string_jsc::create_utf8_for_js(global_this, bytes).unwrap_or(JSValue::ZERO)
 }
 
 pub fn set_tls_default_ciphers(
@@ -2333,23 +2369,47 @@ pub fn set_tls_default_ciphers(
     _: &JSObject,
     ciphers: JSValue,
 ) -> JSValue {
-    // PORT NOTE: Zig signature is `fn(..., ciphers: jsc.JSValue)`; the
-    // un-gated `bun_jsc::rare_data::RareData::set_tls_default_ciphers()`
-    // currently takes `&[u8]`.
-    let _ = (global_this, ciphers);
-    todo!("blocked_on: bun_jsc::rare_data::RareData::set_tls_default_ciphers(JSValue)")
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let vm = unsafe { &mut *global_this.bun_vm() };
+    let Ok(sliced) = ciphers.to_slice(global_this) else {
+        return JSValue::ZERO;
+    };
+    vm.rare_data().set_tls_default_ciphers(sliced.slice());
+    JSValue::UNDEFINED
 }
 
 pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // `JSValkeyClient::create_no_js_no_pubsub` / `to_js` / `SubscriptionCtx::init`
-    // live in the still-gated `valkey_jsc::js_valkey_body` (`.classes.ts`-driven).
-    let _ = global_this;
-    todo!("blocked_on: crate::valkey_jsc::JSValkeyClient::create_no_js_no_pubsub + SubscriptionCtx::init")
+    use crate::valkey_jsc::JSValkeyClient;
+
+    let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
+        Ok(p) => p,
+        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(err) => {
+            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            return JSValue::ZERO;
+        }
+    };
+
+    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+
+    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
+    // hold the only mutable reference for field init below.
+    let valkey_mut = unsafe { &mut *valkey };
+    valkey_mut.this_value = jsc::JsRef::init_weak(as_js);
+    match SubscriptionCtx::init(valkey_mut) {
+        Ok(ctx) => valkey_mut._subscription_ctx = ctx,
+        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(err) => {
+            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            return JSValue::ZERO;
+        }
+    }
+
+    as_js
 }
 
 pub fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: bun_jsc::JsClass for crate::valkey_jsc::JSValkeyClient")
+    jsc::codegen::js::get_constructor::<crate::valkey_jsc::JSValkeyClient>(global_this)
 }
 
 pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2357,22 +2417,86 @@ pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+    use bun_standalone_graph::{StandaloneModuleGraph, File as GraphFile};
+    use crate::webcore::blob::Blob;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = unsafe { &*global_this.bun_vm() };
-    let Some(_graph) = vm.standalone_module_graph else {
+    let Some(graph) = vm.standalone_module_graph else {
         return JSValue::create_empty_array(global_this, 0);
     };
+    // PORT NOTE (layering): `VirtualMachine.standalone_module_graph` is
+    // type-erased to `NonNull<c_void>` so `bun_jsc` doesn't depend on
+    // `bun_standalone_graph`. Re-type here where both are in scope.
+    // SAFETY: the field is only ever assigned a `*mut StandaloneModuleGraph`
+    // (see `VirtualMachine::initWithModuleGraph` in the Zig spec).
+    let graph: &mut StandaloneModuleGraph =
+        unsafe { &mut *graph.as_ptr().cast::<StandaloneModuleGraph>() };
 
-    // `VirtualMachine.standalone_module_graph` is currently `Option<NonNull<c_void>>`
-    // (erased to break a crate cycle), and `bun_standalone_graph::File::blob()` /
-    // `WebCore::Blob::{new, dupe_with_content_type, name, to_js}` live behind the
-    // gated `bun_webcore` surface. Body deferred until both are typed.
-    todo!("blocked_on: bun_jsc::VirtualMachine.standalone_module_graph typed + bun_standalone_graph::File::blob + bun_jsc::WebCore::Blob::new")
+    let unsorted_files = graph.files.values_mut();
+    let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());
+    for (index, file) in unsorted_files.iter().enumerate() {
+        // Some % of people using `bun build --compile` want to obscure the source code
+        // We don't really do that right now, but exposing the output source
+        // code here as an easily accessible Blob is even worse for them.
+        // So let's omit any source code files from the list.
+        if !file.appears_in_embedded_files_array() {
+            continue;
+        }
+        sort_indices.push(index as u32);
+    }
+
+    let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
+    sort_indices
+        .sort_by(|a, b| if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
+            core::cmp::Ordering::Less
+        } else {
+            core::cmp::Ordering::Greater
+        });
+    for (i, index) in sort_indices.iter().enumerate() {
+        let file = &mut unsorted_files[*index as usize];
+        // PORT NOTE (layering): `File::blob()` lives in the Zig spec's
+        // `StandaloneModuleGraph.File`; that crate can't depend on
+        // `bun_runtime::webcore::Blob`, so build the blob here from the
+        // file's `cached_blob` slot / contents.
+        let input_blob = standalone_file_blob(file, global_this);
+        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
+        let blob = Blob::new(input_blob.dupe_with_content_type(true));
+        // SAFETY: `Blob::new` returned a fresh heap allocation.
+        unsafe { (*blob).name = (*input_blob).name.dupe_ref() };
+        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
+        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+    }
+
+    Ok(array)
+}
+
+/// `StandaloneModuleGraph.File.blob()` — ported here (rather than upstream in
+/// `bun_standalone_graph`) because `Blob`/`Store` live in `bun_runtime::webcore`
+/// and would otherwise create a crate cycle.
+fn standalone_file_blob(
+    file: &mut bun_standalone_graph::File,
+    global: &JSGlobalObject,
+) -> *mut crate::webcore::blob::Blob {
+    use crate::webcore::blob::{Blob, Store, StoreRef};
+    if let Some(cached) = file.cached_blob {
+        return cached.as_ptr().cast::<Blob>();
+    }
+    let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
+    let mut blob_body = Blob::init_with_store(store, global);
+    if let Some(mime) = bun_http_types::MimeType::by_loader(file.loader) {
+        // SAFETY: `mime.value` is a process-lifetime &'static str.
+        blob_body.content_type = mime.value.as_ptr() as *const _;
+        blob_body.content_type_len = mime.value.len() as u32;
+    }
+    blob_body.name = BunString::create_utf8(bun_paths::basename(file.name));
+    let blob = Blob::new(blob_body);
+    // SAFETY: `Blob::new` heap-allocates; never null.
+    file.cached_blob = core::ptr::NonNull::new(blob.cast());
+    blob
 }
 
 pub fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: bun_semver_jsc::SemverObject (crate not in bun_runtime deps)")
+    semver_object::create(global_this)
 }
 
 pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2381,10 +2505,7 @@ pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn string_width(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // The real impl lives in `bun_jsc::bun_string_jsc::js_get_string_width`
-    // (src/jsc/bun_string_jsc.rs:157) but that module is currently inside the
-    let _ = (global_object, call_frame);
-    todo!("blocked_on: bun_jsc::bun_string_jsc::js_get_string_width (gated)")
+    bun_jsc::bun_string_jsc::js_get_string_width(global_object, call_frame)
 }
 
 /// EnvironmentVariables is runtime defined.

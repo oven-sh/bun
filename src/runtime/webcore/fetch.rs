@@ -1798,14 +1798,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             });
             let s3_path = url_static.s3_path();
 
+            // Proxy href (if any) lives in the same buffer, immediately after `url`.
+            // SAFETY: see `url_static` SAFETY note above.
+            let proxy_url: Option<&[u8]> = if proxy.is_some() {
+                Some(unsafe {
+                    core::slice::from_raw_parts(
+                        owned_buffer.as_ptr().add(url_len),
+                        owned_buffer.len() - url_len,
+                    )
+                })
+            } else {
+                None
+            };
+
             let s3_stream = Box::new(S3StreamWrapper {
                 url: url_static,
                 url_proxy_buffer: owned_buffer,
                 promise,
                 global: global_this,
             });
-
-            let proxy_url: Option<&[u8]> = proxy.as_ref().map(|p| p.href);
             // Shim: Zig used `@ptrCast(&Wrapper.resolve)` to erase both the
             // `*@This()` payload type and the `JSTerminated!void` error union when
             // coercing to `?*const fn (S3UploadResult, *anyopaque) void`. In Rust we

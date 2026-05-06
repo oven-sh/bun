@@ -707,6 +707,87 @@ impl JSValue {
         let s = prop.to_bun_string(global)?;
         if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
     }
+    /// JSValue.zig `getOptional(ZigString.Slice, ...)` — own/prototype lookup,
+    /// `null`/`undefined` → `None`, otherwise coerce to a UTF-8 slice.
+    pub fn get_optional_slice(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bun_string::ZigStringSlice>> {
+        match self.get(global, property)? {
+            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+            _ => Ok(None),
+        }
+    }
+    /// JSValue.zig `getFunction` — `get(prop)`, filter to callable.
+    pub fn get_function(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        match self.get(global, property)? {
+            Some(v) if v.is_callable() => Ok(Some(v)),
+            _ => Ok(None),
+        }
+    }
+    /// JSValue.zig:1873 `getBooleanStrict` — missing/undefined → `None`;
+    /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.
+    pub fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bool>> {
+        let property = property.as_ref();
+        let Some(prop) = self.get(global, property)? else { return Ok(None) };
+        if prop.is_undefined() { return Ok(None); }
+        if prop.is_boolean() { return Ok(Some(prop == JSValue::TRUE)); }
+        // Zig: `jsc.Node.validators.throwErrInvalidArgType` — Node-style
+        // `ERR_INVALID_ARG_TYPE`. PORT NOTE: routed via `throw_invalid_arguments`
+        // until the validators helper is reachable from `bun_jsc`.
+        Err(global.throw_invalid_arguments(format_args!(
+            "The \"{}\" property must be of type boolean.",
+            alloc::string::String::from_utf8_lossy(property),
+        )))
+    }
+    /// JSValue.zig:1703 `toEnumFromMap` — validates `is_string`, looks up via
+    /// the supplied phf map, throws "must be one of …" on miss. The Zig
+    /// `one_of` list is a comptime concat over `enumFieldNames`; Rust callers
+    /// pass a `'static` literal.
+    pub fn to_enum_from_map<E: Copy>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<E> {
+        if !self.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} must be a string", property_name
+            )));
+        }
+        match crate::comptime_string_map_jsc::from_js(map, global, self)? {
+            Some(v) => Ok(v),
+            None => Err(global.throw_invalid_arguments(format_args!(
+                "{} must be one of {}", property_name, one_of
+            ))),
+        }
+    }
+    /// JSValue.zig:1748 `getOptionalEnum` — `get(prop)`, filter
+    /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
+    pub fn get_optional_enum_from_map<E: Copy>(
+        self,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<Option<E>> {
+        match self.get(global, property_name)? {
+            Some(v) if !v.is_empty_or_undefined_or_null() => {
+                Ok(Some(v.to_enum_from_map(global, property_name, map, one_of)?))
+            }
+            _ => Ok(None),
+        }
+    }
     pub fn get_array(self, global: &JSGlobalObject, property: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
         // JSValue.zig:1784 `getArray` → `coerceToArray`: `get(prop)`, require
@@ -1284,6 +1365,29 @@ impl JSValue {
         let name = bun_string::String::borrow_utf8(property_name.as_ref());
         match self.get_own(global, &name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
+            _ => Ok(None),
+        }
+    }
+    /// `JSValue.getOwnObject` — own-property lookup, filtered to objects.
+    pub fn get_own_object(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<*mut JSObject>> {
+        match self.get_own_truthy(global, property_name)? {
+            Some(v) => Ok(v.get_object()),
+            None => Ok(None),
+        }
+    }
+    /// `JSValue.getOwnArray` — own-property lookup (no prototype walk),
+    /// filtered to array values.
+    pub fn get_own_array(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        match self.get_own_truthy(global, property_name)? {
+            Some(v) if v.is_cell() && v.js_type().is_array() => Ok(Some(v)),
             _ => Ok(None),
         }
     }

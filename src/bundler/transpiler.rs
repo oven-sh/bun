@@ -2578,7 +2578,7 @@ impl<'a> Transpiler<'a> {
             (file_path_text, file_path_ext)
         };
 
-        let mut file_path = bun_paths::fs::Path::init(file_path_text);
+        let mut file_path = Fs::Path::init(file_path_text);
 
         // Step 1. Parse & scan
         let loader = self.options.loader(file_path_ext);
@@ -2706,7 +2706,7 @@ impl<'a> Transpiler<'a> {
                 // copy behaviour until the css feature is wired here.
                 let hashed_name = self
                     .linker
-                    .get_hashed_filename(&file_path, None)?;
+                    .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
                 let mut pathname =
                     Vec::with_capacity(hashed_name.len() + file_path_ext.len());
                 pathname.extend_from_slice(&hashed_name);
@@ -2732,7 +2732,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Napi => {
                 let hashed_name = self
                     .linker
-                    .get_hashed_filename(&file_path, None)?;
+                    .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
                 let mut pathname =
                     Vec::with_capacity(hashed_name.len() + file_path_ext.len());
                 pathname.extend_from_slice(&hashed_name);

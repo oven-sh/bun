@@ -370,60 +370,66 @@ for (await of [1, 2, 3]) {
 // ... }` used to point the CJS-TLA diagnostic squiggle at the dead `await`
 // because the parse pass used last-write-wins on `top_level_await_keyword`.
 // Now the visit pass overwrites it with the for-await's stored range.
-test.concurrent("bun build --format=cjs points a live for-await diagnostic at the live await, not a later dead one", async () => {
-  using dir = tempDir("issue-29243-for-await-drift", {
-    "entry.js": `for await (const x of someIter) {
+test.concurrent(
+  "bun build --format=cjs points a live for-await diagnostic at the live await, not a later dead one",
+  async () => {
+    using dir = tempDir("issue-29243-for-await-drift", {
+      "entry.js": `for await (const x of someIter) {
   console.log(x);
 }
 if (false) {
   await import("node:fs");
 }`,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // Column 5 points at the `a` of the live for-await's `await`; column 3
-  // would point at the dead `await` on line 5.
-  expect(stderr).toContain("entry.js:1:5");
-  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
-  expect(exitCode).not.toBe(0);
-});
+    // Column 5 points at the `a` of the live for-await's `await`; column 3
+    // would point at the dead `await` on line 5.
+    expect(stderr).toContain("entry.js:1:5");
+    expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
+    expect(exitCode).not.toBe(0);
+  },
+);
 
 // TypeScript `as` and `satisfies` are contextual infix operators that
 // appear immediately after an identifier. `await as SomeType` uses `await`
 // as an identifier; upgrading on the following `.t_identifier` would eat
 // `as` as the await operand and leave `SomeType` dangling.
-test.concurrent("bun build --format=cjs leaves TS `await as T` / `await satisfies T` identifier uses alone", async () => {
-  using dir = tempDir("issue-29243-ts-as-satisfies", {
-    "entry.ts": `var await = Promise.resolve(1);
+test.concurrent(
+  "bun build --format=cjs leaves TS `await as T` / `await satisfies T` identifier uses alone",
+  async () => {
+    using dir = tempDir("issue-29243-ts-as-satisfies", {
+      "entry.ts": `var await = Promise.resolve(1);
 const viaAs = await as Promise<number>;
 const viaSatisfies = await satisfies unknown;
 globalThis.output = [viaAs, viaSatisfies];`,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stdout).toContain("var await = Promise.resolve(1)");
-  expect(stdout).toContain("viaAs = await");
-  expect(stdout).toContain("viaSatisfies = await");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout).toContain("var await = Promise.resolve(1)");
+    expect(stdout).toContain("viaAs = await");
+    expect(stdout).toContain("viaSatisfies = await");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // `.entry` is overloaded: it marks both the true module scope and
 // TypeScript namespace / enum bodies. Namespace bodies set

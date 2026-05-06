@@ -193,9 +193,15 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
 
     // Encode the token
-    encoding
-        .to_node_encoding()
-        .encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
+    // `csrf::TokenFormat::to_node_encoding()` returns the cycle-broken
+    // `bun_string::NodeEncoding`, not `crate::node::Encoding` (which owns
+    // `encode_with_max_size`). Map locally to the runtime enum instead.
+    let node_encoding = match encoding {
+        csrf::TokenFormat::Base64 => NodeEncoding::Base64,
+        csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
+        csrf::TokenFormat::Hex => NodeEncoding::Hex,
+    };
+    node_encoding.encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
 }
 
 /// JS binding function for verifying CSRF tokens

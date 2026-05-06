@@ -404,9 +404,12 @@ impl FileReader {
         }
 
         // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
+        // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
+        // global); deref to call `event_loop()`.
         {
             let global = unsafe { &*(*self.parent()).global_this };
-            self.event_loop = EventLoopHandle::init(global.bun_vm().event_loop() as *mut ());
+            self.event_loop =
+                EventLoopHandle::init(unsafe { (*global.bun_vm()).event_loop() } as *mut ());
         }
 
         if was_lazy {
@@ -641,7 +644,7 @@ impl FileReader {
                             self.pending_view[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
                                 value: self.pending_value.get().unwrap_or(JSValue::ZERO),
-                                len: buffer.len() as u32, // @truncate
+                                len: buffer.len() as u64, // @truncate
                             });
                             drop(buffer); // clearAndFree
                         } else {
@@ -664,7 +667,7 @@ impl FileReader {
 
                     let into_array = streams::IntoArray {
                         value: self.pending_value.get().unwrap_or(JSValue::ZERO),
-                        len: buf.len() as u32, // @truncate
+                        len: buf.len() as u64, // @truncate
                     };
 
                     self.pending.result = if was_done {

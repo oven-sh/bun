@@ -21,6 +21,33 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+/// `bun_jsc::AnyPromise` (the lib.rs stub enum) lacks `resolve`/`reject`; the
+/// full impl lives in the gated `bun_jsc::any_promise::AnyPromise`. Shim by
+/// dispatching to the underlying `JSPromise` (`JSInternalPromise` subclasses
+/// `JSPromise` in C++, so the pointer cast is sound).
+trait AnyPromiseExt {
+    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
+    fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
+}
+impl AnyPromiseExt for bun_jsc::AnyPromise {
+    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let p: *mut bun_jsc::JSPromise = match self {
+            bun_jsc::AnyPromise::Normal(p) => p,
+            bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+        };
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        unsafe { Ok((*p).resolve(global, value)?) }
+    }
+    fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let p: *mut bun_jsc::JSPromise = match self {
+            bun_jsc::AnyPromise::Normal(p) => p,
+            bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+        };
+        // SAFETY: see `resolve`.
+        unsafe { Ok((*p).reject(global, Ok(value))?) }
+    }
+}
+
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed
 /// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
 /// through the aio hook registered by `crate::init()`.

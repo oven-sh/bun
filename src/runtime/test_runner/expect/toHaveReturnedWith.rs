@@ -16,8 +16,9 @@ pub fn to_have_returned_with(
 
     let this_value = frame.this();
     // defer this.postMatch(globalThis)
-    let _post_match = scopeguard::guard((), |_| this.post_match(global));
-    // TODO(port): scopeguard borrows `this`/`global`; if borrowck rejects, hoist post_match to each return path.
+    // PORT NOTE: reshaped for borrowck — scopeguard owns the `&mut Expect` and DerefMut's back to
+    // it, so post_match runs on every exit while the body re-borrows `this` through the guard.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let value: JSValue = this.get_value(global, this_value, "toHaveReturnedWith", "<green>expected<r>")?;
 

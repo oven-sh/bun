@@ -552,16 +552,18 @@ impl EditorContext {
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
         let mut basename_zbuf = PathBuffer::uninit();
         let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
-        bun_sys::File::write_file(tmpdir, basename_z, blob).map_err(Into::into)?;
+        // `?` converts bun_sys::Error → bun_core::Error directly; explicit
+        // .map_err(Into::into) became ambiguous once node_os::OsError added
+        // its own From<bun_sys::Error>.
+        bun_sys::File::write_file(tmpdir, basename_z, blob)?;
 
-        let opened =
-            bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0).map_err(Into::into)?;
+        let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
         let _close = scopeguard::guard((), |_| {
             let _ = opened.close();
         });
 
         let mut path_buf = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf).map_err(Into::into)?;
+        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;
 
         editor_.open(path, resolved, Some(line), Some(column))
     }

@@ -2022,7 +2022,7 @@ impl RootPackageId {
     /// Zig: `workspace_package_json_cache: WorkspacePackageJSONCache`.
     pub workspace_package_json_cache: package_manager::WorkspacePackageJSONCache,
     /// Zig: `postinstall_optimizer: PostinstallOptimizer`.
-    pub postinstall_optimizer: PostinstallOptimizer,
+    pub postinstall_optimizer: postinstall_optimizer::List,
     /// Zig: `subcommand: Subcommand`.
     pub subcommand: Subcommand,
     /// Zig: `update_requests: []UpdateRequest = &.{}`.

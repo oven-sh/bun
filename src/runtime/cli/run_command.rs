@@ -221,7 +221,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ONCE.call(|| {
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
-            let buf = unsafe { &mut *::::core::ptr::addr_of_mut!(SHELL_BUF) };
+            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(SHELL_BUF) };
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.

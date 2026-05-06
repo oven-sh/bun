@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    SystemError, VirtualMachine, ZigString,
+    SystemError, ZigString,
 };
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_aio::{self as Async, FilePoll, KeepAlive};
 use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};

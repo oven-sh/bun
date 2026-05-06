@@ -585,6 +585,24 @@ pub mod lockfile {
 pub mod package_manager {
     pub use super::PackageManager;
     pub use super::Subcommand;
+    /// Stub: `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
+    /// Real body gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
+    #[allow(non_snake_case)]
+    pub mod Options {
+        #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
+        pub enum LogLevel {
+            #[default] Default,
+            Verbose,
+            Silent,
+            Quiet,
+            DefaultNoProgress,
+            VerboseNoProgress,
+        }
+        pub fn open_global_dir(_explicit: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
+            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        }
+    }
+    pub use Options::LogLevel;
     /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
     /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     /// Only the `AuditLevel` enum is surfaced for `bun_runtime::cli::audit_command`.

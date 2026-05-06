@@ -1715,7 +1715,6 @@ pub struct StoredParseError {
 // TODO(port): jsc.Codegen.JSFrameworkFileSystemRouter — codegen wires toJS/fromJS via #[bun_jsc::JsClass]
 
 impl JSFrameworkRouter {
-    #[bun_jsc::host_fn]
     pub fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
         // TODO(port): jsc.JSObject.create with struct literal — needs builder API
         let obj = bun_jsc::JSObject::create_empty(global, 2)?;

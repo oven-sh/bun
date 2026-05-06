@@ -209,32 +209,43 @@ impl Stdio {
                 let fd = FdStdio::from_int(i).unwrap().fd();
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
-                        if let jsc::node::PathOrFd::Fd(store_fd) = store.data.file.pathlike {
-                            if store_fd == fd {
-                                break 'brk SpawnOptionsStdio::Inherit;
-                            }
+                        // Zig accesses `store.data.file` directly (union payload);
+                        // in Rust `data` is an enum so match the `File` arm.
+                        if let StoreData::File(ref file) = store.data {
+                            match file.pathlike {
+                                PathOrFileDescriptor::Fd(store_fd) => {
+                                    if store_fd == fd {
+                                        break 'brk SpawnOptionsStdio::Inherit;
+                                    }
 
-                            if let Some(tag) = store_fd.stdio_tag() {
-                                match tag {
-                                    FdStdio::StdIn => {
-                                        if i == 1 || i == 2 {
-                                            return ResultT::Err(ToSpawnOptsError::StdinUsedAsOut);
+                                    if let Some(tag) = store_fd.stdio_tag() {
+                                        match tag {
+                                            FdStdio::StdIn => {
+                                                if i == 1 || i == 2 {
+                                                    return ResultT::Err(
+                                                        ToSpawnOptsError::StdinUsedAsOut,
+                                                    );
+                                                }
+                                            }
+                                            FdStdio::StdOut | FdStdio::StdErr => {
+                                                if i == 0 {
+                                                    return ResultT::Err(
+                                                        ToSpawnOptsError::OutUsedAsStdin,
+                                                    );
+                                                }
+                                            }
                                         }
                                     }
-                                    FdStdio::StdOut | FdStdio::StdErr => {
-                                        if i == 0 {
-                                            return ResultT::Err(ToSpawnOptsError::OutUsedAsStdin);
-                                        }
-                                    }
+
+                                    break 'brk SpawnOptionsStdio::Pipe(store_fd);
+                                }
+                                PathOrFileDescriptor::Path(ref path) => {
+                                    break 'brk SpawnOptionsStdio::Path(
+                                        path.slice().to_vec().into_boxed_slice(),
+                                    );
                                 }
                             }
-
-                            break 'brk SpawnOptionsStdio::Pipe(store_fd);
                         }
-
-                        break 'brk SpawnOptionsStdio::Path(
-                            store.data.file.pathlike.path().slice().to_vec().into_boxed_slice(),
-                        );
                     }
                 }
 

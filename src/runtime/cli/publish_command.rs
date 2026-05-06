@@ -197,7 +197,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             } else {
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(size, bun_fmt::SizeOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(size, bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
                 ));
             }
@@ -248,7 +248,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 if manager.options.publish_config.access.is_none() {
                     if let Some(access) = config.get_string(b"access")? {
                         manager.options.publish_config.access = Some(
-                            install::package_manager::Options::Access::from_str(access.0).unwrap_or_else(|| {
+                            Access::from_str(access.0).unwrap_or_else(|| {
                                 Output::err_generic(format_args!(
                                     "invalid `access` value: '{}'",
                                     bstr::BStr::new(access.0),

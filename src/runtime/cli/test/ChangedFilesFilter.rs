@@ -19,13 +19,16 @@ use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, which, Global, Output};
 use bun_bundler::bun_fs::FileSystem;
+use bun_event_loop::AnyEventLoop;
 use bun_js_parser::Index;
-use bun_jsc::{self as jsc, EventLoopHandle, VirtualMachine};
+use bun_jsc::{self as jsc, EventLoopHandle};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger as logger;
-use bun_paths::{self, PathBuffer, SEP};
+use bun_paths::{self, resolve_path, platform, PathBuffer, SEP};
 use bun_str::{strings, PathString, ZStr};
 use bun_sys as sys;
 
+use crate::api::bun_process::sync as spawn_sync;
 use crate::Command;
 
 // PORT NOTE: named `Result` in Zig; kept verbatim for side-by-side diffing.
@@ -129,7 +132,7 @@ pub fn filter<'a>(
     scan_transpiler.options.target = bun_bundler::options::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
-    scan_transpiler.options.packages = bun_bundler::options::Packages::External;
+    scan_transpiler.options.packages = bun_bundler::options::PackagesOption::External;
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
     scan_transpiler.options.ignore_module_resolution_errors = true;

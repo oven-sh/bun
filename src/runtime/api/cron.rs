@@ -1897,26 +1897,6 @@ pub enum ClearMode {
 // No JSC dependencies — operate on `&[u8]` and `cron_parser::CronExpression`.
 // ============================================================================
 
- // duplicate now lives inside _jsc_gated; keep gated to avoid double-def
-fn _find_crontab_dup() -> Option<*const core::ffi::c_char> {
-    #[cfg(windows)]
-    {
-        return None;
-    }
-    #[cfg(not(windows))]
-    {
-        // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
-        // TODO(port): static mut PathBuffer is unsound under aliasing; safe here
-        // because callers serialize on the JS thread.
-        static mut BUF: PathBuffer = PathBuffer::ZEROED;
-        let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        // SAFETY: single-threaded JS access.
-        let buf = unsafe { &mut BUF };
-        let found = bun_core::which(buf, path_env, b"", b"crontab")?;
-        Some(found.as_ptr().cast())
-    }
-}
-
 /// Get the current user ID portably.
 pub fn get_uid() -> u32 {
     #[cfg(unix)]

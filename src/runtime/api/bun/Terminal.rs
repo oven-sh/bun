@@ -824,61 +824,64 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             // TODO(port): Zig used struct-literal flag init on std.posix tc_iflag_t.
             // Rust libc termios uses raw c_uint bitfields; Phase B should map these
             // to bun_sys::posix::termios constants. Preserving intent as bit-ORs.
-            t.c_iflag = sys::posix::ICRNL // Map CR to NL on input
-                | sys::posix::IXON // Enable XON/XOFF flow control on output
-                | sys::posix::IXANY // Any character restarts output
-                | sys::posix::IMAXBEL // Ring bell on input queue full
-                | sys::posix::BRKINT; // Signal interrupt on break
+            t.c_iflag = libc::ICRNL // Map CR to NL on input
+                | libc::IXON // Enable XON/XOFF flow control on output
+                | libc::IXANY // Any character restarts output
+                | libc::IMAXBEL // Ring bell on input queue full
+                | libc::BRKINT; // Signal interrupt on break
             // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
             // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                t.c_iflag |= sys::posix::IUTF8;
+                t.c_iflag |= libc::IUTF8;
             }
 
             // Output flags: standard terminal output processing
-            t.c_oflag = sys::posix::OPOST // Enable output processing
-                | sys::posix::ONLCR; // Map NL to CR-NL on output
+            t.c_oflag = libc::OPOST // Enable output processing
+                | libc::ONLCR; // Map NL to CR-NL on output
 
             // Control flags: 8-bit chars, enable receiver
-            t.c_cflag = sys::posix::CREAD // Enable receiver
-                | sys::posix::CS8 // 8-bit characters
-                | sys::posix::HUPCL; // Hang up on last close
+            t.c_cflag = libc::CREAD // Enable receiver
+                | libc::CS8 // 8-bit characters
+                | libc::HUPCL; // Hang up on last close
 
             // Local flags: canonical mode with echo and signals
-            t.c_lflag = sys::posix::ICANON // Canonical input (line editing)
-                | sys::posix::ISIG // Enable signals (INTR, QUIT, SUSP)
-                | sys::posix::IEXTEN // Enable extended input processing
-                | sys::posix::ECHO // Echo input characters
-                | sys::posix::ECHOE // Echo erase as backspace-space-backspace
-                | sys::posix::ECHOK // Echo NL after KILL
-                | sys::posix::ECHOKE // Visual erase for KILL
-                | sys::posix::ECHOCTL; // Echo control chars as ^X
+            t.c_lflag = libc::ICANON // Canonical input (line editing)
+                | libc::ISIG // Enable signals (INTR, QUIT, SUSP)
+                | libc::IEXTEN // Enable extended input processing
+                | libc::ECHO // Echo input characters
+                | libc::ECHOE // Echo erase as backspace-space-backspace
+                | libc::ECHOK // Echo NL after KILL
+                | libc::ECHOKE // Visual erase for KILL
+                | libc::ECHOCTL; // Echo control chars as ^X
 
             // Control characters - standard defaults
-            t.c_cc[sys::posix::V::EOF as usize] = 4; // Ctrl-D
-            t.c_cc[sys::posix::V::EOL as usize] = 0; // Disabled
-            t.c_cc[sys::posix::V::ERASE as usize] = 0x7f; // DEL (backspace)
-            t.c_cc[sys::posix::V::WERASE as usize] = 23; // Ctrl-W
-            t.c_cc[sys::posix::V::KILL as usize] = 21; // Ctrl-U
-            t.c_cc[sys::posix::V::REPRINT as usize] = 18; // Ctrl-R
-            t.c_cc[sys::posix::V::INTR as usize] = 3; // Ctrl-C
-            t.c_cc[sys::posix::V::QUIT as usize] = 0x1c; // Ctrl-backslash
-            t.c_cc[sys::posix::V::SUSP as usize] = 26; // Ctrl-Z
-            t.c_cc[sys::posix::V::START as usize] = 17; // Ctrl-Q (XON)
-            t.c_cc[sys::posix::V::STOP as usize] = 19; // Ctrl-S (XOFF)
-            t.c_cc[sys::posix::V::LNEXT as usize] = 22; // Ctrl-V
-            t.c_cc[sys::posix::V::DISCARD as usize] = 15; // Ctrl-O
-            t.c_cc[sys::posix::V::MIN as usize] = 1; // Min chars for non-canonical read
-            t.c_cc[sys::posix::V::TIME as usize] = 0; // Timeout for non-canonical read
+            t.c_cc[libc::VEOF] = 4; // Ctrl-D
+            t.c_cc[libc::VEOL] = 0; // Disabled
+            t.c_cc[libc::VERASE] = 0x7f; // DEL (backspace)
+            t.c_cc[libc::VWERASE] = 23; // Ctrl-W
+            t.c_cc[libc::VKILL] = 21; // Ctrl-U
+            t.c_cc[libc::VREPRINT] = 18; // Ctrl-R
+            t.c_cc[libc::VINTR] = 3; // Ctrl-C
+            t.c_cc[libc::VQUIT] = 0x1c; // Ctrl-backslash
+            t.c_cc[libc::VSUSP] = 26; // Ctrl-Z
+            t.c_cc[libc::VSTART] = 17; // Ctrl-Q (XON)
+            t.c_cc[libc::VSTOP] = 19; // Ctrl-S (XOFF)
+            t.c_cc[libc::VLNEXT] = 22; // Ctrl-V
+            t.c_cc[libc::VDISCARD] = 15; // Ctrl-O
+            t.c_cc[libc::VMIN] = 1; // Min chars for non-canonical read
+            t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
             // TODO(port): Zig assigned `.B38400` to ispeed/ospeed enum fields;
             // libc termios uses cfsetispeed/cfsetospeed. Phase B: pick bun_sys API.
-            sys::posix::cfsetispeed(&mut t, sys::posix::B38400);
-            sys::posix::cfsetospeed(&mut t, sys::posix::B38400);
+            // SAFETY: `t` is a fully-initialized termios from tcgetattr.
+            unsafe {
+                libc::cfsetispeed(&mut t, libc::B38400);
+                libc::cfsetospeed(&mut t, libc::B38400);
+            }
 
-            let _ = sys::posix::tcsetattr(slave_fd, sys::posix::TCSANOW, &t);
+            let _ = sys::posix::tcsetattr(slave_fd, sys::posix::TCSA::Now, &t);
         }
         Err(err) => {
             // tcgetattr failed, log in debug builds but continue without modifying termios

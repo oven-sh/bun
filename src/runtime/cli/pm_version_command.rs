@@ -730,7 +730,7 @@ impl PmVersionCommand {
             cwd,
             envp: None,
             #[cfg(windows)]
-            windows: crate::process::WindowsSpawnOptions {
+            windows: crate::api::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -777,7 +777,7 @@ impl PmVersionCommand {
             cwd,
             envp: None,
             #[cfg(windows)]
-            windows: crate::process::WindowsSpawnOptions {
+            windows: crate::api::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -845,7 +845,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::process::WindowsSpawnOptions {
+            windows: crate::api::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -891,7 +891,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::process::WindowsSpawnOptions {
+            windows: crate::api::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),
@@ -929,7 +929,7 @@ impl PmVersionCommand {
             stdin: Stdio::Ignore,
             envp: None,
             #[cfg(windows)]
-            windows: crate::process::WindowsSpawnOptions {
+            windows: crate::api::process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(
                     None, None,
                 )),

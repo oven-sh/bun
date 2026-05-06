@@ -1832,7 +1832,7 @@ impl DevServer<'_> {
     fn on_framework_request_with_bundle(
         &mut self,
         route_bundle_index: route_bundle::Index,
-        req: SavedRequest::Union,
+        req: SavedRequestUnion,
         resp: AnyResponse,
     ) -> JsResult<()> {
         let route_bundle = self.route_bundle_ptr(route_bundle_index);

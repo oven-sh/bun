@@ -638,7 +638,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_Archive => super::get_archive_constructor,
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_CSRF => super::get_csrf_object,
-        BunObject_lazyPropCb_FFI => FFIObject::getter,
+        BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,

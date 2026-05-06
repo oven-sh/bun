@@ -672,7 +672,10 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             // `OutputReader = BufferedReader` in the install crate — same
             // entry point as `BUFFERED_READER`, separate tag for ownership.
-            let h = owner_as!(bun_install::lifecycle_script_runner::OutputReader);
+            // The real `bun_install::lifecycle_script_runner` is gated; the
+            // active stub re-exports only `LifecycleScriptSubprocess`, so name
+            // the underlying type directly (spec lifecycle_script_runner.zig:48).
+            let h = owner_as!(bun_io::BufferedReader);
             bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup);
         }
 

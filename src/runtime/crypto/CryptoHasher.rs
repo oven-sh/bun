@@ -1125,7 +1125,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // which cannot resolve to an associated fn inside an `impl` block. The
+    // constructor shim is wired by per-monomorphization `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {
         Ok(Box::new(Self {
             hashing: H::init(),
@@ -1136,7 +1138,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     pub fn getter(global: &JSGlobalObject, _: &JSObject) -> JSValue {
         // TODO(port): `@field(jsc.Codegen, "JS" ++ name).getConstructor(global)` —
         // codegen accessor is per-monomorphization; Phase B wires via #[bun_jsc::JsClass].
-        bun_jsc::codegen::get_constructor::<Self>(global)
+        let _ = global;
+        todo!("blocked_on: bun_jsc::JsClass generic-type support (StaticCryptoHasher<H>)")
     }
 
     #[bun_jsc::host_fn(method)]

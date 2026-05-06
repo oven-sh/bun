@@ -1356,8 +1356,10 @@ impl WindowsNamedPipeListeningContext {
         let mut this = Box::new(WindowsNamedPipeListeningContext {
             // SAFETY: all-zero is a valid uv::Pipe (C struct)
             uv_pipe: unsafe { core::mem::zeroed::<uv::Pipe>() },
-            global_this: global_this as *const _ as *mut JSGlobalObject,
-            vm: global_this.bun_vm() as *const _ as *mut VirtualMachine,
+            global_this: global_this as *const JSGlobalObject,
+            // SAFETY: bun_vm() returns *mut with mutable provenance straight
+            // from C++ FFI (JSC__JSGlobalObject__bunVM); no &->*mut laundering.
+            vm: global_this.bun_vm(),
             listener: Some(NonNull::from(listener)),
             ctx: None,
         });

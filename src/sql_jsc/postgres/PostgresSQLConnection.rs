@@ -1331,15 +1331,20 @@ pub struct Reader {
 
 impl Reader {
     #[inline]
-    fn conn(&self) -> &mut PostgresSQLConnection {
-        // SAFETY: see struct-level PORT NOTE — connection outlives the Reader and
-        // read_buffer is disjoint from any concurrent write_buffer access.
-        unsafe { &mut *self.connection }
+    fn read_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: see struct-level PORT NOTE — connection outlives the Reader.
+        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
+        // `&mut PostgresSQLConnection`: `on()` already holds `&mut self` to the same
+        // struct, so a full `&mut *self.connection` would be aliased UB. `read_buffer`
+        // and `last_message_start` are the only fields touched here, and `on()` never
+        // accesses them through its `&mut self` while a Reader is live.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
     }
 
     pub fn mark_message_start(&mut self) {
-        let conn = self.conn();
-        conn.last_message_start = conn.read_buffer.head;
+        let head = self.read_buffer().head;
+        // SAFETY: same justification as `read_buffer()` — disjoint field, raw projection.
+        unsafe { *core::ptr::addr_of_mut!((*self.connection).last_message_start) = head };
     }
 
     pub fn ensure_length(&self, count: usize) -> bool {
@@ -1347,22 +1352,21 @@ impl Reader {
     }
 
     pub fn peek(&self) -> &[u8] {
-        self.conn().read_buffer.remaining()
+        self.read_buffer().remaining()
     }
 
     pub fn skip(&mut self, count: usize) {
-        let conn = self.conn();
-        conn.read_buffer.head =
-            (conn.read_buffer.head + (count as u32)).min(conn.read_buffer.byte_list.len);
+        let buf = self.read_buffer();
+        buf.head = (buf.head + (count as u32)).min(buf.byte_list.len);
     }
 
     pub fn ensure_capacity(&self, count: usize) -> bool {
-        let conn = self.conn();
-        (conn.read_buffer.head as usize) + count <= (conn.read_buffer.byte_list.len as usize)
+        let buf = self.read_buffer();
+        (buf.head as usize) + count <= (buf.byte_list.len as usize)
     }
 
     pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
-        let remaining = self.conn().read_buffer.remaining();
+        let remaining = self.read_buffer().remaining();
         if (remaining.len() as usize) < count {
             return Err(AnyPostgresError::ShortRead);
         }
@@ -1375,7 +1379,7 @@ impl Reader {
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
-        let remain = self.conn().read_buffer.remaining();
+        let remain = self.read_buffer().remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
             let slice = &remain[..zero as usize] as *const [u8];

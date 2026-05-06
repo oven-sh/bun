@@ -174,6 +174,9 @@ impl File {
 
     extern "C" fn on_close_complete(fs: *mut uv::fs_t) {
         // SAFETY: fs points to the .fs field of a Box<File> allocated in open_file().
+        // Unique ownership: by the time libuv fires this callback the parent has
+        // detached (fs.data == null) and no Rust `&mut File` is live; this callback
+        // is the sole owner and reclaims the Box below.
         let file = unsafe { &mut *File::from_fs(fs) };
         debug_assert!(file.state == FileState::Closing);
         file.fs.deinit();
@@ -203,10 +206,11 @@ impl Source {
         }
     }
 
-    pub fn get_handle(&self) -> *mut uv::Handle {
+    pub fn get_handle(&mut self) -> *mut uv::Handle {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
-            Source::Pipe(pipe) => (pipe.as_ref() as *const Pipe as *mut Pipe).cast(),
+            // `&mut self` so the returned `*mut` carries write provenance (Zig: `getHandle` returns `*uv.Handle`).
+            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }

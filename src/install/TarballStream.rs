@@ -244,7 +244,9 @@ impl TarballStream {
         if self.draining.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.package_manager
+        // SAFETY: `package_manager` outlives this stream (it owns the thread
+        // pool that runs us); Zig stores `*PackageManager`.
+        unsafe { &*self.package_manager }
             .thread_pool
             .schedule(thread_pool::Batch::from(&mut self.drain_task));
     }
@@ -402,7 +404,11 @@ impl TarballStream {
             self.open_destination()?;
         }
 
-        // SAFETY: archive is Some after open_archive() succeeds.
+        // SAFETY: `archive` is Some after `open_archive()` succeeds and points
+        // to a libarchive heap allocation disjoint from `*self`. Only the
+        // single active drain task touches it (guarded by `draining`), so
+        // this `&mut` is unique; nothing below reads or writes
+        // `self.archive` while it is live.
         let archive = unsafe { &mut *self.archive.unwrap() };
 
         loop {

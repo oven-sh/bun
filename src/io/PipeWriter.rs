@@ -330,25 +330,13 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 }
 
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
+    /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
+    /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
+    /// would alias the live `&mut self` under Stacked Borrows. All vtable
+    /// dispatch goes through `Parent::method(ptr, ..)` which takes `*mut Self`.
     #[inline]
-    fn parent(&mut self) -> &mut Parent {
-        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
-        // this writer.
-        //
-        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
-        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
-        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
-        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
-        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
-        // a fresh Unique from the stored raw pointer pops the caller's
-        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
-        // a known port-level unsoundness. Callers MUST treat the returned
-        // reference as a leaf call into the vtable only — do not retain it, do
-        // not access the writer subobject through it, and prefer ordering so it
-        // is the last use of `self` in the basic block.
-        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
-        // so no `&mut Parent` is ever materialized while `&mut self` is live.
-        unsafe { &mut *self.parent }
+    fn parent(&self) -> *mut Parent {
+        self.parent
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -357,7 +345,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     pub fn create_poll(&mut self, fd: Fd) -> FilePoll {
         FilePoll::init(
-            self.parent().event_loop(),
+            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+            unsafe { Parent::event_loop(self.parent()) },
             fd,
             (),
             self as *mut _ as *mut c_void,
@@ -380,7 +369,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     fn _on_error(&mut self, err: sys::Error) {
         debug_assert!(!err.is_retry());
 
-        self.parent().on_error(err);
+        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+        unsafe { Parent::on_error(self.parent(), err) };
 
         self.close();
     }
@@ -1246,11 +1236,18 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
 }
 
 /// Common parent requirements for Windows writers (event loop access + ref counting).
+///
+/// All methods take `*mut Self` (not `&self`) because the writer is an
+/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// Materializing `&Parent`/`&mut Parent` while a `&mut writer` is live would
+/// alias under Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that
+/// with raw pointers and never form a Rust reference to `Parent` inside the
+/// writer.
 #[cfg(windows)]
 pub trait WindowsWriterParent {
-    fn loop_(&self) -> *mut uv::Loop;
-    fn ref_(&self);
-    fn deref(&self);
+    fn loop_(this: *mut Self) -> *mut uv::Loop;
+    fn ref_(this: *mut Self);
+    fn deref(this: *mut Self);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1258,15 +1255,17 @@ pub trait WindowsWriterParent {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Function table for `WindowsBufferedWriter`.
+///
+/// All methods take `*mut Self` — see [`WindowsWriterParent`] for rationale.
 #[cfg(windows)]
 pub trait WindowsBufferedWriterParent: WindowsWriterParent {
-    fn on_write(&mut self, amount: usize, status: WriteStatus);
-    fn on_error(&mut self, err: sys::Error);
+    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_CLOSE: bool;
-    fn on_close(&mut self) {}
-    fn get_buffer(&self) -> &[u8];
+    fn on_close(_this: *mut Self) {}
+    fn get_buffer<'a>(this: *mut Self) -> &'a [u8];
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(&mut self) {}
+    fn on_writable(_this: *mut Self) {}
 }
 
 #[cfg(windows)]
@@ -1645,14 +1644,15 @@ pub enum WriteKind {
 
 /// Function table for `WindowsStreamingWriter`.
 #[cfg(windows)]
+/// All methods take `*mut Self` — see [`WindowsWriterParent`] for rationale.
 pub trait WindowsStreamingWriterParent: WindowsWriterParent {
     /// reports the amount written and done means that we dont have any
     /// other pending data to send (but we may send more data)
-    fn on_write(&mut self, amount: usize, status: WriteStatus);
-    fn on_error(&mut self, err: sys::Error);
+    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_WRITABLE: bool;
-    fn on_writable(&mut self) {}
-    fn on_close(&mut self);
+    fn on_writable(_this: *mut Self) {}
+    fn on_close(this: *mut Self);
 }
 
 #[cfg(windows)]

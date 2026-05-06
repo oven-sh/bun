@@ -1350,13 +1350,13 @@ pub mod js_bundler {
                         val = ZigString::from_utf8(b"\"\"");
                     }
 
-                    let key = prop.to_owned_slice()?;
+                    let key = prop.to_owned_slice();
 
                     // value is always cloned
                     let value = val.to_slice();
 
                     // .insert clones the value, but not the key
-                    this.define.insert(key, value.slice())?;
+                    this.define.insert(&key, value.slice())?;
                     drop(value);
                 }
             }

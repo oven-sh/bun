@@ -3067,23 +3067,28 @@ pub mod JSZstd {
             Box::into_raw(Box::new(init))
         }
 
-        pub fn run_task(task: *mut jsc::WorkPoolTask) {
+        /// SAFETY: `task` must point to the `task` field of a live `ZstdJob`
+        /// scheduled via `WorkPool::schedule` from `ZstdJob::create`.
+        pub unsafe fn run_task(task: *mut jsc::WorkPoolTask) {
             // SAFETY: task points to ZstdJob.task; recover parent via offset_of.
-            let job: *mut ZstdJob = unsafe {
+            let job_ptr: *mut ZstdJob = unsafe {
                 (task as *mut u8)
                     .sub(core::mem::offset_of!(ZstdJob, task))
                     .cast::<ZstdJob>()
             };
-            let job = unsafe { &mut *job };
-            let _enqueue = scopeguard::guard((), |_| {
-                // SAFETY: vm.event_loop is a self-pointer into the VM; the loop
-                // outlives the job (vm is &'static).
+            let _enqueue = scopeguard::guard(job_ptr, |job_ptr| {
+                // SAFETY: job_ptr is the unique live ZstdJob; vm.event_loop is a
+                // self-pointer into the VM and the loop outlives the job
+                // (vm is &'static).
                 unsafe {
+                    let job = &mut *job_ptr;
                     (*job.vm.event_loop).enqueue_task_concurrent(
                         jsc::ConcurrentTask::create(job.any_task.task()),
                     );
                 }
             });
+            // SAFETY: caller contract — job_ptr is the unique live ZstdJob.
+            let job = unsafe { &mut *job_ptr };
 
             let input = job.buffer.slice();
 

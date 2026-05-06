@@ -140,7 +140,7 @@ pub static Bun__version_sha: CStrPtr =
 mod _impl {
 use core::ffi::{c_char, c_void};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc};
 use bun_jsc::zig_string::ZigString;
 use bun_str::{self as bstr_, String as BunString, strings};
 use bun_sys as Syscall;
@@ -152,9 +152,19 @@ unsafe extern "C" {
     fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
 }
 
+/// Local shim for `bun.String.toJSArray` — `bun_jsc::bun_string_jsc::to_js_array`
+/// (which wraps `BunString__createArray`) is gated behind `#[cfg(any())]` upstream.
+fn bun_string_to_js_array(global: &JSGlobalObject, items: &[BunString]) -> JsResult<JSValue> {
+    let array = JSValue::create_empty_array(global, items.len())?;
+    for (i, s) in items.iter().enumerate() {
+        array.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
+    }
+    Ok(array)
+}
+
 // ───────────────────────────── title ─────────────────────────────
 
-static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::default();
+static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
 
 #[unsafe(export_name = "Bun__Process__getTitle")]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {

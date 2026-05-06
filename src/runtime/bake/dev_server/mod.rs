@@ -564,6 +564,26 @@ impl HotReloadEvent {
         self.dirs.clear_retaining_capacity();
         self.extra_files.clear();
     }
+
+    /// Spec DevServer.zig `HotReloadEvent.run` — main-thread side of the
+    /// watcher → DevServer hand-off. Full body lives in the gated draft
+    /// (calls `DevServer::on_hot_reload_event` which touches the bundler).
+    pub fn run(_this: &mut HotReloadEvent) {
+        todo!("blocked_on: bake::DevServer::on_hot_reload_event")
+    }
+}
+
+impl DevServer {
+    /// Spec DevServer.zig `emitMemoryVisualizerMessageTimer` — periodic
+    /// memory-visualizer push to connected HMR sockets. Called from the
+    /// high-tier `EventLoopTimer` dispatch with the raw `*EventLoopTimer`
+    /// (Zig recovers `*DevServer` via `@fieldParentPtr`).
+    pub fn emit_memory_visualizer_message_timer(
+        _t: &mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        _now: &bun_event_loop::EventLoopTimer::Timespec,
+    ) {
+        todo!("blocked_on: bake::DevServer::emit_memory_visualizer_message_timer body")
+    }
 }
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s

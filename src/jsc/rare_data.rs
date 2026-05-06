@@ -10,7 +10,8 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_aio::{self as Async};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
-use bun_core::{Mutex, Output};
+use bun_core::Output;
+type Mutex = bun_core::Mutex<()>;
 use bun_event_loop::MiniEventLoop::STDIO_BLOB_STORE_CTOR;
 use bun_http::MimeType as mime_type;
 use bun_paths::MAX_PATH_BYTES;
@@ -564,8 +565,7 @@ impl AWSSignatureCache {
     }
 
     pub fn get(&mut self, numeric_day: u64, key: &[u8]) -> Option<&[u8]> {
-        self.lock.lock();
-        let _g = scopeguard::guard((), |_| self.lock.unlock());
+        let _g = self.lock.lock();
         if self.date == 0 {
             return None;
         }
@@ -581,8 +581,7 @@ impl AWSSignatureCache {
     }
 
     pub fn set(&mut self, numeric_day: u64, key: &[u8], value: [u8; DIGESTED_HMAC_256_LEN]) {
-        self.lock.lock();
-        let _g = scopeguard::guard((), |_| self.lock.unlock());
+        let _g = self.lock.lock();
         if self.date == 0 {
             self.cache = StringArrayHashMap::new();
         } else if self.date != numeric_day {

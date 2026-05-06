@@ -2499,6 +2499,114 @@ pub fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     semver_object::create(global_this)
 }
 
+/// `Bun.semver` — port of `bun_semver_jsc::SemverObject` against the real
+/// `bun_jsc` types. The standalone `bun_semver_jsc` crate currently uses a
+/// local `jsc_stub` (layout-compatible newtypes) so adding it as a direct dep
+/// would be the banned local-extern pattern at the call site; instead the
+/// (small) `create`/`order`/`satisfies` bodies are ported here verbatim.
+pub mod semver_object {
+    use super::*;
+    use core::cmp::Ordering;
+    use bun_semver::{query, SlicedString, Version};
+
+    pub fn create(global: &JSGlobalObject) -> JSValue {
+        let object = JSValue::create_empty_object(global, 2);
+        object.put(
+            global,
+            b"satisfies",
+            JSFunction::create(global, "satisfies", bun_jsc::to_js_host_fn(satisfies), 2, Default::default()),
+        );
+        object.put(
+            global,
+            b"order",
+            JSFunction::create(global, "order", bun_jsc::to_js_host_fn(order), 2, Default::default()),
+        );
+        object
+    }
+
+    pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments_old::<2>();
+        let arguments = arguments.slice();
+        if arguments.len() < 2 {
+            return Err(global.throw("Expected two arguments"));
+        }
+
+        let left_string = arguments[0].to_js_string(global)?;
+        let right_string = arguments[1].to_js_string(global)?;
+        let left = left_string.to_slice(global);
+        let right = right_string.to_slice(global);
+
+        if !strings::is_all_ascii(left.slice()) || !strings::is_all_ascii(right.slice()) {
+            return Ok(JSValue::js_number(0));
+        }
+
+        let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
+        let right_result = Version::parse(SlicedString::init(right.slice(), right.slice()));
+
+        if !left_result.valid {
+            return Err(global.throw(format_args!(
+                "Invalid SemVer: {}\n",
+                bstr::BStr::new(left.slice()),
+            )));
+        }
+        if !right_result.valid {
+            return Err(global.throw(format_args!(
+                "Invalid SemVer: {}\n",
+                bstr::BStr::new(right.slice()),
+            )));
+        }
+
+        let left_version = left_result.version.max();
+        let right_version = right_result.version.max();
+
+        Ok(match left_version.order_without_build(right_version, left.slice(), right.slice()) {
+            Ordering::Equal => JSValue::js_number(0),
+            Ordering::Greater => JSValue::js_number(1),
+            Ordering::Less => JSValue::js_number(-1),
+        })
+    }
+
+    pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments_old::<2>();
+        let arguments = arguments.slice();
+        if arguments.len() < 2 {
+            return Err(global.throw("Expected two arguments"));
+        }
+
+        let left_string = arguments[0].to_js_string(global)?;
+        let right_string = arguments[1].to_js_string(global)?;
+        let left = left_string.to_slice(global);
+        let right = right_string.to_slice(global);
+
+        if !strings::is_all_ascii(left.slice()) || !strings::is_all_ascii(right.slice()) {
+            return Ok(JSValue::FALSE);
+        }
+
+        let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
+        if left_result.wildcard != query::token::Wildcard::None {
+            return Ok(JSValue::FALSE);
+        }
+
+        let left_version = left_result.version.min();
+
+        let right_group = match query::parse(
+            right.slice(),
+            SlicedString::init(right.slice(), right.slice()),
+        ) {
+            Ok(g) => g,
+            Err(_) => return Err(global.throw_out_of_memory()),
+        };
+
+        if let Some(right_version) = right_group.get_exact_version() {
+            return Ok(JSValue::js_boolean(left_version.eql(right_version)));
+        }
+
+        Ok(JSValue::js_boolean(
+            right_group.satisfies(left_version, right.slice(), left.slice()),
+        ))
+    }
+}
+
 pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     UnsafeObject::create(global_this)
 }

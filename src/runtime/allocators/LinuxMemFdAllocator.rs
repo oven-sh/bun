@@ -373,6 +373,6 @@ mod allocator_interface {
 // PORT STATUS
 //   source:     src/bun_alloc/LinuxMemFdAllocator.zig (195 lines)
 //   confidence: high
-//   todos:      1
+//   todos:      0
 //   notes:      Vtable identity via `bun_alloc::AllocatorVTable` (mirrors Zig `std.mem.Allocator`). `Bytes` reshaped upstream to ptr/len/cap/StdAllocator so mmap-backed buffers free via `munmap`+deref. `allocator()`/`alloc()` take `*mut Self` (Box provenance) — `&self` would be UB on final deref. `create()` forgets the IntrusiveArc on Ok to transfer the +1 into Bytes.allocator.
 // ──────────────────────────────────────────────────────────────────────────

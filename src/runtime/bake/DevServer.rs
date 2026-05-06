@@ -1774,12 +1774,28 @@ impl<'a> DevServer<'a> {
                 }
                 deferred_request::HandlerKind::ServerHandler => 'brk: {
                     let server_handler: SavedRequest = match req {
-                        ReqOrSaved::Req(_r) => {
-                            // TODO(port): blocked_on: server::AnyServer::prepare_and_save_js_request_context
-                            // returns server_body::SavedRequest<'_> (distinct from crate::server::SavedRequest);
-                            // unify the two SavedRequest shapes before wiring this path.
-                            let _ = (resp, method, deferred_ptr);
-                            todo!("blocked_on: server::SavedRequest unification (server_body vs server::mod)")
+                        ReqOrSaved::Req(r) => {
+                            // SAFETY: vm.global is JSC_BORROW, valid for VM lifetime.
+                            let global = unsafe { &*(*self.vm).global };
+                            match self
+                                .server
+                                .as_ref()
+                                .unwrap()
+                                .prepare_and_save_js_request_context(
+                                    // SAFETY: r is the live µWS request for this handler frame.
+                                    unsafe { &mut *r },
+                                    resp,
+                                    global,
+                                    Some(method),
+                                )?
+                            {
+                                Some(saved) => saved,
+                                // Zig: `catch return` — abort the deferral on failure.
+                                None => {
+                                    self.deferred_request_pool.put(deferred_ptr);
+                                    return Ok(());
+                                }
+                            }
                         }
                         ReqOrSaved::Saved(saved) => saved,
                         _ => unreachable!(),
@@ -2172,11 +2188,11 @@ impl DevServer<'_> {
             true,
         )?;
 
-        let _ = (
+        self.server.as_ref().unwrap().on_saved_request(
             req,
             resp,
             server_request_callback,
-            &[
+            [
                 args.router_type_main,
                 args.route_modules,
                 args.client_id,
@@ -2187,8 +2203,6 @@ impl DevServer<'_> {
                 args.new_route_params,
             ],
         );
-        todo!("blocked_on: AnyServer::on_saved_request (crate::server::SavedRequestUnion is unnameable)");
-        #[allow(unreachable_code)]
         Ok(())
     }
 

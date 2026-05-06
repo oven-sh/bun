@@ -3007,6 +3007,7 @@ impl bun_ptr::RefCounted for Resolver {
     }
 }
 
+#[cfg(windows)]
 pub struct UvDnsPoll {
     // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
     // callback hands it to `Resolver::deref`, which may write/free `*this`.
@@ -3015,6 +3016,7 @@ pub struct UvDnsPoll {
     pub poll: libuv::uv_poll_t,
 }
 
+#[cfg(windows)]
 impl UvDnsPoll {
     pub fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
         Box::into_raw(Box::new(Self {

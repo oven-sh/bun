@@ -2791,8 +2791,9 @@ pub struct ServeResult {
 //   source:     src/bundler/transpiler.zig (1461 lines)
 //   confidence: medium
 //   notes:      __phase_a_draft removed (superseded by un-gated bodies above);
-//               `transform` / `buildWithResolveResultEager` / `printAst`
-//               (transpiler.zig:380-674, 1286-1403) intentionally omitted —
-//               legacy single-file CLI path with no Rust callers; bundle_v2 is
-//               the live entry. Port when `bun build --no-bundle` lands.
+//               `transform` / `enqueueEntryPoints` / `processResolveQueue` /
+//               `buildWithResolveResultEager` ported for the legacy
+//               single-file CLI path (`bun build --no-bundle`). CSS branch
+//               of buildWithResolveResultEager falls back to file-copy until
+//               the `css` cargo feature is wired to this crate's default set.
 // ──────────────────────────────────────────────────────────────────────────

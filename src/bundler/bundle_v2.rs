@@ -888,16 +888,16 @@ pub mod api {
             }
         }
 
-        /// Mirrors `JSBundler.Resolve` (zig:1234). `js_task`/`task` slots are
-        /// erased — T6 (`bun_runtime`) writes its concrete `jsc::AnyTask` /
-        /// `AnyEventLoop::Task` via `dispatch()` and never reads them here.
+        /// Mirrors `JSBundler.Resolve` (zig:1234). `js_task` is the real
+        /// `bun_event_loop::AnyTask` (lower-tier crate, no JSC dep), filled
+        /// by T6 (`bun_runtime`) via `dispatch_js()`. `task` remains erased
+        /// (`jsc::AnyEventLoop::Task` lives in T6).
         pub struct Resolve {
             pub bv2: *mut BundleV2<'static>,
             pub import_record: MiniImportRecord,
             pub value: ResolveValue,
-            // SAFETY: erased `jsc::AnyTask` / `jsc::AnyEventLoop::Task` storage.
-            // Layout reserved so T6 can `cast` and fill in-place.
-            pub js_task: [usize; 2],
+            pub js_task: bun_event_loop::AnyTask::AnyTask,
+            // SAFETY: erased `jsc::AnyEventLoop::Task` storage; T6 casts in-place.
             pub task: [usize; 4],
         }
         impl Default for Resolve {
@@ -906,7 +906,7 @@ pub mod api {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
-                    js_task: [0; 2],
+                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: [0; 4],
                 }
             }
@@ -919,7 +919,7 @@ pub mod api {
                     bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
                     import_record: record,
                     value: ResolveValue::Pending,
-                    js_task: [0; 2],
+                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: [0; 4],
                 }
             }
@@ -972,8 +972,8 @@ pub mod api {
             pub was_file: bool,
             /// Defer may only be called once.
             pub called_defer: bool,
-            // SAFETY: erased `jsc::AnyTask` / `jsc::AnyEventLoop::Task` storage.
-            pub js_task: [usize; 2],
+            pub js_task: bun_event_loop::AnyTask::AnyTask,
+            // SAFETY: erased `jsc::AnyEventLoop::Task` storage; T6 casts in-place.
             pub task: [usize; 4],
         }
         impl Load {
@@ -992,7 +992,7 @@ pub mod api {
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     was_file: false,
                     called_defer: false,
-                    js_task: [0; 2],
+                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
                     task: [0; 4],
                 }
             }

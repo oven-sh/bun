@@ -523,7 +523,7 @@ impl Execution {
         sequence_ptr: NonNull<ExecutionSequence>,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
-        let _scope = group_log::begin();
+        group_begin!();
 
         // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
         // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
@@ -540,11 +540,11 @@ impl Execution {
                 sequence.maybe_skip = false;
                 sequence.active_entry = match entry.failure_skip_past {
                     // SAFETY: arena-owned entry
-                    Some(failure_skip_past) => unsafe { failure_skip_past.as_ref() }.next,
+                    Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
                     None => None,
                 };
             } else {
-                sequence.active_entry = entry.next;
+                sequence.active_entry = nn(entry.next);
             }
         } else {
             // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).

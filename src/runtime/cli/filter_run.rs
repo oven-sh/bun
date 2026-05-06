@@ -277,7 +277,9 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: &'static MiniEventLoop<'static>,
+    // Raw `*mut` (Zig: `*MiniEventLoop`) — `init_global` returns the
+    // thread-local singleton pointer; aliasing &mut would be UB.
+    event_loop: *mut MiniEventLoop<'static>,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
@@ -285,10 +287,11 @@ struct State<'a> {
     pretty_output: bool,
     shell_bin: &'static ZStr, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
     aborted: bool,
-    // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a`), but Zig field is
-    // `*bun.DotEnv.Loader` and ProcessHandle::start mutates `env.map` (PATH swap). Needs `&mut`;
-    // file a correction to LIFETIMES.tsv.
-    env: &'a mut bun_dotenv::Loader<'a>,
+    // Raw `*mut` (Zig: `*bun.DotEnv.Loader`) — process-lifetime singleton owned
+    // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
+    // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
+    // own raw-ptr field. Reborrow `&mut *env` at use sites.
+    env: *mut bun_dotenv::Loader<'static>,
 }
 
 struct ElideResult<'b> {

@@ -586,18 +586,43 @@ impl SocketAddress {
     }
 
     pub fn estimated_size(&self) -> usize {
-        mem::size_of::<SocketAddress>() + self._presentation.estimated_size()
+        // PORT NOTE: `bun_str::String::estimated_size` not yet ported (Zig
+        // `bun.String.estimatedSize`); approximate via byte length until
+        // landed upstream.
+        mem::size_of::<SocketAddress>() + self._presentation.byte_slice().len()
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn to_json(this: &mut Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        // TODO(port): jsc.JSObject.create with anon struct → need bun_jsc::JSObject builder API
-        Ok(bun_jsc::JSObject::create(global, &[
-            ("address", Self::get_address(this, global)?),
-            ("family", Self::get_family(this, global)?),
-            ("port", JSValue::js_number(this.port())),
-            ("flowlabel", JSValue::js_number(this.flow_label().unwrap_or(0))),
-        ])?.to_js())
+        // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust
+        // requires a `PojoFields` impl, so use a local struct.
+        struct ToJson {
+            address: JSValue,
+            family: JSValue,
+            port: JSValue,
+            flowlabel: JSValue,
+        }
+        impl bun_jsc::PojoFields for ToJson {
+            const FIELD_COUNT: usize = 4;
+            fn put_fields(
+                &self,
+                _global: &JSGlobalObject,
+                mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
+            ) -> JsResult<()> {
+                put(b"address", self.address)?;
+                put(b"family", self.family)?;
+                put(b"port", self.port)?;
+                put(b"flowlabel", self.flowlabel)?;
+                Ok(())
+            }
+        }
+        let pojo = ToJson {
+            address: Self::get_address(this, global)?,
+            family: Self::get_family(this, global)?,
+            port: JSValue::js_number(f64::from(this.port())),
+            flowlabel: JSValue::js_number(f64::from(this.flow_label().unwrap_or(0))),
+        };
+        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }
 }
 

@@ -6,7 +6,38 @@ use bun_options_types::import_record;
 
 use crate::ast::{self as js_ast, Binding, Expr, Stmt, B, E, G, S};
 use crate::ast::p::P;
-use crate::parser::{JsxT, ReactRefresh, Ref};
+use crate::parser::{JsxT, ReactRefresh, Ref, TempRef};
+
+// PORT NOTE: `P::generate_temp_ref` is `#[cfg(any())]`-gated in P.rs (round-6
+// re-gate); replicate it here so this file can un-gate independently. Body is
+// a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
+// `P::will_use_renamer` is private — its body is inlined.
+fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
+    p: &mut P<'p, TS, J, SCAN>,
+    default_name: Option<&'p [u8]>,
+) -> Ref {
+    let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
+    let name: &'p [u8] = (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
+        p.temp_ref_count += 1;
+        bumpalo::format!(in p.allocator, "__bun_temp_ref_{:x}$", p.temp_ref_count)
+            .into_bump_str()
+            .as_bytes()
+    });
+    let r#ref = p
+        .new_symbol(js_ast::symbol::Kind::Other, name)
+        .expect("oom");
+
+    p.temp_refs_to_declare
+        .push(TempRef { r#ref, ..Default::default() });
+
+    // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
+    unsafe { &mut *p.current_scope }
+        .generated
+        .append(r#ref)
+        .expect("oom");
+
+    r#ref
+}
 
 pub struct ConvertESMExportsForHmr<'a> {
     pub last_part: &'a mut js_ast::Part,
@@ -180,7 +211,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 // Otherwise, an identifier must be exported
                 match &st.value {
                     js_ast::StmtOrExpr::Expr(_) => {
-                        let temp_id = p.generate_temp_ref(Some(b"default_export"));
+                        let temp_id = generate_temp_ref(p, Some(b"default_export"));
                         self.last_part
                             .declared_symbols
                             .append(js_ast::DeclaredSymbol { ref_: temp_id, is_top_level: true })?;
@@ -576,7 +607,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // collisions, not necessarily the best minificaiton (dev only)
             // SAFETY: arena-owned name slice valid for the parse; lifetime erased per Phase-A
             // `Str`/`ArenaStr` convention (`generate_temp_ref` wants `&'p [u8]`).
-            let arg1 = p.generate_temp_ref(Some(unsafe { &*original_name }));
+            let arg1 = generate_temp_ref(p, Some(unsafe { &*original_name }));
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol { ref_: arg1, is_top_level: true })?;

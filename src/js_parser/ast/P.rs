@@ -6924,9 +6924,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // inline its body (Zig: `strings.contains(path.text, "/node_modules/")`).
                 is_in_node_modules: strings::contains(self.source.path.text, b"/node_modules/"),
                 imports_seen: Default::default(),
-                export_star_props: BumpVec::new_in(allocator),
-                export_props: BumpVec::new_in(allocator),
-                stmts: BumpVec::new_in(allocator),
+                export_star_props: Vec::new(),
+                export_props: Vec::new(),
+                stmts: Vec::new(),
             };
             hmr_transform_ctx.stmts.reserve({
                 // get a estimate on how many statements there are going to be
@@ -7628,12 +7628,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // entry anyway. // TODO(b2-blocked): unify logger::fs::Path → bun_paths::fs::Path
                 let path_view = fs::Path { text: source.path.text, pretty: source.path.text, ..Default::default() };
                 if let Some(pkg) = path_package_name(&path_view) {
-                    // TODO(b2-blocked): `RuntimeFeatures` is the parser.rs stub
-                    // (`should_unwrap_require: bool` placeholder for the real
-                    // `runtime.rs::Features::should_unwrap_require(pkg)` check
-                    // against `unwrap_commonjs_packages`). Swap to the method
-                    // call once `Options.features` is the real `Runtime::Features`.
-                    if this.options.features.should_unwrap_require {
+                    if this.options.features.should_unwrap_require(pkg) {
                         if pkg == b"react" || pkg == b"react-dom" {
                             let version = this.options.package_version;
                             if version.len() > 2

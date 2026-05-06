@@ -8,14 +8,19 @@ use crate::ast::{
     AssignTarget, Binding, BindingNodeIndex, Expr, ExprData, ExprNodeList, LocRef, Scope, Stmt,
     StmtData, StmtNodeIndex, Symbol, B, E, G, S,
 };
-use crate::ast::G::{Arg, Decl, Property};
+use crate::ast::b::B as BData;
+use crate::ast::G::{Arg, Decl, Property, PropertyKind};
 use crate::ast::p::P;
+use crate::ast::scope::{Kind as ScopeKind, Member as ScopeMember};
+use crate::ast::symbol::Kind as SymbolKind;
+use crate::flags;
 use crate::lexer as js_lexer;
 use crate::parser::{
     is_eval_or_arguments, ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
-    JsxT, PrependTempRefsOpts, Ref, RuntimeFeatures, SideEffects, StmtsKind, StringVoidMap,
-    TempRef, VisitArgsOpts,
+    JsxT, PrependTempRefsOpts, Ref, RuntimeFeatures, SideEffects, StmtsKind, StrictModeFeature,
+    StringVoidMap, TempRef, VisitArgsOpts,
 };
+use crate::StrictModeKind;
 use bun_logger as logger;
 
 // In the AST crate, ListManaged is arena-backed.
@@ -26,14 +31,45 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 // a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
+    // `pushScopeForVisitPass`/`popScope` keep it non-dangling. Private to this
+    // impl block (sibling files have their own copy).
+    #[inline(always)]
+    fn vis_scope(&mut self) -> &mut js_ast::Scope {
+        unsafe { &mut *self.current_scope }
+    }
+
     pub fn visit_stmts_and_prepend_temp_refs(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
-        opts: PrependTempRefsOpts,
+        opts: &mut PrependTempRefsOpts,
     ) -> Result<(), bun_core::Error> {
-        let _ = (stmts, opts);
-        todo!("b2-ast-E: visit_stmts_and_prepend_temp_refs")
+        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        debug_assert!(
+            !SCAN_ONLY,
+            "only_scan_imports_and_do_not_visit must not run this."
+        );
+
+        // p.temp_refs_to_declare.deinit(p.allocator); + reset to empty
+        self.temp_refs_to_declare = BumpVec::new_in(self.allocator);
+        self.temp_ref_count = 0;
+
+        self.visit_stmts(stmts, opts.kind)?;
+
+        // Prepend values for "this" and "arguments"
+        if let Some(fn_body_loc) = opts.fn_body_loc {
+            // Capture "this"
+            if let Some(ref_) = self.fn_only_data_visit.this_capture_ref {
+                let value = self.new_expr(E::This {}, fn_body_loc);
+                self.temp_refs_to_declare.push(TempRef {
+                    r#ref: ref_,
+                    value: Some(value),
+                });
+            }
+        }
+        Ok(())
     }
+
     pub fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
@@ -43,63 +79,900 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             })
             .expect("oom");
     }
-    pub fn visit_func(&mut self, func: &mut G::Fn, open_parens_loc: logger::Loc) {
-        let _ = (func, open_parens_loc);
+
+    pub fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: logger::Loc) -> G::Fn {
+        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        debug_assert!(
+            !SCAN_ONLY,
+            "only_scan_imports_and_do_not_visit must not run this."
+        );
+
+        // PORT NOTE: FnOnlyDataVisit holds `Option<&'a mut Ref>` (non-Copy); save/restore
+        // via `take` instead of by-value copy.
+        let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
+        let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
+        self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
+            is_async: func.flags.contains(flags::Function::IsAsync),
+            ..Default::default()
+        };
+        self.fn_only_data_visit = FnOnlyDataVisit {
+            is_this_nested: true,
+            arguments_ref: func.arguments_ref,
+            ..Default::default()
+        };
+
+        if let Some(name) = func.name {
+            if let Some(name_ref) = name.ref_ {
+                self.record_declared_symbol(name_ref);
+                let symbol_name = self.load_name_from_ref(name_ref);
+                if is_eval_or_arguments(symbol_name) {
+                    self.mark_strict_mode_feature(
+                        StrictModeFeature::EvalOrArguments,
+                        js_lexer::range_of_identifier(self.source, name.loc),
+                        symbol_name,
+                    )
+                    .expect("unreachable");
+                }
+            }
+        }
+
+        let body_loc = func.body.loc;
+        // SAFETY: arena-owned slice valid for 'a (Zig: `body.stmts`).
+        let body_stmts: &'a [Stmt] = unsafe { &*func.body.stmts };
+
+        self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
+            .expect("unreachable");
+        // SAFETY: arena-owned slice valid for 'a (Zig: `func.args` is []G.Arg).
+        let args: &mut [G::Arg] = unsafe { &mut *func.args };
+        self.visit_args(
+            args,
+            VisitArgsOpts {
+                has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
+                body: body_stmts,
+                is_unique_formal_parameters: true,
+            },
+        );
+
+        self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
+            .expect("unreachable");
+        // PERF(port): was arena-backed ListManaged.fromOwnedSlice — Stmt is Copy.
+        let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.allocator);
+        stmts.extend_from_slice(body_stmts);
+        let mut temp_opts = PrependTempRefsOpts {
+            kind: StmtsKind::FnBody,
+            fn_body_loc: Some(body_loc),
+        };
+        self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
+            .expect("unreachable");
+
+        if self.options.features.react_fast_refresh {
+            // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
+            //   borrowing it through `&mut self` while calling another `&mut self` method is
+            //   disjoint-borrow-incompatible. Body preserved in `_draft::visit_func`.
+            // TODO(port): wire handle_react_refresh_post_visit_function_body once hook storage
+            // is reshaped to a raw ptr (matching the Zig `*?Hook`).
+            #[cfg(any())]
+            {
+                let hook_storage = self
+                    .react_refresh
+                    .hook_ctx_storage
+                    .as_deref_mut()
+                    .expect("caller did not init hook storage. any function can have react hooks!");
+                if let Some(hook) = hook_storage.as_mut() {
+                    self.handle_react_refresh_post_visit_function_body(&mut stmts, hook);
+                }
+            }
+        }
+
+        func.body = G::FnBody {
+            stmts: stmts.into_bump_slice_mut() as *mut [Stmt],
+            loc: body_loc,
+        };
+
+        self.pop_scope();
+        self.pop_scope();
+
+        self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+        self.fn_only_data_visit = old_fn_only_data;
+
+        func
     }
+
     pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
-        let _ = (args, opts);
-        todo!("b2-ast-E: visit_args")
+        let strict_loc = fn_body_contains_use_strict(opts.body);
+        let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
+        // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
+        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<'static, StringVoidMap>> = None;
+
+        // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
+        // FunctionBodyContainsUseStrict of FunctionBody is true and
+        // IsSimpleParameterList of FormalParameters is false."
+        if strict_loc.is_some() && !has_simple_args {
+            self.log
+                .add_range_error(
+                    Some(self.source),
+                    self.source.range_of_string(strict_loc.unwrap()),
+                    b"Cannot use a \"use strict\" directive in a function with a non-simple parameter list".as_slice().into(),
+                )
+                .expect("unreachable");
+        }
+
+        // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
+        // the same BindingIdentifier in a FormalParameterList is only allowed for
+        // functions which have simple parameter lists and which are not defined in
+        // strict mode code."
+        if opts.is_unique_formal_parameters
+            || strict_loc.is_some()
+            || !has_simple_args
+            || self.is_strict_mode()
+        {
+            duplicate_args_check = Some(StringVoidMap::get());
+        }
+
+        for arg in args.iter_mut() {
+            if arg.ts_decorators.len() > 0 {
+                arg.ts_decorators = self.visit_ts_decorators(arg.ts_decorators);
+            }
+
+            // PORT NOTE: reborrow per-iter (Zig passes the same pointer each time).
+            let dup: Option<&mut StringVoidMap> =
+                duplicate_args_check.as_mut().map(|g| &mut **g);
+            self.visit_binding(arg.binding, dup);
+            if let Some(default) = arg.default {
+                arg.default = Some(self.visit_expr(default));
+            }
+        }
     }
+
     pub fn visit_ts_decorators(&mut self, mut decs: ExprNodeList) -> ExprNodeList {
         for dec in decs.slice_mut() {
             *dec = self.visit_expr(*dec);
         }
         decs
     }
+
     pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
-        decls: &mut G::DeclList,
+        decls: &mut [G::Decl],
         was_const: bool,
-    ) {
-        let _ = (decls, was_const);
+    ) -> usize {
+        let mut j: usize = 0;
+        // PORT NOTE: reshaped for borrowck — Zig aliased `out_decls = decls` and
+        // iterated `decls` while writing through `out_decls[j]`. We iterate by index.
+        let len = decls.len();
+        let mut i: usize = 0;
+        'outer: while i < len {
+            // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
+            // and decls[j] (write at end). j <= i always holds.
+            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
+            i += 1;
+
+            self.visit_binding(decl.binding, None);
+
+            if let Some(mut val) = decl.value {
+                let was_anonymous_named_expr = val.is_anonymous_named();
+
+                let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
+                let prev_macro_call_count = self.macro_call_count;
+                let orig_dead = self.is_control_flow_dead;
+                // blocked_on: Runtime::Features.replace_exports is a `bool` stub (parser.rs:260),
+                //   not the real `StringArrayHashMap<ReplaceableExport>`; replace_decl_and_possibly_remove
+                //   is gated (P.rs:5202). The IS_POSSIBLY_DECL_TO_REMOVE lookup/replace path is preserved
+                //   in `_draft::visit_decls` and re-enabled when those un-gate.
+                let _ = orig_dead;
+
+                if self.options.features.react_fast_refresh {
+                    self.react_refresh.last_hook_seen = None;
+                }
+
+                debug_assert!(
+                    !SCAN_ONLY,
+                    "only_scan_imports_and_do_not_visit must not run this."
+                );
+                // Propagate name from binding to anonymous decorated class expressions
+                let prev_decorator_class_name = self.decorator_class_name;
+                if was_anonymous_named_expr {
+                    if let ExprData::EClass(e_class) = &val.data {
+                        if e_class.should_lower_standard_decorators {
+                            if let BData::BIdentifier(id) = decl.binding.data {
+                                // SAFETY: arena-owned B::Identifier valid for 'a.
+                                let id = unsafe { &*id };
+                                self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
+                            }
+                        }
+                    }
+                }
+                decl.value = Some(self.visit_expr_in_out(
+                    val,
+                    ExprIn {
+                        is_immediately_assigned_to_decl: true,
+                        ..Default::default()
+                    },
+                ));
+                self.decorator_class_name = prev_decorator_class_name;
+
+                if self.options.features.react_fast_refresh {
+                    // When hooks are immediately assigned to something, we need to hash the binding.
+                    if let Some(last_hook) = self.react_refresh.last_hook_seen {
+                        if let Some(call) = decl.value.unwrap().data.e_call() {
+                            if core::ptr::eq(last_hook, &*call) {
+                                // blocked_on: B::write_to_hasher generic bound + hook_ctx_storage
+                                //   double-borrow; preserved in `_draft::visit_decls`.
+                                #[cfg(any())]
+                                decl.binding.data.write_to_hasher(
+                                    &mut self
+                                        .react_refresh
+                                        .hook_ctx_storage
+                                        .as_deref_mut()
+                                        .unwrap()
+                                        .as_mut()
+                                        .unwrap()
+                                        .hasher,
+                                    self.symbols.as_mut_slice(),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if self.should_unwrap_common_js_to_esm() {
+                    if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
+                        if let BData::BIdentifier(id) = decl.binding.data {
+                            // SAFETY: arena-owned B::Identifier valid for 'a.
+                            let ref_ = unsafe { (*id).r#ref };
+                            if let Some(value) = decl.value {
+                                if let ExprData::ERequireString(req) = value.data {
+                                    if req.unwrapped_id != u32::MAX {
+                                        self.imports_to_convert_from_require
+                                            [req.unwrapped_id as usize]
+                                            .namespace
+                                            .ref_ = Some(ref_);
+                                        self.import_items_for_namespace
+                                            .insert(ref_, ImportItemForNamespaceMap::default());
+                                        continue 'outer;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // blocked_on: see above — IS_POSSIBLY_DECL_TO_REMOVE replace path gated.
+
+                let is_after = self.vis_scope().is_after_const_local_prefix;
+                self.visit_decl(
+                    decl,
+                    was_anonymous_named_expr,
+                    was_const && !is_after,
+                    if Self::ALLOW_MACROS {
+                        prev_macro_call_count != self.macro_call_count
+                    } else {
+                        false
+                    },
+                );
+            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+                // blocked_on: Runtime::Features.replace_exports map + replace_decl_and_possibly_remove.
+                // Preserved in `_draft::visit_decls`.
+            }
+
+            // out_decls[j] = decl.*;
+            if j != i - 1 {
+                // SAFETY: j < i-1 < len; src/dst non-overlapping; Decl has no Drop.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        decls.as_ptr().add(i - 1),
+                        decls.as_mut_ptr().add(j),
+                        1,
+                    );
+                }
+            }
+            j += 1;
+        }
+
+        j
     }
-    pub fn visit_binding_and_expr_for_macro(
+
+    pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+        match binding.data {
+            BData::BObject(bound_object) => {
+                // SAFETY: arena-owned B::Object valid for 'a.
+                let bound_object = unsafe { &*bound_object };
+                if let ExprData::EObject(mut object) = expr.data {
+                    if object.was_originally_macro {
+                        for property in bound_object.properties() {
+                            if property.flags.contains(flags::Property::IsSpread) {
+                                return;
+                            }
+                        }
+                        // blocked_on: E::Object::as_property + Expr::as_string_literal both touch
+                        //   gated rope/EString surface; the inner property-match-and-compact loop
+                        //   is preserved verbatim in `_draft::visit_binding_and_expr_for_macro`.
+                        let _ = &mut object;
+                    }
+                }
+            }
+            BData::BArray(bound_array) => {
+                // SAFETY: arena-owned B::Array valid for 'a.
+                let bound_array = unsafe { &*bound_array };
+                if let ExprData::EArray(mut array) = expr.data {
+                    if array.was_originally_macro && !bound_array.has_spread {
+                        let bound_items = bound_array.items();
+                        array.items.len = array.items.len.min(bound_items.len() as u32);
+                        let n = array.items.len as usize;
+                        for (item, child_expr) in bound_items[..n]
+                            .iter()
+                            .zip(array.items.slice_mut().iter_mut())
+                        {
+                            if matches!(item.binding.data, BData::BMissing(_)) {
+                                *child_expr = self.new_expr(E::Missing {}, expr.loc);
+                                continue;
+                            }
+                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr);
+                        }
+                    }
+                }
+            }
+            BData::BIdentifier(id) => {
+                if self.options.features.inlining {
+                    // SAFETY: arena-owned B::Identifier valid for 'a.
+                    let id = unsafe { &*id };
+                    self.const_values.put(id.r#ref, expr).expect("oom");
+                }
+            }
+            BData::BMissing(_) => {}
+        }
+    }
+
+    pub fn visit_decl(
         &mut self,
-        binding: Binding,
-        expr: &mut Option<Expr>,
+        decl: &mut G::Decl,
+        was_anonymous_named_expr: bool,
+        could_be_const_value: bool,
+        could_be_macro: bool,
     ) {
-        let _ = (binding, expr);
+        // Optionally preserve the name
+        match decl.binding.data {
+            BData::BIdentifier(id) => {
+                // SAFETY: arena-owned B::Identifier valid for 'a.
+                let id_ref = unsafe { (*id).r#ref };
+                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
+                    if let Some(val) = decl.value {
+                        if val.can_be_const_value() {
+                            self.const_values.put(id_ref, val).expect("oom");
+                        }
+                    }
+                } else {
+                    self.vis_scope().is_after_const_local_prefix = true;
+                }
+                // SAFETY: original_name is arena-owned, valid for 'a.
+                let original_name: &'a [u8] =
+                    unsafe { &*self.symbols[id_ref.inner_index() as usize].original_name };
+                decl.value = Some(self.maybe_keep_expr_symbol_name(
+                    decl.value.unwrap(),
+                    original_name,
+                    was_anonymous_named_expr,
+                ));
+            }
+            BData::BObject(_) | BData::BArray(_) => {
+                if Self::ALLOW_MACROS {
+                    if could_be_macro && decl.value.is_some() {
+                        self.visit_binding_and_expr_for_macro(decl.binding, decl.value.unwrap());
+                    }
+                }
+            }
+            BData::BMissing(_) => {}
+        }
     }
-    pub fn visit_decl(&mut self, decl: &mut G::Decl) {
-        let _ = decl;
-    }
+
     pub fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
-        let _ = is_in_or_of;
+        match stmt.data {
+            StmtData::SExpr(mut st) => {
+                let assign_target = if is_in_or_of {
+                    AssignTarget::Replace
+                } else {
+                    AssignTarget::None
+                };
+                self.stmt_expr_value = st.value.data;
+                st.value = self.visit_expr_in_out(
+                    st.value,
+                    ExprIn {
+                        assign_target,
+                        ..Default::default()
+                    },
+                );
+            }
+            StmtData::SLocal(mut st) => {
+                for dec in st.decls.slice_mut() {
+                    self.visit_binding(dec.binding, None);
+                    if let Some(val) = dec.value {
+                        dec.value = Some(self.visit_expr(val));
+                    }
+                }
+                st.kind = self.select_local_kind(st.kind);
+            }
+            _ => {
+                self.panic("Unexpected stmt in visitForLoopInit", format_args!(""));
+            }
+        }
+
         stmt
     }
-    pub fn visit_binding(&mut self, binding: BindingNodeIndex, duplicate_arg_check: Option<&mut StringVoidMap>) {
-        let _ = (binding, duplicate_arg_check);
+
+    pub fn visit_binding(
+        &mut self,
+        binding: BindingNodeIndex,
+        mut duplicate_arg_check: Option<&mut StringVoidMap>,
+    ) {
+        match binding.data {
+            BData::BMissing(_) => {}
+            BData::BIdentifier(bind) => {
+                // SAFETY: arena-owned B::Identifier valid for 'a.
+                let bind = unsafe { &*bind };
+                self.record_declared_symbol(bind.r#ref);
+                // SAFETY: original_name is arena-owned, valid for 'a.
+                let name: &'a [u8] =
+                    unsafe { &*self.symbols[bind.r#ref.inner_index() as usize].original_name };
+                if is_eval_or_arguments(name) {
+                    self.mark_strict_mode_feature(
+                        StrictModeFeature::EvalOrArguments,
+                        js_lexer::range_of_identifier(self.source, binding.loc),
+                        name,
+                    )
+                    .expect("unreachable");
+                }
+                if let Some(dup) = duplicate_arg_check {
+                    if dup.get_or_put_contains(name) {
+                        self.log
+                            .add_range_error_fmt(
+                                Some(self.source),
+                                js_lexer::range_of_identifier(self.source, binding.loc),
+                                format_args!(
+                                    "\"{}\" cannot be bound multiple times in the same parameter list",
+                                    bstr::BStr::new(name)
+                                ),
+                            )
+                            .expect("unreachable");
+                    }
+                }
+            }
+            BData::BArray(bind) => {
+                // SAFETY: arena-owned B::Array valid for 'a; exclusive during visit pass.
+                let bind = unsafe { &mut *bind };
+                for item in bind.items_mut() {
+                    self.visit_binding(item.binding, duplicate_arg_check.as_deref_mut());
+                    if let Some(default_value) = item.default_value {
+                        let was_anonymous_named_expr = default_value.is_anonymous_named();
+                        let prev_decorator_class_name2 = self.decorator_class_name;
+                        if was_anonymous_named_expr {
+                            if let ExprData::EClass(e_class) = &default_value.data {
+                                if e_class.should_lower_standard_decorators {
+                                    if let BData::BIdentifier(id) = item.binding.data {
+                                        // SAFETY: arena-owned B::Identifier valid for 'a.
+                                        let id = unsafe { &*id };
+                                        self.decorator_class_name =
+                                            Some(self.load_name_from_ref(id.r#ref));
+                                    }
+                                }
+                            }
+                        }
+                        item.default_value = Some(self.visit_expr(default_value));
+                        self.decorator_class_name = prev_decorator_class_name2;
+
+                        if let BData::BIdentifier(bind_) = item.binding.data {
+                            // SAFETY: arena-owned B::Identifier valid for 'a.
+                            let bind_ = unsafe { &*bind_ };
+                            // SAFETY: original_name is arena-owned, valid for 'a.
+                            let name: &'a [u8] = unsafe {
+                                &*self.symbols[bind_.r#ref.inner_index() as usize].original_name
+                            };
+                            item.default_value = Some(self.maybe_keep_expr_symbol_name(
+                                item.default_value.expect("unreachable"),
+                                name,
+                                was_anonymous_named_expr,
+                            ));
+                        }
+                    }
+                }
+            }
+            BData::BObject(bind) => {
+                // SAFETY: arena-owned B::Object valid for 'a; exclusive during visit pass.
+                let bind = unsafe { &mut *bind };
+                for property in bind.properties_mut() {
+                    if !property.flags.contains(flags::Property::IsSpread) {
+                        property.key = self.visit_expr(property.key);
+                    }
+
+                    self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
+                    if let Some(default_value) = property.default_value {
+                        let was_anonymous_named_expr = default_value.is_anonymous_named();
+                        let prev_decorator_class_name3 = self.decorator_class_name;
+                        if was_anonymous_named_expr {
+                            if let ExprData::EClass(e_class) = &default_value.data {
+                                if e_class.should_lower_standard_decorators {
+                                    if let BData::BIdentifier(id) = property.value.data {
+                                        // SAFETY: arena-owned B::Identifier valid for 'a.
+                                        let id = unsafe { &*id };
+                                        self.decorator_class_name =
+                                            Some(self.load_name_from_ref(id.r#ref));
+                                    }
+                                }
+                            }
+                        }
+                        property.default_value = Some(self.visit_expr(default_value));
+                        self.decorator_class_name = prev_decorator_class_name3;
+
+                        if let BData::BIdentifier(bind_) = property.value.data {
+                            // SAFETY: arena-owned B::Identifier valid for 'a.
+                            let bind_ = unsafe { &*bind_ };
+                            // SAFETY: original_name is arena-owned, valid for 'a.
+                            let name: &'a [u8] = unsafe {
+                                &*self.symbols[bind_.r#ref.inner_index() as usize].original_name
+                            };
+                            property.default_value = Some(self.maybe_keep_expr_symbol_name(
+                                property.default_value.expect("unreachable"),
+                                name,
+                                was_anonymous_named_expr,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
     }
+
     pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
-        stmt
+        let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
+        self.fn_or_arrow_data_visit.is_inside_loop = true;
+        self.loop_body = stmt.data;
+        let res = self.visit_single_stmt(stmt, StmtsKind::LoopBody);
+        self.fn_or_arrow_data_visit.is_inside_loop = old_is_inside_loop;
+        res
     }
-    pub fn visit_single_stmt_block(&mut self, stmt: Stmt) -> Stmt {
-        stmt
+
+    pub fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+        let mut new_stmt = stmt;
+        self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
+            .expect("unreachable");
+        // SAFETY: caller guarantees `stmt.data` is `SBlock`; stmts is arena-owned.
+        let block_stmts: &[Stmt] = match stmt.data {
+            StmtData::SBlock(b) => unsafe { &*b.stmts },
+            _ => unreachable!(),
+        };
+        let mut stmts = BumpVec::with_capacity_in(block_stmts.len(), self.allocator);
+        stmts.extend_from_slice(block_stmts);
+        self.visit_stmts(&mut stmts, kind).expect("unreachable");
+        self.pop_scope();
+        let items: &'a mut [Stmt] = stmts.into_bump_slice_mut();
+        if let StmtData::SBlock(mut b) = new_stmt.data {
+            b.stmts = items as *mut [Stmt];
+        }
+        if self.options.features.minify_syntax {
+            // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; in Zig
+            // `stmts.items` aliases the slice now stored in `s_block.stmts`.
+            new_stmt = self.stmts_to_single_stmt(stmt.loc, items);
+        }
+
+        new_stmt
     }
+
     pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
-        let _ = kind;
-        stmt
+        if matches!(stmt.data, StmtData::SBlock(_)) {
+            return self.visit_single_stmt_block(stmt, kind);
+        }
+
+        let has_if_scope = match stmt.data {
+            StmtData::SFunction(f) => f.func.flags.contains(flags::Function::HasIfScope),
+            _ => false,
+        };
+
+        // Introduce a fake block scope for function declarations inside if statements
+        if has_if_scope {
+            self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
+                .expect("unreachable");
+        }
+
+        let mut stmts = BumpVec::with_capacity_in(1, self.allocator);
+        stmts.push(stmt);
+        self.visit_stmts(&mut stmts, kind).expect("unreachable");
+
+        if has_if_scope {
+            self.pop_scope();
+        }
+
+        self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
-    pub fn visit_class(&mut self, class: &mut G::Class) {
-        let _ = class;
+
+    pub fn visit_class(
+        &mut self,
+        name_scope_loc: logger::Loc,
+        class: &mut G::Class,
+        default_name_ref: Ref,
+    ) -> Ref {
+        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)`
+        debug_assert!(
+            !SCAN_ONLY,
+            "only_scan_imports_and_do_not_visit must not run this."
+        );
+
+        class.ts_decorators = self.visit_ts_decorators(class.ts_decorators);
+
+        if let Some(name) = class.class_name {
+            self.record_declared_symbol(name.ref_.unwrap());
+        }
+
+        self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
+            .expect("unreachable");
+        let old_enclosing_class_keyword = self.enclosing_class_keyword;
+        self.enclosing_class_keyword = class.class_keyword;
+        self.vis_scope()
+            .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
+        // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a mut Ref>`, so the
+        // shadow ref must outlive the parser. Allocate it in the bump arena (Zig kept it
+        // on the stack and passed `&shadow_ref` — Rust's lifetime on the field forbids that).
+        let shadow_ref: &'a mut Ref = self.allocator.alloc(Ref::NONE);
+
+        // Insert a shadowing name that spans the whole class, which matches
+        // JavaScript's semantics. The class body (and extends clause) "captures" the
+        // original value of the name. This matters for class statements because the
+        // symbol can be re-assigned to something else later. The captured values
+        // must be the original value of the name, not the re-assigned value.
+        // Use "const" for this symbol to match JavaScript run-time semantics. You
+        // are not allowed to assign to this symbol (it throws a TypeError).
+        if let Some(name) = class.class_name {
+            *shadow_ref = name.ref_.unwrap();
+            // SAFETY: original_name is arena-owned, valid for 'a.
+            let original_name: &'a [u8] =
+                unsafe { &*self.symbols[shadow_ref.inner_index() as usize].original_name };
+            self.vis_scope()
+                .members
+                .put(
+                    original_name,
+                    ScopeMember {
+                        r#ref: name.ref_.unwrap_or(Ref::NONE),
+                        loc: name.loc,
+                    },
+                )
+                .expect("oom");
+        } else {
+            let name_str: &'a [u8] = if default_name_ref.is_null() {
+                b"_this"
+            } else {
+                b"_default"
+            };
+            *shadow_ref = self
+                .new_symbol(SymbolKind::Constant, name_str)
+                .expect("unreachable");
+        }
+
+        self.record_declared_symbol(*shadow_ref);
+
+        if let Some(extends) = class.extends {
+            class.extends = Some(self.visit_expr(extends));
+        }
+
+        {
+            self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
+                .expect("unreachable");
+            // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
+            // — manual restore at block end below; no early returns in this block.
+
+            let shadow_ref_ptr: *mut Ref = shadow_ref as *mut Ref;
+            let mut constructor_function: Option<*mut E::Function> = None;
+            // SAFETY: arena-owned slice valid for 'a; exclusive during visit pass.
+            let properties: &mut [G::Property] = unsafe { &mut *class.properties };
+            for property in properties.iter_mut() {
+                if property.kind == PropertyKind::ClassStaticBlock {
+                    let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
+                    let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
+                    self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
+                    self.fn_only_data_visit = FnOnlyDataVisit {
+                        is_this_nested: true,
+                        is_new_target_allowed: true,
+                        // SAFETY: shadow_ref is bump-allocated for 'a.
+                        class_name_ref: Some(unsafe { &mut *shadow_ref_ptr }),
+
+                        // TODO: down transpilation
+                        should_replace_this_with_class_name_ref: false,
+                        ..Default::default()
+                    };
+                    // SAFETY: class_static_block is `Some(NonNull<ClassStaticBlock>)` here
+                    // (PropertyKind::ClassStaticBlock guarantees it); arena-owned for 'a.
+                    let csb = unsafe { property.class_static_block.unwrap().as_mut() };
+                    self.push_scope_for_visit_pass(ScopeKind::ClassStaticInit, csb.loc)
+                        .expect("unreachable");
+
+                    // Make it an error to use "arguments" in a static class block
+                    self.vis_scope().forbid_arguments = true;
+
+                    // PERF(port): was BabyList::move_to_list_managed; Stmt is Copy.
+                    let csb_stmts = csb.stmts.slice();
+                    let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.allocator);
+                    list.extend_from_slice(csb_stmts);
+                    self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
+                    csb.stmts =
+                        bun_collections::BabyList::from_owned_bump_slice(list.into_bump_slice_mut());
+                    self.pop_scope();
+
+                    self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+                    self.fn_only_data_visit = old_fn_only_data;
+
+                    continue;
+                }
+                property.ts_decorators = self.visit_ts_decorators(property.ts_decorators);
+                let is_private = if let Some(key) = property.key {
+                    matches!(key.data, ExprData::EPrivateIdentifier(_))
+                } else {
+                    false
+                };
+
+                // Special-case EPrivateIdentifier to allow it here
+
+                if is_private {
+                    let priv_ref = match property.key.unwrap().data {
+                        ExprData::EPrivateIdentifier(pi) => pi.ref_,
+                        _ => unreachable!(),
+                    };
+                    self.record_declared_symbol(priv_ref);
+                } else if let Some(key) = property.key {
+                    property.key = Some(self.visit_expr(key));
+                }
+
+                // Make it an error to use "arguments" in a class body
+                self.vis_scope().forbid_arguments = true;
+                // defer p.current_scope.forbid_arguments = false;
+
+                // The value of "this" is shadowed inside property values
+                let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
+                let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
+                self.fn_only_data_visit.is_this_nested = true;
+                self.fn_only_data_visit.is_new_target_allowed = true;
+                // SAFETY: shadow_ref is bump-allocated for 'a; reborrow per-iter.
+                self.fn_only_data_visit.class_name_ref = Some(unsafe { &mut *shadow_ref_ptr });
+                // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
+                // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
+                // — manual restore at end of loop body; no `continue` after this point.
+
+                // We need to explicitly assign the name to the property initializer if it
+                // will be transformed such that it is no longer an inline initializer.
+
+                let mut constructor_function_: Option<*mut E::Function> = None;
+
+                let mut name_to_keep: Option<&'a [u8]> = None;
+                if is_private {
+                    // (no-op)
+                } else if !property.flags.contains(flags::Property::IsMethod)
+                    && !property.flags.contains(flags::Property::IsComputed)
+                {
+                    if let Some(key) = property.key {
+                        if let ExprData::EString(e_str) = key.data {
+                            name_to_keep = Some(e_str.string(self.allocator).expect("oom"));
+                        }
+                    }
+                } else if property.flags.contains(flags::Property::IsMethod) {
+                    if Self::IS_TYPESCRIPT_ENABLED {
+                        if let (Some(value), Some(key)) = (property.value, property.key) {
+                            if let (ExprData::EFunction(mut e_func), ExprData::EString(e_str)) =
+                                (value.data, key.data)
+                            {
+                                if e_str.eql_comptime(b"constructor") {
+                                    // PORT NOTE: Zig keeps a `*E.Function` into property.value's
+                                    // arena slot, then re-reads it after visit_expr overwrites the
+                                    // value below. We mirror via raw ptr.
+                                    constructor_function_ = Some(&mut *e_func as *mut E::Function);
+                                    constructor_function = constructor_function_;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(val) = property.value {
+                    if let Some(name) = name_to_keep {
+                        let was_anon = val.is_anonymous_named();
+                        let prev_dcn = self.decorator_class_name;
+                        if let ExprData::EClass(e_class) = &val.data {
+                            if e_class.class_name.is_none()
+                                && e_class.should_lower_standard_decorators
+                            {
+                                self.decorator_class_name = Some(name);
+                            }
+                        }
+                        let visited = self.visit_expr(val);
+                        property.value =
+                            Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
+                        self.decorator_class_name = prev_dcn;
+                    } else {
+                        property.value = Some(self.visit_expr(val));
+                    }
+
+                    if Self::IS_TYPESCRIPT_ENABLED {
+                        if constructor_function_.is_some() {
+                            if let Some(value) = property.value {
+                                if let ExprData::EFunction(mut e_func) = value.data {
+                                    constructor_function = Some(&mut *e_func as *mut E::Function);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(val) = property.initializer {
+                    // if (property.flags.is_static and )
+                    if let Some(name) = name_to_keep {
+                        let was_anon = val.is_anonymous_named();
+                        let prev_dcn2 = self.decorator_class_name;
+                        if let ExprData::EClass(e_class) = &val.data {
+                            if e_class.class_name.is_none()
+                                && e_class.should_lower_standard_decorators
+                            {
+                                self.decorator_class_name = Some(name);
+                            }
+                        }
+                        let visited = self.visit_expr(val);
+                        property.initializer =
+                            Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
+                        self.decorator_class_name = prev_dcn2;
+                    } else {
+                        property.initializer = Some(self.visit_expr(val));
+                    }
+                }
+
+                // manual restore for the three `defer`s above
+                self.vis_scope().forbid_arguments = false;
+                self.fn_only_data_visit.is_this_nested = old_is_this_captured;
+                self.fn_only_data_visit.class_name_ref = old_class_name_ref;
+            }
+
+            // note: our version assumes useDefineForClassFields is true
+            if Self::IS_TYPESCRIPT_ENABLED {
+                if let Some(constructor) = constructor_function {
+                    // blocked_on: TS ctor-field hoisting — touches `Stmt::assign`, `E::Dot` ctor,
+                    //   `declare_symbol`, and overlapping `&mut [Property]` borrows that need a
+                    //   reshaped Vec dance. Preserved verbatim in `_draft::visit_class`.
+                    let _ = constructor;
+                }
+            }
+
+            // manual restore for the block-level `defer`
+            self.pop_scope();
+            self.enclosing_class_keyword = old_enclosing_class_keyword;
+        }
+
+        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
+            // If there was originally no class name but something inside needed one
+            // (e.g. there was a static property initializer that referenced "this"),
+            // store our generated name so the class expression ends up with a name.
+            *shadow_ref = Ref::NONE;
+        } else if class.class_name.is_none() {
+            class.class_name = Some(LocRef {
+                ref_: Some(*shadow_ref),
+                loc: name_scope_loc,
+            });
+            self.record_declared_symbol(*shadow_ref);
+        }
+
+        // class name scope
+        self.pop_scope();
+
+        *shadow_ref
     }
+
+    // Try separating the list for appending, so that it's not a pointer.
     pub fn visit_stmts(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
     ) -> Result<(), bun_core::Error> {
+        // blocked_on: visitStmt — `visit_and_append_stmt` body + the heavy P helpers it calls
+        //   (substitute_single_use_symbol_in_stmt, should_lower_using_declarations,
+        //   maybe_relocate_vars_to_top_level, SideEffects::should_keep_stmt_in_dead_control_flow,
+        //   scopes_in_order_for_enum) are mid-port. Full body preserved in `_draft::visit_stmts`.
         let _ = (stmts, kind);
-        todo!("b2-ast-E: visit_stmts")
+        debug_assert!(
+            !SCAN_ONLY,
+            "only_scan_imports_and_do_not_visit must not run this."
+        );
+        todo!("b2-ast-E: visit_stmts — blocked on visitStmt.rs")
     }
 }
 

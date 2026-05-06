@@ -3,6 +3,7 @@ use crate::ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
 use crate::ast::p::P;
 use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
 use crate::parser::{ImportItemForNamespaceMap, JsxT, Ref};
+use bun_crash_handler::handle_oom::handle_oom;
 use bun_logger as logger;
 use bun_options_types::{import_record, ImportRecord};
 use bun_string::strings;
@@ -329,9 +330,7 @@ impl<'a> ImportScanner<'a> {
                                 sorted.push(&**alias);
                             }
                             strings::sort_desc(&mut sorted);
-                            bun_core::handle_oom(
-                                p.named_imports.ensure_unused_capacity(sorted.len()),
-                            );
+                            handle_oom(p.named_imports.ensure_unused_capacity(sorted.len()));
 
                             // Create named imports for these property accesses. This will
                             // cause missing imports to generate useful warnings.
@@ -341,7 +340,7 @@ impl<'a> ImportScanner<'a> {
                             // bare identifiers even if the namespace is still needed.
                             for alias in &sorted {
                                 let item: LocRef = *existing.get(alias).unwrap();
-                                bun_core::handle_oom(p.named_imports.put(
+                                handle_oom(p.named_imports.put(
                                     item.ref_.unwrap(),
                                     js_ast::NamedImport {
                                         alias: Some(*alias as *const [u8]),
@@ -381,7 +380,7 @@ impl<'a> ImportScanner<'a> {
                             }
                         }
 
-                        bun_core::handle_oom(p.named_imports.ensure_unused_capacity(
+                        handle_oom(p.named_imports.ensure_unused_capacity(
                             st_items.len()
                                 + usize::from(st.default_name.is_some())
                                 + usize::from(st.star_name_loc.is_some()),
@@ -630,6 +629,7 @@ impl<'a> ImportScanner<'a> {
                     // But only if it's anonymous
                     // PORT NOTE: comptime `P != bun.bundle_v2.AstBuilder` check elided —
                     // this monomorphization is the parser `P` only (see fn-level TODO).
+                    #[cfg(any())] // blocked_on: P::module_exports gated (reconciler-6 re-gate in P.rs)
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.
@@ -646,6 +646,7 @@ impl<'a> ImportScanner<'a> {
                             expr.loc,
                         );
                     }
+                    let _ = &mut st;
 
                     // This is defer'd so that we still record export default for identifiers
                     if let Some(ref_) = deferred_default_name.ref_ {

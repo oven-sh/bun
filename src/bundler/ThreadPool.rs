@@ -469,7 +469,11 @@ impl Worker {
         drop(unsafe { Box::<MaybeUninit<Worker>>::from_raw(this.cast()) });
     }
 
-    pub fn get(ctx: &BundleV2<'_>) -> &mut Worker {
+    // PORT NOTE: returns `&'static mut` (detached) — the `Worker` is
+    // heap-pinned (Box::into_raw in `get_worker`) and outlives any `ctx`
+    // borrow; Zig returned `*Worker`. Tying it to `ctx`'s lifetime would
+    // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
+    pub fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` needs `&mut` but `BundleV2`
         // owns it uniquely on the JS thread, and per-thread `get_worker` only
         // touches the map under `workers_assignments_lock`.

@@ -195,7 +195,7 @@ pub mod options {
     /// `Runtime.Features.ServerComponentsMode`. Aliased so call sites that
     /// spell it as either `options::ServerComponents` (P.rs) or
     /// `RuntimeFeatures.server_components` resolve to one type.
-    pub use crate::runtime::ServerComponentsMode as ServerComponents;
+    pub use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
     /// Port of `options_types/BundleEnums.zig` `Format` (spec for

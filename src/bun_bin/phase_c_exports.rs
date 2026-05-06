@@ -202,11 +202,12 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: *mut Vi
 }
 
 // REAL: src/jsc/VirtualMachine.rs (no Rust impl yet — C++ BunProcess.cpp caller)
-// Default = allow the warning (matches Zig `is_handled_promise_warned == false`).
+// Zig returns `unhandledRejectionsMode() != .bun`; the default mode is `.bun`,
+// so default = suppress the warning.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VM__allowRejectionHandledWarning(vm: *mut VirtualMachine) -> bool {
     let _ = vm;
-    true
+    false
 }
 
 // REAL: C++ ZigGlobalObject.cpp (not in the Phase-C link set)

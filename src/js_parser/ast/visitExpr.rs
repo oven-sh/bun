@@ -2034,7 +2034,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: round-C `Runtime::Features.server_components` is a `bool` stub; the
         // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
         // `true` as server-side until the enum lands.
-        if p.options.features.react_fast_refresh || p.options.features.server_components {
+        if p.options.features.react_fast_refresh || p.options.features.server_components.is_server_side() {
             'try_record_hook: {
                 let original_name: &[u8] = match &e_.target.data {
                     Data::EIdentifier(id) => unsafe {
@@ -2082,7 +2082,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     break 'check_for_usestate false;
                 } {
-                    debug_assert!(p.options.features.server_components);
+                    debug_assert!(p.options.features.server_components.is_server_side());
                     // blocked_on: bun_logger::fs::Path::pretty field/accessor.
                     #[cfg(any())]
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")

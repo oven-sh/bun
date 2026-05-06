@@ -104,51 +104,55 @@ impl LinkerGraph {
     }
 }
 
-// TODO(b2-blocked): every method below indexes `MultiArrayList` via the
-// assumed `.items().field_name` SoA accessor API which `bun_collections` does
-// not yet expose (it has only `.slice()` returning raw column ptrs). The
-// bodies are preserved verbatim from the Phase-A draft and re-gated; the
-// struct + `init` + `File`/`FileList` above are real so downstream
-// `LinkerContext.graph` no longer dead-ends on the `()` stub. Un-gate together
-// with the `MultiArrayElement` derive for `JSAst`/`JSMeta`/`File`/`EntryPoint`.
-#[cfg(any())]
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gate: symbol/part graph mutation surface needed by
+// `linker_context/scanImportsAndExports.rs` and `LinkerContext::do_step5`.
+// Rewritten from the Phase-A `.items().field` draft to the
+// `items_<field>()` `*ListExt` spelling and reshaped for borrowck (no
+// overlapping `&mut` into the same `MultiArrayList`).
+// ──────────────────────────────────────────────────────────────────────────
 impl LinkerGraph {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
-        self.ast.items().named_exports[Index::RUNTIME.value()]
+        self.ast.items_named_exports()[Index::RUNTIME.get() as usize]
             .get(name)
-            .unwrap()
+            .expect("runtime function must be a named export of the runtime module")
             .ref_
     }
 
     pub fn generate_new_symbol(
         &mut self,
         source_index: u32,
-        kind: Symbol::Kind,
+        kind: symbol::Kind,
         original_name: &[u8],
     ) -> Ref {
         let source_symbols =
             &mut self.symbols.symbols_for_source.slice_mut()[source_index as usize];
 
-        let mut ref_ = Ref::init(
-            source_symbols.len() as u32, // @truncate
-            source_index,                // @truncate (already u32)
-            false,
+        // PORT NOTE: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
+        // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
+        // the `Ref::new` constructor that takes the tag explicitly.
+        let ref_ = Ref::new(
+            source_symbols.len, // @truncate (u32 → u31 in pack())
+            source_index,       // @truncate
+            RefTag::Symbol,
         );
-        ref_.tag = Ref::Tag::Symbol;
 
         // TODO: will this crash on resize due to using threadlocal mimalloc heap?
-        source_symbols.push(
-            self.bump,
-            Symbol {
+        source_symbols
+            .append(Symbol {
                 kind,
-                original_name,
+                // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
+                // arena-owned slice whose lifetime is erased (matches the Zig
+                // `[]const u8`); caller guarantees it outlives the symbol table.
+                original_name: original_name as *const [u8],
                 ..Default::default()
-            },
-        );
+            })
+            .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        self.ast.items_mut().module_scope[source_index as usize]
+        self.ast.items_module_scope_mut()[source_index as usize]
             .generated
-            .push(self.bump, ref_);
+            .append(ref_)
+            .unwrap_or_else(|_| bun_core::out_of_memory());
         ref_
     }
 
@@ -162,7 +166,7 @@ impl LinkerGraph {
         if count == 0 {
             return Ok(());
         }
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             LinkerGraph,
             "generateRuntimeSymbolImportAndUse({}) for {}",
             bstr::BStr::new(name),
@@ -180,85 +184,67 @@ impl LinkerGraph {
     }
 
     pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
-        let parts: &mut part::List = &mut self.ast.items_mut().parts[id as usize];
-        let part_id = parts.len() as u32; // @truncate
-        parts.push(self.bump, part)?;
-        let mut top_level_symbol_to_parts_overlay: Option<&mut TopLevelSymbolToParts> = None;
+        let parts: &mut part::List = &mut self.ast.items_parts_mut()[id as usize];
+        let part_id = parts.len; // @truncate (u32)
+        parts.append(part)?;
 
-        struct Iterator<'a, 'bump> {
-            graph: &'a mut LinkerGraph<'bump>,
+        // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
+        //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
+        //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
+        //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
+        // and additionally caches `*?*TopLevelSymbolToParts` across calls.
+        // In Rust the two `ast` borrows alias `&mut self.ast`. The columns are
+        // physically disjoint and the closure never reallocs `ast`, so we
+        // detach `declared_symbols` by `mem::take` (it is read-only inside
+        // `for_each_top_level_symbol`), iterate, then move it back. The
+        // overlay-pointer cache is dropped — re-index `meta` each call (O(1)
+        // pointer arithmetic; the cache was a Zig micro-opt that does not
+        // survive Stacked Borrows).
+        let mut declared_symbols: DeclaredSymbolList = core::mem::take(
+            &mut parts.mut_(part_id as usize).declared_symbols,
+        );
+
+        struct Ctx<'a> {
+            graph: &'a mut LinkerGraph,
             id: u32,
-            top_level_symbol_to_parts_overlay: &'a mut Option<&'a mut TopLevelSymbolToParts>,
             part_id: u32,
         }
+        let mut ctx = Ctx { graph: self, id, part_id };
 
-        impl<'a, 'bump> Iterator<'a, 'bump> {
-            pub fn next(&mut self, ref_: Ref) {
-                // TODO(port): borrowck — `top_level_symbol_to_parts_overlay`
-                // caches a `&mut` into `self.graph.meta` while `self.graph` is
-                // also held `&mut`. Phase B: reshape to re-index `meta` each
-                // call instead of caching the pointer, or split borrows.
-                let overlay = 'brk: {
-                    if let Some(out) = self.top_level_symbol_to_parts_overlay.as_deref_mut() {
-                        break 'brk out;
-                    }
+        DeclaredSymbol::for_each_top_level_symbol(&mut declared_symbols, &mut ctx, |ctx, ref_| {
+            let id = ctx.id;
+            let part_id = ctx.part_id;
+            let overlay =
+                &mut ctx.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[id as usize];
 
-                    let out = &mut self
-                        .graph
-                        .meta
-                        .items_mut()
-                        .top_level_symbol_to_parts_overlay[self.id as usize];
-
-                    *self.top_level_symbol_to_parts_overlay = Some(out);
-                    break 'brk self
-                        .top_level_symbol_to_parts_overlay
-                        .as_deref_mut()
-                        .unwrap();
-                };
-
-                let entry = overlay
-                    .get_or_put(self.graph.bump, ref_)
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    if let Some(original_parts) = self.graph.ast.items().top_level_symbols_to_parts
-                        [self.id as usize]
-                        .get(ref_)
-                    {
-                        let mut list =
-                            bumpalo::collections::Vec::<u32>::new_in(self.graph.bump);
-                        list.reserve_exact(original_parts.len() + 1);
-                        list.extend_from_slice(original_parts.slice());
-                        // PERF(port): was assume_capacity
-                        list.push(self.part_id);
-                        // PERF(port): was assume_capacity
-
-                        *entry.value_ptr = BabyList::from_owned_slice(list.into_bump_slice());
-                    } else {
-                        *entry.value_ptr =
-                            BabyList::<u32>::from_slice(self.graph.bump, &[self.part_id]);
-                    }
+            let entry = overlay
+                .get_or_put(ref_)
+                .unwrap_or_else(|_| bun_core::out_of_memory());
+            if !entry.found_existing {
+                if let Some(original_parts) =
+                    ctx.graph.ast.items_top_level_symbols_to_parts()[id as usize].get(&ref_)
+                {
+                    let mut list = Vec::<u32>::with_capacity(original_parts.len as usize + 1);
+                    list.extend_from_slice(original_parts.slice());
+                    // PERF(port): was assume_capacity
+                    list.push(part_id);
+                    *entry.value_ptr = BabyList::move_from_list(list);
                 } else {
-                    entry.value_ptr.push(self.graph.bump, self.part_id);
+                    *entry.value_ptr = BabyList::<u32>::from_slice(&[part_id])
+                        .unwrap_or_else(|_| bun_core::out_of_memory());
                 }
+            } else {
+                entry
+                    .value_ptr
+                    .append(part_id)
+                    .unwrap_or_else(|_| bun_core::out_of_memory());
             }
-        }
+        });
 
-        let mut ctx = Iterator {
-            graph: self,
-            id,
-            part_id,
-            top_level_symbol_to_parts_overlay: &mut top_level_symbol_to_parts_overlay,
-        };
-
-        // PORT NOTE: reshaped for borrowck — `parts` borrow above conflicts
-        // with `ctx.graph = self`; re-index here instead of reusing `parts`.
-        js_ast::DeclaredSymbol::for_each_top_level_symbol(
-            &mut ctx.graph.ast.items_mut().parts[id as usize]
-                .get_mut(part_id)
-                .declared_symbols,
-            &mut ctx,
-            Iterator::next,
-        );
+        // Restore the temporarily-detached list.
+        self.ast.items_parts_mut()[id as usize]
+            .mut_(part_id as usize)
+            .declared_symbols = declared_symbols;
 
         Ok(part_id)
     }
@@ -275,31 +261,33 @@ impl LinkerGraph {
             return Ok(());
         }
 
-        let parts_list = self.ast.items_mut().parts[source_index as usize].slice_mut();
-        let part: &mut Part = &mut parts_list[part_index as usize];
+        // PORT NOTE: hoisted above the `&mut parts` borrow — Zig interleaved
+        // these reads with the live `*Part` pointer; in Rust both touch
+        // `self.ast` so read the `Copy` refs first.
+        let exports_ref = self.ast.items_exports_ref()[source_index as usize];
+        let module_ref = self.ast.items_module_ref()[source_index as usize];
 
         // Mark this symbol as used by this part
-
-        let uses = &mut part.symbol_uses;
-        let uses_entry = uses.get_or_put(self.bump, ref_)?;
-
-        if !uses_entry.found_existing {
-            *uses_entry.value_ptr = part::SymbolUse {
-                count_estimate: use_count,
-                ..Default::default()
-            };
-        } else {
-            uses_entry.value_ptr.count_estimate += use_count;
+        {
+            let part: &mut Part =
+                &mut self.ast.items_parts_mut()[source_index as usize].slice_mut()
+                    [part_index as usize];
+            let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+            if !uses_entry.found_existing {
+                *uses_entry.value_ptr = symbol::Use { count_estimate: use_count };
+            } else {
+                uses_entry.value_ptr.count_estimate += use_count;
+            }
         }
 
-        let exports_ref = self.ast.items().exports_ref[source_index as usize];
-        let module_ref = self.ast.items().module_ref[source_index as usize];
-        if !exports_ref.is_null() && ref_.eql(exports_ref) {
-            self.ast.items_mut().flags[source_index as usize].uses_exports_ref = true;
+        if !exports_ref.is_empty() && ref_.eql(exports_ref) {
+            self.ast.items_flags_mut()[source_index as usize]
+                .insert(bundled_ast::Flags::USES_EXPORTS_REF);
         }
 
-        if !module_ref.is_null() && ref_.eql(module_ref) {
-            self.ast.items_mut().flags[source_index as usize].uses_module_ref = true;
+        if !module_ref.is_empty() && ref_.eql(module_ref) {
+            self.ast.items_flags_mut()[source_index as usize]
+                .insert(bundled_ast::Flags::USES_MODULE_REF);
         }
 
         // null ref shouldn't be there.
@@ -307,12 +295,12 @@ impl LinkerGraph {
 
         // Track that this specific symbol was imported
         if source_index_to_import_from.get() != source_index {
-            let imports_to_bind = &mut self.meta.items_mut().imports_to_bind[source_index as usize];
+            let imports_to_bind =
+                &mut self.meta.items_imports_to_bind_mut()[source_index as usize];
             imports_to_bind.put(
-                self.bump,
                 ref_,
                 js_meta::ImportToBind {
-                    data: js_meta::ImportData {
+                    data: ImportTracker {
                         source_index: source_index_to_import_from,
                         import_ref: ref_,
                         ..Default::default()
@@ -323,21 +311,24 @@ impl LinkerGraph {
         }
 
         // Pull in all parts that declare this symbol
-        // PORT NOTE: reshaped for borrowck — re-borrow `part.dependencies`
-        // after calling `top_level_symbol_to_parts` (which borrows `self`).
-        let part_ids = self
+        // PORT NOTE: reshaped for borrowck — `top_level_symbol_to_parts`
+        // borrows `&self` (both `ast` and `meta`), which conflicts with the
+        // `&mut part.dependencies` re-borrow. Copy the (small) part-id slice
+        // out first.
+        // PERF(port): was zero-copy slice borrow into ast/meta — revisit with
+        // `Slice::items_raw` if this shows up in profiles.
+        let part_ids: Vec<u32> = self
             .top_level_symbol_to_parts(source_index_to_import_from.get(), ref_)
             .to_vec();
-        // PERF(port): was zero-copy slice borrow into ast/meta — profile in Phase B
-        let dependencies = &mut self.ast.items_mut().parts[source_index as usize].slice_mut()
+        let dependencies = &mut self.ast.items_parts_mut()[source_index as usize].slice_mut()
             [part_index as usize]
             .dependencies;
-        let new_dependencies = dependencies.writable_slice(self.bump, part_ids.len())?;
+        let new_dependencies = dependencies.writable_slice(part_ids.len())?;
         debug_assert_eq!(part_ids.len(), new_dependencies.len());
         for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
-            *dependency = part::Dependency {
+            *dependency = Dependency {
                 source_index: source_index_to_import_from,
-                part_index: *part_id as u32, // @truncate
+                part_index: *part_id, // @truncate (already u32)
             };
         }
         Ok(())
@@ -345,18 +336,25 @@ impl LinkerGraph {
 
     pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
         if let Some(overlay) =
-            self.meta.items().top_level_symbol_to_parts_overlay[id as usize].get(ref_)
+            self.meta.items_top_level_symbol_to_parts_overlay()[id as usize].get(&ref_)
         {
             return overlay.slice();
         }
 
-        if let Some(list) = self.ast.items().top_level_symbols_to_parts[id as usize].get(ref_) {
+        if let Some(list) = self.ast.items_top_level_symbols_to_parts()[id as usize].get(&ref_) {
             return list.slice();
         }
 
         &[]
     }
+}
 
+// TODO(b2-blocked): `load` / `take_ast_ownership` / `propagate_async_dependencies`
+// still index `MultiArrayList` via the Phase-A `.items().field` shape and
+// touch APIs not yet ported (`BitSet::init_empty(len)`, `BabyList::clone_in`,
+// `transfer_ownership(heap)`). Kept gated; un-gate alongside `LinkerGraph::init`.
+#[cfg(any())]
+impl LinkerGraph {
     pub fn load(
         &mut self,
         entry_points: &[Index],
@@ -808,6 +806,10 @@ use crate::UseDirective;
 // PORT STATUS
 //   source:     src/bundler/LinkerGraph.zig (563 lines)
 //   confidence: medium
-//   todos:      9
-//   notes:      MultiArrayList field-slice API assumed; addPartToFile Iterator has overlapping &mut (graph + cached overlay ptr) needing borrowck reshape; arena threaded as &'bump Arena
+//   todos:      6
+//   notes:      generate_new_symbol/add_part_to_file/generate_symbol_import_and_use
+//               un-gated (B-2); add_part_to_file reshaped via mem::take to avoid
+//               overlapping &mut into self.ast; load/take_ast_ownership/
+//               propagate_async_dependencies still gated. Depends on
+//               #[derive(MultiArrayElement)] for BundledAst (BundledAstListExt).
 // ──────────────────────────────────────────────────────────────────────────

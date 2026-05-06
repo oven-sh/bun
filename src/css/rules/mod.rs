@@ -238,35 +238,112 @@ macro_rules! to_css_shim {
     )*};
 }
 
-// non-generic leaf rules
-to_css_shim!(
-    keyframes::KeyframesRule,
-    font_face::FontFaceRule,
-    font_palette_values::FontPaletteValuesRule,
-    page::PageRule,
-    counter_style::CounterStyleRule,
-    viewport::ViewportRule,
-    property::PropertyRule,
-);
-// generic leaf rules
-use container::ContainerRule;
-use document::MozDocumentRule;
+// generic leaf rules whose own `to_css` body is still gated
 use media::MediaRule;
-use nesting::NestingRule;
-use scope::ScopeRule;
-use starting_style::StartingStyleRule;
 use style::StyleRule;
 use supports::SupportsRule;
 to_css_shim!(generic:
     MediaRule,
     SupportsRule,
-    ContainerRule,
-    ScopeRule,
-    StartingStyleRule,
-    MozDocumentRule,
-    NestingRule,
     StyleRule,
 );
+
+// ─── shared serialization helpers for leaf rules ──────────────────────────
+// Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
+// homes are still `#[cfg(any())]`-gated outside `rules/` (DeclarationBlock::
+// to_css_block, VendorPrefix::toCss, CustomIdent/DashedIdent ::toCss). The
+// bodies are tiny and have no further blockers, so they're inlined here so the
+// 12 leaf rules can serialize for real. Once the upstream gates drop, callers
+// switch back and these are deleted.
+
+/// Port of `DeclarationBlock.toCssBlock` (declaration.zig). The real impl is
+/// gated in `declaration.rs`; `Property::to_css` is un-gated so the body is
+/// trivially inlinable here.
+pub(super) fn decl_block_to_css(
+    decls: &css::DeclarationBlock<'_>,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
+    dest.whitespace()?;
+    dest.write_char(b'{')?;
+    dest.indent();
+
+    let length = decls.len();
+    let mut i: usize = 0;
+    // Zig: `inline for (.{"declarations","important_declarations"}) |field|` — unrolled.
+    for decl in decls.declarations.iter() {
+        dest.newline()?;
+        decl.to_css(dest, false)?;
+        if i != length - 1 || !dest.minify {
+            dest.write_char(b';')?;
+        }
+        i += 1;
+    }
+    for decl in decls.important_declarations.iter() {
+        dest.newline()?;
+        decl.to_css(dest, true)?;
+        if i != length - 1 || !dest.minify {
+            dest.write_char(b';')?;
+        }
+        i += 1;
+    }
+
+    dest.dedent();
+    dest.newline()?;
+    dest.write_char(b'}')
+}
+
+/// Port of `VendorPrefix.toCss` (css_parser.zig:182). Lives here because the
+/// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css` yet
+/// and `rules/` is the only un-gated caller.
+#[inline]
+pub(super) fn vendor_prefix_to_css(
+    prefix: css::VendorPrefix,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
+    use css::VendorPrefix as VP;
+    match prefix.bits() {
+        b if b == VP::WEBKIT.bits() => dest.write_str("-webkit-"),
+        b if b == VP::MOZ.bits() => dest.write_str("-moz-"),
+        b if b == VP::MS.bits() => dest.write_str("-ms-"),
+        b if b == VP::O.bits() => dest.write_str("-o-"),
+        _ => Ok(()),
+    }
+}
+
+/// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
+/// custom-ident scoping. `CustomIdent::to_css` in `values/ident.rs` is gated
+/// on a stale `Printer::write_ident` blocker.
+#[inline]
+pub(super) fn custom_ident_to_css(
+    ident: &css::css_values::ident::CustomIdent,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
+    let css_module_custom_idents_enabled = if let Some(css_module) = &dest.css_module {
+        css_module.config.custom_idents
+    } else {
+        false
+    };
+    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
+    let v = unsafe { &*ident.v };
+    dest.write_ident(v, css_module_custom_idents_enabled)
+}
+
+/// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real
+/// printer method is gated on a borrowck reshape of the css-module pattern
+/// closure; the non-css-module path (the only one any current rule reaches)
+/// is `--` + `serialize_name(rest)`.
+#[inline]
+pub(super) fn dashed_ident_to_css(
+    ident: &css::css_values::ident::DashedIdent,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
+    // SAFETY: DashedIdent.v points into the parser arena which outlives the AST.
+    let v = unsafe { &*ident.v };
+    dest.write_str("--")?;
+    // blocked_on: Printer::write_dashed_ident — css-module dashed-ident scoping
+    // path is gated; fall through to the unscoped tail it shares.
+    css::serializer::serialize_name(&v[2..], dest).map_err(|_| dest.add_fmt_error())
+}
 
 /// Shim: `MediaRule::minify` is gated in `media.rs` until that file's full
 /// `to_css` body un-gates. Recurse into the nested list and report whether the

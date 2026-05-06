@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, HashMap as BunHashMap, IdentityContext, ArrayIdentityContext,
-    LinearFifo, StaticHashMap,
+    LinearFifo,
 };
 use bun_core::{err, Error as BunError, Global, Output, ConfigVersion};
 use bun_alloc::AllocError;

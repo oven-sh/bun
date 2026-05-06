@@ -1251,22 +1251,11 @@ pub mod package_manager {
         todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
     }
 }
-pub mod extract_tarball { pub use super::ExtractTarball; }
-pub mod network_task { pub use super::NetworkTask; }
-pub mod tarball_stream { pub use super::TarballStream; }
-pub mod lifecycle_script_runner { pub use super::LifecycleScriptSubprocess; }
-pub mod package_install { pub use super::PackageInstall; }
-pub mod package_installer {}
-pub mod isolated_install {
-    pub use super::Store;
-    pub use super::FileCopier;
-    pub type EntryId = u32;
-}
-pub mod patch_install { pub use super::PatchTask; }
-pub mod hoisted_install {}
-pub mod migration {}
-pub mod pnpm {}
-pub mod yarn {}
+// reconciler-6 inline module stubs removed — real modules are now declared
+// at the crate-tree block above (`pub mod extract_tarball;` … `pub mod yarn;`)
+// and own these types directly. The root-level `ExtractTarball`/`NetworkTask`/
+// … stub structs below remain as Phase-A placeholders for `package_manager`'s
+// by-value fields until `package_manager_real` is un-gated.
 
 /// `crate::install::…` shim — Phase-A drafts (bin.rs, repository.rs,
 /// migration.rs, resolvers/folder_resolver.rs) were written against a

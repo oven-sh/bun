@@ -1204,15 +1204,15 @@ impl Framework {
             Graph::Server | Graph::Ssr => bun_bundler::options::Target::Bun,
         };
         out.options.public_path = match renderer {
-            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes(),
-            Graph::Server | Graph::Ssr => b"",
+            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
+            Graph::Server | Graph::Ssr => Box::default(),
         };
-        out.options.entry_points = &[];
+        out.options.entry_points = Box::default();
         out.options.log = log;
         out.options.output_format = match mode {
-            Mode::Development => bun_js_parser::options::OutputFormat::Internal_BakeDev,
+            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
             Mode::ProductionDynamic | Mode::ProductionStatic => {
-                bun_js_parser::options::OutputFormat::Esm
+                bun_bundler::options::Format::Esm
             }
         };
         out.options.out_extensions = bun_collections::StringHashMap::new();

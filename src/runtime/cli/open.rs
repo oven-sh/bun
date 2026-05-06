@@ -603,7 +603,7 @@ impl EditorContext {
                     self.editor = Some(editor_);
                     self.path = Fs::FileSystem::instance()
                         .dirname_store
-                        .append(static_out)
+                        .append_slice(static_out)
                         .expect("unreachable");
                     return;
                 }
@@ -622,7 +622,7 @@ impl EditorContext {
                 self.editor = Some(editor_);
                 self.path = Fs::FileSystem::instance()
                     .dirname_store
-                    .append(out)
+                    .append_slice(out)
                     .expect("unreachable");
                 return;
             }
@@ -633,7 +633,7 @@ impl EditorContext {
                 self.editor = Some(editor_);
                 self.path = Fs::FileSystem::instance()
                     .dirname_store
-                    .append(static_out)
+                    .append_slice(static_out)
                     .expect("unreachable");
                 return;
             }
@@ -649,7 +649,7 @@ impl EditorContext {
             self.editor = Some(editor_);
             self.path = Fs::FileSystem::instance()
                 .dirname_store
-                .append(out)
+                .append_slice(out)
                 .expect("unreachable");
             return;
         }

@@ -540,7 +540,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         &mut self,
         are_new_files_stale: bool,
     ) -> Result<(), bun_alloc::AllocError> {
-        let target = self.bundled_files.count().max(self.stale_files.bit_length());
+        let target = self.bundled_files.count().max(self.stale_files.unmanaged.bit_length);
         // allocate 8 in 8 usize chunks
         let align = 8 * core::mem::size_of::<usize>() * 8;
         let aligned = (target + align - 1) & !(align - 1);
@@ -565,7 +565,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
             IncrementalGraph,
             "IncrementalGraph(0x{:x}, {}).freeEdge({})",
             self as *const _ as usize,
-            <&'static str>::from(S::SIDE),
+            side_name(S::SIDE),
             edge_index.get()
         );
         // `defer g.checkEdgeRemoval(edge_index)` — run after the body below.
@@ -849,7 +849,7 @@ impl IncrementalGraph<Client> {
         let mut code: usize = 0;
         let mut source_maps: usize = 0;
         graph += memory_cost_array_hash_map(&self.bundled_files);
-        graph += self.stale_files.bytes().len();
+        graph += self.stale_files.unmanaged.bytes().len();
         graph += memory_cost_array_list(&self.first_dep);
         graph += memory_cost_array_list(&self.first_import);
         graph += memory_cost_array_list(&self.edges);
@@ -880,7 +880,7 @@ impl IncrementalGraph<Server> {
         let code: usize = 0;
         let mut source_maps: usize = 0;
         graph += memory_cost_array_hash_map(&self.bundled_files);
-        graph += self.stale_files.bytes().len();
+        graph += self.stale_files.unmanaged.bytes().len();
         graph += memory_cost_array_list(&self.first_dep);
         graph += memory_cost_array_list(&self.first_import);
         graph += memory_cost_array_list(&self.edges);
@@ -921,7 +921,7 @@ impl IncrementalGraph<Client> {
         bun_output::scoped_log!(
             IncrementalGraphReceiveChunk,
             "receiveChunk({}, {})",
-            <&'static str>::from(Side::Client),
+            side_name(Side::Client),
             bstr::BStr::new(key)
         );
 
@@ -955,7 +955,7 @@ impl IncrementalGraph<Client> {
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.bit_length() > gop.index {
+        if self.stale_files.unmanaged.bit_length > gop.index {
             self.stale_files.unset(gop.index);
         }
 
@@ -1084,7 +1084,7 @@ impl IncrementalGraph<Server> {
         bun_output::scoped_log!(
             IncrementalGraphReceiveChunk,
             "receiveChunk({}, {})",
-            <&'static str>::from(Side::Server),
+            side_name(Side::Server),
             bstr::BStr::new(key)
         );
 
@@ -1117,7 +1117,7 @@ impl IncrementalGraph<Server> {
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.bit_length() > gop.index {
+        if self.stale_files.unmanaged.bit_length > gop.index {
             self.stale_files.unset(gop.index);
         }
 
@@ -1656,7 +1656,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         if cfg!(feature = "debug_logs") {
             ig_log!(
                 "traceDependencies(.{}, {}{})",
-                <&'static str>::from(S::SIDE),
+                side_name(S::SIDE),
                 bun_fmt::quote(&self.bundled_files.keys()[file_index.get() as usize]),
                 if gts.bits(S::SIDE).is_set(file_index.get() as usize) {
                     " [already visited]"
@@ -1759,8 +1759,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
         if cfg!(feature = "debug_logs") {
             ig_log!(
                 "traceImports(.{}, .{}, {}{})",
-                <&'static str>::from(S::SIDE),
-                <&'static str>::from(goal),
+                side_name(S::SIDE),
+                trace_import_goal_name(goal),
                 bun_fmt::quote(&self.bundled_files.keys()[file_index.get() as usize]),
                 if gts.bits(S::SIDE).is_set(file_index.get() as usize) {
                     " [already visited]"
@@ -1896,7 +1896,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
             self.first_import.push(OptionalEdgeIndex::NONE);
         }
 
-        if self.stale_files.bit_length() > gop.index {
+        if self.stale_files.unmanaged.bit_length > gop.index {
             self.stale_files.set(gop.index);
         }
 

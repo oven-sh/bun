@@ -188,9 +188,14 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         return;
     }
 
-    // Stable output order.
-    // TODO(port): ArrayHashMap::sort_by API — Zig sorts entries by key bytes
-    by_file.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
+    // PORT NOTE: reshaped — ArrayHashMap has no in-place sort yet, so build a
+    // permutation and iterate via `order` everywhere below.
+    let mut order: Vec<usize> = (0..by_file.count()).collect();
+    {
+        let keys = by_file.keys();
+        order.sort_by(|&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
+    }
 
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();

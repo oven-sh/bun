@@ -144,7 +144,9 @@ pub mod js_bundler {
     impl FileMap {
         pub fn deinit_and_unprotect(&mut self) {
             for (key, value) in self.map.drain() {
-                value.deinit_and_unprotect();
+                // TODO(port): BlobOrStringOrBuffer is currently a stub in bun_jsc
+                let _ = value;
+                let _ = todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::deinit_and_unprotect");
                 drop(key);
             }
             // map dropped automatically
@@ -162,7 +164,8 @@ pub mod js_bundler {
             #[cfg(not(windows))]
             {
                 let entry = self.map.get(specifier)?;
-                return Some(entry.slice());
+                let _ = entry;
+                return Some(todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::slice"));
             }
 
             #[cfg(windows)]
@@ -211,7 +214,8 @@ pub mod js_bundler {
             // Must use getKey to return the map's owned key, not the parameter
             #[cfg(not(windows))]
             {
-                if let Some(key) = self.map.get_key(specifier) {
+                if let Some((key, _)) = self.map.get_key_value(specifier) {
+                    let key: &[u8] = key.as_ref();
                     return Some(resolver::Result {
                         path_pair: resolver::PathPair {
                             primary: Fs::Path::init_with_namespace(key, b"file"),
@@ -278,7 +282,7 @@ pub mod js_bundler {
                     } else if !normalized_source_file.is_empty() && normalized_source_file[0] == b'/' {
                         b"/"
                     } else {
-                        Fs::FileSystem::instance().top_level_dir()
+                        Fs::FileSystem::instance().top_level_dir
                     }
                 } else {
                     source_dir

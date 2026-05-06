@@ -44,6 +44,44 @@ use bun_md::root as md;
 use bun_md::parser::ParserError;
 use crate::node::StringOrBuffer;
 
+// ── Local upstream shims ────────────────────────────────────────────────────
+// `bun_str::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
+// (tier-6), not on `bun_str::String` itself.
+#[inline]
+fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
+}
+
+/// `JSGlobalObject::throw_stack_overflow` is defined on the
+/// `bun_jsc::js_global_object::JSGlobalObject` impl block but not yet on the
+/// canonical `bun_jsc::JSGlobalObject`. Shim locally via FFI until upstream
+/// merges the two impls.
+trait ThrowStackOverflowExt {
+    fn throw_stack_overflow(&self) -> bun_jsc::JsError;
+}
+impl ThrowStackOverflowExt for JSGlobalObject {
+    #[inline]
+    fn throw_stack_overflow(&self) -> bun_jsc::JsError {
+        unsafe extern "C" {
+            fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
+        }
+        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
+        unsafe { JSGlobalObject__throwStackOverflow(self) };
+        bun_jsc::JsError::Thrown
+    }
+}
+
+/// `JSValue.push` (JSValue.zig:404) — not yet exposed on `bun_jsc::JSValue`.
+#[inline]
+fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
+    unsafe extern "C" {
+        fn JSC__JSValue__push(value: JSValue, global: *const JSGlobalObject, out: JSValue);
+    }
+    // SAFETY: `global` is live; FFI may set an exception (checked below).
+    unsafe { JSC__JSValue__push(arr, global, item) };
+    if global.has_exception() { Err(bun_jsc::JsError::Thrown) } else { Ok(()) }
+}
+
 /// Map a host-fn `JsError` back into the parser's error enum so it can
 /// bubble through `md::render_with_renderer` and be re-thrown at the top.
 #[inline]

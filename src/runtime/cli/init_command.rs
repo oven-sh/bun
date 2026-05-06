@@ -448,6 +448,8 @@ impl InitCommand {
                 .ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         initialize_store();
+        // Arena for JSON parse / Expr building (Zig used the AST store).
+        let bump = bumpalo::Bump::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {
@@ -466,20 +468,25 @@ impl InitCommand {
                         let Ok(stat) = pkg.stat() else {
                             break 'read_package_json;
                         };
-                        if stat.kind() != bun_sys::FileKind::File || stat.size() == 0 {
+                        if bun_core::kind_from_mode(stat.st_mode as _) != bun_sys::FileKind::File
+                            || stat.st_size == 0
+                        {
                             break 'read_package_json;
                         }
-                        break 'brk stat.size();
+                        break 'brk stat.st_size as u64;
                     }
                 };
 
                 package_json_contents = MutableString::init(usize::try_from(size).unwrap())?;
-                package_json_contents.list_mut().expand_to_capacity();
+                // Zig: list_mut().expand_to_capacity()
+                package_json_contents
+                    .list
+                    .resize(usize::try_from(size).unwrap(), 0);
 
                 #[cfg(windows)]
                 let prev_file_pos = pkg.get_pos()?;
                 if pkg
-                    .pread_all(package_json_contents.list_mut().as_mut_slice(), 0)
+                    .pread_all(package_json_contents.list.as_mut_slice(), 0)
                     .is_err()
                 {
                     package_json_file = None;

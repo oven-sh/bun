@@ -1112,7 +1112,7 @@ pub fn load_config_with_cmd_args<const CMD: Command::Tag>(
     args: &clap::Args<clap::Help>,
     ctx: &mut Command::Context,
 ) -> Result<(), AllocError> {
-    load_config::<CMD>(args.option("--config"), ctx)
+    load_config::<CMD>(args.option(b"--config"), ctx)
 }
 
 // TODO(port): narrow error set
@@ -1140,7 +1140,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
     };
 
-    let print_help = args.flag("--help");
+    let print_help = args.flag(b"--help");
     if print_help {
         CMD.print_help(true);
         Output::flush();
@@ -1148,24 +1148,24 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     if CMD == Command::Tag::AutoCommand {
-        if args.flag("--version") {
+        if args.flag(b"--version") {
             print_version_and_exit();
         }
 
-        if args.flag("--revision") {
+        if args.flag(b"--revision") {
             print_revision_and_exit();
         }
     }
 
     #[cfg(feature = "error_return_tracing")]
     {
-        if args.flag("--verbose-error-trace") {
+        if args.flag(b"--verbose-error-trace") {
             bun_crash_handler::set_verbose_error_trace(true);
         }
     }
 
     let cwd: Box<ZStr>;
-    if let Some(cwd_arg) = args.option("--cwd") {
+    if let Some(cwd_arg) = args.option(b"--cwd") {
         cwd = 'brk: {
             let mut outbuf = PathBuffer::uninit();
             let out = resolve_path::join_abs::<platform::Loose>(bun_sys::getcwd(&mut outbuf)?, cwd_arg);
@@ -1188,20 +1188,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     // (uses_global_options=false). bunx picks up no-orphans via the
     // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand | Command::Tag::TestCommand) {
-        if args.flag("--no-orphans") {
+        if args.flag(b"--no-orphans") {
             bun_aio::parent_death_watchdog::ParentDeathWatchdog::enable();
         }
     }
 
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand) {
-        ctx.filters = args.options("--filter");
-        ctx.workspaces = args.flag("--workspaces");
-        ctx.if_present = args.flag("--if-present");
-        ctx.parallel = args.flag("--parallel");
-        ctx.sequential = args.flag("--sequential");
-        ctx.no_exit_on_error = args.flag("--no-exit-on-error");
+        ctx.filters = args.options(b"--filter");
+        ctx.workspaces = args.flag(b"--workspaces");
+        ctx.if_present = args.flag(b"--if-present");
+        ctx.parallel = args.flag(b"--parallel");
+        ctx.sequential = args.flag(b"--sequential");
+        ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
 
-        if let Some(elide_lines) = args.option("--elide-lines") {
+        if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
                 ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
                     Ok(v) => v,
@@ -1215,7 +1215,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     if CMD == Command::Tag::TestCommand {
-        if let Some(timeout_ms) = args.option("--timeout") {
+        if let Some(timeout_ms) = args.option(b"--timeout") {
             if !timeout_ms.is_empty() {
                 ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
                     Ok(v) => v,
@@ -1228,7 +1228,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(max_concurrency) = args.option("--max-concurrency") {
+        if let Some(max_concurrency) = args.option(b"--max-concurrency") {
             if !max_concurrency.is_empty() {
                 ctx.test_options.max_concurrency = match strings::parse_int::<u32>(max_concurrency, 10) {
                     Ok(v) => v,
@@ -1241,14 +1241,14 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if !ctx.test_options.coverage.enabled {
-            ctx.test_options.coverage.enabled = args.flag("--coverage");
+            ctx.test_options.coverage.enabled = args.flag(b"--coverage");
         }
 
-        if !args.options("--coverage-reporter").is_empty() {
+        if !args.options(b"--coverage-reporter").is_empty() {
             ctx.test_options.coverage.reporters = Default::default(); // { text: false, lcov: false }
             ctx.test_options.coverage.reporters.text = false;
             ctx.test_options.coverage.reporters.lcov = false;
-            for reporter in args.options("--coverage-reporter") {
+            for reporter in args.options(b"--coverage-reporter") {
                 if reporter == b"text" {
                     ctx.test_options.coverage.reporters.text = true;
                 } else if reporter == b"lcov" {
@@ -1260,11 +1260,11 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if let Some(reporter_outfile) = args.option("--reporter-outfile") {
+        if let Some(reporter_outfile) = args.option(b"--reporter-outfile") {
             ctx.test_options.reporter_outfile = Some(reporter_outfile);
         }
 
-        if let Some(reporter) = args.option("--reporter") {
+        if let Some(reporter) = args.option(b"--reporter") {
             if reporter == b"junit" {
                 if ctx.test_options.reporter_outfile.is_none() {
                     Output::err_generic("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", format_args!(""));
@@ -1280,25 +1280,25 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         // Handle --dots flag as shorthand for --reporter=dots
-        if args.flag("--dots") {
+        if args.flag(b"--dots") {
             ctx.test_options.reporters.dots = true;
         }
 
         // Handle --only-failures flag
-        if args.flag("--only-failures") {
+        if args.flag(b"--only-failures") {
             ctx.test_options.reporters.only_failures = true;
         }
 
-        if let Some(dir) = args.option("--coverage-dir") {
+        if let Some(dir) = args.option(b"--coverage-dir") {
             ctx.test_options.coverage.reports_directory = dir;
         }
 
-        if !args.options("--path-ignore-patterns").is_empty() {
-            ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+        if !args.options(b"--path-ignore-patterns").is_empty() {
+            ctx.test_options.path_ignore_patterns = args.options(b"--path-ignore-patterns");
             ctx.test_options.path_ignore_patterns_from_cli = true;
         }
 
-        if let Some(bail) = args.option("--bail") {
+        if let Some(bail) = args.option(b"--bail") {
             if !bail.is_empty() {
                 ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                     Ok(v) => v,
@@ -1318,7 +1318,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.bail = 1;
             }
         }
-        if let Some(repeat_count) = args.option("--rerun-each") {
+        if let Some(repeat_count) = args.option(b"--rerun-each") {
             if !repeat_count.is_empty() {
                 ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                     Ok(v) => v,
@@ -1329,7 +1329,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 };
             }
         }
-        if let Some(retry_count) = args.option("--retry") {
+        if let Some(retry_count) = args.option(b"--retry") {
             if !retry_count.is_empty() {
                 ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                     Ok(v) => v,
@@ -1344,7 +1344,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             Output::pretty_errorln(format_args!("<r><red>error<r>: --retry cannot be used with --rerun-each"));
             Global::exit(1);
         }
-        if let Some(name_pattern) = args.option("--test-name-pattern") {
+        if let Some(name_pattern) = args.option(b"--test-name-pattern") {
             ctx.test_options.test_filter_pattern = Some(name_pattern);
             let regex = match RegularExpression::init(bun_str::String::from_bytes(name_pattern), RegularExpression::Flags::NONE) {
                 Ok(r) => r,
@@ -1359,10 +1359,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             // TODO(port): @ptrCast — verify regex pointer type
             ctx.test_options.test_filter_regex = Some(regex);
         }
-        if let Some(since) = args.option("--changed") {
+        if let Some(since) = args.option(b"--changed") {
             ctx.test_options.changed = Some(since);
         }
-        if let Some(shard) = args.option("--shard") {
+        if let Some(shard) = args.option(b"--shard") {
             let Some(sep) = strings::index_of_char(shard, b'/') else {
                 Output::pretty_errorln(format_args!("<r><red>error<r>: --shard expects <d>'<r>index/count<d>'<r>, e.g. --shard=1/3"));
                 Global::exit(1);
@@ -1394,16 +1394,16 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
             ctx.test_options.shard = Some(Shard { index, count });
         }
-        ctx.test_options.update_snapshots = args.flag("--update-snapshots");
-        ctx.test_options.run_todo = args.flag("--todo");
-        ctx.test_options.only = args.flag("--only");
-        ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
-        ctx.test_options.concurrent = args.flag("--concurrent");
-        ctx.test_options.randomize = args.flag("--randomize");
-        ctx.test_options.isolate = args.flag("--isolate");
-        ctx.test_options.test_worker = args.flag("--test-worker");
+        ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
+        ctx.test_options.run_todo = args.flag(b"--todo");
+        ctx.test_options.only = args.flag(b"--only");
+        ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
+        ctx.test_options.concurrent = args.flag(b"--concurrent");
+        ctx.test_options.randomize = args.flag(b"--randomize");
+        ctx.test_options.isolate = args.flag(b"--isolate");
+        ctx.test_options.test_worker = args.flag(b"--test-worker");
 
-        if let Some(parallel_str) = args.option("--parallel") {
+        if let Some(parallel_str) = args.option(b"--parallel") {
             let parsed: u32 = if !parallel_str.is_empty() {
                 match strings::parse_int::<u32>(parallel_str, 10) {
                     Ok(v) => v,
@@ -1424,7 +1424,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.test_options.isolate = true;
         }
 
-        if let Some(delay_str) = args.option("--parallel-delay") {
+        if let Some(delay_str) = args.option(b"--parallel-delay") {
             ctx.test_options.parallel_delay_ms = match strings::parse_int::<u32>(delay_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
@@ -1434,7 +1434,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         }
 
-        if let Some(seed_str) = args.option("--seed") {
+        if let Some(seed_str) = args.option(b"--seed") {
             ctx.test_options.randomize = true;
             ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
                 Ok(v) => v,
@@ -1455,7 +1455,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     let mut opts: api::TransformOptions = ctx.args.clone();
 
-    let defines_tuple = DefineColonList::resolve(args.options("--define"))?;
+    let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
 
     if !defines_tuple.keys.is_empty() {
         opts.define = Some(api::StringMap {
@@ -1464,13 +1464,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         });
     }
 
-    opts.drop = args.options("--drop");
-    opts.feature_flags = args.options("--feature");
+    opts.drop = args.options(b"--drop");
+    opts.feature_flags = args.options(b"--feature");
 
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.
     let loader_tuple = if CMD != Command::Tag::RunAsNodeCommand {
-        LoaderColonList::resolve(args.options("--loader"))?
+        LoaderColonList::resolve(args.options(b"--loader"))?
     } else {
         LoaderColonList::Result { keys: Vec::new(), values: Vec::new() }
     };
@@ -1482,43 +1482,43 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option("--tsconfig-override") {
+    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
         Some(resolve_path::join_abs_string::<platform::Auto>(ctx.args.absolute_working_dir.as_ref().unwrap().as_bytes(), &[ts]))
     } else {
         None
     };
 
-    opts.main_fields = args.options("--main-fields");
+    opts.main_fields = args.options(b"--main-fields");
     // we never actually supported inject.
-    // opts.inject = args.options("--inject");
-    opts.env_files = args.options("--env-file");
-    opts.extension_order = args.options("--extension-order");
+    // opts.inject = args.options(b"--inject");
+    opts.env_files = args.options(b"--env-file");
+    opts.extension_order = args.options(b"--extension-order");
 
-    if args.flag("--no-env-file") {
+    if args.flag(b"--no-env-file") {
         opts.disable_default_env_files = true;
     }
 
-    if args.flag("--preserve-symlinks") {
+    if args.flag(b"--preserve-symlinks") {
         opts.preserve_symlinks = true;
     }
-    if args.flag("--preserve-symlinks-main") {
+    if args.flag(b"--preserve-symlinks-main") {
         ctx.runtime_options.preserve_symlinks_main = true;
     }
 
     ctx.passthrough = args.remaining();
 
     if matches!(CMD, Command::Tag::AutoCommand | Command::Tag::RunCommand | Command::Tag::BuildCommand | Command::Tag::TestCommand) {
-        if !args.options("--conditions").is_empty() {
-            opts.conditions = args.options("--conditions");
+        if !args.options(b"--conditions").is_empty() {
+            opts.conditions = args.options(b"--conditions");
         }
     }
 
     // runtime commands
     if matches!(CMD, Command::Tag::AutoCommand | Command::Tag::RunCommand | Command::Tag::TestCommand | Command::Tag::RunAsNodeCommand) {
         {
-            let preloads = args.options("--preload");
-            let preloads2 = args.options("--require");
-            let preloads3 = args.options("--import");
+            let preloads = args.options(b"--preload");
+            let preloads2 = args.options(b"--require");
+            let preloads3 = args.options(b"--import");
             let preload4 = env_var::BUN_INSPECT_PRELOAD.get();
 
             let total_preloads = ctx.preloads.len() + preloads.len() + preloads2.len() + preloads3.len() + (if preload4.is_some() { 1usize } else { 0usize });
@@ -1534,12 +1534,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
         }
 
-        if args.flag("--hot") {
+        if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
-            if args.flag("--no-clear-screen") {
+            if args.flag(b"--no-clear-screen") {
                 bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
             }
-        } else if args.flag("--watch") {
+        } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
 
             // Windows applies this to the watcher child process.
@@ -1549,30 +1549,30 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 bun_core::set_auto_reload_on_crash(true);
             }
 
-            if args.flag("--no-clear-screen") {
+            if args.flag(b"--no-clear-screen") {
                 bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
             }
         }
 
-        if let Some(origin) = args.option("--origin") {
+        if let Some(origin) = args.option(b"--origin") {
             opts.origin = Some(origin);
         }
 
-        if args.flag("--redis-preconnect") {
+        if args.flag(b"--redis-preconnect") {
             ctx.runtime_options.redis_preconnect = true;
         }
 
-        if args.flag("--sql-preconnect") {
+        if args.flag(b"--sql-preconnect") {
             ctx.runtime_options.sql_preconnect = true;
         }
 
-        if args.flag("--no-addons") {
+        if args.flag(b"--no-addons") {
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
             opts.allow_addons = false;
         }
 
-        if let Some(unhandled_rejections) = args.option("--unhandled-rejections") {
+        if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
             opts.unhandled_rejections = match api::UnhandledRejections::MAP.get(unhandled_rejections) {
                 Some(v) => Some(*v),
                 None => {
@@ -1582,7 +1582,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             };
         }
 
-        if let Some(port_str) = args.option("--port") {
+        if let Some(port_str) = args.option(b"--port") {
             if CMD == Command::Tag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str;

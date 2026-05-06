@@ -93,8 +93,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
     jsc::initialize(false);
-    bun_js_parser::Expr::Data::Store::create();
-    bun_js_parser::Stmt::Data::Store::create();
+    bun_js_parser::Expr::data_store_create();
+    bun_js_parser::Stmt::data_store_create();
 
     // PERF(port): was MimallocArena bulk-free — VM allocator now global mimalloc.
     let mut arena = Arena::new();
@@ -117,7 +117,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
 
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
-    vm.regular_event_loop.global = vm.global;
+    vm.regular_event_loop.global = NonNull::new(vm.global);
     // SAFETY: event_loop is a self-ptr into vm; unique access here.
     unsafe { (*vm.event_loop()).ensure_waker() };
     {

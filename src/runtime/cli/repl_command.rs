@@ -47,7 +47,7 @@ impl ReplCommand {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
-            Arguments::load_config_path(true, b"bunfig.toml", &ctx, Command::Tag::RunCommand)?;
+            Arguments::load_config_path(Command::Tag::RunCommand, true, bun_core::zstr!("bunfig.toml"), ctx)?;
         }
 
         // Initialize JSC

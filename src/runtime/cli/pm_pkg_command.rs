@@ -706,7 +706,10 @@ impl PmPkgCommand {
 
         if remaining_path.is_empty() {
             let expr = Self::parse_value(value, parse_json)?;
-            root.as_e_object_mut().put(current_key, expr)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), current_key, expr)?;
             return Ok(());
         }
 
@@ -715,7 +718,10 @@ impl PmPkgCommand {
             || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
         {
             let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-            root.as_e_object_mut().put(current_key, new_obj)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), current_key, new_obj)?;
             nested_obj = root.get(current_key);
         }
 
@@ -725,7 +731,10 @@ impl PmPkgCommand {
 
         let mut nested = nested_obj.unwrap();
         Self::set_nested_simple(&mut nested, remaining_path, value, parse_json)?;
-        root.as_e_object_mut().put(current_key, nested)?;
+        root.data
+            .e_object_mut()
+            .unwrap()
+            .put(dummy_bump(), current_key, nested)?;
         Ok(())
     }
 
@@ -750,7 +759,10 @@ impl PmPkgCommand {
         if remaining_path.is_empty() {
             let expr = Self::parse_value(value, parse_json)?;
 
-            root.as_e_object_mut().put(current_key, expr)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), current_key, expr)?;
 
             return Ok(());
         }
@@ -761,7 +773,10 @@ impl PmPkgCommand {
         {
             let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
 
-            root.as_e_object_mut().put(current_key, new_obj)?;
+            root.data
+                .e_object_mut()
+                .unwrap()
+                .put(dummy_bump(), current_key, new_obj)?;
 
             nested_obj = root.get(current_key);
         }

@@ -608,9 +608,8 @@ pub mod bun_object {
                     object: *mut JSObject,
                 ) -> JSValue {
                     // SAFETY: JSC always passes valid pointers here.
-                    unsafe {
-                        bun_jsc::to_js_host_call(&*this, $target, (&*this, &*object))
-                    }
+                    let (g, o) = unsafe { (&*this, &*object) };
+                    bun_jsc::to_js_host_call(g, Ok($target(g, o)))
                 }
             )*
         };

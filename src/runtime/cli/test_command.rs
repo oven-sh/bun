@@ -1622,7 +1622,9 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_str::St
 
     let ext = bun_path::extension(slice);
     // TODO(port): std.fs.path.extension — using bun_path equivalent
-    let loader_by_ext = VirtualMachine::get().transpiler.options.loader(ext);
+    // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
+    // called from the JS thread once a VM exists.
+    let loader_by_ext = unsafe { (*VirtualMachine::get()).transpiler.options.loader(ext) };
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_bundler::options::Loader::File) {
@@ -1659,10 +1661,10 @@ impl TestCommand {
             // print the version so you know its doing stuff if it takes a sec
             let w = out_w();
             let colors = Output::enable_ansi_colors_stdout();
-            let _ = w.write_all(if colors {
-                Output::pretty_fmt(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"), true)
+            let _ = w.write_all(&if colors {
+                Output::pretty_fmt::<true>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
             } else {
-                Output::pretty_fmt(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"), false)
+                Output::pretty_fmt::<false>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
             });
             if ctx.test_options.parallel > 0 {
                 if colors {

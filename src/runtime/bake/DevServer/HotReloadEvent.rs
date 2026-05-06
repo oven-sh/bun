@@ -229,9 +229,9 @@ impl HotReloadEvent {
             }
 
             dev.publish(
-                MessageId::TestingWatchSynchronization,
+                HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 1],
-                bun_uws::Opcode::Binary,
+                bun_uws::Opcode::BINARY,
             );
             return;
         }
@@ -241,8 +241,8 @@ impl HotReloadEvent {
                 let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
                     continue;
                 };
-                let file = file.unpack();
-                if file.kind() == FileKind::Css {
+                // PORT NOTE: mod.rs `incremental_graph::File` is the un-packed shape already.
+                if file.kind == FileKind::Css {
                     entry_points.append_css(abs_path);
                 }
             }

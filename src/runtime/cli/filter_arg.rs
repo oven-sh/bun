@@ -317,7 +317,7 @@ impl PackageFilterIterator {
     fn init_walker(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // SAFETY: pattern_idx < patterns.len() checked by caller; patterns slice kept alive by caller.
-        let pattern: &[u8] = unsafe { &*(&*self.patterns)[self.pattern_idx] };
+        let pattern: &[u8] = unsafe { &(*self.patterns)[self.pattern_idx] };
         // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
         // ownership). bun_glob's Rust API copies `pattern`/`cwd` internally.
         // SAFETY: root_dir slice kept alive by caller.

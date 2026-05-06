@@ -1369,7 +1369,7 @@ impl RunCommand {
         if !ctx.debug.loaded_bunfig {
             // `Arguments::load_config_path` — loads global bunfig (if the
             // command opts in via `read_global_config`) then `bunfig.toml`.
-            let _ = arguments::load_config_path(true, b"bunfig.toml", ctx, CommandTag::RunCommand);
+            let _ = arguments::load_config_path(CommandTag::RunCommand, true, bun_core::zstr!("bunfig.toml"), ctx);
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
@@ -4157,7 +4157,7 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            let _ = cli::Arguments::load_config_path(true, b"bunfig.toml", ctx, cli::Command::Tag::RunCommand);
+            let _ = cli::Arguments::load_config_path(cli::Command::Tag::RunCommand, true, bun_core::zstr!("bunfig.toml"), ctx);
         }
 
         // try fast run (check if the file exists and is not a folder, then run it)

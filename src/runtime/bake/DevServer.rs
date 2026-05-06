@@ -5543,6 +5543,32 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     }
 }
 
+impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
+    fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+        PromiseEnsureRouteBundledCtx::on_defer(self, bundle_field)
+    }
+    fn on_loaded(&mut self) -> JsResult<()> {
+        PromiseEnsureRouteBundledCtx::on_loaded(self)
+    }
+    fn on_failure(&mut self) -> JsResult<()> {
+        PromiseEnsureRouteBundledCtx::on_failure(self)
+    }
+    fn on_plugin_error(&mut self) -> JsResult<()> {
+        PromiseEnsureRouteBundledCtx::on_plugin_error(self)
+    }
+    fn to_dev_response(&mut self) -> DevResponse {
+        PromiseEnsureRouteBundledCtx::to_dev_response(self)
+    }
+    fn dev(&mut self) -> &mut DevServer {
+        // SAFETY: lifetime erased to satisfy the trait's invariant signature;
+        // borrow does not outlive `self`.
+        unsafe { core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(self.dev) }
+    }
+    fn route_bundle_index(&self) -> route_bundle::Index {
+        self.route_bundle_index
+    }
+}
+
 #[bun_jsc::host_fn]
 #[unsafe(no_mangle)]
 pub fn Bake__bundleNewRouteJSFunctionImpl(

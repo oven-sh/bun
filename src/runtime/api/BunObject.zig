@@ -1608,8 +1608,8 @@ pub const JSZlib = struct {
     }
 
     pub fn gunzipOrInflateSync(globalThis: *JSGlobalObject, buffer: jsc.Node.StringOrBuffer, options_val_: ?JSValue, is_gzip: bool) bun.JSError!JSValue {
+        // Defaults: gunzip → 31 (gzip wrap), inflate → -15 (raw deflate).
         var opts = zlib.Options{
-            .gzip = is_gzip,
             .windowBits = if (is_gzip) 31 else -15,
         };
 
@@ -1617,6 +1617,15 @@ pub const JSZlib = struct {
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
                 opts.windowBits = try window.coerce(i32, globalThis);
+                // node:zlib's Gunzip class adds 16 to a windowBits in 8..15
+                // before forwarding to inflateInit2_ so callers can ask for a
+                // smaller window without losing the gzip wrapper. Mirror that
+                // here — without the +16, `Bun.gunzipSync(gzipped, {windowBits: 15})`
+                // would ask zlib to read gzip bytes as zlib-wrapped and fail
+                // with "incorrect header check".
+                if (is_gzip and opts.windowBits >= 8 and opts.windowBits <= 15) {
+                    opts.windowBits += 16;
+                }
                 library = .zlib;
             }
 
@@ -1738,11 +1747,33 @@ pub const JSZlib = struct {
     ) bun.JSError!JSValue {
         var level: ?i32 = null;
         var library: Library = .zlib;
-        var windowBits: i32 = 0;
+        // Defaults: gzipSync → 31 (gzip wrap), deflateSync → -15 (raw deflate, the
+        // historical default — `Bun.deflateSync(buf)` without options has always
+        // produced raw deflate, so callers may be relying on it).
+        var windowBits: i32 = if (is_gzip) 31 else -15;
+        var memLevel: i32 = 8;
+        var strategy: i32 = 0;
 
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
                 windowBits = try window.coerce(i32, globalThis);
+                // Mirror node:zlib's Gzip class: a windowBits in 8..15 stays in
+                // gzip mode by adding 16. This is also the reason `+16` cannot
+                // be applied unconditionally — values in 24..31 are already
+                // gzip-wrapped and negative values mean raw deflate.
+                if (is_gzip and windowBits >= 8 and windowBits <= 15) {
+                    windowBits += 16;
+                }
+                library = .zlib;
+            }
+
+            if (try options_val.get(globalThis, "memLevel")) |memLevel_value| {
+                memLevel = try memLevel_value.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (try options_val.get(globalThis, "strategy")) |strategy_value| {
+                strategy = try strategy_value.coerce(i32, globalThis);
                 library = .zlib;
             }
 
@@ -1775,8 +1806,9 @@ pub const JSZlib = struct {
                 );
 
                 var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
-                    .windowBits = 15,
-                    .gzip = is_gzip,
+                    .windowBits = windowBits,
+                    .memLevel = memLevel,
+                    .strategy = strategy,
                     .level = level orelse 6,
                 }) catch |err| {
                     defer list.deinit(allocator);

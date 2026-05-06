@@ -523,9 +523,17 @@ pub const ZlibReaderArrayList = struct {
 };
 
 pub const Options = struct {
-    gzip: bool = false,
     level: c_int = 6,
     method: c_int = 8,
+    /// Passed verbatim to `deflateInit2_` / `inflateInit2_`.
+    /// Zlib interprets the sign and range:
+    ///   8..15:    zlib header/trailer
+    ///   -8..-15:  raw deflate (no header/trailer)
+    ///   24..31:   gzip header/trailer (16 + 8..15)
+    /// The compressor used to flip the sign / add 16 internally based on a
+    /// separate `gzip` boolean, but that meant the caller's `windowBits` was
+    /// silently dropped on the compress path. Callers now compute the final
+    /// value and pass it through directly.
     windowBits: c_int = 15,
     memLevel: c_int = 8,
     strategy: c_int = 0,
@@ -837,7 +845,7 @@ pub const ZlibCompressorArrayList = struct {
             &zlib_reader.zlib,
             options.level,
             options.method,
-            if (!options.gzip) -options.windowBits else options.windowBits + 16,
+            options.windowBits,
             options.memLevel,
             options.strategy,
             zlibVersion(),

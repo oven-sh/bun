@@ -344,7 +344,7 @@ pub fn validate_number(
 pub fn validate_boolean(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display,
 ) -> JsResult<bool> {
     if !value.is_boolean() {
         return Err(throw_err_invalid_arg_type(global_this, name, "boolean", value));
@@ -380,7 +380,7 @@ impl ValidateObjectOptions {
 pub fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
     if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
@@ -410,7 +410,7 @@ pub fn validate_object(
 pub fn validate_array(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {

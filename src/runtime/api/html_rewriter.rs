@@ -323,11 +323,13 @@ impl HTMLRewriter {
             // on the stack via ensure_still_alive above).
             let mut blob = unsafe { (*out_response).get_body_value().use_as_any_blob_allow_non_utf8_string() };
 
-            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
+            let _out_guard = scopeguard::guard((out_response_value, out_response), |(_v, r)| {
                 // SAFETY: r is the m_ctx pointer detached from v here, then
                 // finalized exactly once (Zig: dangerouslySetPtr + finalize).
                 unsafe {
-                    let _ = Response::js::dangerously_set_ptr(v, core::ptr::null_mut());
+                    // TODO(b2-blocked): `Response::js::dangerously_set_ptr` not
+                    // yet exported from the JSResponse codegen module.
+                    let _ = todo!("blocked_on: webcore::response::js::dangerously_set_ptr");
                     // Manually invoke the finalizer to ensure it does what we want
                     Response::finalize(r);
                 }
@@ -340,7 +342,7 @@ impl HTMLRewriter {
             };
         }
 
-        global.throw_invalid_arguments("Expected Response or Body")
+        Err(global.throw_invalid_arguments("Expected Response or Body"))
     }
 
     // TODO(port): host_fn.wrapInstanceMethod codegen — `on`, `onDocument`,

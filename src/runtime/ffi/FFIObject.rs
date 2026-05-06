@@ -719,7 +719,7 @@ pub fn to_cstring_buffer(
         ValueOrError::Slice(ptr, len) => {
             // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            JSValue::create_buffer(global_this, slice, None)
+            create_buffer_with_ctx(global_this, slice, core::ptr::null_mut(), None)
         }
     }
 }

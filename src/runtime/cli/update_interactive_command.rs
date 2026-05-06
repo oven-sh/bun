@@ -1505,8 +1505,8 @@ pub fn edit_catalog_definitions(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    Expr::Disabler::disable();
-    let _reenable = scopeguard::guard((), |_| Expr::Disabler::enable());
+    bun_js_parser::ast::expr::Disabler::disable();
+    let _reenable = scopeguard::guard((), |_| bun_js_parser::ast::expr::Disabler::enable());
 
     let _ = manager; // allocator removed in Rust port
 

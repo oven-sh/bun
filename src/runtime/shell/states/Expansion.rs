@@ -99,6 +99,29 @@ impl Expansion {
         Yield::Next(this)
     }
 
+    /// Spec: Expansion.zig `onGlobWalkDone`. Main-thread re-entry for the
+    /// off-thread glob walker — splice each match as a separate word into
+    /// `out` then resume the atom-walk trampoline.
+    pub fn on_glob_walk_done(
+        interp: &mut Interpreter,
+        this: NodeId,
+        result: Vec<Vec<u8>>,
+        err: Option<bun_core::Error>,
+    ) {
+        {
+            let me = interp.as_expansion_mut(this);
+            for entry in result {
+                me.out.buf.extend_from_slice(&entry);
+                me.out.bounds.push(me.out.buf.len() as u32);
+            }
+            me.state = ExpansionState::Done;
+        }
+        // TODO(b2-blocked): on `err.is_some()` route through
+        // `writeFailingError` (IOWriter::enqueue) instead of resuming clean.
+        let _ = err;
+        Yield::Next(this).run(interp);
+    }
+
     pub fn deinit(interp: &mut Interpreter, this: NodeId) {
         log!("Expansion {} deinit", this);
         let child = interp.as_expansion_mut(this).child_script.take();

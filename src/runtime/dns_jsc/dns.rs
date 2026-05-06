@@ -889,7 +889,7 @@ impl GetNameInfoRequest {
     ) -> *mut Self {
         let hash = wyhash(&name);
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
         let name_len = name.len();
         let request = Box::into_raw(Box::new(Self {
             resolver_for_caching: resolver,

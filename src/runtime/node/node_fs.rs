@@ -1693,6 +1693,7 @@ impl AsyncReaddirRecursiveTask {
 
         let root_fd = self.root_fd;
         if root_fd != FD::INVALID {
+            use bun_sys::FdExt as _;
             self.root_fd = FD::INVALID;
             root_fd.close();
             // free root_path's heap-backed slice

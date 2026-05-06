@@ -133,9 +133,8 @@ impl Drop for BlobOrStringOrBuffer {
             Self::Blob(blob) => {
                 // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
                 // content_type/name. Only release the store reference.
-                if let Some(store) = blob.store() {
-                    store.deref_count();
-                }
+                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
+                let _ = blob.store.take();
             }
             Self::StringOrBuffer(_) => {
                 // StringOrBuffer's own Drop handles cleanup.

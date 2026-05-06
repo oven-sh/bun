@@ -1248,7 +1248,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
+            if let Some(optimize_imports) = get_own_array(config, global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;

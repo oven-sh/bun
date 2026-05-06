@@ -578,16 +578,21 @@ impl UpgradeCommand {
 
         let mut version: Version = if !use_canary {
             // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `refresher`;
-            // leak the Progress so the Node borrow is `'static` and we can pass
-            // both `&mut refresher` and `&mut progress` to `get_latest_version`.
-            let refresher: &'static mut Progress::Progress =
-                Box::leak(Box::new(Progress::Progress::default()));
-            let progress: *mut Progress::Node = refresher.start(b"Fetching version tags", 0);
+            // leak the Progress and use raw pointers so we can pass both
+            // `&mut refresher` and `&mut progress` to `get_latest_version` (Zig
+            // freely aliased these).
+            let refresher: *mut Progress::Progress =
+                Box::into_raw(Box::new(Progress::Progress::default()));
+            // SAFETY: refresher is a fresh leaked allocation.
+            let progress: *mut Progress::Node =
+                unsafe { (*refresher).start(b"Fetching version tags", 0) };
 
             let Some(version) = Self::get_latest_version::<false>(
                 &mut env_loader,
-                Some(refresher),
-                // SAFETY: progress points into `refresher`'s root Node which is leaked.
+                // SAFETY: refresher/progress point into the same leaked allocation;
+                // `get_latest_version` only touches them on the !SILENT error
+                // path (no overlapping live borrows).
+                Some(unsafe { &mut *refresher }),
                 Some(unsafe { &mut *progress }),
                 use_profile,
             )?
@@ -597,7 +602,7 @@ impl UpgradeCommand {
 
             // SAFETY: see above.
             unsafe { (*progress).end() };
-            refresher.refresh();
+            unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {

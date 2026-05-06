@@ -2272,7 +2272,7 @@ impl Default for TakeJSBundleOptionsClient {
     fn default() -> Self {
         Self {
             kind: ChunkKind::InitialResponse,
-            script_id: SourceMapStoreKey::default(),
+            script_id: SourceMapStoreKey::init(0),
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
             console_log: false,

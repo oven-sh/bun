@@ -660,15 +660,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
     if !override_env && env_array.is_empty() {
-        match jsc_vm.transpiler.env.map.create_null_delimited_env_map() {
-            Ok(items) => {
-                env_array = items;
-            }
-            Err(err) => {
-                let _ = global_this.throw_error(err, "in Bun.spawn");
-                return Ok(JSValue::ZERO);
-            }
-        }
+        // TODO(port): `DotEnv::Map::create_null_delimited_env_map` not yet on
+        // the Rust port; build the envp array directly from the loader's map.
+        todo!("blocked_on: bun_dotenv::Map::create_null_delimited_env_map");
     }
 
     // PORT NOTE: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.

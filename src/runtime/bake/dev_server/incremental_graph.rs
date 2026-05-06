@@ -83,6 +83,13 @@ pub struct File {
     pub content: Content,
 }
 
+impl File {
+    #[inline]
+    pub fn file_kind(&self) -> FileKind {
+        self.kind
+    }
+}
+
 impl Default for File {
     /// Only exists to satisfy `StringArrayHashMap::get_or_put`'s `V: Default`
     /// bound; the slot is always overwritten on `!found_existing`.

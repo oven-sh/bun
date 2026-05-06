@@ -803,17 +803,18 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             // SAFETY: route was ref'd when stored
-            let route = unsafe { &mut *route };
-            route.on_plugins_rejected();
-            route.deref_();
+            let _ = unsafe { &mut *route }.on_plugins_rejected();
+            // SAFETY: route was ref'd when stored; pair with that ref
+            unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(server) = dev_server {
             // SAFETY: dev_server outlives plugin load
-            unsafe { server.as_ref() }.on_plugins_rejected();
+            unsafe { server.as_mut() }.on_plugins_rejected();
         }
 
-        Output::err_generic(format_args!("Failed to load plugins for Bun.serve:"));
-        global.bun_vm().run_error_handler(err, None);
+        Output::err_generic("Failed to load plugins for Bun.serve:", ());
+        // SAFETY: bun_vm() returns a non-null *mut to the active VM
+        unsafe { &mut *global.bun_vm() }.run_error_handler(err, None);
     }
 }
 

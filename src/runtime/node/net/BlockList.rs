@@ -364,54 +364,41 @@ impl BlockList {
 
     #[bun_jsc::host_fn(getter)]
     pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // GC must be able to visit
-        let array = JSArray::create_empty(global, 0)?;
-
         let _guard = this.mutex.lock();
-        for rule in this.da_rules.iter() {
-            match rule {
+        // GC must be able to visit
+        let array = JSValue::create_empty_array(global, this.da_rules.len())?;
+
+        for (i, rule) in this.da_rules.iter().enumerate() {
+            let s = match rule {
                 Rule::Addr(a) => {
-                    let mut buf = [0u8; socket_address::inet::INET6_ADDRSTRLEN];
-                    array.push(
-                        global,
-                        BunString::create_format_for_js(
-                            global,
-                            format_args!("Address: {} {}", a.family().upper(), a.fmt(&mut buf)),
-                        )?,
-                    )?;
+                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
+                    BunString::create_format(format_args!(
+                        "Address: {} {}",
+                        z(a.family().upper()),
+                        z(a.fmt(&mut buf)),
+                    ))
                 }
                 Rule::Range { start, end } => {
-                    let mut buf_s = [0u8; socket_address::inet::INET6_ADDRSTRLEN];
-                    let mut buf_e = [0u8; socket_address::inet::INET6_ADDRSTRLEN];
-                    array.push(
-                        global,
-                        BunString::create_format_for_js(
-                            global,
-                            format_args!(
-                                "Range: {} {}-{}",
-                                start.family().upper(),
-                                start.fmt(&mut buf_s),
-                                end.fmt(&mut buf_e)
-                            ),
-                        )?,
-                    )?;
+                    let mut buf_s = [0u8; inet::INET6_ADDRSTRLEN as usize];
+                    let mut buf_e = [0u8; inet::INET6_ADDRSTRLEN as usize];
+                    BunString::create_format(format_args!(
+                        "Range: {} {}-{}",
+                        z(start.family().upper()),
+                        z(start.fmt(&mut buf_s)),
+                        z(end.fmt(&mut buf_e)),
+                    ))
                 }
                 Rule::Subnet { network, prefix } => {
-                    let mut buf = [0u8; socket_address::inet::INET6_ADDRSTRLEN];
-                    array.push(
-                        global,
-                        BunString::create_format_for_js(
-                            global,
-                            format_args!(
-                                "Subnet: {} {}/{}",
-                                network.family().upper(),
-                                network.fmt(&mut buf),
-                                prefix
-                            ),
-                        )?,
-                    )?;
+                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
+                    BunString::create_format(format_args!(
+                        "Subnet: {} {}/{}",
+                        z(network.family().upper()),
+                        z(network.fmt(&mut buf)),
+                        prefix,
+                    ))
                 }
-            }
+            };
+            array.put_index(global, i as u32, s.to_js(global)?)?;
         }
         Ok(array)
     }

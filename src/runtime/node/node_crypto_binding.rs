@@ -1250,15 +1250,15 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
 #[bun_jsc::host_fn]
 fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-    ScryptJob::init_and_schedule(global, callback, &ctx)?;
+    ScryptJob::init_and_schedule(global, callback, ctx)?;
     Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]
 fn scrypt_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let (mut ctx, _) = Scrypt::from_js::<false>(global, call_frame)?;
-    let _guard = scopeguard::guard((), |_| ctx.deinit_sync());
-    let (buf, bytes) = ArrayBuffer::alloc(global, ArrayBuffer::Kind::ArrayBuffer, ctx.keylen)?;
+    let (ctx, _) = Scrypt::from_js::<false>(global, call_frame)?;
+    let mut ctx = scopeguard::guard(ctx, |mut c| c.deinit_sync());
+    let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
     ctx.run_task_impl(bytes);
     Ok(buf)
 }

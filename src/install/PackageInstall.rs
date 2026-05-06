@@ -1195,14 +1195,22 @@ impl<'a> PackageInstall<'a> {
         type WinSlice<'b> = &'b mut [u16];
         #[cfg(not(windows))]
         type WinSlice<'b> = ();
+        #[cfg(windows)]
+        type WinOffset = usize;
+        #[cfg(not(windows))]
+        type WinOffset = ();
 
+        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
+        // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
+        // offset and reslice inside.
         fn copy(
             destination_dir_: Dir,
             walker: &mut Walker,
             mut progress_: Option<&mut Progress>,
-            #[allow(unused)] to_copy_into1: WinSlice<'_>,
+            #[allow(unused)] to_copy_into1_offset: WinOffset,
             #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2: WinSlice<'_>,
+            #[allow(unused)] to_copy_into2_offset: WinOffset,
             #[allow(unused)] head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
@@ -1218,29 +1226,23 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > to_copy_into1.len() || entry.path.len() > to_copy_into2.len() {
+                    if entry.path.len() > head1.len() - to_copy_into1_offset
+                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
-                    head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
+                    let dest_len = to_copy_into1_offset + entry.path.len();
+                    head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
+                    head1[dest_len] = 0;
                     // SAFETY: NUL written above.
-                    let dest = unsafe {
-                        bun_str::WStr::from_raw(
-                            head1.as_ptr(),
-                            entry.path.len() + head1.len() - to_copy_into1.len(),
-                        )
-                    };
+                    let dest = unsafe { bun_str::WStr::from_raw(head1.as_ptr(), dest_len) };
 
-                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path.as_slice());
-                    head2[entry.path.len() + (head1.len() - to_copy_into2.len())] = 0;
+                    let src_len = to_copy_into2_offset + entry.path.len();
+                    head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
+                    head2[src_len] = 0;
                     // SAFETY: NUL written above.
-                    let src = unsafe {
-                        bun_str::WStr::from_raw(
-                            head2.as_ptr(),
-                            entry.path.len() + head2.len() - to_copy_into2.len(),
-                        )
-                    };
+                    let src = unsafe { bun_str::WStr::from_raw(head2.as_ptr(), src_len) };
 
                     match entry.kind {
                         EntryKind::Directory => {
@@ -1453,17 +1455,27 @@ impl<'a> PackageInstall<'a> {
                                 destination_dir.fd(),
                                 entry.path,
                             ) {
-                                if err.get_errno() != sys::E::EEXIST {
-                                    return Err(err.into());
+                                // Map raw errno to the Zig error names std.posix.linkatZ would
+                                // produce, so the caller's `NotSameFileSystem` / `ENXIO` checks
+                                // (and the copyfile fallback in `install()`) actually fire.
+                                match err.get_errno() {
+                                    sys::E::EEXIST => {
+                                        let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
+                                        sys::linkat(
+                                            entry.dir,
+                                            entry.basename,
+                                            destination_dir.fd(),
+                                            entry.path,
+                                        )?;
+                                    }
+                                    sys::E::EXDEV => {
+                                        return Err(bun_core::err!("NotSameFileSystem"));
+                                    }
+                                    sys::E::ENXIO => {
+                                        return Err(bun_core::err!("ENXIO"));
+                                    }
+                                    _ => return Err(err.into()),
                                 }
-
-                                let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
-                                sys::linkat(
-                                    entry.dir,
-                                    entry.basename,
-                                    destination_dir.fd(),
-                                    entry.path,
-                                )?;
                             }
 
                             real_file_count += 1;

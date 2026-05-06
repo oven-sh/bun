@@ -5,7 +5,7 @@ use bun_collections::BabyList;
 use bun_core::{self, err, Error, Output};
 use bun_logger as logger;
 use bun_string::strings;
-use bun_wyhash::Wyhash;
+use bun_wyhash::Wyhash11 as Wyhash;
 
 use crate::parser::options;
 use bun_options_types::import_record::ImportRecord;

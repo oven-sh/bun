@@ -396,8 +396,6 @@ pub mod GlobalRegistry {
     // Backing storage + intern() are gated until the content-hash MapContext
     // adapter exists; remove() is a no-op while no map is populated.
 
-    static MUTEX: bun_threading::Mutex = bun_threading::Mutex::new();
-
     /// Called from `SSLConfig::drop()` on strong 1->0. If `intern()` replaced
     /// our slot while we blocked on the mutex, the pointer-identity check
     /// fails and we skip (intern already disposed our weak ref).

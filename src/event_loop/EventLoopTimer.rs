@@ -16,14 +16,11 @@ impl Timespec {
 }
 use Timespec as timespec;
 
-// TODO(b1): bun_io::heap::IntrusiveField missing from lower tier (only
-// IntrusiveHeap is exposed) — local stub until B-2.
-pub struct IntrusiveField<T>(core::marker::PhantomData<T>);
-impl<T> Default for IntrusiveField<T> {
-    fn default() -> Self {
-        Self(core::marker::PhantomData)
-    }
-}
+// Re-export so higher tiers see the *same* type they pass to
+// `bun_io::heap::Intrusive<EventLoopTimer, _>` (was a zero-sized local stub
+// in B-1, which made the real pairing-heap unusable — orphan rule blocked
+// `impl HeapNode for EventLoopTimer` anywhere but here).
+pub use bun_io::heap::IntrusiveField;
 
 const NS_PER_MS: i64 = 1_000_000;
 
@@ -56,6 +53,16 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+}
+
+// Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
+// here (the defining crate) so higher tiers can instantiate
+// `Intrusive<EventLoopTimer, _>` without hitting the orphan rule.
+impl bun_io::heap::HeapNode for EventLoopTimer {
+    #[inline]
+    fn heap(&mut self) -> &mut IntrusiveField<Self> {
+        &mut self.heap
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Default)]

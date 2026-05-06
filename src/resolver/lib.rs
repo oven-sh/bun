@@ -1472,7 +1472,7 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 //   ✓ bun_bundler::options::jsx::Pragma → crate::tsconfig_json::options::jsx::Pragma (structural local def; TYPE_ONLY)
 //   ✓ bun_bundler::options::jsx::Pragma::parse_package_name → crate::fs::parse_package_name (inlined)
 //   ✓ bun_bundler::cache::Json → crate::tsconfig_json::JsonCache (manual vtable, §Dispatch cold-path)
-//   ✓ bun_bundler::cache::Set → *mut () FORWARD_DECL inside __phase_a_body
+//   ✓ bun_bundler::cache::Set → crate::cache::Set (MOVE_DOWN; bundler re-exports/extends)
 //   ✗ bun_bundler::options::{BundleOptions, Packages} — TODO(b0-genuine): MOVE_DOWN to bun_options_types
 //
 // Remaining peer-crate blocks on __phase_a_body (NOT cycle-related):
@@ -2746,9 +2746,10 @@ impl<'a> Resolver<'a> {
         self.opts.global_cache.is_enabled()
     }
 
-    // TODO(b2-blocked): bun_bundler::cache::Set::init — `caches` is opaque until
-    // the bundler crate compiles; the bundler constructs `Resolver` directly with
-    // its real `cache::Set`. Re-gated until CacheSet has a real init().
+    // TODO(b2-blocked): `CacheSet::init()` is now real (see `crate::cache`);
+    // remaining gate is `options::BundleOptions` field-shape parity
+    // (`extension_order.default.default` chain) once MOVE_DOWN to
+    // bun_options_types completes.
     #[cfg(any())]
     pub fn init1(
         log: &'a mut logger::Log,

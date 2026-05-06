@@ -1905,7 +1905,10 @@ impl HTTPClient {
                 // Rust the const-generic isn't unified, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                let session = h2::ClientSession::create(ctx, tls_socket, self);
+                // SAFETY: `create` returns a freshly-boxed session with refcount 1,
+                // owned by the socket ext-data via `tag_as_h2`. The `&mut` is
+                // unique here — no other access until `attach` returns.
+                let session = unsafe { &mut *h2::ClientSession::create(ctx, tls_socket, self) };
                 GenHttpContext::<true>::tag_as_h2(tls_socket, session);
                 self.resolve_pending_h2(PendingH2Resolution::H2(session));
                 session.attach(self);
@@ -2067,7 +2070,7 @@ impl HTTPClient {
     ///
     /// On https://, we are limited to a 16 KB TLS record size.
     #[inline]
-    fn get_request_body_send_buffer(&self) -> http_thread_bridge::RequestBodyBuffer {
+    fn get_request_body_send_buffer(&self) -> http_thread::RequestBodyBuffer {
         let actual_estimated_size =
             self.request_body().len() + self.estimated_request_header_byte_length();
         let estimated_size = if HTTPClient::is_https(self) {

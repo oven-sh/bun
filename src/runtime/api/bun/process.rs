@@ -2023,6 +2023,39 @@ pub fn spawn_process(
     }
 }
 
+/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
+/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
+/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
+/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
+/// on error returns. `on_error` is disarmed on the success path.
+///
+/// This exists so that bare `?` on `actions.*` propagates without leaking
+/// the parent-side socketpair ends pushed earlier in the loop.
+#[cfg(unix)]
+struct PosixSpawnFdGuard {
+    to_set_cloexec: Vec<Fd>,
+    to_close_at_end: Vec<Fd>,
+    to_close_on_error: Vec<Fd>,
+    on_error: bool,
+}
+
+#[cfg(unix)]
+impl Drop for PosixSpawnFdGuard {
+    fn drop(&mut self) {
+        if self.on_error {
+            for fd in self.to_close_on_error.iter() {
+                fd.close();
+            }
+        }
+        for fd in self.to_set_cloexec.iter() {
+            let _ = spawn_sys::set_close_on_exec(*fd);
+        }
+        for fd in self.to_close_at_end.iter() {
+            fd.close();
+        }
+    }
+}
+
 #[cfg(unix)]
 pub fn spawn_process_posix(
     options: &PosixSpawnOptions,
@@ -2092,13 +2125,14 @@ pub fn spawn_process_posix(
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
     // errdefer extra_fds.deinit() — Vec drops on ?
     // PERF(port): was stack-fallback allocator (2048)
-    // PORT NOTE: Zig defers `to_set_cloexec`/`to_close_at_end` cleanup; the
-    // scopeguard form borrow-conflicts with later pushes, so cleanup is run
-    // inline at every return site (LIFO-equivalent for the three exits below).
-    let mut to_close_at_end: Vec<Fd> = Vec::new();
-    let mut to_set_cloexec: Vec<Fd> = Vec::new();
-    // TODO(port): errdefer — to_close_on_error closed on any `?` after this point
-    let mut to_close_on_error: Vec<Fd> = Vec::new();
+    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
+    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
+    let mut cleanup = PosixSpawnFdGuard {
+        to_set_cloexec: Vec::new(),
+        to_close_at_end: Vec::new(),
+        to_close_on_error: Vec::new(),
+        on_error: true,
+    };
 
     let _ = attr.set(flags as _);
     let _ = attr.reset_signals();
@@ -2165,8 +2199,8 @@ pub fn spawn_process_posix(
                             Err(_) => break 'use_memfd,
                         };
 
-                        to_close_on_error.push(fd);
-                        to_set_cloexec.push(fd);
+                        cleanup.to_close_on_error.push(fd);
+                        cleanup.to_set_cloexec.push(fd);
                         actions.dup2(fd, fileno)?;
                         set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
@@ -2192,12 +2226,7 @@ pub fn spawn_process_posix(
                     };
                     let pair = match pair_result {
                         Ok(p) => p,
-                        Err(e) => {
-                            for fd in to_close_on_error.iter() { fd.close(); }
-                            for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
-                            for fd in to_close_at_end.iter() { fd.close(); }
-                            return Ok(Err(e));
-                        }
+                        Err(e) => return Ok(Err(e)),
                     };
                     break 'brk [pair[if i == 0 { 1 } else { 0 }], pair[if i == 0 { 0 } else { 1 }]];
                 };
@@ -2251,14 +2280,11 @@ pub fn spawn_process_posix(
                     }
                 }
 
-                to_close_at_end.push(fds[1]);
-                to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(fds[1]);
+                cleanup.to_close_on_error.push(fds[0]);
 
                 if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
-                        for fd in to_close_on_error.iter() { fd.close(); }
-                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
-                        for fd in to_close_at_end.iter() { fd.close(); }
                         return Ok(Err(e));
                     }
                 }
@@ -2319,25 +2345,17 @@ pub fn spawn_process_posix(
                     },
                 ) {
                     Ok(p) => p,
-                    Err(e) => {
-                        for fd in to_close_on_error.iter() { fd.close(); }
-                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
-                        for fd in to_close_at_end.iter() { fd.close(); }
-                        return Ok(Err(e));
-                    }
+                    Err(e) => return Ok(Err(e)),
                 };
 
                 if !options.sync && !is_ipc {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
-                        for fd in to_close_on_error.iter() { fd.close(); }
-                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
-                        for fd in to_close_at_end.iter() { fd.close(); }
                         return Ok(Err(e));
                     }
                 }
 
-                to_close_at_end.push(fds[1]);
-                to_close_on_error.push(fds[0]);
+                cleanup.to_close_at_end.push(fds[1]);
+                cleanup.to_close_on_error.push(fds[0]);
 
                 actions.dup2(fds[1], fileno)?;
                 if fds[1] != fileno {
@@ -2363,15 +2381,6 @@ pub fn spawn_process_posix(
 
     match spawn_result {
         Err(err) => {
-            for fd in to_close_on_error.iter() {
-                fd.close();
-            }
-            for fd in to_set_cloexec.iter() {
-                let _ = spawn_sys::set_close_on_exec(*fd);
-            }
-            for fd in to_close_at_end.iter() {
-                fd.close();
-            }
             return Ok(Err(err));
         }
         Ok(pid) => {
@@ -2396,15 +2405,6 @@ pub fn spawn_process_posix(
                                 spawned.has_exited = true;
                                 // a real error occurred. one we should not assume means pidfd_open is blocked.
                             } else if !WaiterThread::should_use_waiter_thread() {
-                                for fd in to_close_on_error.iter() {
-                                    fd.close();
-                                }
-                                for fd in to_set_cloexec.iter() {
-                                    let _ = spawn_sys::set_close_on_exec(*fd);
-                                }
-                                for fd in to_close_at_end.iter() {
-                                    fd.close();
-                                }
                                 return Ok(Err(err));
                             }
                         }
@@ -2412,13 +2412,9 @@ pub fn spawn_process_posix(
                 }
             }
 
-            // success-path defer cleanup
-            for fd in to_set_cloexec.iter() {
-                let _ = spawn_sys::set_close_on_exec(*fd);
-            }
-            for fd in to_close_at_end.iter() {
-                fd.close();
-            }
+            // Disarm `errdefer`; the unconditional `defer` (cloexec +
+            // close_at_end) runs from `cleanup`'s Drop on the way out.
+            cleanup.on_error = false;
             return Ok(Ok(spawned));
         }
     }

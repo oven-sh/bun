@@ -167,11 +167,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // ─── heavy visitors ─────────────────────────────────────────────────────
-    // Round-H: e_* accessors on `expr::Data` are now real (Option<StoreRef<T>>
-    // / Option<T>). The ten "structural" visitors below are un-gated from
-    // `_draft`; remaining JSX/template/import/arrow/function/class bodies still
-    // depend on `P::{jsx_import, value_for_this, visit_fn, visit_class}` and
-    // stay todo!()-gated with their drafts preserved in `mod _draft`.
+    // Round-H r2: e_* accessors on `expr::Data` are real (Option<StoreRef<T>>
+    // / Option<T>); P::value_for_this + P::find_symbol are real. The ten
+    // "structural" visitors below are un-gated from `_draft`; remaining
+    // JSX/template/import/arrow/function/class bodies still depend on
+    // `P::{jsx_import, visit_fn, visit_class}` and stay todo!()-gated with
+    // their drafts preserved in `mod _draft`. Inside the un-gated bodies,
+    // `todo!()` markers remain only at call-sites for P helpers still gated
+    // under `#[cfg(any())]` (P.rs:5380 impl block + individually-gated fns):
+    // value_for_define, is_dot_define_match, transpose_require,
+    // transpose_require_resolve_known_string, check_dynamic_specifier,
+    // handle_import_meta_hot_accept_call, handle_react_refresh_hook_call,
+    // MacroContext::call.
 
     fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = (p, in_);

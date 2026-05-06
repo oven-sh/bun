@@ -6288,7 +6288,7 @@ impl<'a> Resolver<'a> {
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption;
         let mut needs_iter = true;
         let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
-        let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path).unwrap() {
+        let open_dir = match bun_sys::open_dir_for_iteration(FD::cwd(), dir_path) {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better

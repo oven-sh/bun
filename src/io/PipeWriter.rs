@@ -326,8 +326,11 @@ impl<Parent: PosixBufferedWriterParent> PosixPipeWriter for PosixBufferedWriter<
 
 impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     #[inline]
-    fn parent(&self) -> &mut Parent {
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+    fn parent(&mut self) -> &mut Parent {
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
+        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
+        // forbids interleaving with other `&self`/`&mut self` borrows.
         unsafe { &mut *self.parent }
     }
 
@@ -591,11 +594,15 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     // TODO: configurable?
     // TODO(port): std.heap.page_size_min — pick correct const for target.
+    const CHUNK_SIX_SIZE_PLACEHOLDER: () = ();
     const CHUNK_SIZE: usize = 4096;
 
     #[inline]
-    fn parent(&self) -> &mut Parent {
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+    fn parent(&mut self) -> &mut Parent {
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
+        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
+        // forbids interleaving with other `&self`/`&mut self` borrows.
         unsafe { &mut *self.parent }
     }
 

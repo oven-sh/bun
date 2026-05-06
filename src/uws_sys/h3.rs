@@ -532,9 +532,11 @@ impl App {
         {
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `res`/`req` are live H3 handles for the duration of the callback.
+            // SAFETY: `res`/`req` are live H3 handles (opaque ZSTs, disjoint allocations)
+            // for the duration of the callback; uws dispatches each request to one handler.
             let (res, req) = unsafe { (&mut *res, &mut *req) };
             // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
+            // The handler fires from the uws event loop with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // PERF(port): was @call(.always_inline)
             handler(ud, req, res);
@@ -635,6 +637,7 @@ impl App {
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
             // SAFETY: `p` is the `ud` pointer we passed below; non-null by caller contract.
+            // uws invokes this once during listen setup with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // SAFETY: `ls`, when non-null, is a live listen-socket handle for the duration of the callback.
             let ls = unsafe { ls.as_mut() };

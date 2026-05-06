@@ -126,13 +126,28 @@ impl ClientSession {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
+    /// Release one strong reference; frees the allocation when the count
+    /// reaches zero.
+    ///
+    /// # Safety
+    /// `this` must point to a live `ClientSession` allocated via `create`
+    /// (Box::into_raw), and the pointer's provenance must permit writes
+    /// (i.e. derived from the original `*mut` / a `&mut`, never from a `&`).
+    /// After the final deref the allocation is freed; callers must not touch
+    /// `this` again.
     #[inline]
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref(this: *const Self) {
+        // SAFETY: caller contract — `this` is live. ref_count is a Cell so
+        // read/write through a shared raw pointer is sound.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: ref_count reached zero; no other holders. Allocated via Box::into_raw in `create`.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: ref_count reached zero; no other holders. Allocated via
+            // Box::into_raw in `create`. Taking a raw pointer (not `&self`)
+            // means no live shared borrow exists while Box asserts unique
+            // ownership and runs Drop — avoids the &T → *mut T provenance UB.
+            unsafe { drop(Box::from_raw(this as *mut Self)) };
         }
     }
 
@@ -468,7 +483,7 @@ impl ClientSession {
         self.r#ref();
         // PORT NOTE: scopeguard borrows &self via raw ptr to avoid &mut overlap.
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
         for &stream in self.streams.values() {
             // SAFETY: owned live Stream pointer.
             let stream = unsafe { &mut *stream };
@@ -488,7 +503,7 @@ impl ClientSession {
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
@@ -584,7 +599,7 @@ impl ClientSession {
     pub fn on_data(&mut self, incoming: &[u8]) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
         self.stream_progressed = false;
         if self.read_buffer.is_empty() {
             let consumed = dispatch::parse_frames(self, incoming);
@@ -682,7 +697,7 @@ impl ClientSession {
     pub fn on_writable(&mut self) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
         if let Err(err) = self.flush() {
             return self.fail_all(err);
         }
@@ -719,7 +734,7 @@ impl ClientSession {
     pub fn on_close(&mut self, err: Error) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
         // SAFETY: ctx back-ref is valid for the session's lifetime.
         unsafe { (*self.ctx).h2_unregister(self) };
         for client in core::mem::take(&mut self.pending_attach) {

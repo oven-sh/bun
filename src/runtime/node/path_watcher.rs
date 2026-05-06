@@ -1079,9 +1079,11 @@ impl Default for Kqueue {
 }
 
 #[cfg(target_os = "freebsd")]
-struct KqEntry<'a> {
-    // TODO(port): lifetime — TSV says BORROW_PARAM; stored in long-lived map.
-    watcher: &'a PathWatcher,
+struct KqEntry {
+    /// Raw `*mut` (Zig: `*PathWatcher`). See `WdOwner.watcher` — stored long-lived,
+    /// mutated through (`emit`) under `manager.mutex`; outlives the entry because
+    /// `remove_watch` clears all of a watcher's entries before `destroy()`.
+    watcher: *mut PathWatcher,
     fd: Fd,
     /// Relative to watcher.path; empty for the root. Owned.
     subpath: Box<ZStr>,
@@ -1103,7 +1105,7 @@ impl Kqueue {
         if let Some(err) = sys::errno_sys(rc, Syscall::Kqueue) {
             return Err(err);
         }
-        manager.platform.kq = Fd::from_native(rc);
+        manager.platform.get_mut().kq = Fd::from_native(rc);
         // Daemon reader — the manager is process-global and never torn down.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
         match bun_threading::spawn(move || {
@@ -1112,7 +1114,7 @@ impl Kqueue {
         }) {
             Ok(thread) => thread.detach(),
             Err(_) => {
-                manager.platform.kq.close();
+                manager.platform.get_mut().kq.close();
                 return Err(sys::Error {
                     errno: sys::E::NOMEM as _,
                     syscall: Syscall::Watch,

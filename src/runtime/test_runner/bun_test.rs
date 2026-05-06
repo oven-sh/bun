@@ -491,6 +491,7 @@ impl BunTestRoot {
 
     pub fn on_before_print(&self) {
         if let Some(active_file) = &self.active_file {
+            // Read-only field access through `BunTestCell` Deref.
             if let Some(reporter) = active_file.reporter {
                 // `last_printed_dot` is `Cell<bool>` so the `&CommandLineReporter` borrow
                 // suffices — no `&mut` materialized through a shared ref (Zig used `*T`).
@@ -667,8 +668,9 @@ impl<'a> BunTest<'a> {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
             return Ok(());
         };
-        // SAFETY: see BunTestPtr TODO — interior mutability
-        let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
+        // SAFETY: `&mut` derived via `UnsafeCell`; not held across `run_next_tick`
+        // (which itself calls `.get()` for a single field write).
+        let this = this_strong.get();
 
         if is_catch {
             this.on_uncaught_exception(global_this, Some(result), true, refdata.phase.clone());
@@ -679,6 +681,7 @@ impl<'a> BunTest<'a> {
         }
 
         this.add_result(refdata.phase.clone());
+        // `this` borrow ends here (NLL); `run_next_tick` re-derives via `.get()`.
         Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase.clone());
         Ok(())
     }

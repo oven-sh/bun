@@ -2123,8 +2123,7 @@ fn run_with_source_code(
     })
     .unwrap_or_else(|| {
         if task.known_target == options::Target::BakeServerComponentsSsr
-            && transpiler_ref
-                .options
+            && topts
                 .framework
                 .as_ref()
                 .unwrap()
@@ -2135,11 +2134,11 @@ fn run_with_source_code(
         {
             options::Target::BakeServerComponentsSsr
         } else {
-            transpiler_ref.options.target
+            topts.target
         }
     });
 
-    let output_format = transpiler_ref.options.output_format;
+    let output_format = topts.output_format;
 
     // PORT NOTE: `ParserOptions::init` takes `bun_js_parser::options::JSX::Pragma`,
     // distinct from `crate::options::jsx::Pragma` (TYPE_ONLY divergence). Until
@@ -2163,10 +2162,10 @@ fn run_with_source_code(
         output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
     opts.features.top_level_await = output_format == options::Format::Esm
         || output_format == options::Format::InternalBakeDev;
-    opts.features.auto_import_jsx = task.jsx.parse && transpiler_ref.options.auto_import_jsx;
+    opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;
     opts.features.trim_unused_imports =
-        loader.is_typescript() || transpiler_ref.options.trim_unused_imports.unwrap_or(false);
-    opts.features.inlining = transpiler_ref.options.minify_syntax;
+        loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);
+    opts.features.inlining = topts.minify_syntax;
     // TODO(port): TYPE_ONLY divergence — `bun_options_types::Format` vs
     // `bun_js_parser::options::Format`. Map by discriminant.
     opts.output_format = match output_format {
@@ -2175,17 +2174,17 @@ fn run_with_source_code(
         options::Format::Iife => js_parser::options::Format::Iife,
         options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
     };
-    opts.features.minify_syntax = transpiler_ref.options.minify_syntax;
-    opts.features.minify_identifiers = transpiler_ref.options.minify_identifiers;
-    opts.features.minify_keep_names = transpiler_ref.options.keep_names;
-    opts.features.minify_whitespace = transpiler_ref.options.minify_whitespace;
+    opts.features.minify_syntax = topts.minify_syntax;
+    opts.features.minify_identifiers = topts.minify_identifiers;
+    opts.features.minify_keep_names = topts.keep_names;
+    opts.features.minify_whitespace = topts.minify_whitespace;
     opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
     // emitDecoratorMetadata implies legacy/experimental decorators, as it only
     // makes sense with TypeScript's legacy decorator system (reflect-metadata).
     // TC39 standard decorators have their own metadata mechanism.
     opts.features.standard_decorators =
         !loader.is_typescript() || !(task.experimental_decorators || task.emit_decorator_metadata);
-    opts.features.unwrap_commonjs_packages = transpiler_ref.options.unwrap_commonjs_packages;
+    opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
     // TODO(port): `bundler_feature_flags` is `Option<Box<StringSet>>` on both
     // sides; cannot move out of `&transpiler.options`. Phase B: store as
     // `Option<&'a StringSet>` on `RuntimeFeatures`.
@@ -2197,19 +2196,18 @@ fn run_with_source_code(
         output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
     opts.features.auto_polyfill_require =
         output_format == options::Format::Esm && !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = transpiler_ref.options.react_fast_refresh
+    opts.features.react_fast_refresh = topts.react_fast_refresh
         && loader.is_jsx()
         && !source.path.is_node_module();
 
-    opts.features.server_components = if transpiler_ref.options.server_components {
+    opts.features.server_components = if topts.server_components {
         use js_parser::options::ServerComponents as SC;
         match target {
             options::Target::Browser => SC::ClientSide,
             _ => match use_directive {
                 UseDirective::None => SC::WrapAnonServerFunctions,
                 UseDirective::Client => {
-                    if transpiler_ref
-                        .options
+                    if topts
                         .framework
                         .as_ref()
                         .unwrap()
@@ -2236,14 +2234,14 @@ fn run_with_source_code(
     opts.framework = None;
 
     opts.ignore_dce_annotations =
-        transpiler_ref.options.ignore_dce_annotations && !task.source_index.is_runtime();
+        topts.ignore_dce_annotations && !task.source_index.is_runtime();
 
     // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
     // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
     // in which we inline `true`.
-    if transpiler_ref.options.inline_entrypoint_import_meta_main || !task.is_entry_point {
+    if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
         opts.import_meta_main_value =
-            Some(task.is_entry_point && transpiler_ref.options.dev_server.is_null());
+            Some(task.is_entry_point && topts.dev_server.is_null());
     } else if target == options::Target::Node {
         opts.lower_import_meta_main_for_node_js = true;
     }
@@ -2251,9 +2249,9 @@ fn run_with_source_code(
     opts.tree_shaking = if task.source_index.is_runtime() {
         true
     } else {
-        transpiler_ref.options.tree_shaking
+        topts.tree_shaking
     };
-    opts.code_splitting = transpiler_ref.options.code_splitting;
+    opts.code_splitting = topts.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.is_jsx();
@@ -2265,10 +2263,13 @@ fn run_with_source_code(
     // SAFETY: task.ctx backref valid.
     let task_ctx = unsafe { &*task.ctx };
     let module_type = opts.module_type;
+    // `topts` (a `&BundleOptions`) is dead past this point; the callees take
+    // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
+    let _ = topts;
     let mut ast: JSAst = if !is_empty || loader.handles_empty_file() {
         get_ast(
             log,
-            transpiler_ref,
+            transpiler,
             opts,
             bump,
             resolver,
@@ -2280,15 +2281,15 @@ fn run_with_source_code(
         )?
     } else if module_type == options::ModuleType::Esm {
         if loader.is_css() {
-            get_empty_css_ast(log, transpiler_ref, opts, bump, &source)?
+            get_empty_css_ast(log, transpiler, opts, bump, &source)?
         } else {
-            get_empty_ast::<E::Undefined>(log, transpiler_ref, opts, bump, &source)?
+            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)?
         }
     } else {
         if loader.is_css() {
-            get_empty_css_ast(log, transpiler_ref, opts, bump, &source)?
+            get_empty_css_ast(log, transpiler, opts, bump, &source)?
         } else {
-            get_empty_ast::<E::Object>(log, transpiler_ref, opts, bump, &source)?
+            get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)?
         }
     };
     // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`

@@ -1944,21 +1944,29 @@ fn get_source_code(
 
 fn run_with_source_code(
     task: &mut ParseTask,
-    this: &mut ThreadPool::Worker,
+    this: &mut crate::Worker,
     step: &mut Step,
     log: &mut Log,
     entry: &mut CacheEntry,
 ) -> core::result::Result<Success, AnyError> {
-    let bump = this.allocator;
+    // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
+    let bump: &Bump = unsafe { &*this.allocator };
 
-    let mut transpiler = this.transpiler_for_target(task.known_target);
+    // PORT NOTE: reshaped for borrowck — `transpiler_for_target` borrows `this`
+    // mutably; we may need to call it again below (server-components branch),
+    // so hold it as a raw pointer and reborrow per use site.
+    let mut transpiler: *mut Transpiler<'static> =
+        this.transpiler_for_target(task.known_target) as *mut _;
     // TODO(port): errdefer transpiler.resetStore() + errdefer entry.deinit().
-    // Using a single scopeguard that captures both; disarmed on success.
-    let resolver: &mut Resolver = &mut transpiler.resolver;
+    // Reshaped: cleanup runs on the err return paths explicitly (scopeguard
+    // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows below).
+    // SAFETY: `transpiler` just derived from a live `&mut`.
+    let resolver: &mut Resolver =
+        unsafe { &mut *(core::ptr::addr_of_mut!((*transpiler).resolver)) };
     let file_path = &mut task.path;
     let loader = task
         .loader
-        .or_else(|| file_path.loader(&transpiler.options.loaders))
+        .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
         .unwrap_or(Loader::File);
 
     // WARNING: Do not change the variant of `task.contents_or_fd` from
@@ -1972,19 +1980,9 @@ fn run_with_source_code(
     // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
     #[cfg(debug_assertions)]
     let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
+    #[cfg(debug_assertions)]
+    let _ = debug_original_variant_check;
 
-    let cleanup = scopeguard::guard((&mut *transpiler, &mut *entry, task.contents_or_fd.tag()), |(t, e, tag)| {
-        #[cfg(debug_assertions)]
-        {
-            // TODO(port): cannot re-read task here without aliasing; check moved
-            // to use captured tag snapshot. Phase B: revisit.
-            let _ = debug_original_variant_check;
-        }
-        if tag == ContentsOrFdTag::Fd {
-            e.deinit(/* bump */);
-        }
-        t.reset_store();
-    });
     // PORT NOTE: reshaped for borrowck — Zig had two errdefers (transpiler.resetStore
     // unconditional; entry.deinit only when contents_or_fd == .fd, with a debug
     // tag-change panic). The debug check used live `task.contents_or_fd` which

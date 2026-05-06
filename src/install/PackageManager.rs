@@ -703,7 +703,9 @@ impl PackageManager {
     }
 
     pub fn has_enough_time_passed_between_waiting_messages() -> bool {
-        let iter = get().event_loop.loop_().iteration_number();
+        // SAFETY: main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
+        // event_loop.iteration_number which is written only by the same main-thread tick loop.
+        let iter = unsafe { (*get()).event_loop.loop_().iteration_number() };
         // SAFETY: only called from main thread
         unsafe {
             if TIME_PASSER_LAST_TIME < iter {

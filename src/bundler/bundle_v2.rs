@@ -1791,7 +1791,7 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(
                     ReachableFiles,
                     "reachable file: #{} {} ({}) target=.{}",
-                    source.index.get(),
+                    source.index.0,
                     bun_core::fmt::quote(&source.path.pretty),
                     bstr::BStr::new(&source.path.text),
                     <&'static str>::from(targets[idx.get() as usize]),
@@ -1899,7 +1899,7 @@ impl<'a> BundleV2<'a> {
             if let Some(_file_map_result) = file_map.resolve(import_record.source_file, import_record.specifier) {
                 let mut file_map_result = _file_map_result;
                 let mut path_primary = file_map_result.path_pair.primary.clone();
-                let entry = self.path_to_source_index_map(target).get_or_put(path_primary.text.clone());
+                let entry = self.path_to_source_index_map(target).get_or_put(&path_primary.text).expect("oom");
                 if !entry.found_existing {
                     let loader: Loader = 'brk: {
                         let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
@@ -2037,7 +2037,7 @@ impl<'a> BundleV2<'a> {
         path.assert_pretty_is_valid();
         path.assert_file_path_is_absolute();
 
-        let entry = self.path_to_source_index_map(target).get_or_put(path.text.clone());
+        let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
         if !entry.found_existing {
             *path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
             *entry.key_ptr = path.text.clone();
@@ -2106,7 +2106,7 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) -> Result<(), Error> {
         // TODO: plugins with non-file namespaces
-        let entry = self.path_to_source_index_map(target).get_or_put(path_slice);
+        let entry = self.path_to_source_index_map(target).get_or_put(path_slice).expect("oom");
         if entry.found_existing {
             return Ok(());
         }
@@ -2172,7 +2172,7 @@ impl<'a> BundleV2<'a> {
         let Some(path) = result.path() else { return Ok(None) };
 
         path.assert_file_path_is_absolute();
-        let entry = self.path_to_source_index_map(target).get_or_put(path.text.clone());
+        let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
         if entry.found_existing {
             return Ok(None);
         }
@@ -2571,7 +2571,7 @@ impl<'a> BundleV2<'a> {
             }
 
             if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-                self.graph.heap.help_catch_memory_issues();
+                /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
             }
 
             module_scope.generated = module_scope.generated.clone()?;
@@ -3594,14 +3594,14 @@ impl<'a> BundleV2<'a> {
             return Err(bun_core::err!("BuildFailed"));
         }
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         self.enqueue_entry_points_normal(entry_points)?;
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         self.wait_for_parse();
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         if self.transpiler.log.errors > 0 {
             return Err(bun_core::err!("BuildFailed"));
@@ -3611,11 +3611,11 @@ impl<'a> BundleV2<'a> {
 
         self.process_server_component_manifest_files()?;
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         self.clone_ast()?;
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         let reachable_files = self.find_reachable_files()?;
 
@@ -3767,14 +3767,14 @@ impl<'a> BundleV2<'a> {
     pub fn start_from_bake_dev_server(&mut self, bake_entry_points: bake_types::EntryPointList) -> Result<DevServerInput, Error> {
         self.unique_key = generate_unique_key();
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         let mut ctx = DevServerInput {
             css_entry_points: ArrayHashMap::new(),
         };
         self.enqueue_entry_points_dev_server(bake_entry_points, &mut ctx.css_entry_points)?;
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         Ok(ctx)
     }
@@ -3787,11 +3787,11 @@ impl<'a> BundleV2<'a> {
         // SAFETY: DevServer guarantees current_bundle is Some during finish (DevServer.zig:2237).
         let start = unsafe { &mut *(dev_server.vtable.current_bundle_start_data)(dev_server.owner).cast::<DevServerInput>() };
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         self.clone_ast()?;
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         self.dynamic_import_entry_points = ArrayHashMap::new();
         let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
@@ -3871,7 +3871,7 @@ impl<'a> BundleV2<'a> {
                                 continue;
                             }
 
-                            let gop = start.css_entry_points.get_or_put_assume_capacity(record.source_index);
+                            let gop = start.css_entry_points.get_or_put(record.source_index).expect("oom");
                             if target != Target::Browser {
                                 *gop.value_ptr = CssEntryPointMeta { imported_on_server: true };
                             } else if !gop.found_existing {
@@ -3902,7 +3902,7 @@ impl<'a> BundleV2<'a> {
             break 'reachable_files self.allocator().alloc_slice_copy(&js_files);
         };
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         // HMR skips most of the linker! All linking errors are converted into
         // runtime errors to avoid a more complicated dependency graph. For
@@ -3923,7 +3923,7 @@ impl<'a> BundleV2<'a> {
             js_reachable_files,
         )?;
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         // Compute line offset tables and quoted contents, used in source maps.
         // Quoted contents will be default-allocated
@@ -3936,7 +3936,7 @@ impl<'a> BundleV2<'a> {
         self.linker.compute_data_for_source_map(unsafe { core::mem::transmute::<&[Index], &[IndexInt]>(js_reachable_files) });
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         // Generate chunks
         let js_part_ranges = self.allocator().alloc_slice_fill_default::<PartRange>(js_reachable_files.len());
@@ -4000,12 +4000,12 @@ impl<'a> BundleV2<'a> {
         }
         let chunks: &mut [Chunk] = Box::leak(chunks.into_boxed_slice());
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         self.linker.generate_chunks_in_parallel(chunks, true)?;
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
-        self.graph.heap.help_catch_memory_issues();
+        /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
         dev_server.finalize_bundle(self, &DevServerOutput {
             chunks,
@@ -4215,7 +4215,7 @@ impl<'a> BundleV2<'a> {
 
             parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                 err,
-                step: ParseTask::Step::Resolve,
+                step: crate::parse_task::Step::Resolve,
                 log: Logger::Log::init(),
                 source_index,
                 target,
@@ -4360,7 +4360,7 @@ impl<'a> BundleV2<'a> {
                 import_record.flags.is_external_without_side_effects = true;
             }
 
-            if self.enqueue_on_resolve_plugin_if_needed(source.index.get(), import_record, &source.path.text, i as u32, ctx.target) {
+            if self.enqueue_on_resolve_plugin_if_needed(source.index.0, import_record, &source.path.text, i as u32, ctx.target) {
                 continue;
             }
 
@@ -4406,7 +4406,7 @@ impl<'a> BundleV2<'a> {
                         continue;
                     }
 
-                    let resolve_entry = resolve_queue.get_or_put(path_primary.text.clone());
+                    let resolve_entry = resolve_queue.get_or_put(&path_primary.text).expect("oom");
                     if resolve_entry.found_existing {
                         import_record.path = (*resolve_entry.value_ptr).path.clone();
                         continue;
@@ -4676,7 +4676,7 @@ impl<'a> BundleV2<'a> {
                 import_record.kind = ImportKind::HtmlManifest;
             }
 
-            let resolve_entry = resolve_queue.get_or_put(path.text.clone());
+            let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
             if resolve_entry.found_existing {
                 import_record.path = (*resolve_entry.value_ptr).path.clone();
                 continue;
@@ -4736,7 +4736,7 @@ impl<'a> BundleV2<'a> {
             let loader = value.loader.unwrap_or_else(|| value.path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File));
             let is_html_entrypoint = loader == Loader::Html && target.is_server_side() && self.dev_server.is_none();
             let map: &mut PathToSourceIndexMap = if is_html_entrypoint { self.path_to_source_index_map(Target::Browser) } else { path_to_source_index_map };
-            let existing = map.get_or_put(key.clone());
+            let existing = map.get_or_put(&key).expect("oom");
 
             if !existing.found_existing {
                 let new_task: &mut ParseTask = value;
@@ -4834,7 +4834,7 @@ impl<'a> BundleV2<'a> {
             || ctx.loader == Loader::Html
             || ctx.loader.is_css();
 
-        if let Some(pending_entry) = self.resolve_tasks_waiting_for_import_source_index.fetch_swap_remove(&ctx.source_index.get()) {
+        if let Some(pending_entry) = self.resolve_tasks_waiting_for_import_source_index.swap_remove_entry(&ctx.source_index.get()) {
             let value = pending_entry.value;
             for to_assign in value.slice() {
                 if save_import_record_source_index
@@ -4905,8 +4905,8 @@ impl<'a> BundleV2<'a> {
         graph.ast.append(ast_for_html_entrypoint);
 
         import_record.source_index = fake_input_file.source.index;
-        self.path_to_source_index_map(target).put(path_text.into(), fake_input_file.source.index.get());
-        graph.html_imports.server_source_indices.append(fake_input_file.source.index.get());
+        self.path_to_source_index_map(target).put(path_text.into(), fake_input_file.source.index.0);
+        graph.html_imports.server_source_indices.append(fake_input_file.source.index.0);
         self.ensure_client_transpiler();
         Ok(())
     }
@@ -4932,7 +4932,7 @@ impl<'a> BundleV2<'a> {
             let source = match &parse_result.value {
                 parse_task::ResultValue::Empty(data) => data.source_index.get(),
                 parse_task::ResultValue::Err(data) => data.source_index.get(),
-                parse_task::ResultValue::Success(val) => val.source.index.get(),
+                parse_task::ResultValue::Success(val) => val.source.index.0,
             };
             let loader: Loader = graph.input_files.items_loader()[source as usize];
             if !loader.should_copy_for_bundling() {
@@ -4982,7 +4982,7 @@ impl<'a> BundleV2<'a> {
                         parse_result.watcher_data.fd,
                         &source.path.text,
                         bun_wyhash::hash32(&source.path.text),
-                        graph.input_files.items_loader()[source.index.get() as usize],
+                        graph.input_files.items_loader()[source.index.0 as usize],
                         parse_result.watcher_data.dir_fd,
                         None,
                         cfg!(windows),
@@ -5009,15 +5009,15 @@ impl<'a> BundleV2<'a> {
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.
-                graph.input_files.items_source_mut()[result.source.index.get() as usize] = result.source.clone();
+                graph.input_files.items_source_mut()[result.source.index.0 as usize] = result.source.clone();
                 this.source_code_length += if !result.source.index.is_runtime() {
                     result.source.contents.len()
                 } else {
                     0
                 };
 
-                graph.input_files.items_unique_key_for_additional_file_mut()[result.source.index.get() as usize] = result.unique_key_for_additional_file.clone();
-                graph.input_files.items_content_hash_for_additional_file_mut()[result.source.index.get() as usize] = result.content_hash_for_additional_file;
+                graph.input_files.items_unique_key_for_additional_file_mut()[result.source.index.0 as usize] = result.unique_key_for_additional_file.clone();
+                graph.input_files.items_content_hash_for_additional_file_mut()[result.source.index.0 as usize] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {
                         dev.put_or_overwrite_asset(
@@ -5032,10 +5032,10 @@ impl<'a> BundleV2<'a> {
                 }
 
                 // Record which loader we used for this file
-                graph.input_files.items_loader_mut()[result.source.index.get() as usize] = result.loader;
+                graph.input_files.items_loader_mut()[result.source.index.0 as usize] = result.loader;
 
                 bun_core::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
-                    result.source.index.get(),
+                    result.source.index.0,
                     bstr::BStr::new(&result.source.path.text),
                     result.ast.import_records.len(),
                     result.ast.named_exports.count());
@@ -5044,7 +5044,7 @@ impl<'a> BundleV2<'a> {
                     graph.css_file_count += 1;
                 }
 
-                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::new()), result.ast.target, result.source.index.get());
+                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::new()), result.ast.target, result.source.index.0);
 
                 let mut import_records = result.ast.import_records.clone();
                 this.patch_import_record_source_indices(&mut import_records, PatchImportRecordsCtx {
@@ -5075,7 +5075,7 @@ impl<'a> BundleV2<'a> {
                     }
                 }
 
-                graph.ast.set(result.source.index.get(), result.ast.clone());
+                graph.ast.set(result.source.index.0, result.ast.clone());
 
                 // Barrel optimization: eagerly record import requests and
                 // un-defer barrel records that are now needed.
@@ -5110,7 +5110,7 @@ impl<'a> BundleV2<'a> {
                         ssr_source.path = this.path_with_pretty_initialized(ssr_source.path.clone(), Target::BakeServerComponentsSsr).expect("oom");
                         let ssr_index = this.enqueue_parse_task2(
                             ssr_source,
-                            graph.input_files.items_loader()[result.source.index.get() as usize],
+                            graph.input_files.items_loader()[result.source.index.0 as usize],
                             Target::BakeServerComponentsSsr,
                         ).expect("oom");
 
@@ -5122,7 +5122,7 @@ impl<'a> BundleV2<'a> {
                         server_source.path = this.path_with_pretty_initialized(server_source.path.clone(), this.transpiler.options.target).expect("oom");
                         let server_index = this.enqueue_parse_task2(
                             server_source,
-                            graph.input_files.items_loader()[result.source.index.get() as usize],
+                            graph.input_files.items_loader()[result.source.index.0 as usize],
                             Target::Browser,
                         ).expect("oom");
 
@@ -5135,7 +5135,7 @@ impl<'a> BundleV2<'a> {
                     );
 
                     graph.server_component_boundaries.put(
-                        result.source.index.get(),
+                        result.source.index.0,
                         result.use_directive,
                         reference_source_index,
                         ssr_index,

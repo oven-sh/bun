@@ -1625,7 +1625,7 @@ mod __css_validation {
                                     );
                                 }
                             } else {
-                                debug_assert!(matches!(from, ComposeFrom::Global));
+                                debug_assert!(matches!(from, Specifier::Global));
                                 // Otherwise it is composed from the global scope.
                                 //
                                 // See comment above for why we are skipping checking this for now.

@@ -1074,12 +1074,11 @@ pub struct CssChunk {
     pub asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
-#[allow(dead_code)]
-enum CssImportKind {
-    SourceIndex,
-    ExternalPath,
-    ImportLayers,
-}
+/// Zig: `const CssImportKind = enum { source_index, external_path, import_layers }` is the
+/// (private) tag enum for `CssImportOrder.kind: union(enum) { ... }`. In Rust the tagged
+/// union is `CssImportOrderKind`; callers that switch on `css_import.kind` reference it via
+/// the Zig-spelled name, so re-export it here.
+pub type CssImportKind = CssImportOrderKind;
 
 pub struct CssImportOrder {
     pub conditions: BabyList<bun_css::ImportConditions>,

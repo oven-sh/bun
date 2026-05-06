@@ -1404,6 +1404,60 @@ pub mod jsx {
     pub mod pragma {
         pub use super::defaults as Defaults;
     }
+
+    // ── CYCLEBREAK conversions ────────────────────────────────────────────
+    // `bun_resolver::tsconfig_json::options::jsx::Pragma` and this `Pragma`
+    // are nominally distinct until the move-down to `bun_options_types`
+    // lands (see resolver/tsconfig_json.rs:13). Field-wise copy; resolver
+    // subset omits `classic_import_source`/`parse`/`side_effects`, which keep
+    // the bundler `Default` (matches Zig struct-literal defaults
+    // options.zig:1196-1204).
+    impl From<bun_resolver::tsconfig_json::options::jsx::Pragma> for Pragma {
+        fn from(src: bun_resolver::tsconfig_json::options::jsx::Pragma) -> Self {
+            use bun_resolver::tsconfig_json::options::jsx::Runtime as R;
+            Pragma {
+                factory: src.factory.into_boxed_slice(),
+                fragment: src.fragment.into_boxed_slice(),
+                runtime: match src.runtime {
+                    R::Automatic => Runtime::Automatic,
+                    R::Classic => Runtime::Classic,
+                    R::Solid => Runtime::Solid,
+                },
+                import_source: ImportSource {
+                    development: src.import_source.development,
+                    production: src.import_source.production,
+                },
+                package_name: src.package_name,
+                development: src.development,
+                ..Pragma::default()
+            }
+        }
+    }
+
+    impl From<Pragma> for bun_js_parser::options::JSX::Pragma {
+        fn from(src: Pragma) -> Self {
+            // Structurally identical; see js_parser/parser.rs:49 CYCLEBREAK note.
+            use bun_js_parser::options::JSX as P;
+            P::Pragma {
+                factory: src.factory,
+                fragment: src.fragment,
+                runtime: match src.runtime {
+                    Runtime::Automatic => P::Runtime::Automatic,
+                    Runtime::Classic => P::Runtime::Classic,
+                    Runtime::Solid => P::Runtime::Solid,
+                },
+                import_source: P::ImportSource {
+                    development: src.import_source.development,
+                    production: src.import_source.production,
+                },
+                classic_import_source: src.classic_import_source,
+                package_name: src.package_name,
+                development: src.development,
+                parse: src.parse,
+                side_effects: src.side_effects,
+            }
+        }
+    }
 }
 
 pub use jsx as JSX;

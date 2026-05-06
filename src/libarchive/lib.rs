@@ -1076,6 +1076,9 @@ impl Archiver {
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.inflate(size)?;
+                                            // Zig: plucker_.contents.list.expandToCapacity()
+                                            let cap = plucker_.contents.list.capacity();
+                                            plucker_.contents.list.resize(cap, 0);
                                             // SAFETY: archive valid
                                             let read = unsafe {
                                                 (*archive).read_data(

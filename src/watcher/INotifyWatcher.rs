@@ -546,7 +546,7 @@ fn process_inotify_event_batch(
         // without a gratuitous `.to_vec()`/`.clone()`.
         let deduped = &mut this.watch_events[..last_event_index + 1];
         let changed = &this.changed_filepaths[..name_off as usize];
-        Watcher::write_trace_events_static(&this.trace, deduped, changed, &this.watchlist);
+        crate::watcher_trace::write_events(&this.watchlist, deduped, changed);
         (this.on_file_update)(this.ctx, deduped, changed, &this.watchlist);
     }
 

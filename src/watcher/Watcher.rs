@@ -211,7 +211,7 @@ impl Watcher {
     /// Write trace events to the trace file if enabled.
     /// This runs on the watcher thread, so no locking is needed.
     pub fn write_trace_events(&self, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
-        WatcherTrace::write_events(self, events, changed_files);
+        WatcherTrace::write_events(&self.watchlist, events, changed_files);
     }
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {

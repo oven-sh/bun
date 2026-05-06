@@ -164,8 +164,26 @@ impl EventIterator {
             (info.FileNameLength as usize) / size_of::<u16>(),
         );
 
-        // SAFETY: info.Action is one of FILE_ACTION_* (1..=5), all of which are Action variants.
-        let action: Action = unsafe { core::mem::transmute::<u32, Action>(info.Action) };
+        // PORT NOTE: Zig `@enumFromInt` is safety-checked in debug; Rust `transmute`
+        // into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
+        // discriminant. Use a checked match — kernel docs guarantee 1..=5 today.
+        let action: Action = match info.Action {
+            w::FILE_ACTION_ADDED => Action::Added,
+            w::FILE_ACTION_REMOVED => Action::Removed,
+            w::FILE_ACTION_MODIFIED => Action::Modified,
+            w::FILE_ACTION_RENAMED_OLD_NAME => Action::RenamedOld,
+            w::FILE_ACTION_RENAMED_NEW_NAME => Action::RenamedNew,
+            other => {
+                debug_assert!(false, "unexpected FILE_NOTIFY_INFORMATION.Action = {other}");
+                // Skip unknown action and advance to next record.
+                if info.NextEntryOffset == 0 {
+                    self.has_next = false;
+                } else {
+                    self.offset += info.NextEntryOffset as usize;
+                }
+                return self.next();
+            }
+        };
 
         if info.NextEntryOffset == 0 {
             self.has_next = false;

@@ -4,7 +4,7 @@ use bun_core::{env_var, fmt as bun_fmt, output, ZStr};
 use bun_sys::{self, Fd, File, O};
 use parking_lot::Mutex;
 
-use crate::watcher_impl::{ChangedFilePath, WatchEvent, Watcher};
+use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
 /// Optional trace file for debugging watcher events.
 // PORTING.md §Concurrency: Zig used a bare `var trace_file: ?File = null` plus
@@ -36,7 +36,7 @@ pub fn init() {
 /// Write trace events to the trace file if enabled.
 /// This is called from the watcher thread, so no locking is needed.
 /// Events are assumed to be already deduped by path.
-pub fn write_events(watcher: &Watcher, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
+pub fn write_events(watchlist: &WatchList, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
     use crate::watcher_impl::WatchItemColumns;
     let guard = TRACE_FILE.lock();
     let Some(file) = guard.as_ref() else {
@@ -85,7 +85,7 @@ pub fn write_events(watcher: &Watcher, events: &[WatchEvent], changed_files: &[C
         return;
     }
 
-    let watchlist_slice = watcher.watchlist.slice();
+    let watchlist_slice = watchlist.slice();
     let file_paths = watchlist_slice.items_file_path();
 
     let mut first_file = true;

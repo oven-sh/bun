@@ -1,5 +1,5 @@
 use crate::command::Context as CommandContext;
-use crate::why_command::WhyCommand;
+use crate::cli::why_command::WhyCommand;
 use bun_install::PackageManager;
 
 pub struct PmWhyCommand;

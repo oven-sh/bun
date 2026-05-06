@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use core::mem::offset_of;
 
 use bun_core::Output;
-use bun_jsc::VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
 use bun_uws as uws;
 

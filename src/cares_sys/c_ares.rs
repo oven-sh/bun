@@ -4,8 +4,7 @@ use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_sys::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
-// TODO(port): confirm exact module paths for sockaddr/iovec/timeval/AF in bun_sys
+use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 
 pub type ares_socklen_t = socklen_t;
 pub type ares_ssize_t = isize;
@@ -25,8 +24,56 @@ pub struct struct_apattern {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// re-export of std.posix.AF in Zig; callers use AF::INET / AF::INET6.
-// (provided by `use bun_sys::AF` above)
+/// Mirror of `std.posix.AF` in Zig — only the address families c-ares
+/// actually uses. Kept local so this `*_sys` crate stays leaf-level
+/// (no dependency on `bun_sys`).
+pub mod AF {
+    use core::ffi::c_int;
+    pub const INET: c_int = libc::AF_INET;
+    pub const INET6: c_int = libc::AF_INET6;
+}
+
+/// Mirror of `std.posix.system.EAI` in Zig. The `libc` crate is missing
+/// `EAI_ADDRFAMILY` and the glibc-only async-getaddrinfo extensions, so we
+/// hardcode those raw values from `<netdb.h>`.
+#[cfg(not(windows))]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct EAI(c_int);
+
+#[cfg(not(windows))]
+impl EAI {
+    #[inline]
+    pub const fn from_raw(rc: i32) -> Self {
+        Self(rc as c_int)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub const ADDRFAMILY: Self = Self(-9);
+    #[cfg(not(target_os = "linux"))]
+    pub const ADDRFAMILY: Self = Self(1);
+
+    pub const BADFLAGS: Self = Self(libc::EAI_BADFLAGS);
+    pub const FAIL: Self = Self(libc::EAI_FAIL);
+    pub const FAMILY: Self = Self(libc::EAI_FAMILY);
+    pub const MEMORY: Self = Self(libc::EAI_MEMORY);
+    pub const NODATA: Self = Self(libc::EAI_NODATA);
+    pub const NONAME: Self = Self(libc::EAI_NONAME);
+    pub const SERVICE: Self = Self(libc::EAI_SERVICE);
+    pub const SOCKTYPE: Self = Self(libc::EAI_SOCKTYPE);
+    pub const SYSTEM: Self = Self(libc::EAI_SYSTEM);
+
+    // glibc-only `getaddrinfo_a` / IDN extensions (absent on musl, bionic).
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    pub const INPROGRESS: Self = Self(-100);
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    pub const CANCELED: Self = Self(-101);
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    pub const NOTCANCELED: Self = Self(-102);
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    pub const ALLDONE: Self = Self(-103);
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    pub const IDN_ENCODE: Self = Self(-105);
+}
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1623,9 +1670,6 @@ impl Error {
 
         #[cfg(not(windows))]
         {
-            use bun_sys::posix::EAI;
-            // TODO(port): confirm bun_sys::posix::EAI exposes the same variants
-            // as std.posix.system.EAI per platform.
             let eai = EAI::from_raw(rc);
 
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815

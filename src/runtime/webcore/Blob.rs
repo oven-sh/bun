@@ -3000,9 +3000,9 @@ impl S3BlobDownloadTask {
         let path = s3_store.path();
 
         let _ = env;
-        todo!("blocked_on: bun_aio::KeepAlive::ref_(EventLoopCtx) from VirtualMachine");
-        #[allow(unreachable_code)]
-        let proxy: Option<&[u8]> = None;
+        this_ref.poll_ref.ref_(vm_ctx());
+        let proxy_owned = http_proxy_href(global_this);
+        let proxy = proxy_owned.as_deref();
 
         // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
         // back to the boxed task.

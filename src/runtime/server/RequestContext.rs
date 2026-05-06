@@ -2301,8 +2301,8 @@ where
                     response_value.then_with_value(
                         this.global_this(),
                         cell,
-                        Self::on_resolve,
-                        Self::on_reject,
+                        Self::ON_RESOLVE,
+                        Self::ON_REJECT,
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
@@ -3005,8 +3005,8 @@ where
                 promise_js.then_with_value(
                     server.global_this(),
                     cell,
-                    Self::on_resolve,
-                    Self::on_reject,
+                    Self::ON_RESOLVE,
+                    Self::ON_REJECT,
                 ); // TODO: properly propagate exception upwards
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {

@@ -2054,8 +2054,6 @@ fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) 
     drop(old);
 }
 
-} // mod _gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/fetch.zig (1526 lines)

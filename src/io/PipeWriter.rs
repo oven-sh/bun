@@ -1726,7 +1726,7 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
             return;
         }
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
-        unsafe { (*self.parent).on_close() };
+        unsafe { Parent::on_close(self.parent) };
     }
 
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1738,25 +1738,13 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
 
 #[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
+    /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
+    /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
+    /// would alias the live `&mut self` under Stacked Borrows. All vtable
+    /// dispatch goes through `Parent::method(ptr, ..)` which takes `*mut Self`.
     #[inline]
-    fn parent(&mut self) -> &mut Parent {
-        // SAFETY: `parent` is a BACKREF set via set_parent; the pointee outlives
-        // this writer.
-        //
-        // ALIASING HAZARD: per the Zig layout this writer is itself a *field of*
-        // `Parent` (intrusive backref — see PipeWriter.zig `parent: *Parent`),
-        // so the `&mut Parent` produced here *overlaps* the caller's `&mut self`.
-        // borrowck CANNOT see through the raw `*mut Parent` and therefore does
-        // NOT enforce uniqueness between them; under Stacked Borrows, deriving
-        // a fresh Unique from the stored raw pointer pops the caller's
-        // `&mut self` tag. This mirrors Zig's freely-aliasing `*Parent` and is
-        // a known port-level unsoundness. Callers MUST treat the returned
-        // reference as a leaf call into the vtable only — do not retain it, do
-        // not access the writer subobject through it, and prefer ordering so it
-        // is the last use of `self` in the basic block.
-        // TODO(port): change the parent vtable to take `*mut Self`/`NonNull<Self>`
-        // so no `&mut Parent` is ever materialized while `&mut self` is live.
-        unsafe { &mut *self.parent }
+    fn parent(&self) -> *mut Parent {
+        self.parent
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -1776,13 +1764,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // Deref the parent at the end to balance the ref taken in
         // process_send before submitting the async write request.
         // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
-        let _g = scopeguard::guard(self.parent, |p| unsafe { (*p).deref() });
+        let _g = scopeguard::guard(self.parent, |p| unsafe { Parent::deref(p) });
 
         if let Some(err) = status.to_error(uv::SyscallTag::Write) {
             self.last_write_result = WriteResult::Err(err);
             log!("onWrite() = {}", err.name());
 
-            self.parent().on_error(err);
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_error(self.parent(), err) };
             self.close_without_reporting();
             return;
         }
@@ -1800,22 +1789,30 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         if was_done && done {
             // we already call .end lets close the connection
             self.last_write_result = WriteResult::Done(written);
-            self.parent().on_write(written, WriteStatus::EndOfFile);
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_write(self.parent(), written, WriteStatus::EndOfFile) };
             return;
         }
         // .end was not called yet
         self.last_write_result = WriteResult::Wrote(written);
 
         // report data written
-        self.parent()
-            .on_write(written, if done { WriteStatus::Drained } else { WriteStatus::Pending });
+        // SAFETY: parent BACKREF valid.
+        unsafe {
+            Parent::on_write(
+                self.parent(),
+                written,
+                if done { WriteStatus::Drained } else { WriteStatus::Pending },
+            )
+        };
 
         // process pending outgoing data if any
         self.process_send();
 
         // TODO: should we report writable?
         if Parent::HAS_ON_WRITABLE {
-            self.parent().on_writable();
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_writable(self.parent()) };
         }
     }
 
@@ -1845,16 +1842,17 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // Canceled write - reset buffers and deref to balance process_send ref
             this.current_payload.reset();
             // SAFETY: parent is BACKREF; ref taken in process_send keeps it alive until this deref.
-            unsafe { (*this.parent).deref() };
+            unsafe { Parent::deref(this.parent) };
             return;
         }
 
         if let Some(err) = result.to_error(uv::SyscallTag::Write) {
             // deref to balance process_send ref
             // SAFETY: p is the BACKREF parent ptr; ref taken in process_send keeps it alive until this deref.
-            let _g = scopeguard::guard(this.parent, |p| unsafe { (*p).deref() });
+            let _g = scopeguard::guard(this.parent, |p| unsafe { Parent::deref(p) });
             this.close();
-            this.parent().on_error(err);
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_error(this.parent(), err) };
             return;
         }
 
@@ -1881,7 +1879,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         let Some(pipe) = &self.source else {
             let err = sys::Error::from_code(sys::E::PIPE, sys::SyscallTag::Pipe);
             self.last_write_result = WriteResult::Err(err);
-            self.parent().on_error(err);
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_error(self.parent(), err) };
             self.close_without_reporting();
             return;
         };

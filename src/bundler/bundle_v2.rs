@@ -1406,28 +1406,52 @@ impl<'a> BundleV2<'a> {
 
         self.dynamic_import_entry_points = ArrayHashMap::new();
 
+        // PORT NOTE: reshaped for borrowck — hoist the values that would
+        // otherwise re-borrow `self`/`self.graph` while the visitor holds
+        // disjoint column refs (Zig pulled multiple `items(.field)` columns at
+        // once with no aliasing model).
+        let redirect_map: *const PathToSourceIndexMap =
+            self.path_to_source_index_map(self.transpiler.options.target) as *const _;
+        let scb_list = if scb_bitset.is_some() {
+            self.graph.server_component_boundaries.slice()
+        } else {
+            // SAFETY: will never be read since `scb_bitset` is `None`
+            unsafe { core::mem::zeroed() }
+        };
+
+        // PORT NOTE: reshaped for borrowck — SoA columns are physically
+        // disjoint slabs but rustc cannot see that through `&mut
+        // MultiArrayList`. Route the one mutable column through the raw
+        // pointer (`Slice::items_raw`); the rest stay as shared borrows.
+        let ast_slice = self.graph.ast.slice();
+        let ast_len = ast_slice.len();
+        // SAFETY: column type matches `BundledAst::import_records`; the slab
+        // does not resize for the duration of this function and no other
+        // `&mut` to this column exists.
+        let all_import_records: &mut [import_record::List] = unsafe {
+            core::slice::from_raw_parts_mut(
+                ast_slice.items_raw::<import_record::List>(
+                    js_ast::ast::bundled_ast::BundledAstField::import_records,
+                ),
+                ast_len,
+            )
+        };
         let all_urls_for_css = self.graph.ast.items_url_for_css();
 
         let mut visitor = ReachableFileVisitor {
             reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
             visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
             redirects: self.graph.ast.items_redirect_import_record_index(),
-            all_import_records: self.graph.ast.items_import_records_mut(),
+            all_import_records,
             all_loaders: self.graph.input_files.items_loader(),
             all_urls_for_css,
-            redirect_map: self.path_to_source_index_map(self.transpiler.options.target) as *const _,
+            redirect_map,
             dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
             scb_bitset,
-            scb_list: if scb_bitset.is_some() {
-                self.graph.server_component_boundaries.slice()
-            } else {
-                // SAFETY: will never be read since the above bitset is `null`
-                unsafe { core::mem::zeroed() }
-            },
+            scb_list,
             additional_files_imported_by_js_and_inlined_in_css: &mut additional_files_imported_by_js_and_inlined_in_css,
             additional_files_imported_by_css_and_inlined: &mut additional_files_imported_by_css_and_inlined,
         };
-        // PORT NOTE: reshaped for borrowck — many overlapping borrows of self.graph here; Phase B may need to restructure
 
         // If we don't include the runtime, __toESM or __toCommonJS will not get
         // imported and weird things will happen
@@ -1460,9 +1484,37 @@ impl<'a> BundleV2<'a> {
             }
         }
 
-        let additional_files = self.graph.input_files.items_additional_files_mut();
-        let unique_keys = self.graph.input_files.items_unique_key_for_additional_file_mut();
-        let content_hashes = self.graph.input_files.items_content_hash_for_additional_file_mut();
+        // PORT NOTE: reshaped for borrowck — release the visitor's `&mut`
+        // borrows on the two bitsets and `input_files` columns before the
+        // cleanup loop reads them.
+        let ReachableFileVisitor { reachable, .. } = visitor;
+
+        // PORT NOTE: reshaped for borrowck — three disjoint mutable SoA
+        // columns; route through `Slice::items_raw`.
+        let input_files_slice = self.graph.input_files.slice();
+        let input_files_len = input_files_slice.len();
+        // SAFETY: SoA columns are disjoint; the slab does not resize for the
+        // duration of this loop and no other `&mut` to these columns exists.
+        let additional_files: &mut [BabyList<crate::AdditionalFile>] = unsafe {
+            core::slice::from_raw_parts_mut(
+                input_files_slice
+                    .items_raw::<BabyList<crate::AdditionalFile>>(crate::Graph::InputFileField::additional_files),
+                input_files_len,
+            )
+        };
+        let unique_keys: &mut [Box<[u8]>] = unsafe {
+            core::slice::from_raw_parts_mut(
+                input_files_slice
+                    .items_raw::<Box<[u8]>>(crate::Graph::InputFileField::unique_key_for_additional_file),
+                input_files_len,
+            )
+        };
+        let content_hashes: &mut [u64] = unsafe {
+            core::slice::from_raw_parts_mut(
+                input_files_slice.items_raw::<u64>(crate::Graph::InputFileField::content_hash_for_additional_file),
+                input_files_len,
+            )
+        };
         for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
             if !url_for_css.is_empty() {
                 // We like to inline additional files in CSS if they fit a size threshold
@@ -1477,7 +1529,7 @@ impl<'a> BundleV2<'a> {
             }
         }
 
-        Ok(visitor.reachable.into_boxed_slice())
+        Ok(reachable.into_boxed_slice())
     }
 
     fn is_done(&mut self) -> bool {
@@ -1527,15 +1579,34 @@ impl<'a> BundleV2<'a> {
         // version and exports a non-object in CommonJS (often a function). If we
         // pick the "module" field and the package is imported with "require" then
         // code expecting a function will crash.
-        let ast_import_records = self.graph.ast.items_import_records();
+        //
+        // PORT NOTE: reshaped for borrowck — Zig pulled the mutable
+        // `import_records` column alongside shared columns. Route the one
+        // mutable column through `Slice::items_raw` and read the per-target
+        // map through the disjoint `build_graphs` field instead of the
+        // `&mut self` accessor.
+        let ast_slice = self.graph.ast.slice();
+        let ast_len = ast_slice.len();
+        // SAFETY: column type matches `BundledAst::import_records`; the slab
+        // does not resize for the duration of this loop and no other `&mut`
+        // to this column exists.
+        let ast_import_records: &mut [import_record::List] = unsafe {
+            core::slice::from_raw_parts_mut(
+                ast_slice.items_raw::<import_record::List>(
+                    js_ast::ast::bundled_ast::BundledAstField::import_records,
+                ),
+                ast_len,
+            )
+        };
         let targets = self.graph.ast.items_target();
         let max_valid_source_index = Index::init(self.graph.input_files.len());
         let secondary_paths = self.graph.input_files.items_secondary_path();
+        let sources = self.graph.input_files.items_source();
 
         debug_assert_eq!(ast_import_records.len(), targets.len());
-        for (ast_import_record_list, target) in ast_import_records.iter().zip(targets.iter()) {
+        for (ast_import_record_list, target) in ast_import_records.iter_mut().zip(targets.iter()) {
             let import_records = ast_import_record_list.slice_mut();
-            let path_to_source_index_map = self.path_to_source_index_map(*target);
+            let path_to_source_index_map = &self.graph.build_graphs[*target];
             for import_record in import_records.iter_mut() {
                 let source_index = import_record.source_index.get();
                 if source_index >= max_valid_source_index.get() {
@@ -1546,7 +1617,7 @@ impl<'a> BundleV2<'a> {
                     let Some(secondary_source_index) = path_to_source_index_map.get(secondary_path) else { continue };
                     import_record.source_index = Index::init(secondary_source_index);
                     // Keep path in sync for determinism, diagnostics, and dev tooling.
-                    import_record.path = logger_path_to_paths(&self.graph.input_files.items_source()[secondary_source_index as usize].path);
+                    import_record.path = logger_path_to_paths(&sources[secondary_source_index as usize].path);
                 }
             }
         }
@@ -1741,7 +1812,7 @@ impl<'a> BundleV2<'a> {
                     && !strings::eql_long(&secondary.text, &path.text, true)
                 {
                     let secondary_path_to_copy = secondary.dupe_alloc().expect("oom");
-                    self.graph.input_files.items_secondary_path_mut()[idx as usize] = secondary_path_to_copy.text;
+                    self.graph.input_files.items_secondary_path_mut()[idx as usize] = secondary_path_to_copy.text.into();
                     // Ensure the determinism pass runs.
                     self.graph.has_any_secondary_paths = true;
                 }

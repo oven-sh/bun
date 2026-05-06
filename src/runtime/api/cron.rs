@@ -1400,9 +1400,12 @@ impl CronJob {
     /// the pending ref is left for onPromiseResolve/Reject to balance.
     /// `.teardown`: worker exit — the event loop is dying, settle never
     /// happens, so release the pending ref here to avoid leaking the struct.
-    pub fn clear_all_for_vm<const MODE: ClearMode>(vm: &VirtualMachine) {
-        let Some(rare) = vm.rare_data.as_ref() else { return };
+    pub fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
+        let Some(rare) = vm.rare_data.as_mut() else { return };
         for &job in rare.cron_jobs.as_slice() {
+            // PORT NOTE: stored as opaque `rare_data::high_tier::CronJob`; the
+            // concrete type is this `CronJob` (see `register` push site).
+            let job = job as *mut () as *mut CronJob;
             // SAFETY: list holds a ref for each entry.
             unsafe { (*job).stop_internal(vm) };
             if MODE == ClearMode::Teardown {

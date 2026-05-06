@@ -759,7 +759,7 @@ pub struct CAresNameInfo {
 impl CAresNameInfo {
     pub fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
         Box::into_raw(Box::new(Self {
             global_this: global_this as *const JSGlobalObject,
             promise: JSPromiseStrong::init(global_this),

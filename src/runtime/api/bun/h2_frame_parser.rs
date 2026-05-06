@@ -140,6 +140,13 @@ impl<'a> H2ErrBuilder<'a> {
 pub(crate) trait H2GlobalErrExt {
     fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_>;
+    fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_>;
+    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_>;
+    /// Zig `globalObject.toTypeError(code, fmt, .{})` — build (don't throw) a coded error.
+    fn to_type_error(&self, code: JscErrorCode, msg: &'static str) -> JSValue;
+    fn to_type_error_fmt(&self, code: JscErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
+    /// Zig `jsc.toInvalidArguments(fmt, .{}, globalObject)` — build a TypeError JSValue.
+    fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue;
 }
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
@@ -149,6 +156,75 @@ impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_> {
         H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_INVALID_SETTING_VALUE, msg }
+    }
+    #[inline]
+    fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_> {
+        H2ErrBuilder { global: self, code: JscErrorCode::HTTP2_TOO_MANY_CUSTOM_SETTINGS, msg }
+    }
+    #[inline]
+    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
+        H2ErrBuilder { global: self, code: JscErrorCode::INVALID_ARG_TYPE, msg }
+    }
+    #[inline]
+    fn to_type_error(&self, code: JscErrorCode, msg: &'static str) -> JSValue {
+        code.fmt(self, format_args!("{msg}"))
+    }
+    #[inline]
+    fn to_type_error_fmt(&self, code: JscErrorCode, args: core::fmt::Arguments<'_>) -> JSValue {
+        code.fmt(self, args)
+    }
+    #[inline]
+    fn to_invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> JSValue {
+        JscErrorCode::INVALID_ARG_TYPE.fmt(self, args)
+    }
+}
+
+// Local shim: `bun_jsc::VM` (lib.rs) lacks `deprecated_report_extra_memory`
+// (the impl in `VM.rs` is not yet wired into the crate).
+pub(crate) trait H2VMExt {
+    fn deprecated_report_extra_memory(&self, size: usize);
+}
+impl H2VMExt for bun_jsc::VM {
+    #[inline]
+    fn deprecated_report_extra_memory(&self, size: usize) {
+        unsafe extern "C" {
+            fn JSC__VM__reportExtraMemory(vm: *mut bun_jsc::VM, size: usize);
+        }
+        // SAFETY: `self` is a live opaque JSC VM handle (interior-mutable via UnsafeCell).
+        unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
+    }
+}
+
+// Local shim: `JSValue::to(u32)` from Zig — coerce to u32 via i32 path.
+pub(crate) trait H2JSValueExt {
+    fn to_u32(self) -> u32;
+}
+impl H2JSValueExt for JSValue {
+    #[inline]
+    fn to_u32(self) -> u32 {
+        // Matches Zig `value.to(u32)` semantics (truncating reinterpret of i32).
+        self.to_int32() as u32
+    }
+}
+
+// Local shim: `bun_jsc::BinaryType` (lib.rs 3-variant) lacks `from_js_value`;
+// the richer impl lives in `array_buffer.rs` on a separate type. Map the three
+// strings the H2 layer accepts.
+pub(crate) trait H2BinaryTypeExt: Sized {
+    fn from_js_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>>;
+}
+impl H2BinaryTypeExt for BinaryType {
+    fn from_js_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+        if !value.is_string() {
+            return Ok(None);
+        }
+        let s = value.to_slice(global)?;
+        Ok(match s.slice() {
+            b"arraybuffer" | b"ArrayBuffer" => Some(BinaryType::ArrayBuffer),
+            b"uint8array" | b"Uint8Array" | b"nodebuffer" => Some(BinaryType::Uint8Array),
+            b"buffer" | b"Buffer" => Some(BinaryType::Buffer),
+            _ => None,
+        })
     }
 }
 
@@ -1155,20 +1231,27 @@ impl StreamResumableIterator {
         // UB. Callers must route every in-loop parser access through a reborrow of the SAME `*mut`
         // they passed to `init()` (see flush_stream_queue / emit_*_to_all_streams / detach_from_js).
         let streams = unsafe { &mut (*self.parser).streams };
-        let mut it = streams.iterator();
-        if it.index() > it.capacity() || self.index > it.capacity() {
-            return None;
+        // PORT NOTE: Zig's bucket-index iterator is not available on
+        // `bun_collections::HashMap` (it derefs to `std::HashMap`). Approximate
+        // resumability by skipping `self.index` entries each call. This is O(n)
+        // per `next()` but preserves the "yield each value once if the map is
+        // not mutated" contract; mutation-safety is best-effort (matching Zig's
+        // behaviour only when `capacity` is unchanged).
+        // TODO(port): switch to a true bucket-index iterator once
+        // `bun_collections::HashMap` grows one.
+        let skip = self.index as usize;
+        for (i, (_, v)) in streams.iter().enumerate() {
+            if i < skip {
+                continue;
+            }
+            self.index = (i as u32) + 1;
+            return Some(*v);
         }
-        // resume the iterator from the same index if possible
-        it.set_index(self.index);
-        while let Some(item) = it.next() {
-            self.index = it.index();
-            return Some(*item.value_ptr());
-        }
-        self.index = it.index();
+        self.index = streams.len() as u32;
         None
     }
 }
+
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FlushState {

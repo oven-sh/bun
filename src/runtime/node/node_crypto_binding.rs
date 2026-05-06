@@ -1041,10 +1041,13 @@ impl Scrypt {
 
 impl CryptoJobCtx for Scrypt {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        if self.keylen as usize > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT {
-            return global.throw_out_of_memory();
+        // SAFETY: `SYNTHETIC_ALLOCATION_LIMIT` is a `pub static mut` written only at
+        // VM init; read-only access here is sound on the JS thread.
+        if self.keylen as usize > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT } {
+            return Err(global.throw_out_of_memory());
         }
-        let (buf, bytes) = ArrayBuffer::alloc(global, ArrayBuffer::Kind::ArrayBuffer, self.keylen)?;
+        let (buf, bytes) =
+            ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, self.keylen)?;
 
         // to be filled in later
         self.result = bytes as *mut [u8];
@@ -1059,43 +1062,46 @@ impl CryptoJobCtx for Scrypt {
     }
 
     fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
-        let vm = global.bun_vm();
+        // SAFETY: `bun_vm()` is non-null for a Bun-owned global; `event_loop()` is
+        // a self-ptr live for the VM lifetime. Short-lived `&mut` formed at use site
+        // per VirtualMachine.rs §event_loop contract.
+        let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
 
         if let Some(err) = self.err {
             if err != 0 {
                 let mut buf = [0u8; 256];
-                // SAFETY: buf is a valid 256-byte buffer.
-                let msg = unsafe {
+                // SAFETY: buf is a valid 256-byte buffer; ERR_error_string_n
+                // NUL-terminates within `len` bytes and returns `buf`.
+                unsafe {
                     boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast(), buf.len())
                 };
+                // SAFETY: `buf` is NUL-terminated by the call above.
+                let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
                 let exception = global
-                    .err_crypto_operation_failed(format_args!(
-                        "Scrypt failed: {}",
-                        bstr::BStr::new(msg)
-                    ))
+                    .err(
+                        ErrorCode::CRYPTO_OPERATION_FAILED,
+                        format_args!("Scrypt failed: {}", bstr::BStr::new(msg.to_bytes())),
+                    )
                     .to_js();
-                vm.event_loop()
-                    .run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
                 return;
             }
 
             let exception = global
-                .err_crypto_operation_failed(format_args!("Scrypt failed"))
+                .err(ErrorCode::CRYPTO_OPERATION_FAILED, format_args!("Scrypt failed"))
                 .to_js();
-            vm.event_loop()
-                .run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+            event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
             return;
         }
 
         let buf = self.buf.swap();
-        vm.event_loop()
-            .run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::UNDEFINED, buf]);
+        event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[JSValue::UNDEFINED, buf]);
     }
 
     fn deinit(&mut self) {
         self.salt.deinit_and_unprotect();
         self.password.deinit_and_unprotect();
-        drop(self.buf.take());
+        self.buf.deinit();
     }
 }
 

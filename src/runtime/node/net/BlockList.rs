@@ -163,10 +163,11 @@ impl BlockList {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
         let address = if let Some(sa) = address_js.as_::<SocketAddress>() {
-            sa._addr
+            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
+            unsafe { (*sa)._addr }
         } else {
-            validators::validate_string(global, address_js, "address")?;
-            validators::validate_string(global, family_js, "family")?;
+            validators::validate_string(global, address_js, format_args!("address"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
         };
 

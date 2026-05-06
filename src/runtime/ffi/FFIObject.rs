@@ -221,55 +221,55 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: caller-supplied raw address; `read_unaligned` matches Zig `*align(1)`.
         let value = unsafe { (addr as *const u8).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn u16(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const u16).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn u32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const u32).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn ptr(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const u64).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn i8(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const i8).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn i16(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const i16).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn i32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const i32).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn intptr(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const i64).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn f32(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const f32).read_unaligned() };
-        Ok(JSValue::js_number(value))
+        Ok(JSValue::js_number(value as f64))
     }
     pub fn f64(global_object: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JsResult<JSValue> {
         let addr = addr_from_args(global_object, arguments)?;

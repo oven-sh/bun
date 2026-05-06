@@ -750,6 +750,29 @@ impl DevServer {
         &mut self.route_bundles[idx.get() as usize]
     }
 
+    /// `DevServer.devAllocator()` -- DevServer.zig:273. Returns the borrowed
+    /// allocation-scope handle that `Entry`/`PackedMap` use for
+    /// allocator-tagging. `bun_alloc::AllocationScope` is currently a
+    /// unit-struct stub upstream, so this just constructs it directly.
+    // TODO(b2-blocked): forward to `self.allocation_scope.borrow()` once
+    // `bun_alloc::AllocationScope` is real.
+    #[inline]
+    pub fn dev_allocator(&self) -> crate::bake::dev_server_body::DevAllocator {
+        let _ = &self.allocation_scope;
+        bun_alloc::AllocationScope
+    }
+
+    /// `DevServer.emitMemoryVisualizerMessageIfNeeded` -- DevServer.zig:4341.
+    /// Full body lives in the gated `../DevServer.rs` draft (depends on
+    /// `HmrSocket::publish` + `memory_cost_detailed`). Sub-stores call this
+    /// after structural mutations so the inspector tab refreshes.
+    pub fn emit_memory_visualizer_message_if_needed(&mut self) {
+        if self.emit_memory_visualizer_events == 0 {
+            return;
+        }
+        todo!("blocked_on: dev_server::DevServer::emit_memory_visualizer_message_if_needed body un-gate")
+    }
+
     /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128. Exposed via
     /// `DEV_SERVER_VTABLE.is_file_cached` for the bundler.
     pub fn is_file_cached(&mut self, path: &[u8], side: Graph) -> Option<CacheEntry> {

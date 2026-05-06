@@ -1659,7 +1659,7 @@ impl<'a> Repl<'a> {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let bun_js_parser::Result::Ast(ast) = parse_result else { return None; };
+        let bun_js_parser::Result::Ast(mut ast) = parse_result else { return None; };
         // Don't call ast.deinit() - the arena handles cleanup
 
         // Check for parse errors

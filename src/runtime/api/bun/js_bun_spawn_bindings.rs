@@ -537,7 +537,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
                                 stdio::ResultT::Err(e) => {
-                                    return e.throw_js(global_this);
+                                    return Err(e.throw_js(global_this));
                                 }
                             };
                             #[cfg(not(windows))]

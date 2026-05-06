@@ -942,6 +942,59 @@ impl Status {
     }
 }
 
+// ─── Status ⇄ bun_spawn::Status ──────────────────────────────────────────────
+// `bun_spawn::Status` is the lower-tier copy used by `bun_spawn::sync::Result`.
+// Higher-tier callers (cli::test::parallel, shell) sometimes spell one and
+// receive the other through the exit-handler vtable. Provide lossless
+// conversions so the call boundary stays a single `.into()`.
+
+impl From<Status> for bun_spawn::Status {
+    fn from(s: Status) -> Self {
+        match s {
+            Status::Running => bun_spawn::Status::Running,
+            Status::Exited(e) => {
+                // bun_spawn stores `signal` as `bun_core::SignalCode`; round-trip
+                // through the enum, falling back to a raw transmute for in-range
+                // values and `SIGHUP` (1) when out of range — `signal == 0`
+                // ("no signal") cannot be represented by the exhaustive enum, so
+                // both crates treat 0 specially via `signal_code()`.
+                let sig = if e.signal > 0 && e.signal <= bun_core::SignalCode::SIGSYS as u8 {
+                    // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)].
+                    unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(e.signal) }
+                } else {
+                    // SAFETY: discriminant 1 = SIGHUP; placeholder for 0/out-of-range.
+                    unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(1) }
+                };
+                bun_spawn::Status::Exited { code: e.code, signal: sig }
+            }
+            Status::Signaled(raw) => {
+                let sig = if raw > 0 && raw <= bun_core::SignalCode::SIGSYS as u8 {
+                    // SAFETY: range-checked.
+                    unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(raw) }
+                } else {
+                    // SAFETY: placeholder; see above.
+                    unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(1) }
+                };
+                bun_spawn::Status::Signaled(sig)
+            }
+            Status::Err(e) => bun_spawn::Status::Err(e),
+        }
+    }
+}
+
+impl From<bun_spawn::Status> for Status {
+    fn from(s: bun_spawn::Status) -> Self {
+        match s {
+            bun_spawn::Status::Running => Status::Running,
+            bun_spawn::Status::Exited { code, signal } => {
+                Status::Exited(Exited { code, signal: signal as u8 })
+            }
+            bun_spawn::Status::Signaled(sig) => Status::Signaled(sig as u8),
+            bun_spawn::Status::Err(e) => Status::Err(e),
+        }
+    }
+}
+
 /// Local shim for `bun.SignalCode.toExitCode` (lives in `src/sys/SignalCode.zig`).
 /// Upstream `bun_core::SignalCode` does not yet expose this — see SignalCode.zig:53.
 /// Shell-convention: 128 + signal number for signals 1..=31, else `None`.

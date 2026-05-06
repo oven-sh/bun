@@ -258,14 +258,14 @@ const RESET: &[u8] = b"\x1b[0m";
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: &'static MiniEventLoop<'static>,
+    event_loop: *mut MiniEventLoop<'static>,
     remaining_scripts: usize,
     max_label_len: usize,
-    // TODO(port): was `[:0]const u8`; needs NUL-terminated for argv[0]
+    // NUL-terminated (last byte is 0) for argv[0].
     shell_bin: Box<[u8]>,
     aborted: bool,
     no_exit_on_error: bool,
-    env: &'a DotEnvLoader<'a>,
+    env: *mut DotEnvLoader<'static>,
     use_colors: bool,
 }
 

@@ -228,7 +228,10 @@ impl Worker {
             }
         }
 
-        let process = this.process.as_ref().expect("set above");
+        let process_ptr = this.process.expect("set above");
+        // SAFETY: process_ptr is the live intrusive-refcounted *mut Process from
+        // `to_process` above; sole owner until reaped.
+        let process = unsafe { &mut *process_ptr };
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
@@ -243,12 +246,13 @@ impl Worker {
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
         unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers += 1 };
-        // TODO(port): setExitHandler(this) stores a *Worker callback target on
-        // Process; with Arc<Process> this needs interior mutability.
-        process.set_exit_handler(&mut **this as *mut Worker);
+        process.set_exit_handler(
+            (&mut **this as *mut Worker).cast::<()>(),
+            &WORKER_EXIT_VTABLE,
+        );
         match process.watch_or_reap() {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(e) => {
+            Ok(_) => {}
+            Err(e) => {
                 // Surface to the caller (spawnWorker / onWorkerExit) instead of
                 // synchronously firing onExit() — that would re-enter
                 // onWorkerExit() → start(), which under persistent EMFILE
@@ -257,7 +261,7 @@ impl Worker {
                 this.alive = false;
                 // SAFETY: see above.
                 unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers -= 1 };
-                Output::err(e, "watchOrReap failed for test worker");
+                Output::err(e, "watchOrReap failed for test worker", ());
                 return Err(bun_core::err!("ProcessWatchFailed"));
             }
         }

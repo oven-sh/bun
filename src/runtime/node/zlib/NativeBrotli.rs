@@ -296,9 +296,9 @@ impl Context {
                 if unsafe { c::BrotliEncoderSetParameter(self.state_ptr().cast(), key, value) } == 0
                 {
                     return Error::init(
-                        "Setting parameter failed",
+                        c"Setting parameter failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_PARAM_SET_FAILED",
+                        c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -308,9 +308,9 @@ impl Context {
                 if unsafe { c::BrotliDecoderSetParameter(self.state_ptr().cast(), key, value) } == 0
                 {
                     return Error::init(
-                        "Setting parameter failed",
+                        c"Setting parameter failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_PARAM_SET_FAILED",
+                        c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()

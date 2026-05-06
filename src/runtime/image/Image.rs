@@ -645,28 +645,28 @@ impl Image {
 fn error_code(e: codecs::Error) -> &'static ZStr {
     use codecs::Error as E;
     match e {
-        E::UnknownFormat => ZStr::from_lit(b"ERR_IMAGE_UNKNOWN_FORMAT\0"),
-        E::DecodeFailed => ZStr::from_lit(b"ERR_IMAGE_DECODE_FAILED\0"),
-        E::EncodeFailed => ZStr::from_lit(b"ERR_IMAGE_ENCODE_FAILED\0"),
-        E::TooManyPixels => ZStr::from_lit(b"ERR_IMAGE_TOO_MANY_PIXELS\0"),
-        E::UnsupportedOnPlatform => ZStr::from_lit(b"ERR_IMAGE_FORMAT_UNSUPPORTED\0"),
-        E::OutOfMemory => ZStr::from_lit(b"ERR_OUT_OF_MEMORY\0"),
+        E::UnknownFormat => zstr!("ERR_IMAGE_UNKNOWN_FORMAT"),
+        E::DecodeFailed => zstr!("ERR_IMAGE_DECODE_FAILED"),
+        E::EncodeFailed => zstr!("ERR_IMAGE_ENCODE_FAILED"),
+        E::TooManyPixels => zstr!("ERR_IMAGE_TOO_MANY_PIXELS"),
+        E::UnsupportedOnPlatform => zstr!("ERR_IMAGE_FORMAT_UNSUPPORTED"),
+        E::OutOfMemory => zstr!("ERR_OUT_OF_MEMORY"),
     }
 }
 
 fn error_message(e: codecs::Error) -> &'static ZStr {
     use codecs::Error as E;
     match e {
-        E::UnknownFormat => ZStr::from_lit(
-            b"Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)\0",
+        E::UnknownFormat => zstr!(
+            "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)"
         ),
-        E::DecodeFailed => ZStr::from_lit(b"Image: decode failed\0"),
-        E::EncodeFailed => ZStr::from_lit(b"Image: encode failed\0"),
-        E::TooManyPixels => ZStr::from_lit(b"Image: input exceeds maxPixels limit\0"),
-        E::UnsupportedOnPlatform => ZStr::from_lit(
-            b"Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)\0",
+        E::DecodeFailed => zstr!("Image: decode failed"),
+        E::EncodeFailed => zstr!("Image: encode failed"),
+        E::TooManyPixels => zstr!("Image: input exceeds maxPixels limit"),
+        E::UnsupportedOnPlatform => zstr!(
+            "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)"
         ),
-        E::OutOfMemory => ZStr::from_lit(b"Image: out of memory\0"),
+        E::OutOfMemory => zstr!("Image: out of memory"),
     }
 }
 

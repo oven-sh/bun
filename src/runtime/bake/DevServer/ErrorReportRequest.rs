@@ -147,14 +147,6 @@ impl ErrorReportRequest {
     }
 }
 
-// Kept so the helper fns below stay referenced (silences dead_code) and so the
-// response-serialization tail can be restored verbatim once the jsc stubs lift.
-#[allow(dead_code)]
-fn write_response_tail(out: &mut Vec<u8>, top_col_one_based: i32) {
-    write_u32_le(out, 0);
-    write_i32_le(out, top_col_one_based);
-}
-
 pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<SourceMapStore::Key> {
     if !source_url.starts_with(browser_url) {
         return None;

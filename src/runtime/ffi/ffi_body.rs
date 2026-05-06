@@ -9,16 +9,141 @@ use std::sync::{Once, OnceLock};
 use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{env_var, fmt as bun_fmt, Output};
+use bun_core::{env_var, fmt as bun_fmt, Output, ZBox};
 use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsError, JsResult, ModuleLoader, SystemError, VirtualMachine,
+    JsClass, JsError, JsResult, ModuleLoader, SystemError, VirtualMachine, ZigStringJsc,
 };
 use crate::napi;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs as Fs;
 use bun_str::{strings, ZStr, ZigString};
 use bun_sys::{self, Fd};
+
+// ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
+
+/// Compile-time `&'static ZStr` from a byte literal. The literal need not be
+/// NUL-terminated; we tack one on via `concat_bytes!`-equivalent.
+macro_rules! zstr {
+    ($lit:literal) => {{
+        const __B: &[u8] = $lit;
+        // SAFETY: the trailing NUL is appended below; len excludes it.
+        unsafe {
+            ::bun_str::ZStr::from_raw(
+                ::core::concat!(
+                    // SAFETY: $lit is ASCII in every call site below.
+                    unsafe { ::core::str::from_utf8_unchecked(__B) },
+                    "\0"
+                )
+                .as_ptr(),
+                __B.len(),
+            )
+        }
+    }};
+}
+
+/// `bun.sys.directoryExistsAt(FD.cwd(), path).isTrue()` — local helper while
+/// `bun_core::Fd` lacks an inherent forwarder.
+#[inline]
+fn dir_exists(path: &'static [u8]) -> bool {
+    // SAFETY: `path` is a NUL-free static literal; copy into a stack ZBox.
+    let z = ZBox::from_bytes(path);
+    bun_sys::directory_exists_at(Fd::cwd(), &z).unwrap_or(false)
+}
+
+/// Extension trait for JSC surfaces the upstream crate hasn't exposed yet.
+/// All bodies are thin extern-"C" thunks (Zig: `JSValue.asPtrAddress`, etc.).
+trait JSValueFfiExt: Copy {
+    fn as_ptr_address(self) -> usize;
+    fn is_heap_big_int(self) -> bool;
+    fn to_uint64_no_truncate(self) -> u64;
+}
+impl JSValueFfiExt for JSValue {
+    #[inline]
+    fn as_ptr_address(self) -> usize {
+        // Zig `asPtrAddress`: bit-cast the encoded JSNumber back to a pointer
+        // address (round-trips with `from_ptr_address`).
+        let bits = self.encoded();
+        f64::from_bits(bits as u64) as usize
+    }
+    #[inline]
+    fn is_heap_big_int(self) -> bool {
+        // Upstream exposes `is_big_int()`; HeapBigInt is the only BigInt cell.
+        self.is_big_int()
+    }
+    #[inline]
+    fn to_uint64_no_truncate(self) -> u64 {
+        unsafe extern "C" {
+            fn JSC__JSValue__toUInt64NoTruncate(v: JSValue) -> u64;
+        }
+        // SAFETY: FFI — `self` is a valid encoded JSValue.
+        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
+    }
+}
+
+/// Local non-throwing error-instance helpers — Zig's `toInvalidArguments` /
+/// `toTypeError` create and return the JS Error without throwing, which the
+/// upstream `bun_jsc` surface only offers as throwing variants.
+trait GlobalObjectFfiExt {
+    fn to_invalid_arguments(&self, msg: impl core::fmt::Display) -> JSValue;
+    fn to_type_error(&self, code: jsc::ErrorCode, msg: impl core::fmt::Display) -> JSValue;
+    fn make_napi_env_for_ffi(&self) -> *mut napi::NapiEnv;
+}
+impl GlobalObjectFfiExt for JSGlobalObject {
+    #[inline]
+    fn to_invalid_arguments(&self, msg: impl core::fmt::Display) -> JSValue {
+        // PORT NOTE: Zig wraps this with `ERR_INVALID_ARG_TYPE`; the
+        // type-error instance is the closest non-throwing surface today.
+        self.create_type_error_instance(msg)
+    }
+    #[inline]
+    fn to_type_error(&self, _code: jsc::ErrorCode, msg: impl core::fmt::Display) -> JSValue {
+        // TODO(port): attach `_code` once `ErrorBuilder` exposes a non-throwing path.
+        self.create_type_error_instance(msg)
+    }
+    #[inline]
+    fn make_napi_env_for_ffi(&self) -> *mut napi::NapiEnv {
+        unsafe extern "C" {
+            fn ZigGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject)
+                -> *mut napi::NapiEnv;
+        }
+        // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the VM.
+        unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
+    }
+}
+
+/// `JSValue.createObject2` — local extern thunk; upstream `bun_jsc` hasn't
+/// re-exported it yet.
+#[inline]
+fn create_object_2(
+    global: &JSGlobalObject,
+    key1: &ZigString,
+    key2: &ZigString,
+    value1: JSValue,
+    value2: JSValue,
+) -> JSValue {
+    unsafe extern "C" {
+        fn JSC__JSValue__createObject2(
+            global: *const JSGlobalObject,
+            key1: *const ZigString,
+            key2: *const ZigString,
+            value1: JSValue,
+            value2: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: all pointers borrowed for the call; C++ clones key strings.
+    unsafe { JSC__JSValue__createObject2(global, key1, key2, value1, value2) }
+}
+
+/// `bun.String.toJSArray` — local shim over `JSValue::create_empty_array`.
+fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_str::String]) -> JsResult<JSValue> {
+    let arr = JSValue::create_empty_array(global, strs.len())?;
+    for (i, s) in strs.iter().enumerate() {
+        let v = jsc::bun_string_jsc::to_js(s, global)?;
+        arr.put_index(global, i as u32, v)?;
+    }
+    Ok(arr)
+}
 
 // `bun_tcc_sys` is an un-gated workspace crate (B-2) and is now a direct dep of
 // `bun_runtime`, so import it unconditionally. The `feature = "tinycc"` flag

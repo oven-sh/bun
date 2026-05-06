@@ -2074,27 +2074,19 @@ pub fn init_with_runtime_once(
     // initialized it (Zig PackageManager.zig:1013 `const manager = get()`
     // yields a raw `*PackageManager` with no validity invariant).
     let manager_ptr: *mut PackageManager = unsafe { holder::RAW_PTR };
-    let root_dir = match FileSystem::instance().fs.read_directory(
-        FileSystem::instance().top_level_dir,
-        None,
-        0,
-        true,
-    ) {
-        Ok(d) => d,
-        Err(e) => {
-            Output::err(
-                e,
-                "failed to read root directory: '{s}'",
-                &[&bstr::BStr::new(FileSystem::instance().top_level_dir)],
-            );
-            panic!("Failed to initialize package manager");
-        }
-    };
+    // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, ...)` — the
+    // resolver-tier dir-entry cache. Not exposed through `bun_sys::fs::FsVTable`
+    // yet (only `top_level_dir`/`dirname_store` are).
+    // TODO(port): blocked_on bun_sys::fs::FsVTable::read_directory
+    let root_dir: &'static mut fs::DirEntry = todo!(
+        "blocked_on: bun_sys::fs::FsVTable::read_directory (resolver T4 hook) — \
+         needed for `init_with_runtime` root_dir; tracked alongside `init()` above"
+    );
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
     let top_level_dir_no_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir);
+        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let mut original_package_json_path =
         vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
     original_package_json_path[..top_level_dir_no_trailing_slash.len()]

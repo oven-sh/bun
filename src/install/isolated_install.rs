@@ -1613,7 +1613,7 @@ pub fn install_isolated_packages(
                         continue;
                     }
                     for dep in entry_dependencies[idx].slice() {
-                        if entry_hashes[dep.entry_id.get()] == 0 {
+                        if entry_hashes[dep.entry_id.get() as usize] == 0 {
                             entry_hashes[idx] = 0;
                             changed = true;
                             break;
@@ -1629,9 +1629,13 @@ pub fn install_isolated_packages(
             if cache_dir_path.is_empty() {
                 break 'global_store_path None;
             }
-            break 'global_store_path Some(bun_str::ZStr::from_bytes(
-                paths::resolve_path::join_abs_string::<paths::platform::Auto>(cache_dir_path, &[b"links"]),
-            ));
+            // PORT NOTE: Zig allocated a `[:0]u8` via `joinAbsStringBufZ`; here
+            // we own a Vec<u8> with a trailing NUL so it can be re-borrowed as
+            // a `&ZStr` for `Installer.global_store_path` below.
+            let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(cache_dir_path, &[b"links"]);
+            let mut owned = joined.to_vec();
+            owned.push(0);
+            break 'global_store_path Some(owned);
         }
     } else {
         None

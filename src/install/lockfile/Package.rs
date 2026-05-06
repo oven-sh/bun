@@ -2935,7 +2935,8 @@ pub mod serializer {
             // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
-            list_for_migrating_from_v2.set_len(list_len as usize);
+            // SAFETY: capacity reserved above; `load_fields` writes every column.
+            unsafe { list_for_migrating_from_v2.set_len(list_len as usize) };
 
             load_fields::<u32>(
                 stream,
@@ -2946,7 +2947,8 @@ pub mod serializer {
 
             for pkg_id_ in 0..list_for_migrating_from_v2.len() {
                 let pkg_id: PackageID = PackageID::try_from(pkg_id_).unwrap();
-                let old: OldPackageV2 = list_for_migrating_from_v2.get(pkg_id);
+                let _ = pkg_id;
+                let old: OldPackageV2 = list_for_migrating_from_v2.get(pkg_id_);
                 let new = Package::<SemverIntType> {
                     name: old.name,
                     name_hash: old.name_hash,

@@ -55,6 +55,8 @@ impl SavedFile {
 mod _output_file_jsc_impl {
     use super::*;
     use bun_bundler::output_file::{OutputFile, OutputFileValue};
+    #[allow(unused_imports)]
+    use bun_bundler::options_impl::LoaderExt;
     use bun_core::Output;
     use bun_jsc::api::BuildArtifact;
     use bun_jsc::node::{PathLike, PathOrFileDescriptor};
@@ -150,41 +152,27 @@ mod _output_file_jsc_impl {
                         ..Default::default()
                     });
 
-                    break 'brk build_output.to_js(global_object);
+                    let _ = build_output;
+                    break 'brk todo!("blocked_on: bun_jsc::api::BuildArtifact::to_js");
                 }
-                OutputFileValue::Buffer(buffer) => 'brk: {
+                OutputFileValue::Buffer { bytes } => {
                     // TODO(port): @constCast(buffer.bytes) — ownership transfer of bytes into Blob;
                     // Rust side likely takes Box<[u8]> directly.
-                    let mut blob = Blob::init(buffer.bytes, global_object);
-                    if let Some(store) = &mut blob.store {
-                        store.mime_type =
-                            self.loader.to_mime_type(&[owned_pathname.unwrap_or(b"")]);
-                        blob.content_type = store.mime_type.value;
-                    } else {
-                        blob.content_type = self
-                            .loader
-                            .to_mime_type(&[owned_pathname.unwrap_or(b"")])
-                            .value;
-                    }
-
-                    blob.size = buffer.bytes.len() as BlobSizeType;
-
-                    let build_output = Box::new(BuildArtifact {
-                        blob,
-                        hash: self.hash,
-                        loader: self.input_loader,
-                        output_kind: self.output_kind,
-                        path: owned_pathname
-                            .map(Box::<[u8]>::from)
-                            .unwrap_or_else(|| Box::<[u8]>::from(self.src_path.text.as_ref())),
-                        ..Default::default()
-                    });
-
-                    self.value = OutputFileValue::Buffer {
-                        bytes: Box::default(),
-                    };
-
-                    break 'brk build_output.to_js(global_object);
+                    //
+                    // `bun_jsc::webcore::Blob` is an opaque shim at this tier (real
+                    // type lives in `bun_runtime::webcore::Blob`, a forward-dep), so
+                    // `Blob::init`, `.store`, `.content_type`, `.size` are unavailable.
+                    // `bun_jsc::api::BuildArtifact` is likewise a `stub_ty!` placeholder
+                    // with no fields/`to_js`. Body deferred until those land.
+                    let _ = (
+                        bytes,
+                        global_object,
+                        owned_pathname,
+                        self.hash,
+                        self.input_loader,
+                        self.output_kind,
+                    );
+                    todo!("blocked_on: bun_jsc::webcore::Blob::init, bun_jsc::api::BuildArtifact")
                 }
             }
         }
@@ -194,66 +182,40 @@ mod _output_file_jsc_impl {
             &mut self,
             global_this: &JSGlobalObject,
         ) -> Result<Blob, bun_core::Error> {
+            // `bun_jsc::node::{PathOrFileDescriptor, PathLike}` are `stub_ty!`
+            // placeholders (no variants), and `bun_jsc::webcore::Blob` is an
+            // opaque shim with no `init`/`init_with_store`/fields at this tier.
+            // Arm bodies deferred until those forward-dep types land.
+            let _ = global_this;
             match &mut self.value {
-                OutputFileValue::Move | OutputFileValue::Pending => {
+                OutputFileValue::Move(_) | OutputFileValue::Pending(_) => {
                     panic!("Unexpected pending output file")
                 }
                 OutputFileValue::Noop => panic!("Cannot convert noop output file to blob"),
-                OutputFileValue::Copy(copy) => 'brk: {
-                    let file_blob = BlobStore::init_file(
-                        if copy.fd.is_valid() {
-                            PathOrFileDescriptor::Fd(copy.fd)
-                        } else {
-                            PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                                Box::<[u8]>::from(copy.pathname.as_ref()),
-                            )))
-                        },
-                        self.loader
-                            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]),
-                    )?;
-
-                    self.value = OutputFileValue::Buffer {
-                        bytes: Box::default(),
-                    };
-
-                    break 'brk Ok(Blob::init_with_store(file_blob, global_this));
+                OutputFileValue::Copy(copy) => {
+                    let _ = (copy.fd, copy.pathname.as_ref());
+                    let _ = self
+                        .loader
+                        .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+                    todo!(
+                        "blocked_on: bun_jsc::node::PathOrFileDescriptor, bun_jsc::webcore::Blob::init_with_store"
+                    )
                 }
-                OutputFileValue::Saved => 'brk: {
-                    let file_blob = BlobStore::init_file(
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            Box::<[u8]>::from(self.src_path.text.as_ref()),
-                        ))),
-                        self.loader
-                            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]),
-                    )?;
-
-                    self.value = OutputFileValue::Buffer {
-                        bytes: Box::default(),
-                    };
-
-                    break 'brk Ok(Blob::init_with_store(file_blob, global_this));
+                OutputFileValue::Saved(_) => {
+                    let _ = self
+                        .loader
+                        .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+                    todo!(
+                        "blocked_on: bun_jsc::node::PathOrFileDescriptor, bun_jsc::webcore::Blob::init_with_store"
+                    )
                 }
-                OutputFileValue::Buffer(buffer) => 'brk: {
+                OutputFileValue::Buffer { bytes } => {
                     // TODO(port): @constCast(buffer.bytes) — ownership transfer of bytes into Blob.
-                    let mut blob = Blob::init(buffer.bytes, global_this);
-                    if let Some(store) = &mut blob.store {
-                        store.mime_type = self
-                            .loader
-                            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
-                        blob.content_type = store.mime_type.value;
-                    } else {
-                        blob.content_type = self
-                            .loader
-                            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()])
-                            .value;
-                    }
-
-                    self.value = OutputFileValue::Buffer {
-                        bytes: Box::default(),
-                    };
-
-                    blob.size = buffer.bytes.len() as BlobSizeType;
-                    break 'brk Ok(blob);
+                    let _ = bytes;
+                    let _ = self
+                        .loader
+                        .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+                    todo!("blocked_on: bun_jsc::webcore::Blob::init")
                 }
             }
         }

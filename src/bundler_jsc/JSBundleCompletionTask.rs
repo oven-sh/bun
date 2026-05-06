@@ -12,12 +12,13 @@ use bun_bundler::bundle_v2::{self as bv2, BundleThread, BundleV2};
 use bun_bundler::options::{self, OutputFile};
 use bun_core::Environment;
 use bun_jsc::{
-    self as jsc, AnyTask, CallFrame, ConcurrentTask, EventLoop, JSGlobalObject, JSPromise, JSValue,
-    JsResult, ZigString,
+    self as jsc, CallFrame, ConcurrentTask, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString,
 };
+use bun_jsc::AnyTask::{AnyTask, New as AnyTaskNew};
+use bun_jsc::event_loop::EventLoop;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP};
-use bun_ptr::IntrusiveArc;
+use bun_ptr::{IntrusiveArc, RefCount, RefCounted};
 use bun_str::{self as strings, String as BunString};
 use bun_sys::Fd;
 use bun_threading::WorkPool;
@@ -44,15 +45,16 @@ pub fn create_and_schedule_completion_task<'a>(
     event_loop: &'a EventLoop,
     // PORT NOTE: Zig had `_: std.mem.Allocator` (unused) — dropped per §Allocators.
 ) -> core::result::Result<IntrusiveArc<JSBundleCompletionTask<'a>>, AllocError> {
-    let mut completion = IntrusiveArc::new(JSBundleCompletionTask {
-        ref_count: AtomicU32::new(1),
+    let completion = IntrusiveArc::new(JSBundleCompletionTask {
+        ref_count: RefCount::init(),
         config,
         jsc_event_loop: event_loop,
         task: AnyTask::default(), // assigned just below (Zig: `= undefined`)
         global_this,
-        promise: JSPromise::Strong::default(),
+        promise: jsc::JSPromiseStrong::default(),
         poll_ref: KeepAlive::init(),
-        env: global_this.bun_vm().transpiler.env,
+        // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
+        env: unsafe { (*global_this.bun_vm()).transpiler.env },
         log: logger::Log::init(),
         cancelled: false,
         html_build_task: None,
@@ -62,19 +64,25 @@ pub fn create_and_schedule_completion_task<'a>(
         plugins,
         started_at_ns: 0,
     });
-    completion.task = JSBundleCompletionTask::TaskCompletion::init(&*completion);
+    // SAFETY: freshly-boxed allocation with ref_count == 1; we hold the only handle, so
+    // forming a temporary `&mut` through the intrusive pointer cannot alias.
+    let c: *mut JSBundleCompletionTask<'a> = completion.data.as_ptr();
+    unsafe {
+        (*c).task = AnyTaskNew::<JSBundleCompletionTask<'a>>::init(&mut *c);
 
-    if let Some(plugin) = completion.plugins.as_deref_mut() {
-        plugin.set_config(&*completion);
+        if let Some(plugin) = (*c).plugins.as_deref_mut() {
+            plugin.set_config(&*c);
+        }
     }
 
     // Ensure this exists before we spawn the thread to prevent any race
     // conditions from creating two
     let _ = WorkPool::get();
 
-    JSBundleThread::singleton().enqueue(&*completion);
+    JSBundleThread::singleton().enqueue(c);
 
-    completion.poll_ref.ref_(global_this.bun_vm());
+    // SAFETY: see above; still sole owner on this thread.
+    unsafe { (*c).poll_ref.ref_(global_this.bun_vm()) };
 
     Ok(completion)
 }
@@ -86,19 +94,23 @@ pub fn generate_from_javascript<'a>(
     event_loop: &'a EventLoop,
     // PORT NOTE: allocator param dropped (was forwarded but ultimately unused)
 ) -> core::result::Result<JSValue, AllocError> {
-    let mut completion =
+    let completion =
         create_and_schedule_completion_task(config, plugins, global_this, event_loop)?;
-    completion.promise = JSPromise::Strong::init(global_this);
+    // SAFETY: `completion` holds a live ref; mutating `promise` here mirrors Zig's
+    // post-construction assignment (single-threaded JS-side init).
+    unsafe {
+        (*completion.data.as_ptr()).promise = jsc::JSPromiseStrong::init(global_this);
+    }
     Ok(completion.promise.value())
 }
 
 pub struct JSBundleCompletionTask<'a> {
-    pub ref_count: AtomicU32, // intrusive count for IntrusiveArc<Self>
+    pub ref_count: RefCount<Self>, // intrusive count for IntrusiveArc<Self>
     pub config: JSBundlerConfig,
     pub jsc_event_loop: &'a EventLoop,
     pub task: AnyTask,
     pub global_this: &'a JSGlobalObject,
-    pub promise: jsc::PromiseStrong, // jsc.JSPromise.Strong
+    pub promise: jsc::JSPromiseStrong, // jsc.JSPromise.Strong
     pub poll_ref: KeepAlive,
     pub env: &'static DotEnvLoader,
     pub log: logger::Log,
@@ -112,6 +124,23 @@ pub struct JSBundleCompletionTask<'a> {
     pub transpiler: *mut BundleV2,             // arena-owned by BundleThread heap
     pub plugins: Option<Box<Plugin>>,
     pub started_at_ns: u64,
+}
+
+// Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
+// TODO(port): Zig used the *thread-safe* mixin but `bun_ptr` currently only
+// blanket-implements `AnyRefCounted` for the single-threaded `RefCounted`
+// trait (see ref_count.rs comment at line 553). Revisit once the thread-safe
+// blanket lands; for now this satisfies `IntrusiveArc<Self>` at type level.
+impl<'a> RefCounted for JSBundleCompletionTask<'a> {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; allocation came from `IntrusiveArc::new` (Box).
+        drop(unsafe { Box::from_raw(this) });
+    }
 }
 
 impl<'a> JSBundleCompletionTask<'a> {

@@ -978,8 +978,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         stmt: &mut Stmt,
         data: &mut S::Class,
     ) -> Result<(), Error> {
-        // blocked_on: is_export_to_eliminate + replace_exports map.
-        let mark_as_dead = false;
+        let mark_as_dead = p.options.features.dead_code_elimination
+            && data.is_export
+            && p.options.features.replace_exports.count() > 0
+            && p.is_export_to_eliminate(data.class.class_name.unwrap().ref_.unwrap());
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {

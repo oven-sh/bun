@@ -5675,6 +5675,14 @@ pub trait FileOpener: Sized {
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
     #[cfg(windows)]
     fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t;
+    /// Stash/retrieve the open completion callback across the libuv async hop.
+    /// Zig captured this at comptime (`comptime Callback`) so the generated
+    /// `WrappedCallback` was monomorphic; Rust can't const-generic over fn
+    /// pointers, so the implementor stores it on `self` (e.g. next to `req`).
+    #[cfg(windows)]
+    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));
+    #[cfg(windows)]
+    fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -5686,9 +5694,68 @@ pub trait FileOpener: Sized {
 
         #[cfg(windows)]
         {
-            // TODO(port): libuv async open with WrappedCallback (Zig lines 4918-4957).
-            // Stores `self` in req.data, on completion sets opened_fd or errno+system_error.
-            unimplemented!("FileOpener::get_fd_by_opening (windows libuv path)");
+            // Monomorphic libuv completion thunk — recovers `*mut Self` from
+            // `req.data`, mirrors Zig's `WrappedCallback.callback`.
+            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_uv_sys::uv_fs_t) {
+                // SAFETY: `req.data` was set to `self as *mut Self` below before
+                // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
+                let self_: &mut S = unsafe { &mut *(*req).data.cast::<S>() };
+                {
+                    // SAFETY: req points into self_.req(); cleanup before reuse.
+                    let _guard = scopeguard::guard((), |_| unsafe {
+                        bun_uv_sys::uv_fs_req_cleanup(req);
+                    });
+                    // SAFETY: req is the live uv_fs_t from the open request.
+                    let result = unsafe { (*req).result };
+                    if let Some(err_enum) = result.err_enum() {
+                        let path_string_2 = match self_.pathlike() {
+                            PathOrFileDescriptor::Path(p) => p.clone(),
+                            PathOrFileDescriptor::Fd(_) => unreachable!(),
+                        };
+                        self_.set_errno(bun_core::errno_to_zig_err(err_enum as _));
+                        self_.set_system_error(
+                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
+                                .with_path(path_string_2.slice())
+                                .to_system_error(),
+                        );
+                        self_.set_opened_fd(bun_sys::INVALID_FD);
+                    } else {
+                        self_.set_opened_fd(result.to_fd());
+                    }
+                }
+                let cb = self_.open_callback();
+                cb(self_, self_.opened_fd());
+            }
+
+            self.set_open_callback(callback);
+            let loop_ = self.loop_();
+            let self_ptr = self as *mut Self;
+            let req = self.req();
+            // SAFETY: loop_/req are live for the duration of the async open;
+            // req.data is consumed by `wrapped_callback::<Self>` above.
+            let rc = unsafe {
+                bun_uv_sys::uv_fs_open(
+                    loop_,
+                    req,
+                    path.as_ptr(),
+                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                    node::fs::DEFAULT_PERMISSION,
+                    Some(wrapped_callback::<Self>),
+                )
+            };
+            if let Some(errno) = rc.err_enum() {
+                self.set_errno(bun_core::errno_to_zig_err(errno as _));
+                self.set_system_error(
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                        .with_path(path_string.slice())
+                        .to_system_error(),
+                );
+                self.set_opened_fd(bun_sys::INVALID_FD);
+                callback(self, bun_sys::INVALID_FD);
+            }
+            // SAFETY: req() borrows self; re-borrow to set data after rc check.
+            self.req().data = self_ptr.cast();
+            return;
         }
 
         #[cfg(not(windows))]

@@ -42,6 +42,13 @@ pub mod build_options {
     pub const CODEGEN_PATH: &[u8] = b"";
     pub const CODEGEN_EMBED: bool = true;
     pub const VERSION: crate::Version = crate::Version { major: 1, minor: 3, patch: 0 };
+    /// Zig: `build_options.fallback_html_version` — hex-string hash of the
+    /// fallback HTML bundle, injected by the build system. Placeholder until
+    /// Phase C wires the real value via `env!()` in `build.rs`.
+    pub const FALLBACK_HTML_VERSION: &str = match option_env!("BUN_FALLBACK_HTML_VERSION") {
+        Some(v) => v,
+        None => "0000000000000000",
+    };
 }
 
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────

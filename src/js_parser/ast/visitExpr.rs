@@ -129,9 +129,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     // ─── visitors ───────────────────────────────────────────────────────────
     // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
-    // associated fns on this impl so they can see the const-generic feature params. Round-G
-    // un-gated the trivial bodies; heavy bodies remain `todo!()` with full draft preserved in
-    // ` mod _draft` below until the matching expr::Data accessors / P helpers land.
+    // associated fns on this impl so they can see the const-generic feature params.
 
     fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
         // this error is not necessary and it is causing breakages

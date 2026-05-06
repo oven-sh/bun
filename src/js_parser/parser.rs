@@ -1797,6 +1797,16 @@ pub struct ThenCatchChain {
     pub has_multiple_args: bool,
     pub has_catch: bool,
 }
+impl Default for ThenCatchChain {
+    fn default() -> Self {
+        Self {
+            // Zig: zero-init `js_ast.Expr.Data` → `.e_missing` (tag 0).
+            next_target: js_ast::ExprData::EMissing,
+            has_multiple_args: false,
+            has_catch: false,
+        }
+    }
+}
 
 pub struct ParsedPath<'a> {
     pub loc: logger::Loc,

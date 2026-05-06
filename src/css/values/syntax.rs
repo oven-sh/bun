@@ -132,25 +132,16 @@ impl SyntaxString {
                                 }
                                 SyntaxComponentKind::Color => ParsedComponent::Color(CssColor::parse(i)?),
                                 SyntaxComponentKind::Image => ParsedComponent::Image(Image::parse(i)?),
-                                SyntaxComponentKind::Url => {
-                                    let _ = i;
-                                    todo!("blocked_on: values::url::Url::parse un-gate")
-                                }
+                                SyntaxComponentKind::Url => ParsedComponent::Url(Url::parse(i)?),
                                 SyntaxComponentKind::Integer => ParsedComponent::Integer(CSSIntegerFns::parse(i)?),
                                 SyntaxComponentKind::Angle => ParsedComponent::Angle(Angle::parse(i)?),
                                 SyntaxComponentKind::Time => ParsedComponent::Time(Time::parse(i)?),
                                 SyntaxComponentKind::Resolution => ParsedComponent::Resolution(Resolution::parse(i)?),
                                 SyntaxComponentKind::TransformFunction => {
-                                    todo!("blocked_on: properties::transform::Transform::parse un-gate")
+                                    ParsedComponent::TransformFunction(Transform::parse(i)?)
                                 }
                                 SyntaxComponentKind::TransformList => {
-                                    // blocked_on: 'bump threading — `TransformList<'bump>` borrows
-                                    // the parser arena but `ParsedComponent` is lifetime-free in
-                                    // Phase A (matching `Token`/`Ident`'s `'static` placeholders).
-                                    // Body once `'bump` is threaded through `ParsedComponent<'a>`:
-                                    //   ParsedComponent::TransformList(TransformList::parse(i)?)
-                                    let _ = i;
-                                    todo!("blocked_on: ParsedComponent<'bump> threading for TransformList::parse")
+                                    ParsedComponent::TransformList(TransformList::parse(i)?)
                                 }
                                 SyntaxComponentKind::CustomIdent => {
                                     ParsedComponent::CustomIdent(CustomIdentFns::parse(i)?)

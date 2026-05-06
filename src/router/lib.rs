@@ -1338,13 +1338,9 @@ impl Route {
                     .dirname_store()
                     .append(_abs)
                     .expect("unreachable");
-                
-                // TODO(b2-blocked): bun_sys::fs::Entry::set_abs_path — opaque
-                //   MOVE_DOWN stub exposes no setter for `abs_path`
-                //   (Zig: `entry.abs_path = PathString.init(...)`).
-                {
-                    entry.set_abs_path(bun_string::PathString::init(abs_path_str));
-                }
+
+                // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
+                entry.set_abs_path(bun_string::PathString::init(abs_path_str));
             }
 
             #[cfg(windows)]
@@ -1514,9 +1510,6 @@ impl<'a> Match<'a> {
         self.params.len() > 0
     }
 
-    
-    // TODO(b2-blocked): bun_url::PathnameScanner still names the non-generic
-    // `bun_url::route_param::Param`; once it adopts `Param<'a>` this un-gates.
     pub fn params_iterator(&self) -> PathnameScanner<'_> {
         PathnameScanner::init(self.pathname, self.name, self.params)
     }

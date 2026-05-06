@@ -314,8 +314,7 @@ mod shim {
         todo!("blocked_on: bun_jsc::AbortSignal::signal")
     }
     #[inline] pub fn signal_unref(s: &Arc<AbortSignal>) {
-        let _ = s;
-        todo!("blocked_on: bun_jsc::AbortSignal::pending_activity_unref")
+        s.pending_activity_unref()
     }
     #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
         cb.trigger(ev, g)

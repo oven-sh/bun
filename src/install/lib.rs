@@ -845,16 +845,43 @@ pub mod package_manager {
     pub mod security_scanner {
         pub use crate::SecurityScanSubprocess;
 
-        /// Stub: real body in `PackageManager/security_scanner.rs`, gated behind
-        /// `package_manager_real` (`#![cfg(any())]` reconciler-6). Generic over
-        /// `Ctx` because `bun_runtime::command::Context` would be a circular dep.
-        #[derive(Default)]
-        pub struct SecurityScanResults;
-        impl SecurityScanResults {
-            pub fn has_advisories(&self) -> bool {
-                todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
-            }
+        /// Port of `SecurityAdvisory.Level` (src/install/PackageManager/security_scanner.zig).
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub enum SecurityAdvisoryLevel { Fatal, Warn }
+
+        /// Port of `SecurityAdvisory` (src/install/PackageManager/security_scanner.zig).
+        pub struct SecurityAdvisory {
+            pub level: SecurityAdvisoryLevel,
+            pub package: Box<[u8]>,
+            pub url: Option<Box<[u8]>>,
+            pub description: Option<Box<[u8]>>,
+            pub pkg_path: Option<Box<[crate::PackageID]>>,
         }
+
+        /// Port of `SecurityScanResults` (src/install/PackageManager/security_scanner.zig).
+        /// Zig `deinit` only freed owned fields → Rust drops `Box`/`Vec`
+        /// automatically, so no explicit Drop.
+        #[derive(Default)]
+        pub struct SecurityScanResults {
+            pub advisories: Box<[SecurityAdvisory]>,
+            pub fatal_count: usize,
+            pub warn_count: usize,
+            pub packages_scanned: usize,
+            pub duration_ms: i64,
+            // Zig borrows from `manager.options.security_scanner`; Box to avoid
+            // a struct lifetime in Phase A.
+            pub security_scanner: Box<[u8]>,
+        }
+        impl SecurityScanResults {
+            #[inline] pub fn has_fatal_advisories(&self) -> bool { self.fatal_count > 0 }
+            #[inline] pub fn has_warnings(&self) -> bool { self.warn_count > 0 }
+            #[inline] pub fn has_advisories(&self) -> bool { !self.advisories.is_empty() }
+        }
+
+        /// Stub: real body in `PackageManager/security_scanner.rs`, gated behind
+        /// `package_manager_real` (`#![cfg(any())]` reconciler-6). Depends on
+        /// `PackageManager::lockfile` iteration + subprocess scan loop. Generic
+        /// over `Ctx` because `bun_runtime::command::Context` would be a circular dep.
         pub fn perform_security_scan_for_all<Ctx>(
             _manager: &mut crate::PackageManager,
             _command_ctx: Ctx,
@@ -862,11 +889,94 @@ pub mod package_manager {
         ) -> Result<Option<SecurityScanResults>, bun_core::Error> {
             todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
         }
+
+        /// Port of `printSecurityAdvisories` (src/install/PackageManager/security_scanner.zig).
+        /// Reads `manager.lockfile.packages`/`string_bytes` for the `via …`
+        /// ancestry line — those are populated only once the gated
+        /// `lockfile_real` un-gates, but the stub `Lockfile` carries the same
+        /// fields so this compiles against either.
         pub fn print_security_advisories(
-            _manager: &crate::PackageManager,
-            _results: &SecurityScanResults,
+            manager: &crate::PackageManager,
+            results: &SecurityScanResults,
         ) {
-            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+            use bun_core::Output;
+            if !results.has_advisories() { return; }
+
+            let pkgs = manager.lockfile.packages.slice();
+            let pkg_names = pkgs.items_name();
+            let string_buf = &manager.lockfile.buffers.string_bytes;
+
+            for advisory in results.advisories.iter() {
+                Output::print(format_args!("\n"));
+                match advisory.level {
+                    SecurityAdvisoryLevel::Fatal => Output::pretty(format_args!(
+                        "  <red>FATAL<r>: {}\n",
+                        bstr::BStr::new(&advisory.package)
+                    )),
+                    SecurityAdvisoryLevel::Warn => Output::pretty(format_args!(
+                        "  <yellow>WARNING<r>: {}\n",
+                        bstr::BStr::new(&advisory.package)
+                    )),
+                }
+
+                if let Some(pkg_path) = &advisory.pkg_path {
+                    if pkg_path.len() > 1 {
+                        Output::pretty(format_args!("    <d>via "));
+                        for (idx, &ancestor_id) in pkg_path[..pkg_path.len() - 1].iter().enumerate() {
+                            if idx > 0 { Output::pretty(format_args!(" › ")); }
+                            let ancestor_name = pkg_names[ancestor_id as usize].slice(string_buf);
+                            Output::pretty(format_args!("{}", bstr::BStr::new(ancestor_name)));
+                        }
+                        Output::pretty(format_args!(
+                            " › <red>{}<r>\n",
+                            bstr::BStr::new(&advisory.package)
+                        ));
+                    } else {
+                        Output::pretty(format_args!("    <d>(direct dependency)<r>\n"));
+                    }
+                }
+
+                if let Some(desc) = &advisory.description {
+                    if !desc.is_empty() {
+                        Output::pretty(format_args!("    {}\n", bstr::BStr::new(desc)));
+                    }
+                }
+                if let Some(url) = &advisory.url {
+                    if !url.is_empty() {
+                        Output::pretty(format_args!("    <cyan>{}<r>\n", bstr::BStr::new(url)));
+                    }
+                }
+            }
+
+            Output::print(format_args!("\n"));
+            let total = results.fatal_count + results.warn_count;
+            if total == 1 {
+                if results.fatal_count == 1 {
+                    Output::pretty(format_args!("<b>1 advisory (<red>1 fatal<r>)<r>\n"));
+                } else {
+                    Output::pretty(format_args!("<b>1 advisory (<yellow>1 warning<r>)<r>\n"));
+                }
+            } else if results.fatal_count > 0 && results.warn_count > 0 {
+                Output::pretty(format_args!(
+                    "<b>{} advisories (<red>{} fatal<r>, <yellow>{} warning{}<r>)<r>\n",
+                    total,
+                    results.fatal_count,
+                    results.warn_count,
+                    if results.warn_count == 1 { "" } else { "s" }
+                ));
+            } else if results.fatal_count > 0 {
+                Output::pretty(format_args!(
+                    "<b>{} advisories (<red>{} fatal<r>)<r>\n",
+                    total, results.fatal_count
+                ));
+            } else {
+                Output::pretty(format_args!(
+                    "<b>{} advisories (<yellow>{} warning{}<r>)<r>\n",
+                    total,
+                    results.warn_count,
+                    if results.warn_count == 1 { "" } else { "s" }
+                ));
+            }
         }
     }
     /// Stub: real body lives in `PackageManager/updatePackageJSONAndInstall.rs`,

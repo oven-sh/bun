@@ -4092,7 +4092,8 @@ impl Resolver {
         Ok(values)
     }
 
-    #[host_fn]
+    // FFI shim emitted by `export_host_fn!` below — `#[host_fn]` (Free) cannot
+    // expand inside an `impl` block (it emits a bare `fn_name(...)` call).
     pub fn get_global_servers(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::get_channel_servers(Self::get_channel_from_vm(global_this)?, global_this, callframe)
     }

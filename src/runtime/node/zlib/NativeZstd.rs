@@ -1,11 +1,4 @@
-// ─── gated: JsClass payload + Context (ZSTD FFI path unresolved) ──────────
-// `Context` references `bun_sys::c::ZSTD_*`, but the ZSTD bindings live in
-// `bun_zstd::c` and lack several of the streaming-compress fns used here
-// (ZSTD_createCCtx, ZSTD_CCtx_setParameter, ZSTD_compressStream2, ZSTD_e_*,
-// ZSTD_error_* consts, ZSTD_getErrorCode/String). The `Error` field shapes
-// (`msg: Option<_>`, `code: &str`) also diverge from `node_zlib_binding::Error`.
-// No JSC-free body is currently compilable here.
-// TODO(b2-blocked): un-gate once bun_zstd surfaces the streaming-compress C API + Error shape unified.
+pub use _impl::{Context, NativeZstd};
 
 mod _impl {
 use core::cell::Cell;
@@ -13,7 +6,7 @@ use core::ffi::{c_int, c_uint, c_void, CStr};
 use core::ptr;
 
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, WorkPoolTask};
-use bun_sys::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
+use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;

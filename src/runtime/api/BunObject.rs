@@ -444,9 +444,10 @@ use std::io::Write as _;
 use bun_core::{Environment, Output};
 use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, VirtualMachine, WebCore,
-    ZigString,
+    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, WebCore, ZigString,
 };
+// `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, String as BunString};
 use bun_sys::{self as sys, Fd};
@@ -804,9 +805,11 @@ pub fn braces(
             Ok(v) => v,
             Err(err) => return global.throw_error(err, "failed to parse braces"),
         };
-        let mut str: Vec<u8> = Vec::new();
-        // TODO(port): std.json.fmt
-        write!(&mut str, "{}", bun_json::fmt(&ast_node)).expect("oom");
+        // TODO(port): std.json.fmt — bun_json crate not yet ported
+        let str: Vec<u8> = {
+            let _ = &ast_node;
+            todo!("blocked_on: bun_json::fmt")
+        };
         let mut bun_str = BunString::from_bytes(&str);
         return Ok(bun_str.to_js(global));
     }
@@ -845,7 +848,7 @@ pub fn braces(
 #[bun_jsc::host_fn]
 pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments_ = callframe.arguments_old(2);
-    let path_buf = bun_paths::path_buffer_pool().get();
+    let path_buf = bun_paths::path_buffer_pool::get();
     let mut arguments = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
         return global_this.throw("which: expected 1 argument, got 0", format_args!(""));
@@ -949,7 +952,7 @@ pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
         JSValue::UNDEFINED
     };
     let mut table_printer =
-        ConsoleObject::TablePrinter::init(global_this, ConsoleObject::Kind::Log, value, properties)?;
+        ConsoleObject::TablePrinter::init(global_this, ConsoleObject::MessageLevel::Log, value, properties)?;
     table_printer.value_formatter.depth = format_options.max_depth;
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
@@ -1005,7 +1008,7 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     ConsoleObject::format2(
-        ConsoleObject::Kind::Debug,
+        ConsoleObject::MessageLevel::Debug,
         global_this,
         arguments.as_ptr(),
         1,
@@ -1051,7 +1054,7 @@ pub extern "C" fn Bun__inspect_singleline(
     let global_this = unsafe { &*global_this };
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
-        ConsoleObject::Kind::Debug,
+        ConsoleObject::MessageLevel::Debug,
         global_this,
         core::slice::from_ref(&value).as_ptr(),
         1,
@@ -1112,7 +1115,8 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
         return global_object.throw("Macro must be a function", format_args!(""));
     }
 
-    let get_or_put_result = VirtualMachine::get()
+    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+    let get_or_put_result = unsafe { &mut *VirtualMachine::get() }
         .macros
         .get_or_put(id)
         .expect("unreachable");
@@ -1132,11 +1136,13 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
 }
 
 pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    ZigString::init(VirtualMachine::get().transpiler.fs.top_level_dir).to_js(global_this)
+    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+    ZigString::init(unsafe { &*VirtualMachine::get() }.transpiler.fs.top_level_dir).to_js(global_this)
 }
 
 pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    ZigString::init(VirtualMachine::get().origin.origin).to_js(global_this)
+    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+    ZigString::init(unsafe { &*VirtualMachine::get() }.origin.origin).to_js(global_this)
 }
 
 pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1158,10 +1164,10 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     'use_resolved_path: {
         if vm.main_resolved_path.is_empty() {
             // If it's from eval, don't try to resolve it.
-            if strings::has_suffix(vm.main, b"[eval]") {
+            if strings::ends_with(vm.main, b"[eval]") {
                 break 'use_resolved_path;
             }
-            if strings::has_suffix(vm.main, b"[stdin]") {
+            if strings::ends_with(vm.main, b"[stdin]") {
                 break 'use_resolved_path;
             }
 
@@ -1226,7 +1232,8 @@ pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let edit = &mut VirtualMachine::get().rare_data().editor_context;
+    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+    let edit = &mut unsafe { &mut *VirtualMachine::get() }.rare_data().editor_context;
     let args = callframe.arguments_old(4);
     let mut arguments = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), args.slice());
     let mut path: &[u8] = b"";
@@ -1248,7 +1255,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                 if !strings::eql_long(prev_name, sliced.slice(), true) {
                     let prev = *edit;
                     edit.name = sliced.slice();
-                    edit.detect_editor(VirtualMachine::get().transpiler.env);
+                    edit.detect_editor(unsafe { &*VirtualMachine::get() }.transpiler.env);
                     editor_choice = edit.editor;
                     if editor_choice.is_none() {
                         *edit = prev;
@@ -1280,7 +1287,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     let editor = match editor_choice.or(edit.editor) {
         Some(e) => e,
         None => 'brk: {
-            edit.auto_detect_editor(VirtualMachine::get().transpiler.env);
+            edit.auto_detect_editor(unsafe { &*VirtualMachine::get() }.transpiler.env);
             match edit.editor {
                 Some(e) => break 'brk e,
                 None => {
@@ -1307,7 +1314,8 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 pub fn get_public_path(to: &[u8], origin: URL, writer: &mut impl bun_io::Write) {
     get_public_path_with_asset_prefix(
         to,
-        VirtualMachine::get().transpiler.fs.top_level_dir,
+        // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+        unsafe { &*VirtualMachine::get() }.transpiler.fs.top_level_dir,
         origin,
         b"",
         writer,
@@ -1328,7 +1336,8 @@ pub fn get_public_path_with_asset_prefix(
     let relative_path = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        VirtualMachine::get()
+        // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
+        unsafe { &*VirtualMachine::get() }
             .transpiler
             .fs
             .relative_platform(dir, to, platform)
@@ -1344,7 +1353,7 @@ pub fn get_public_path_with_asset_prefix(
             if bun_paths::is_absolute(to) {
                 let _ = writer.write_all(to);
             } else {
-                let _ = writer.write_all(VirtualMachine::get().transpiler.fs.abs(&[to]));
+                let _ = writer.write_all(unsafe { &*VirtualMachine::get() }.transpiler.fs.abs(&[to]));
             }
         } else {
             let _ = origin.join_write(writer, asset_prefix, b"", relative_path, b"");
@@ -1451,14 +1460,13 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     };
     // specifier_decoded derefs on Drop
 
-    VirtualMachine::resolve_maybe_needs_trailing_slash(
+    VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         &mut errorable,
         ctx,
         specifier_decoded,
         from,
-        &mut query_string,
+        Some(&mut query_string),
         is_esm,
-        IS_FILE_PATH,
         is_user_require_resolve,
     )?;
 
@@ -3189,6 +3197,11 @@ pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
 }
 
 } // mod _jsc_gated
+
+// Re-export so `crate::api::bun_object::get_public_path` is reachable from
+// `filesystem_router` and `jsc_hooks` (the bun_io::Write variant lives inside
+// the gated mod alongside its `_with_asset_prefix` sibling).
+pub use _jsc_gated::get_public_path;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

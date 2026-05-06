@@ -1644,8 +1644,9 @@ pub extern "C" fn fetch_source_code(
                 return 1;
             }
         };
-        result.source_ptr = entry.contents.as_ptr();
-        result.source_len = entry.contents.len();
+        let contents_slice = entry.contents.as_slice();
+        result.source_ptr = contents_slice.as_ptr();
+        result.source_len = contents_slice.len();
         result.free_user_context = None;
         result.user_context = core::ptr::null_mut();
         // SAFETY: result is always embedded in a wrapper. Write wrapper fields
@@ -1654,8 +1655,8 @@ pub extern "C" fn fetch_source_code(
         // overlap the live `result` borrow above (aliased-`&mut` UB).
         let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
         unsafe {
-            (*wrapper).original_source = entry.contents.as_ptr();
-            (*wrapper).original_source_len = entry.contents.len();
+            (*wrapper).original_source = contents_slice.as_ptr();
+            (*wrapper).original_source_len = contents_slice.len();
             (*wrapper).original_source_fd = entry.fd;
         }
     }
@@ -1719,7 +1720,7 @@ impl<'a> OnBeforeParsePlugin<'a> {
     pub fn run(
         &mut self,
         // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
-        plugin: &crate::api::JSBundler::Plugin,
+        plugin: &bundler::JSBundlerPlugin,
         from_plugin: &mut bool,
     ) -> core::result::Result<CacheEntry, AnyError> {
         let mut args = OnBeforeParseArguments {

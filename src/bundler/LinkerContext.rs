@@ -3538,10 +3538,10 @@ impl<'a> LinkerContext<'a> {
         })?;
         Ok((r#ref, part_index))
     }
-}
+
     pub fn break_output_into_pieces(
         &self,
-        alloc: &Bump,
+        _alloc: &Bump,
         j: &mut StringJoiner,
         count: u32,
     ) -> Result<crate::chunk::IntermediateOutput, BunError> {

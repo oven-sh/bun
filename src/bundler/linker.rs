@@ -433,6 +433,12 @@ impl Linker {
                         let import_record =
                             &mut result.ast.import_records.slice_mut()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
+                            // SAFETY: `plugin_runner` is `Some` only when set
+                            // by the owning `Transpiler` to a live JSC-heap
+                            // `PluginRunner`; the transpiler is single-threaded
+                            // and holds no other `&mut` to it for the duration
+                            // of `on_resolve`. Exclusive access here matches
+                            // Zig `*PluginRunner` (linker.zig:176-193).
                             if let Some(path) = unsafe { &mut *runner }.on_resolve(
                                 import_record.path.text,
                                 file_path.text,
@@ -685,6 +691,9 @@ impl Linker {
 
     pub fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
+        // SAFETY: see struct PORT NOTE — `self.fs` is the process-lifetime
+        // `Fs::FileSystem` singleton wired in `Transpiler::configure_linker*`;
+        // shared read of `top_level_dir` only (linker.zig:377).
         let fs = unsafe { &*self.fs };
         let mut hash_key = path.text;
 

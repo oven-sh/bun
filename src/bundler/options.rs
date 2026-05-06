@@ -2420,6 +2420,14 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     }
 }
 
+/// Port of `fs.zig` `Fs.File` (path + contents pair). `bun_resolver::fs`
+/// does not surface this type yet (TODO(b2-blocked)); local mirror keeps
+/// `TransformOptions.entry_point` self-contained.
+pub struct EntryPointFile {
+    pub path: logger::fs::Path,
+    pub contents: Box<[u8]>,
+}
+
 pub struct TransformOptions {
     pub footer: &'static [u8],
     pub banner: &'static [u8],
@@ -2440,13 +2448,14 @@ pub struct TransformOptions {
 }
 
 impl TransformOptions {
-    
-    // TODO(b2-blocked): bun_resolver::fs::File — see `entry_point` field.
-    pub fn init_uncached(entry_point_name: &[u8], code: &[u8]) -> Result<TransformOptions, bun_core::Error> {
+    pub fn init_uncached(
+        entry_point_name: &'static [u8],
+        code: &[u8],
+    ) -> Result<TransformOptions, bun_core::Error> {
         debug_assert!(!entry_point_name.is_empty());
 
-        let entry_point = Fs::File {
-            path: Fs::Path::init(entry_point_name),
+        let entry_point = EntryPointFile {
+            path: logger::fs::Path::init(entry_point_name),
             contents: Box::from(code),
         };
 
@@ -2463,7 +2472,7 @@ impl TransformOptions {
         define.insert(b"process.env.NODE_ENV".as_slice().into(), b"development".as_slice().into());
 
         let mut loader = Loader::File;
-        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point.path.name.ext.as_ref()) {
+        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point.path.name.ext) {
             loader = *default_loader;
         }
         debug_assert!(!code.is_empty());
@@ -2471,10 +2480,10 @@ impl TransformOptions {
         Ok(TransformOptions {
             footer: b"",
             banner: b"",
-            entry_point,
             define,
             loader,
-            resolve_dir: entry_point.path.name.dir.clone(),
+            resolve_dir: Box::from(entry_point.path.name.dir),
+            entry_point,
             // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
             main_fields: Target::default_main_fields_map()[Target::Browser],
             jsx: if loader.is_jsx() { Some(jsx::Pragma::default()) } else { None },
@@ -2509,15 +2518,15 @@ impl TransformResult {
         output_files: Box<[OutputFile]>,
         log: &mut logger::Log,
     ) -> Result<TransformResult, bun_core::Error> {
-        let mut errors: Vec<logger::Msg> = Vec::with_capacity(log.errors);
-        let mut warnings: Vec<logger::Msg> = Vec::with_capacity(log.warnings);
+        let mut errors: Vec<logger::Msg> = Vec::with_capacity(log.errors as usize);
+        let mut warnings: Vec<logger::Msg> = Vec::with_capacity(log.warnings as usize);
         for msg in log.msgs.iter() {
             match msg.kind {
                 logger::Kind::Err => {
-                    errors.push(msg.clone());
+                    errors.push(msg.clone()?);
                 }
                 logger::Kind::Warn => {
-                    warnings.push(msg.clone());
+                    warnings.push(msg.clone()?);
                 }
                 _ => {}
             }

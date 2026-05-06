@@ -1,6 +1,5 @@
 use core::cmp::Ordering;
 
-use bun_js_parser as js_ast;
 use bun_js_parser::ast::bundled_ast::{BundledAstField as AstField, Flags as AstFlags};
 use bun_js_parser::ast::symbol;
 use bun_js_parser::ast::{CharFreq, Scope, StmtData};

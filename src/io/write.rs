@@ -184,8 +184,9 @@ impl Write for bun_string::MutableString {
 
 /// Integers that can be written little-endian via [`Write::write_int_le`].
 pub trait IntLe: Copy {
-    type Bytes: AsRef<[u8]>;
+    type Bytes: AsRef<[u8]> + AsMut<[u8]> + Default;
     fn to_le_bytes(self) -> Self::Bytes;
+    fn from_le_bytes(bytes: Self::Bytes) -> Self;
 }
 
 macro_rules! impl_int_le {
@@ -194,10 +195,139 @@ macro_rules! impl_int_le {
             type Bytes = [u8; core::mem::size_of::<$t>()];
             #[inline]
             fn to_le_bytes(self) -> Self::Bytes { <$t>::to_le_bytes(self) }
+            #[inline]
+            fn from_le_bytes(bytes: Self::Bytes) -> Self { <$t>::from_le_bytes(bytes) }
         }
     )*};
 }
 impl_int_le!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+
+// ════════════════════════════════════════════════════════════════════════════
+// DiscardingWriter — counting null sink
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Discards all bytes written to it but tracks how many were written.
+/// Port of Zig `std.Io.Writer.Discarding` / `std.io.countingWriter(null_writer)`.
+#[derive(Default)]
+pub struct DiscardingWriter {
+    /// Total bytes "written" (discarded) so far.
+    pub count: usize,
+}
+
+impl DiscardingWriter {
+    #[inline]
+    pub const fn new() -> Self {
+        Self { count: 0 }
+    }
+}
+
+impl Write for DiscardingWriter {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        self.count += buf.len();
+        Ok(())
+    }
+    #[inline]
+    fn splat_byte_all(&mut self, _byte: u8, n: usize) -> Result<()> {
+        self.count += n;
+        Ok(())
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FixedBufferStream — cursor over an in-memory buffer
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Port of Zig `std.io.FixedBufferStream(B)` — a seekable cursor over a byte
+/// buffer that can act as both a reader (when `B: AsRef<[u8]>`) and a writer
+/// (when `B: AsMut<[u8]>`). `pos` and `buffer` are public to mirror the Zig
+/// struct fields.
+pub struct FixedBufferStream<B> {
+    pub buffer: B,
+    pub pos: usize,
+}
+
+impl<B> FixedBufferStream<B> {
+    /// Construct a stream over `buffer` starting at position 0.
+    #[inline]
+    pub fn new(buffer: B) -> Self {
+        Self { buffer, pos: 0 }
+    }
+}
+
+impl<'a> FixedBufferStream<&'a mut [u8]> {
+    /// Convenience constructor for a writable borrowed slice.
+    #[inline]
+    pub fn new_mut(buffer: &'a mut [u8]) -> Self {
+        Self { buffer, pos: 0 }
+    }
+}
+
+impl<B: AsRef<[u8]>> FixedBufferStream<B> {
+    /// Bytes written so far (the slice `[0..pos]`). Zig: `getWritten()`.
+    #[inline]
+    pub fn get_written(&self) -> &[u8] {
+        &self.buffer.as_ref()[..self.pos]
+    }
+
+    /// Read exactly `out.len()` bytes from the current position, advancing it.
+    /// Errors with `EndOfStream` if fewer bytes remain.
+    pub fn read_exact(&mut self, out: &mut [u8]) -> Result<()> {
+        let buf = self.buffer.as_ref();
+        let end = self
+            .pos
+            .checked_add(out.len())
+            .ok_or_else(|| bun_core::err!("EndOfStream"))?;
+        if end > buf.len() {
+            return Err(bun_core::err!("EndOfStream"));
+        }
+        out.copy_from_slice(&buf[self.pos..end]);
+        self.pos = end;
+        Ok(())
+    }
+
+    /// Read a little-endian integer. Zig: `reader().readInt(T, .little)`.
+    #[inline]
+    pub fn read_int_le<I: IntLe>(&mut self) -> Result<I> {
+        let mut bytes = I::Bytes::default();
+        self.read_exact(bytes.as_mut())?;
+        Ok(I::from_le_bytes(bytes))
+    }
+
+    /// Read a POD struct. Zig: `reader().readStruct(T)`.
+    ///
+    /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
+    /// padding-sensitive invariants — same contract as Zig's `readStruct`.
+    pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
+        let mut out = core::mem::MaybeUninit::<T>::uninit();
+        // SAFETY: writing `size_of::<T>()` bytes into MaybeUninit<T> storage.
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(
+                out.as_mut_ptr() as *mut u8,
+                core::mem::size_of::<T>(),
+            )
+        };
+        self.read_exact(bytes)?;
+        // SAFETY: fully initialized by read_exact above.
+        Ok(unsafe { out.assume_init() })
+    }
+}
+
+impl<B: AsMut<[u8]>> Write for FixedBufferStream<B> {
+    fn write_all(&mut self, src: &[u8]) -> Result<()> {
+        let buf = self.buffer.as_mut();
+        let end = self
+            .pos
+            .checked_add(src.len())
+            .ok_or_else(|| bun_core::err!("NoSpaceLeft"))?;
+        if end > buf.len() {
+            return Err(bun_core::err!("NoSpaceLeft"));
+        }
+        buf[self.pos..end].copy_from_slice(src);
+        self.pos = end;
+        Ok(())
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // BufWriter — borrowed-buffer buffered writer

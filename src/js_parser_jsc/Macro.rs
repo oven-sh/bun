@@ -419,7 +419,7 @@ impl From<MacroError> for Error {
 pub struct Run<'a> {
     pub caller: Expr,
     pub function_name: &'a [u8],
-    pub macro_: &'a Macro<'a>,
+    pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
     // allocator field deleted — always default_allocator
     pub id: i32,
@@ -856,7 +856,7 @@ impl Runner {
             }
 
             struct CallData<'c> {
-                macro_: &'c Macro<'c>,
+                macro_: &'c Macro,
                 log: &'c mut Log,
                 function_name: &'c [u8],
                 caller: Expr,
@@ -918,5 +918,5 @@ unsafe extern "C" {
 //   source:     src/js_parser_jsc/Macro.zig (642 lines)
 //   confidence: low
 //   todos:      9
-//   notes:      Macro disabled-sentinel needs Option<>/enum restructure (currently todo!()); CallData threadlocal trampoline reshaped to *mut c_void; const-generic Tag needs ConstParamTy; heavy borrowck reshaping expected in Phase B.
+//   notes:      Macro disabled-sentinel restructured to Option<NonNull>/Option<&'static> (vm() accessor unwraps); CallData threadlocal trampoline reshaped to *mut c_void; const-generic Tag needs ConstParamTy; heavy borrowck reshaping expected in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

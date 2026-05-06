@@ -1159,9 +1159,16 @@ impl FileSink {
                     bun_jsc::js_promise::Status::Pending => {
                         self.writer.enable_keeping_process_alive(self.io_evtloop());
                         self.ref_();
-                        let _ = (promise_result, on_resolve_stream, on_reject_stream);
                         // TODO: properly propagate exception upwards
-                        todo!("blocked_on: bun_jsc::JSValue::then");
+                        // PORT NOTE: `JSValue::then` takes already-wrapped C-ABI
+                        // host fns; the `toJSHostFunction` step is the manual
+                        // shims at the bottom of this file.
+                        promise_result.then(
+                            global_this,
+                            self as *mut FileSink,
+                            on_resolve_stream_shim,
+                            on_reject_stream_shim,
+                        );
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
                         // These don't ref().

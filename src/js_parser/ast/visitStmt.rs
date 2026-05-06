@@ -304,10 +304,40 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // SAFETY: arena-owned slice; valid for 'a.
         let items = unsafe { items_mut::<js_ast::ClauseItem>(data.items) };
 
-        if REPLACE_EXPORTS_REAL {
-            // blocked_on: replace_exports map type + inject_replacement_export.
-            // Full body (incl. dead `j == 0 && items.len > 0` branch) preserved in _draft.
-            todo!("s_export_from: replace_exports map path");
+        if p.options.features.replace_exports.count() > 0 {
+            let mut j: usize = 0;
+            // This is a re-export and the symbols created here are used to reference
+            for i in 0..items.len() {
+                let old_ref = items[i].name.ref_.unwrap();
+
+                // SAFETY: alias is arena-owned, valid for 'a.
+                let alias = unsafe { arena_str(items[i].alias) };
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
+                    let _ = p.inject_replacement_export(stmts, old_ref, logger::Loc::EMPTY, &entry);
+                    continue;
+                }
+
+                let _name = p.load_name_from_ref(old_ref);
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                p.cur_scope().generated.append(ref_).expect("oom");
+                p.record_declared_symbol(ref_);
+                if j != i {
+                    // SAFETY: indices in-bounds; ClauseItem is POD-ish.
+                    unsafe { core::ptr::copy_nonoverlapping(items.as_ptr().add(i), items.as_mut_ptr().add(j), 1) };
+                }
+                items[j].name.ref_ = Some(ref_);
+                j += 1;
+            }
+
+            // Truncate `data.items` to `j` by reslicing the raw arena ptr.
+            data.items = core::ptr::slice_from_raw_parts_mut(items.as_mut_ptr(), j);
+
+            // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
+            // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
+            #[allow(unreachable_code)]
+            if j == 0 && unsafe { &*data.items }.len() > 0 {
+                return Ok(());
+            }
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {

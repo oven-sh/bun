@@ -1154,7 +1154,11 @@ fn get_module_name_for_address(di: &mut SelfInfo, addr: usize) -> Option<Box<[u8
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/btjs.zig (260 lines)
-//   confidence: low
-//   todos:      19
-//   notes:      heavy std.debug.* (SelfInfo/StackIterator/tty) usage with no crate-map equivalent — stubbed behind #[cfg(debug_assertions)]; release builds compile only the static "disabled" string. Phase B must pick an unwinder backend.
+//   confidence: medium
+//   notes:      std.debug.* (SelfInfo/StackIterator/MemoryAccessor/getContext)
+//               ported inline from vendor/zig/lib/std/debug{.zig,/SelfInfo.zig,
+//               /MemoryAccessor.zig}. fp-based unwinder is a faithful port;
+//               DWARF line-table lookup is replaced by dladdr (symbol name only,
+//               no file:line). Release builds compile only the static
+//               "disabled" string.
 // ──────────────────────────────────────────────────────────────────────────

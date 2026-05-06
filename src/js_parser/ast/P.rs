@@ -3638,7 +3638,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
         let items_slice: &mut [js_ast::ClauseItem] = unsafe { &mut *stmt.items };
         for i in 0..items_slice.len() {
-            let mut item = items_slice[i];
+            // PORT NOTE: Zig copied `ClauseItem` by value (POD struct). Rust's
+            // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
+            // all fields are POD (`*const [u8]`/`Loc`/`LocRef`).
+            // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
+            // original slot is overwritten or compacted below before any drop.
+            let mut item = unsafe { core::ptr::read(&items_slice[i]) };
             let name = self.load_name_from_ref(item.name.ref_.expect("unreachable"));
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.ref_ = Some(r#ref);

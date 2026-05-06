@@ -45,6 +45,19 @@ pub mod dns_jsc;
 pub mod valkey_jsc;
 pub mod test_runner;
 
+// ─── crate-root re-exports for `cli/` submodules ────────────────────────────
+// Phase-A drafts under `src/runtime/cli/**` were ported with crate-root paths
+// (`crate::Command`, `crate::test_command`, `crate::run_command`, …) because
+// the Zig source treats `cli.zig` as the binary root. Surface those names here
+// so the un-gated `*_command.rs` and `test/parallel/*.rs` files resolve their
+// `use crate::…` lines without per-file edits.
+pub use cli::{
+    command, Command, Cli,
+    run_command, test_command, build_command, bunx_command, create_command,
+    package_manager_command, filter_arg, filter_run, multi_run,
+    shell_completions, add_completions,
+};
+
 // Additional subdirectories present under src/runtime/ but not yet wired:
 // webview.
 // These remain un-declared (blocked on bun_jsc method surface).

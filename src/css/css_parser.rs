@@ -2969,74 +2969,76 @@ impl<AtRule> StyleSheet<AtRule> {
 
 impl StyleAttribute {
     pub fn parse(
+        allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions,
         import_records: &mut BabyList<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<StyleAttribute, Err<ParserError>> {
-        // blocked_on: DeclarationBlock::parse (declaration.rs gated body),
-        // 'bump lifetime threading (DeclarationBlock<'static> in StyleAttribute
-        // vs Parser<'a> here).
-         {
+        // TODO(port): 'bump lifetime threading — `DeclarationBlock<'static>` in
+        // `StyleAttribute` vs `Parser<'a>` here; `allocator: &'static Bump`
+        // matches the crate-wide erasure (see `parse_with`).
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
             symbols: SymbolList::default(),
             source_index,
         };
-        let arena = Bump::new();
-        let mut input = ParserInput::new(code, &arena);
+        let mut input = ParserInput::new(code, allocator);
         let mut parser = Parser::new(
             &mut input,
             Some(import_records),
             if options.css_modules.is_some() { ParserOpts::CSS_MODULES } else { ParserOpts::empty() },
             Some(&mut parser_extra),
         );
-        let mut sources = Vec::with_capacity(1);
-        sources.push(options.filename.into());
+        let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
         // PERF(port): was appendAssumeCapacity
-        return Ok(StyleAttribute {
+        sources.push(options.filename.into());
+        Ok(StyleAttribute {
             declarations: match DeclarationBlock::parse(&mut parser, &options) {
                 Ok(v) => v,
                 Err(e) => return Err(Err::from_parse_error(e, b"")),
             },
             sources,
-        });
-        }
-        #[cfg(any())] {
-        let _ = (code, options, import_records, source_index);
-        todo!("StyleAttribute::parse — gated on DeclarationBlock::parse")
-        }
+        })
     }
 
-    pub fn to_css(
-        &self,
-        options: PrinterOptions,
-        import_info: Option<ImportInfo>,
+    pub fn to_css<'a>(
+        &'a self,
+        allocator: &'a Bump,
+        options: PrinterOptions<'a>,
+        import_info: Option<ImportInfo<'a>>,
     ) -> Result<ToCssResult, PrintErr> {
-        // #[cfg(feature = "sourcemap")] assert!(options.source_map.is_none(), ...);
-        // blocked_on: DeclarationBlock::to_css (declaration.rs gated body),
-        // Printer::new dest-ownership / 'bump arena threading,
-        // printer.sources type (`&Vec<&[u8]>` vs `&Vec<Box<[u8]>>`).
-         {
+        // #[cfg(feature = "sourcemap")]
+        // assert!(
+        //   options.source_map.is_none(),
+        //   "Source maps are not supported for style attributes"
+        // );
+
         let symbols = bun_logger::symbol::Map::default();
+        // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; route
+        // through bun_io::Write over Vec<u8> until 'bump dest threads.
         let mut dest: Vec<u8> = Vec::new();
-        // TODO(port): writer adapter
-        let mut printer = Printer::new(Vec::new(), &mut dest, options, import_info, None, &symbols);
+        let mut printer = Printer::new(
+            allocator,
+            bumpalo::collections::Vec::new_in(allocator),
+            &mut dest,
+            options,
+            import_info,
+            None,
+            &symbols,
+        );
+        // TODO(port): printer.sources type — `&Vec<&[u8]>` vs `&Vec<Box<[u8]>>`;
+        // unify with `StyleSheet::to_css_with_writer_impl` when 'bump threads.
         printer.sources = Some(&self.sources);
 
         self.declarations.to_css(&mut printer)?;
 
-        return Ok(ToCssResult {
+        Ok(ToCssResult {
             dependencies: printer.dependencies.take(),
             code: dest,
             exports: None,
             references: None,
-        });
-        }
-        #[cfg(any())] {
-        let _ = (options, import_info);
-        todo!("StyleAttribute::to_css — gated on DeclarationBlock::to_css")
-        }
+        })
     }
 }
 

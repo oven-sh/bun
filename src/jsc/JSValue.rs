@@ -391,18 +391,31 @@ impl JSValue {
     pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
         Ok(self.to_bun_string(global)?.to_utf8())
     }
+    /// Call `toString()` on the JSValue and clone the result.
+    /// On exception or out of memory, this returns a `JsError`.
+    ///
+    /// Remember that `Symbol` throws an exception when you call `toString()`.
+    ///
+    /// Spec (JSValue.zig `toSliceClone` → `toSliceCloneWithAllocator`): the
+    /// returned slice is *always* heap-owned and independent of the backing
+    /// `JSString` cell, so it outlives GC. Allocator param dropped per
+    /// PORTING.md (default_allocator only).
     pub fn to_slice_clone(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        let _ = global;
-        // Spec (JSValue.zig `toSliceClone`) returns an owned/cloned slice
-        // independent of the backing WTFStringImpl; `to_slice` returns a
-        // possibly-borrowed view. Silently aliasing them is wrong — fail loudly
-        // until the clone path is ported.
-        todo!("JSValue::to_slice_clone")
+        let str = self.to_js_string(global)?;
+        // SAFETY: `to_js_string` returns non-null on `Ok` (null ⇒ `Err(Thrown)`
+        // above); the cell is live for this call (GC cannot run between the
+        // FFI return and this deref).
+        unsafe { &*str }.to_slice_clone(global)
     }
+    /// Call `toString()` on the JSValue and clone the result.
+    ///
+    /// Spec (JSValue.zig `toSliceOrNull`): `bun.String.fromJS` → `toUTF8` with
+    /// the default allocator. The `defer str.deref()` is handled by
+    /// `bun_string::String`'s `Drop`; `to_utf8()` refs the underlying
+    /// WTFStringImpl when borrowing so the slice survives that drop.
     pub fn to_slice_or_null(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        let _ = global;
-        // TODO(port): JSC__JSValue__toSliceOrNull.
-        todo!("JSValue::to_slice_or_null")
+        let str = self.to_bun_string(global)?;
+        Ok(str.to_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
         // SAFETY: `global` is live; `exception` is a valid out-param.

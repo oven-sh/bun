@@ -230,27 +230,29 @@ impl Linker {
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
-    // The inline `bun_resolver::fs` module does not yet expose `RealFS::ModKey`
-    // (`mod_key`/`hash_name` live in the gated `fs_full`). `link()` only ever
-    // calls `generate_import_path` with `use_hashed_name == false`, so neither
-    // path is reachable from the un-gated transpiler surface. Gate the real
-    // bodies and provide a loud stub so any future caller fails fast instead
-    // of silently mis-hashing.
-    
+    // PORT NOTE: Zig's `Fs.FileSystem.RealFS.ModKey` is a nested decl; the
+    // Rust port hoists `ModKey` to module scope (`bun_resolver::fs::ModKey`)
+    // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
+    // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
+    // forward directly; only `.text` is read, and both ports define it as
+    // `&[u8]`.
     pub fn get_mod_key(
         &mut self,
-        file_path: &Fs::Path<'_>,
+        file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
-    ) -> Result<Fs::RealFS::ModKey, bun_core::Error> {
+    ) -> Result<Fs::ModKey, bun_core::Error> {
         let file: bun_sys::File = if let Some(f) = fd {
-            f.into_file()
+            bun_sys::File::from_fd(f)
         } else {
-            bun_sys::File::open(file_path.text, bun_sys::O::RDONLY, 0)?
+            bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?
         };
-        Fs::FileSystem::set_max_fd(file.handle());
-        let modkey = Fs::RealFS::ModKey::generate(&mut (*self.fs).fs, file_path.text, &file)?;
+        Fs::FileSystem::set_max_fd(file.handle().native());
+        // SAFETY: `self.fs` is owned by the `Transpiler` which outlives all
+        // `Linker` calls (raw-ptr field, see struct PORT NOTE).
+        let modkey =
+            Fs::ModKey::generate(unsafe { &mut (*self.fs).fs }, file_path.text, &file)?;
         if fd.is_none() {
-            file.close();
+            let _ = file.close();
         }
         Ok(modkey)
     }
@@ -258,7 +260,7 @@ impl Linker {
     pub fn get_hashed_filename(
         &mut self,
         file_path: &PFs::Path<'_>,
-        _fd: Option<Fd>,
+        fd: Option<Fd>,
     ) -> Result<&'static [u8], bun_core::Error> {
         if IS_CACHE_ENABLED {
             let hashed = bun_wyhash::hash(file_path.text);
@@ -266,12 +268,20 @@ impl Linker {
                 return Ok(*v);
             }
         }
-        // TODO(b2-blocked): bun_resolver::fs::RealFS::ModKey — see gated
-        // `get_mod_key` above. Unreachable from `link()` (which always passes
-        // `use_hashed_name=false`); the only other caller is the still-gated
-        // `Transpiler::print_maybe_source_file_only` draft body.
-        let _ = file_path;
-        unimplemented!("Linker::get_hashed_filename: RealFS::ModKey not yet exposed by bun_resolver::fs (Phase B)")
+
+        let modkey = self.get_mod_key(file_path, fd)?;
+        // PORT NOTE: `ModKey::hash_name` writes into a 1 KiB threadlocal and
+        // returns a `'static` slice into it (matches Zig's `hash_name_buf`
+        // threadlocal). Spec passes `file_path.text` even though the param is
+        // named `basename`; preserved verbatim.
+        let hash_name = modkey.hash_name(file_path.text)?;
+
+        if IS_CACHE_ENABLED {
+            let hashed = bun_wyhash::hash(file_path.text);
+            self.hashed_filenames.insert(hashed, dupe(hash_name));
+        }
+
+        Ok(hash_name)
     }
 
     /// This modifies the Ast in-place! It resolves import records and

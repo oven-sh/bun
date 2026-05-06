@@ -145,11 +145,48 @@ pub trait ConsoleFormatter {
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()>;
+
+    /// `formatter.indent += 1` — bump nesting level for the duration of a
+    /// `{ … }` block. Paired with [`indent_dec`].
+    fn indent_inc(&mut self);
+    /// `formatter.indent -|= 1` — saturating decrement (Zig spelling).
+    fn indent_dec(&mut self);
+    /// `Formatter.writeIndent(Writer, writer)` — emit `2 * indent` spaces.
+    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result;
+    /// `Formatter.resetLine()` — reset `estimated_line_length` to current
+    /// indent so wrap heuristics start fresh on the next line.
+    fn reset_line(&mut self);
+    /// `Formatter.printComma(Writer, writer, enable_ansi_colors)` — dim `,`.
+    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+    ) -> core::fmt::Result;
 }
 
 impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     #[inline]
     fn global_this(&self) -> &JSGlobalObject { self.global_this }
+    #[inline]
+    fn indent_inc(&mut self) { self.indent += 1; }
+    #[inline]
+    fn indent_dec(&mut self) { self.indent = self.indent.saturating_sub(1); }
+    #[inline]
+    fn reset_line(&mut self) { self::console_object::Formatter::reset_line(self) }
+    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
+        // Inherent `Formatter::write_indent` takes `&mut dyn bun_io::Write`;
+        // bridge the `core::fmt::Write` sink the same way `print_as` does.
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        self::console_object::Formatter::write_indent(self, &mut sink)
+            .map_err(|_| core::fmt::Error)
+    }
+    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+    ) -> core::fmt::Result {
+        let mut sink = bun_io::FmtAdapter::new(writer);
+        self::console_object::Formatter::print_comma::<ENABLE_ANSI_COLORS>(self, &mut sink)
+            .map_err(|_| core::fmt::Error)
+    }
     fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         tag: FormatTag,

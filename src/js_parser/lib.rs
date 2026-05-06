@@ -1603,13 +1603,16 @@ pub use defines::{Define, DefineData};
 
 
 pub mod defines_full_draft {
+    use bstr::BStr;
     use bun_collections::{ArrayHashMap, StringHashMap};
     use bun_logger as logger;
-    use bun_str as strings;
+    use bun_string::strings;
 
     use crate::ast::base::Ref;
     use crate::ast::e as E;
     use crate::ast::expr;
+    use crate::ast::g as G;
+    use crate::ast::StoreRef;
     use crate::lexer as js_lexer;
 
     // Zig: `bun.StringArrayHashMap(string)` / `bun.StringHashMap(DefineData)`

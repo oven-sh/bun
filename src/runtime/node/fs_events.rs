@@ -973,7 +973,8 @@ pub fn watch(
             ));
         }
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
-        if FSEVENTS_DEFAULT_LOOP.is_none() {
+        // Read by-value through a raw pointer to avoid creating &mut static (static_mut_refs)
+        if (*core::ptr::addr_of!(FSEVENTS_DEFAULT_LOOP)).is_none() {
             FSEVENTS_DEFAULT_LOOP = NonNull::new(FSEventsLoop::init()?);
         }
         Ok(FSEventsWatcher::init(

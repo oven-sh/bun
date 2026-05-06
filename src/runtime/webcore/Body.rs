@@ -109,6 +109,7 @@ bun_core::declare_scope!(BodyValueBufferer, visible);
 // TODO(port): `bun.JSTerminated!T` is a narrower error set than `bun.JSError`; using JsResult for now.
 type JsTerminated<T> = jsc::JsResult<T>;
 
+#[repr(C)]
 pub struct Body {
     pub value: Value, // = Value::Empty,
 }

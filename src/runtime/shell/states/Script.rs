@@ -149,7 +149,7 @@ impl Script {
         // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
         // `stmt_count` by the caller. Raw-pointer arithmetic avoids the
         // implicit autoref that slice indexing would introduce.
-        unsafe { (*me.node).stmts.as_ptr().add(idx) }
+        unsafe { ((*me.node).stmts as *const ast::Stmt).add(idx) }
     }
 }
 

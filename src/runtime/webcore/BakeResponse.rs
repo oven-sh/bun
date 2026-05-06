@@ -13,6 +13,8 @@ pub fn fix_dead_code_elimination() {
 // TODO(port): callconv(jsc.conv) — Rust cannot express the JSC ABI in `extern` position;
 // Phase B should route this through a bun_jsc shim or verify "C" matches on all targets.
 // TODO(port): move to runtime_sys
+// `Response` embeds `Body` (no #[repr(C)]) but is only ever passed by opaque pointer across FFI.
+#[allow(improper_ctypes)]
 unsafe extern "C" {
     fn BakeResponse__createForSSR(
         global_object: *mut JSGlobalObject,

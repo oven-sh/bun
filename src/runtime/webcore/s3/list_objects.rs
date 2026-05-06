@@ -50,7 +50,7 @@ struct ObjectRestoreStatus<'a> {
     restore_expiry_date: Option<&'a [u8]>,
 }
 
-struct S3ListObjectsContents<'a> {
+pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
     // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
     // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.

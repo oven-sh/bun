@@ -40,6 +40,10 @@ pub struct HTMLBundle {
 // Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
 // custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
 const _: () = {
+    // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
+    // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
+    // lacks `#[repr(C)]` so rustc lints anyway.
+    #[allow(improper_ctypes)]
     #[cfg(all(windows, target_arch = "x86_64"))]
     unsafe extern "sysv64" {
         #[link_name = "HTMLBundle__fromJS"]

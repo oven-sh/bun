@@ -280,7 +280,7 @@ struct PackListEntry {
 }
 type PackList = Vec<PackListEntry>;
 
-struct PackQueueItem {
+pub struct PackQueueItem {
     path: ZBox, // owned `[:0]const u8`; allocated via `entry_subpath`
     optional: bool,
 }

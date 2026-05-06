@@ -4,17 +4,12 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_str::ZigString;
 use crate::node::ErrorCode;
 
-pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> &'static str {
-    let _ = global_object;
+pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
     if js_type.is_array() {
-        return "array";
+        return ZigString::static_("array");
     }
-    // PORT NOTE: Zig called `value.jsTypeString(global).getZigString(global)`.
-    // `JSValue::js_type_string` is not yet ported on the Rust side; fall back to
-    // a static name from the JSType enum (sufficient for the ERR_INVALID_ARG_TYPE
-    // message; exact spelling is fixed up in Phase B).
-    todo!("blocked_on: bun_jsc::JSValue::js_type_string")
+    value.js_type_string(global_object).get_zig_string(global_object)
 }
 
 #[cold]

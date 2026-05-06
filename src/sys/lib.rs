@@ -91,18 +91,43 @@ pub mod dir_iterator {
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
     /// Backing storage is `[name..., 0]`; `slice()` excludes the trailing NUL.
-    pub struct Name(Vec<OSPathChar>);
+    ///
+    /// On Windows the native encoding is UTF-16, but the Zig `.u8`
+    /// `NewWrappedIterator` (which `bun.glob` consumes) eagerly transcodes
+    /// `dir_info.FileName` to UTF-8 via `strings.fromWPath` and exposes the
+    /// result as `name.slice() : []const u8`. We mirror that here by caching
+    /// the UTF-8 form alongside the native u16 buffer so `slice_u8()` can
+    /// hand out a borrowed `&[u8]` on every platform.
+    pub struct Name {
+        native: Vec<OSPathChar>,
+        #[cfg(windows)]
+        utf8: Vec<u8>,
+    }
     impl Name {
         #[inline]
         fn from_slice(s: &[OSPathChar]) -> Name {
             let mut v = Vec::with_capacity(s.len() + 1);
             v.extend_from_slice(s);
             v.push(0);
-            Name(v)
+            #[cfg(windows)]
+            {
+                // Zig: `strings.fromWPath(self.name_data[0..], dir_info_name)` —
+                // "Trust that Windows gives us valid UTF-16LE".
+                let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
+                Name { native: v, utf8 }
+            }
+            #[cfg(not(windows))]
+            { Name { native: v } }
         }
         /// Zig: `name.slice()` — borrow the name as `&[OSPathChar]` (no NUL).
-        #[inline] pub fn slice(&self) -> &[OSPathChar] { &self.0[..self.0.len() - 1] }
+        #[inline] pub fn slice(&self) -> &[OSPathChar] { &self.native[..self.native.len() - 1] }
         #[inline] pub fn as_slice(&self) -> &[OSPathChar] { self.slice() }
+        /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
+        /// native slice; on Windows it is the cached `fromWPath` transcode.
+        #[cfg(not(windows))]
+        #[inline] pub fn slice_u8(&self) -> &[u8] { self.slice() }
+        #[cfg(windows)]
+        #[inline] pub fn slice_u8(&self) -> &[u8] { &self.utf8 }
         /// Zig: `name.sliceAssumeZ()` — `[:0]const u8` on POSIX.
         #[cfg(not(windows))]
         #[inline] pub fn as_zstr(&self) -> &bun_core::ZStr {

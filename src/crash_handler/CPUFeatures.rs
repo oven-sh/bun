@@ -110,12 +110,13 @@ impl CPUFeatures {
         #[cfg(target_arch = "x86_64")]
         
         {
-            // TODO(b2-blocked): bun_analytics::Features::no_avx_add
-            // TODO(b2-blocked): bun_analytics::Features::no_avx2_add
             // Zig: bun.analytics.Features.no_avx / no_avx2 are global mutable
-            // counters (`+= usize`). bun_analytics does not compile yet.
-            bun_analytics::Features::no_avx_add(usize::from(!flags.contains(Flags::AVX)));
-            bun_analytics::Features::no_avx2_add(usize::from(!flags.contains(Flags::AVX2)));
+            // counters (`+= usize`). Rust port stores them as `AtomicUsize`.
+            use core::sync::atomic::Ordering;
+            bun_analytics::features::no_avx
+                .fetch_add(usize::from(!flags.contains(Flags::AVX)), Ordering::Relaxed);
+            bun_analytics::features::no_avx2
+                .fetch_add(usize::from(!flags.contains(Flags::AVX2)), Ordering::Relaxed);
         }
 
         CPUFeatures { flags }

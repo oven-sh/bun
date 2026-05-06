@@ -971,11 +971,12 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
     } else if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
         Output::err(
             "ENOENT",
-            format_args!("Bun could not find a file, and the code that produces this error is missing a better error."),
+            "Bun could not find a file, and the code that produces this error is missing a better error.",
+            (),
         );
     } else if err == bun_core::err!("MissingPackageJSON") {
         err_generic!("Bun could not find a package.json file to install from");
-        Output::note("Run \"bun init\" to initialize a project");
+        Output::note("Run \"bun init\" to initialize a project", ());
     } else {
         // PORT NOTE: Zig picked the format string at comptime; the macros need
         // `:literal`, so branch on the const and call separately.
@@ -1246,7 +1247,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         
         // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
         {
-        let platform = bun_analytics::GenerateHeader::GeneratePlatform::for_os();
+        let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
         #[cfg(all(target_os = "linux", target_env = "gnu"))]
         {
             // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
@@ -1256,11 +1257,11 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             } else {
                 unsafe { core::ffi::CStr::from_ptr(version) }.to_bytes()
             };
-            let kernel_version = bun_analytics::GenerateHeader::GeneratePlatform::kernel_version();
-            if platform.os == bun_analytics::PlatformOs::Wsl {
-                write!(writer, "WSL Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes))?;
+            let kernel_version = bun_analytics::GenerateHeader::generate_platform::kernel_version();
+            if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
+                write!(writer, "WSL Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes)).map_err(fmt_err)?;
             } else {
-                write!(writer, "Linux Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes))?;
+                write!(writer, "Linux Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes)).map_err(fmt_err)?;
             }
         }
         #[cfg(all(target_os = "linux", target_env = "musl"))]
@@ -1313,7 +1314,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     }
     
     // TODO(b2-blocked): bun_analytics::Features::formatter
-    { write!(writer, "\n{}", bun_analytics::Features::formatter()).map_err(fmt_err)?; }
+    { write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?; }
     writer.write_all(b"\n")?;
 
     if bun_core::USE_MIMALLOC {
@@ -2052,7 +2053,7 @@ fn cold_handle_error_return_trace<const IS_ROOT: bool>(
         if IS_ROOT {
             // SAFETY: read-only access
             if unsafe { VERBOSE_ERROR_TRACE } {
-                Output::note("Release build will not have this trace by default:");
+                Output::note("Release build will not have this trace by default:", ());
             }
         } else {
             bun_core::pretty_errorln!("<blue>note<r><d>:<r> caught error.{}:", bstr::BStr::new(err.name()));

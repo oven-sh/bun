@@ -757,10 +757,10 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         };
         let less = |ai: usize, bi: usize| ctx.less_than(ai, bi);
 
-        // TODO(port): Zig calls `mem.sortContext` / `mem.sortUnstableContext`,
-        // index-based in-place sorts (timsort / pdqsort) parameterized by
-        // `swap` + `lessThan`. Rust std has no index-based sort; provide
-        // `bun_collections::sort_context` / `sort_unstable_context` in Phase B.
+        // Zig calls `mem.sortContext` / `mem.sortUnstableContext` — index-based
+        // in-place sorts parameterized by `swap` + `lessThan`. Rust std has no
+        // index-based sort, so we port `std.sort.insertionContext` (stable) and
+        // `std.sort.heapContext` (unstable) below.
         match STABLE {
             true => bun_collections_sort_context(a, b, less, swap),
             false => bun_collections_sort_unstable_context(a, b, less, swap),
@@ -936,26 +936,114 @@ fn aligned_alloc(layout: Option<Layout>) -> Result<*mut u8, AllocError> {
     if p.is_null() { Err(AllocError) } else { Ok(p) }
 }
 
-// TODO(port): index-based context sorts (`mem.sortContext` /
-// `mem.sortUnstableContext`). Phase B: implement in `bun_collections::sort`.
+// Index-based context sorts — port of `mem.sortContext` / `mem.sortUnstableContext`
+// (vendor/zig/lib/std/mem.zig:629-635 → std/sort.zig `insertionContext` /
+// `heapContext`). Rust std has no sort parameterized purely by index `swap` /
+// `less`, so we carry the Zig implementations directly.
+
+/// `std.sort.insertionContext` — stable, O(n²) worst case, O(1) memory.
+/// Zig's `mem.sortContext` currently delegates to this (see its TODO re: block
+/// sort); we match that behavior exactly.
 fn bun_collections_sort_context(
-    _a: usize,
-    _b: usize,
-    _less: impl Fn(usize, usize) -> bool,
-    _swap: impl Fn(usize, usize),
+    a: usize,
+    b: usize,
+    less: impl Fn(usize, usize) -> bool,
+    swap: impl Fn(usize, usize),
 ) {
-    // TODO(port): stable index-based sort (timsort).
-    todo!("bun_collections::sort_context")
+    debug_assert!(a <= b);
+    if a >= b {
+        return;
+    }
+    let mut i = a + 1;
+    while i < b {
+        let mut j = i;
+        while j > a && less(j, j - 1) {
+            swap(j, j - 1);
+            j -= 1;
+        }
+        i += 1;
+    }
 }
 
+/// `std.sort.heapContext` — unstable, O(n·log n) best/worst/average, O(1) memory.
+/// Zig's `mem.sortUnstableContext` delegates to `pdqContext`; heap sort is
+/// pdqsort's guaranteed-O(n·log n) fallback and preserves the index-based
+/// `swap`/`less` contract without the partitioning machinery.
+/// PERF(port): upgrade to full `pdqContext` if profiling shows hot SoA sorts.
 fn bun_collections_sort_unstable_context(
-    _a: usize,
-    _b: usize,
-    _less: impl Fn(usize, usize) -> bool,
-    _swap: impl Fn(usize, usize),
+    a: usize,
+    b: usize,
+    less: impl Fn(usize, usize) -> bool,
+    swap: impl Fn(usize, usize),
 ) {
-    // TODO(port): unstable index-based sort (pdqsort).
-    todo!("bun_collections::sort_unstable_context")
+    debug_assert!(a <= b);
+    if b - a < 2 {
+        return;
+    }
+
+    // Build the heap in linear time.
+    let mut i = a + (b - a) / 2;
+    while i > a {
+        i -= 1;
+        sift_down(a, i, b, &less, &swap);
+    }
+
+    // Pop maximal elements from the heap.
+    i = b;
+    while i > a {
+        i -= 1;
+        if i == a {
+            // Zig issues `swap(a, a)` on the final iteration (a no-op there).
+            // Our column-swap closure uses `ptr::swap_nonoverlapping`, which
+            // forbids self-aliasing, so elide it; `siftDown(a, a, a)` is also
+            // a no-op.
+            break;
+        }
+        swap(a, i);
+        sift_down(a, a, i, &less, &swap);
+    }
+}
+
+/// `std.sort.siftDown` (sort.zig:101-129).
+fn sift_down(
+    a: usize,
+    target: usize,
+    b: usize,
+    less: &impl Fn(usize, usize) -> bool,
+    swap: &impl Fn(usize, usize),
+) {
+    let mut cur = target;
+    loop {
+        // When the multiply below does not overflow, this equals
+        // `2*cur - 2*a + a + 1`. The `+ a + 1` is safe: for `a > 0`,
+        // `2a >= a + 1`; for `a == 0` it is `2*cur + 1` (even + 1).
+        let Some(twice) = (cur - a).checked_mul(2) else {
+            break;
+        };
+        let mut child = twice + a + 1;
+
+        // Stop if we overshot the boundary.
+        if !(child < b) {
+            break;
+        }
+
+        // `next_child` is at most `b`, therefore no overflow is possible.
+        let next_child = child + 1;
+
+        // Store the greater child in `child`.
+        if next_child < b && less(child, next_child) {
+            child = next_child;
+        }
+
+        // Stop if the heap invariant holds at `cur`.
+        if less(child, cur) {
+            break;
+        }
+
+        // Swap `cur` with the greater child, move one step down, and continue sifting.
+        swap(child, cur);
+        cur = child;
+    }
 }
 
 // `MaybeUninit` is referenced in doc comments; keep import to avoid dead-code
@@ -1035,5 +1123,5 @@ mod tests {
 //   source:     src/collections/multi_array_list.zig (647 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      Heavy @typeInfo/@field reflection replaced by MultiArrayElement trait (needs #[derive] proc-macro in Phase B); ptrs array fixed at MAX_FIELDS=32 pending generic_const_exprs; index-based sort_context stubbed; allocator params dropped (global mimalloc); union(enum) Elem wrapper deferred to derive.
+//   notes:      Heavy @typeInfo/@field reflection replaced by MultiArrayElement trait (needs #[derive] proc-macro in Phase B); ptrs array fixed at MAX_FIELDS=32 pending generic_const_exprs; index-based sort_context ported as insertionContext/heapContext; allocator params dropped (global mimalloc); union(enum) Elem wrapper deferred to derive.
 // ──────────────────────────────────────────────────────────────────────────

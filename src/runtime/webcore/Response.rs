@@ -274,6 +274,11 @@ impl Response {
     }
 
     #[inline]
+    pub fn get_init_headers_mut(&mut self) -> Option<&mut FetchHeaders> {
+        self.init.headers.as_deref_mut()
+    }
+
+    #[inline]
     pub fn swap_init_headers(&mut self) -> Option<HeadersRef> {
         self.init.headers.take()
     }

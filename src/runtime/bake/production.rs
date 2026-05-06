@@ -164,7 +164,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         module_map: StringArrayHashMap::default(),
         source_maps: StringArrayHashMap::default(),
 
-        vm,
+        vm: vm_ptr,
         loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
         // PORT NOTE: Zig set `.null` then `.protect()`/`.unprotect()` manually;
         // PORTING.md mandates `Strong` for heap-stored JSValue. `Strong::empty()`
@@ -1584,10 +1584,10 @@ impl<'a> PerThread<'a> {
 
 impl<'a> Drop for PerThread<'a> {
     fn drop(&mut self) {
-        // SAFETY: FFI call; `self.vm.global` is still live (VM outlives PerThread),
-        // and passing null detaches the previously-attached pointer.
+        // SAFETY: FFI call; `self.vm` is the live per-thread VM (VM outlives
+        // PerThread), and passing null detaches the previously-attached pointer.
         unsafe {
-            BakeGlobalObject__attachPerThreadData(self.vm.global, core::ptr::null_mut());
+            BakeGlobalObject__attachPerThreadData((*self.vm).global, core::ptr::null_mut());
         }
         // `all_server_files: Strong` is dropped automatically, releasing the GC root.
     }

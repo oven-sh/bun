@@ -430,13 +430,12 @@ impl BunTestRoot {
     pub fn on_before_print(&self) {
         if let Some(active_file) = &self.active_file {
             if let Some(reporter) = active_file.reporter {
-                // SAFETY: reporter outlives the active file by construction (cleared in exit_file)
-                let reporter = unsafe { &mut *(reporter as *const CommandLineReporter as *mut CommandLineReporter) };
-                // TODO(port): reporter is Option<&'a CommandLineReporter> per LIFETIMES; mutation needs reshaping
-                if reporter.reporters.dots && reporter.last_printed_dot {
+                // `last_printed_dot` is `Cell<bool>` so the `&CommandLineReporter` borrow
+                // suffices — no `&mut` materialized through a shared ref (Zig used `*T`).
+                if reporter.reporters.dots && reporter.last_printed_dot.get() {
                     bun_core::pretty_error!("<r>\n");
                     Output::flush();
-                    reporter.last_printed_dot = false;
+                    reporter.last_printed_dot.set(false);
                 }
                 if let Some(runner) = Jest::runner() {
                     runner.current_file.print_if_needed();
@@ -479,7 +478,8 @@ pub struct BunTest<'a> {
     pub file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
     pub reporter: Option<&'a CommandLineReporter>,
-    // TODO(port): mutation through &'a CommandLineReporter (on_before_print writes last_printed_dot) — reshape to Cell/&mut in Phase B
+    // PORT NOTE: Zig stores `?*CommandLineReporter`; the only field mutated through this
+    // shared borrow is `last_printed_dot`, now `Cell<bool>` for sound interior mutability.
     pub timer: EventLoopTimer,
     pub result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
@@ -1598,7 +1598,11 @@ impl ExecutionEntry {
     ) -> bool {
         if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
-            sequence.result = if Some(self as *const _ as *mut _) == sequence.test_entry {
+            // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
+            let is_test_entry = sequence
+                .test_entry
+                .map_or(false, |p| core::ptr::eq(p.as_ptr().cast_const(), self));
+            sequence.result = if is_test_entry {
                 if self.has_done_parameter {
                     Execution::SequenceResult::FailBecauseTimeoutWithDoneCallback
                 } else {

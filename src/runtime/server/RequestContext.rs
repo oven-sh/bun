@@ -3496,7 +3496,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
 }
 
 fn get_content_type(
-    headers: Option<&FetchHeaders>,
+    headers: Option<&mut FetchHeaders>,
     blob: &AnyBlob,
 ) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
@@ -3504,11 +3504,7 @@ fn get_content_type(
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
-            // SAFETY: `fast_get` is logically const (reads a header into an
-            // out-param via FFI); the `&mut self` receiver is over-broad. The
-            // single caller holds an exclusive borrow on the owning `Response`.
-            let headers_mut = unsafe { &mut *(headers_ as *const FetchHeaders as *mut FetchHeaders) };
-            if let Some(content) = headers_mut.fast_get(jsc::HTTPHeaderName::ContentType) {
+            if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();

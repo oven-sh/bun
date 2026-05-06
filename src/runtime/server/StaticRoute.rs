@@ -77,13 +77,19 @@ impl StaticRoute {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref_(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// # Safety
+    /// `this` must have been produced by `Box::into_raw` in one of the constructors
+    /// below (write provenance preserved through FFI userdata round-trips). Caller
+    /// must not hold any live `&`/`&mut` to `*this` across this call when the
+    /// refcount may reach zero.
+    pub unsafe fn deref_(this: *mut Self) {
+        let n = (*this).ref_count.get() - 1;
+        (*this).ref_count.set(n);
         if n == 0 {
-            // SAFETY: ref_count hit zero; self was created via Box::into_raw in the
-            // constructors below and no other live references remain.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: ref_count hit zero; `this` was created via Box::into_raw and
+            // retains write provenance (no `&self` in the chain), so reconstituting
+            // the Box and dropping it is sound.
+            drop(Box::from_raw(this));
         }
     }
 
@@ -120,10 +126,12 @@ impl StaticRoute {
     /// Create a static route to be used on a single response, freeing the bytes once sent.
     pub fn send_blob_then_deinit(resp: AnyResponse, blob: &AnyBlob, options: InitFromBytesOptions<'_>) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
-        // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute with ref_count=1.
-        let temp_route = unsafe { &*temp_route };
-        temp_route.on(resp);
-        temp_route.deref_();
+        // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute (ref_count=1)
+        // with write provenance; on()/deref_() consume it via that same *mut.
+        unsafe {
+            StaticRoute::on(temp_route, resp);
+            StaticRoute::deref_(temp_route);
+        }
     }
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> Result<*mut StaticRoute, Error> {

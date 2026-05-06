@@ -1019,43 +1019,62 @@ extern "C" fn archive_read_callback(
     out_buffer: *mut *const c_void,
 ) -> lib::la_ssize_t {
     // SAFETY: `ctx` was set to `self` in `open_archive`; libarchive passes it
-    // back unchanged. Only one drain runs at a time so `&mut` is exclusive.
-    let this: &mut TarballStream = unsafe { &mut *(ctx as *mut TarballStream) };
+    // back unchanged. This callback is re-entered from inside
+    // `archive.read_next_header()` / `archive.next()` in `step()`, while
+    // `step()`'s `&mut self` is on the stack. Materialising a full
+    // `&mut TarballStream` here would alias that outer borrow (UB under
+    // Stacked Borrows). Instead we keep `this` as a raw pointer and access
+    // fields through it directly — matching Zig's freely-aliasing
+    // `*TarballStream`. All fields touched here (`reading`, `read_pos`,
+    // `mutex`, `pending`, `closed`, `hasher`) are drain-side / mutex-guarded
+    // and are not accessed by `step()` across the FFI call boundary.
+    let this: *mut TarballStream = ctx as *mut TarballStream;
 
-    let remaining = &this.reading[this.read_pos..];
-    if !remaining.is_empty() {
-        // SAFETY: out_buffer is a valid out-param per libarchive contract.
-        unsafe { *out_buffer = remaining.as_ptr().cast() };
-        this.read_pos = this.reading.len();
-        return lib::la_ssize_t::try_from(remaining.len()).unwrap();
+    // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
+    // the single active drain task.
+    unsafe {
+        let remaining = &(*this).reading[(*this).read_pos..];
+        if !remaining.is_empty() {
+            *out_buffer = remaining.as_ptr().cast();
+            (*this).read_pos = (*this).reading.len();
+            return lib::la_ssize_t::try_from(remaining.len()).unwrap();
+        }
     }
 
     // No data left in `reading`. Check for more under the lock —
     // libarchive may have called us more than once for a single
     // `step()` (e.g. gzip header + first deflate block), and `on_chunk`
     // might have landed a fresh chunk in the meantime.
-    this.mutex.lock();
-    let has_pending = !this.pending.is_empty();
-    let closed = this.closed;
-    this.mutex.unlock();
+    // SAFETY: `mutex`/`pending`/`closed` accessed via raw ptr; producer side
+    // is synchronised by the mutex itself.
+    let (has_pending, closed) = unsafe {
+        (*this).mutex.lock();
+        let r = (!(*this).pending.is_empty(), (*this).closed);
+        (*this).mutex.unlock();
+        r
+    };
 
     if has_pending {
         // Pull the new bytes into `reading` and retry the read. We are
         // the only consumer of `reading`/`read_pos`, and `take_pending`
         // only touches producer state under the same mutex.
-        let _ = this.take_pending();
-        let again = &this.reading[this.read_pos..];
-        if !again.is_empty() {
-            // SAFETY: out_buffer is a valid out-param per libarchive contract.
-            unsafe { *out_buffer = again.as_ptr().cast() };
-            this.read_pos = this.reading.len();
-            return lib::la_ssize_t::try_from(again.len()).unwrap();
+        // SAFETY: `take_pending` borrows fields disjoint from anything
+        // `step()` holds across the FFI call; the outer `&mut self` is
+        // dormant while libarchive is on the C stack.
+        unsafe {
+            let _ = (*this).take_pending();
+            let again = &(*this).reading[(*this).read_pos..];
+            if !again.is_empty() {
+                *out_buffer = again.as_ptr().cast();
+                (*this).read_pos = (*this).reading.len();
+                return lib::la_ssize_t::try_from(again.len()).unwrap();
+            }
         }
     }
 
     if closed {
         // SAFETY: out_buffer is a valid out-param; ptr is unused when len==0.
-        unsafe { *out_buffer = (this as *mut TarballStream).cast() };
+        unsafe { *out_buffer = this.cast() };
         return 0;
     }
 

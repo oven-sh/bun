@@ -213,11 +213,12 @@ impl StatWatcherScheduler {
                 .sub(core::mem::offset_of!(StatWatcherScheduler, task))
                 .cast::<StatWatcherScheduler>()
         };
+        let this_ptr: *mut StatWatcherScheduler = this;
         // SAFETY: this is alive — ref'd when the timer was scheduled
         let this = unsafe { &mut *this };
         // ref'd when the timer was scheduled
-        let _deref_on_exit = scopeguard::guard((), |_| this.deref());
-        // TODO(port): scopeguard borrows `this`; Phase B may need to restructure for borrowck
+        // SAFETY: `this_ptr` is live for the scope; one ref owned by this callback.
+        let _deref_on_exit = scopeguard::guard((), move |_| unsafe { Self::deref(this_ptr) });
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`
 
         // Instant.now will not fail on our target platforms.
@@ -233,7 +234,8 @@ impl StatWatcherScheduler {
             // SAFETY: watcher is *mut StatWatcher from intrusive queue; alive because we hold a ref on it
             let w = unsafe { &mut *watcher };
             if w.closed {
-                w.deref();
+                // SAFETY: we own the ref taken in `append`; `watcher` is the original raw ptr.
+                unsafe { StatWatcher::deref(watcher) };
                 continue;
             }
             contain_watchers = true;

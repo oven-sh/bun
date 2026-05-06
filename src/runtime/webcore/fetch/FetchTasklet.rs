@@ -248,10 +248,12 @@ impl FetchTasklet {
         }
     }
 
-    // TODO(port): wrapper to match ConcurrentTask callback signature (was `error{}!void` coercion)
-    fn deinit_callback(this: *mut FetchTasklet) {
+    // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> JsResult<()>`; Zig coerced
+    // `error{}!void` automatically, here we wrap.
+    fn deinit_callback(this: *mut FetchTasklet) -> JsResult<()> {
         // SAFETY: enqueued with last ref; exclusive access on main thread
         unsafe { FetchTasklet::deinit(this) };
+        Ok(())
     }
 
     // PORT NOTE: Zig `pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet { return FetchTasklet{}; }`
@@ -369,7 +371,7 @@ impl FetchTasklet {
         }
     }
 
-    pub fn on_body_received(&mut self) -> bun_jsc::JsTerminatedResult<()> {
+    pub fn on_body_received(&mut self) -> JsTerminatedResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore

@@ -1127,7 +1127,7 @@ impl Blob {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: jsc::ConsoleObjectFormatter,
+        F: jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
         if self.is_detached() {

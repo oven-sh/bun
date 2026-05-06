@@ -5535,8 +5535,9 @@ pub mod testing_apis {
 
         // TODO(port): std.json.fmt — serde_json or custom JSON serializer in Phase B.
         let mut str = Vec::new();
-        write!(&mut str, "{}", bun_core::json::fmt(&test_tokens[..])).unwrap();
-
+        let _ = &test_tokens;
+        todo!("blocked_on: bun_core::json::fmt");
+        #[allow(unreachable_code)]
         let mut bun_str = BunString::from_bytes(&str);
         // TODO(port): move to *_jsc — to_js() lives in StringJsc extension trait
         Ok(bun_str.to_js(global))
@@ -5618,8 +5619,9 @@ pub mod testing_apis {
 
         // TODO(port): std.json.fmt
         let mut str = Vec::new();
-        write!(&mut str, "{}", bun_core::json::fmt(&script_ast)).unwrap();
-
+        let _ = &script_ast;
+        todo!("blocked_on: bun_core::json::fmt");
+        #[allow(unreachable_code)]
         BunString::create_utf8_for_js(global, &str)
     }
 }

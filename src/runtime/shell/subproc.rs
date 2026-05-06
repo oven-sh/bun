@@ -840,10 +840,11 @@ impl Writable {
                 } else {
                     // subprocess.flags.has_stdin_destructor_called = false;
                     // subprocess.weak_file_sink_stdin_ptr = pipe;
-                    pipe.to_js_with_destructor(
-                        global_this,
-                        webcore::sink_destructor::Ptr::init(subprocess),
-                    )
+                    // TODO(port): `webcore::SinkDestructor::Ptr` not yet ported; this
+                    // path is dead under shell (`has_stdin_destructor_called` doesn't
+                    // exist on ShellSubprocess — see Zig comment above).
+                    let _ = (global_this, subprocess, pipe);
+                    todo!("blocked_on: webcore::SinkDestructor::Ptr")
                 }
             }
         }
@@ -1008,7 +1009,7 @@ impl Readable {
         #[cfg(not(windows))]
         match stdio {
             Stdio::Inherit => Readable::Inherit,
-            Stdio::Ipc(_) | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
+            Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
             Stdio::Path(_) => Readable::Ignore,
             Stdio::Fd(_) => Readable::Fd(result.unwrap()),
             // blobs are immutable, so we should only ever get the case
@@ -1611,7 +1612,7 @@ impl PipeReader {
                 {
                     // TODO: are these flags correct
                     let poll = &mut self.reader.handle.poll;
-                    poll.flags.insert(bun_aio::FilePollFlags::SOCKET);
+                    poll.flags.insert(bun_aio::file_poll::Flags::Socket);
                     self.reader.flags.socket = true;
                 }
 

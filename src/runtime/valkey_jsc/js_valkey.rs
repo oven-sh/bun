@@ -1952,7 +1952,7 @@ impl Options {
     ) -> Result<valkey::Options, bun_core::Error> {
         // TODO(port): narrow error set
         let mut this = valkey::Options {
-            enable_auto_pipelining: !bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
+            enable_auto_pipelining: !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
                 .get(),
             ..Default::default()
         };

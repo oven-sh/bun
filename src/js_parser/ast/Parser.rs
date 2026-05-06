@@ -369,7 +369,7 @@ impl<'a> Parser<'a> {
             let import_records = p.import_records.items_mut();
             let mut iter = p
                 .parse_pass_symbol_uses
-                .as_deref_mut()
+                .as_mut()
                 .expect("set above for TS")
                 .iterator();
             while let Some(entry) = iter.next() {

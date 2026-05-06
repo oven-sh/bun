@@ -1109,7 +1109,7 @@ pub struct SpawnArgs<'a> {
 
 pub struct EnvMapIter<'a> {
     pub map: &'a DotEnvMap,
-    pub iter: <DotEnvMap as bun_dotenv::HashTable>::Iterator<'a>,
+    pub iter: <bun_dotenv::HashTable as bun_collections::ArrayHashMapExt>::Iterator<'a>,
     // alloc param dropped — global allocator
 }
 

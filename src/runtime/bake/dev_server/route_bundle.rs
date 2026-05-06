@@ -47,6 +47,9 @@ pub struct Framework {
     pub evaluate_failure: Option<SerializedFailure>,
 }
 
+/// Zig name alias (`RouteBundle.HTML`) — callers use the all-caps form.
+pub type HTML = Html;
+
 pub struct Html {
     /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
     /// refcount via `.initRef(html)` when storing; `.deref()` on drop.

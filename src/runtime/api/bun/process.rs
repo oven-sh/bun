@@ -3648,7 +3648,7 @@ pub mod sync {
         // was recorded before it died. The `begin()` call below seeds the
         // scan root after spawn.
         #[allow(unused_mut)]
-        let mut no_orphans_kq: Fd = bun_sys::INVALID_FD;
+        let mut no_orphans_kq: Fd = spawn_sys::INVALID_FD;
         #[cfg(target_os = "macos")]
         if no_orphans {
             // SAFETY: kqueue syscall
@@ -3661,7 +3661,7 @@ pub mod sync {
         // m_kq) and releaseKq().
         #[cfg(target_os = "macos")]
         let _kq_close_guard = scopeguard::guard((), |_| {
-            if no_orphans_kq != bun_sys::INVALID_FD {
+            if no_orphans_kq != spawn_sys::INVALID_FD {
                 no_orphans_kq.close();
             }
         });
@@ -3669,7 +3669,7 @@ pub mod sync {
         // its NOTE_FORK-drain rescan), before the close above.
         #[cfg(target_os = "macos")]
         let _kq_release_guard = scopeguard::guard((), |_| {
-            if no_orphans_kq != bun_sys::INVALID_FD {
+            if no_orphans_kq != spawn_sys::INVALID_FD {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_releaseKq() };
             }
@@ -3715,7 +3715,7 @@ pub mod sync {
             // each discovered descendant. waitMacKqueue registers the
             // script's own knote.
             #[cfg(target_os = "macos")]
-            if no_orphans_kq != bun_sys::INVALID_FD {
+            if no_orphans_kq != spawn_sys::INVALID_FD {
                 // SAFETY: FFI
                 unsafe { Bun__noOrphans_begin(no_orphans_kq.native(), process.pid) };
             }
@@ -3759,23 +3759,23 @@ pub mod sync {
 
         let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
         let mut out_fds: [Fd; 2] = [
-            process.stdout.unwrap_or(bun_sys::INVALID_FD),
-            process.stderr.unwrap_or(bun_sys::INVALID_FD),
+            process.stdout.unwrap_or(spawn_sys::INVALID_FD),
+            process.stderr.unwrap_or(spawn_sys::INVALID_FD),
         ];
         let mut success = false;
         // defer cleanup — handled at end / via guards below
         // TODO(port): errdefer — manual cleanup at each error return below
 
         let mut out_fds_to_wait_for: [Fd; 2] = [
-            process.stdout.unwrap_or(bun_sys::INVALID_FD),
-            process.stderr.unwrap_or(bun_sys::INVALID_FD),
+            process.stdout.unwrap_or(spawn_sys::INVALID_FD),
+            process.stderr.unwrap_or(spawn_sys::INVALID_FD),
         ];
 
         if process.memfds[1] {
-            out_fds_to_wait_for[0] = bun_sys::INVALID_FD;
+            out_fds_to_wait_for[0] = spawn_sys::INVALID_FD;
         }
         if process.memfds[2] {
-            out_fds_to_wait_for[1] = bun_sys::INVALID_FD;
+            out_fds_to_wait_for[1] = spawn_sys::INVALID_FD;
         }
 
         // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
@@ -3828,8 +3828,8 @@ pub mod sync {
                 // plain poll() loop so `.buffer` stdio still drains instead
                 // of being dropped (or deadlocking) in a blind `wait4()`.
             }
-            while out_fds_to_wait_for[0] != bun_sys::INVALID_FD
-                || out_fds_to_wait_for[1] != bun_sys::INVALID_FD
+            while out_fds_to_wait_for[0] != spawn_sys::INVALID_FD
+                || out_fds_to_wait_for[1] != spawn_sys::INVALID_FD
             {
                 for i in 0..2 {
                     if let Some(err) =
@@ -3845,7 +3845,7 @@ pub mod sync {
                     unsafe { core::mem::zeroed() };
                 let mut poll_len: usize = 0;
                 for &fd in &out_fds_to_wait_for {
-                    if fd == bun_sys::INVALID_FD {
+                    if fd == spawn_sys::INVALID_FD {
                         continue;
                     }
                     poll_fds_buf[poll_len] = libc::pollfd {
@@ -3911,7 +3911,7 @@ pub mod sync {
         }
 
         for &fd in out_fds {
-            if fd != bun_sys::INVALID_FD {
+            if fd != spawn_sys::INVALID_FD {
                 fd.close();
             }
         }
@@ -3956,7 +3956,7 @@ pub mod sync {
         // kqueue() failed in spawnPosix (EMFILE/ENOMEM): let the caller's
         // plain `poll()` loop drain `.buffer` stdio and reap. The spawnPosix
         // defers (pgroup-kill, killTracked() — empty set) still run.
-        if kq_fd == bun_sys::INVALID_FD {
+        if kq_fd == spawn_sys::INVALID_FD {
             return None;
         }
 
@@ -4001,7 +4001,7 @@ pub mod sync {
             add(&mut changes_buf, &mut changes_len, libc::SIGCHLD as usize, libc::EVFILT_SIGNAL, 0, 0);
         }
         for (i, &fd) in out_fds_to_wait_for.iter().enumerate() {
-            if fd != bun_sys::INVALID_FD {
+            if fd != spawn_sys::INVALID_FD {
                 add(&mut changes_buf, &mut changes_len, usize::try_from(fd.cast()).unwrap(), libc::EVFILT_READ, 0, i);
             }
         }
@@ -4183,13 +4183,13 @@ pub mod sync {
                 if rc >= 0 {
                     Fd::from_native(rc)
                 } else {
-                    bun_sys::INVALID_FD
+                    spawn_sys::INVALID_FD
                 }
             };
             (fd, restore)
         };
         let _chld_close = scopeguard::guard((), |_| {
-            if chld_fd != bun_sys::INVALID_FD {
+            if chld_fd != spawn_sys::INVALID_FD {
                 chld_fd.close();
             }
         });
@@ -4197,7 +4197,7 @@ pub mod sync {
         // Parent-death: pidfd when available (instant wake). When not
         // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
         // `getppid()`.
-        let mut ppid_fd = bun_sys::INVALID_FD;
+        let mut ppid_fd = spawn_sys::INVALID_FD;
         if ppid > 1 {
             match bun_sys::pidfd_open(ppid, 0) {
                 Maybe::Result(fd) => ppid_fd = Fd::from_native(fd),
@@ -4209,7 +4209,7 @@ pub mod sync {
             }
         }
         let _ppid_close = scopeguard::guard((), |_| {
-            if ppid_fd != bun_sys::INVALID_FD {
+            if ppid_fd != spawn_sys::INVALID_FD {
                 ppid_fd.close();
             }
         });
@@ -4236,9 +4236,9 @@ pub mod sync {
             Global::exit(ParentDeathWatchdog::EXIT_CODE);
         }
 
-        let need_ppid_fallback = ppid > 1 && ppid_fd == bun_sys::INVALID_FD;
+        let need_ppid_fallback = ppid > 1 && ppid_fd == spawn_sys::INVALID_FD;
         let timeout_ms: i32 =
-            if need_ppid_fallback || chld_fd == bun_sys::INVALID_FD { 100 } else { -1 };
+            if need_ppid_fallback || chld_fd == spawn_sys::INVALID_FD { 100 } else { -1 };
 
         let mut child_status: Option<Status> = None;
         loop {
@@ -4297,16 +4297,16 @@ pub mod sync {
                 *len += 1;
             };
             for &fd in out_fds_to_wait_for.iter() {
-                if fd != bun_sys::INVALID_FD {
+                if fd != spawn_sys::INVALID_FD {
                     push(&mut buf, &mut pfds_len, fd);
                 }
             }
             let ppid_idx = pfds_len;
-            if ppid_fd != bun_sys::INVALID_FD {
+            if ppid_fd != spawn_sys::INVALID_FD {
                 push(&mut buf, &mut pfds_len, ppid_fd);
             }
             let chld_idx = pfds_len;
-            if chld_fd != bun_sys::INVALID_FD {
+            if chld_fd != spawn_sys::INVALID_FD {
                 push(&mut buf, &mut pfds_len, chld_fd);
             }
 
@@ -4320,7 +4320,7 @@ pub mod sync {
                 }
             }
 
-            if (ppid_fd != bun_sys::INVALID_FD && buf[ppid_idx].revents != 0)
+            if (ppid_fd != spawn_sys::INVALID_FD && buf[ppid_idx].revents != 0)
                 || (need_ppid_fallback && unsafe { libc::getppid() } != ppid)
             {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE);
@@ -4328,7 +4328,7 @@ pub mod sync {
 
             // Drain the signalfd so the next poll blocks; the actual reap
             // happens at the top of the next iteration.
-            if chld_fd != bun_sys::INVALID_FD && buf[chld_idx].revents != 0 {
+            if chld_fd != spawn_sys::INVALID_FD && buf[chld_idx].revents != 0 {
                 // SAFETY: zeroed signalfd_siginfo is valid for read target
                 let mut si: libc::signalfd_siginfo = unsafe { core::mem::zeroed() };
                 let si_bytes = unsafe {
@@ -4354,7 +4354,7 @@ pub mod sync {
     /// otherwise. Shared by the `poll()` path and the no-orphans wait loops.
     #[cfg(unix)]
     fn drain_fd(fd: &mut Fd, out_fd: &mut Fd, bytes: &mut Vec<u8>) -> Option<bun_sys::Error> {
-        if *fd == bun_sys::INVALID_FD {
+        if *fd == spawn_sys::INVALID_FD {
             return None;
         }
         loop {
@@ -4378,8 +4378,8 @@ pub mod sync {
                     unsafe { bytes.set_len(bytes.len() + bytes_read) };
                     if bytes_read == 0 {
                         fd.close();
-                        *fd = bun_sys::INVALID_FD;
-                        *out_fd = bun_sys::INVALID_FD;
+                        *fd = spawn_sys::INVALID_FD;
+                        *out_fd = spawn_sys::INVALID_FD;
                         return None;
                     }
                 }

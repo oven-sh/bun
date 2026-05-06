@@ -174,11 +174,20 @@ pub fn run_as_coordinator(
         // self-referential `out.worker`/`err.worker` backrefs. Construct then
         // fix up raw backrefs after push.
         workers.push(Worker {
-            coord: &coord as *const Coordinator, // BACKREF (LIFETIMES.tsv: *const Coordinator)
+            // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>)
+            coord: &coord as *const Coordinator<'_> as *const Coordinator<'static>,
             idx,
-            range: super::worker::Range { lo: idx * n / k, hi: (idx + 1) * n / k },
-            out: super::worker::Stream { role: super::worker::Role::Stdout, worker: core::ptr::null_mut() },
-            err: super::worker::Stream { role: super::worker::Role::Stderr, worker: core::ptr::null_mut() },
+            range: FileRange { lo: idx * n / k, hi: (idx + 1) * n / k },
+            out: WorkerPipe::new(PipeRole::Stdout, core::ptr::null()),
+            err: WorkerPipe::new(PipeRole::Stderr, core::ptr::null()),
+            process: None,
+            ipc: Channel::default(),
+            inflight: None,
+            dispatched_at: 0,
+            captured: Vec::new(),
+            alive: false,
+            exit_status: None,
+            extra_fd_stdio: [Stdio::Ignore],
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -348,8 +357,7 @@ fn build_worker_argv(ctx: &Command::Context) -> Result<Box<[Option<*const c_char
     if ctx.args.allow_addons == false {
         argv.push(Some(lit(b"--no-addons\0")));
     }
-    if ctx.debug.macros == crate::MacrosOption::Disable {
-        // TODO(port): verify enum path for `ctx.debug.macros == .disable`
+    if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(Some(lit(b"--no-macros\0")));
     }
     if ctx.args.disable_default_env_files {
@@ -570,7 +578,7 @@ fn worker_flush_aggregates(
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
-    if let Some(runner) = bun_jsc::Jest::Jest::runner() {
+    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
         let _ = runner.snapshots.write_snapshot_file();
     }

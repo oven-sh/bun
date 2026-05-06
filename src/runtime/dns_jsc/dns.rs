@@ -98,18 +98,18 @@ pub mod lib_info {
     pub type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
     pub type GetaddrinfoAsyncCancel = unsafe extern "C" fn(*mut mach_port);
 
-    static mut HANDLE: *mut c_void = ptr::null_mut();
+    static mut HANDLE: Option<*mut c_void> = None;
     static mut LOADED: bool = false;
 
-    pub fn get_handle() -> *mut c_void {
+    pub fn get_handle() -> Option<*mut c_void> {
         // SAFETY: single-threaded init on JS thread; matches Zig's unguarded statics.
         unsafe {
             if LOADED {
                 return HANDLE;
             }
             LOADED = true;
-            HANDLE = sys::dlopen(b"libinfo.dylib\0", sys::DlopenFlags::LAZY | sys::DlopenFlags::LOCAL);
-            if HANDLE.is_null() {
+            HANDLE = sys::dlopen(bun_core::zstr!("libinfo.dylib"), sys::RTLD::LAZY | sys::RTLD::LOCAL);
+            if HANDLE.is_none() {
                 Output::debug("libinfo.dylib not found", &[]);
             }
             HANDLE
@@ -118,20 +118,21 @@ pub mod lib_info {
 
     pub fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
         bun_core::Environment::only_mac();
-        sys::dlsym_with_handle::<GetaddrinfoAsyncStart>(b"getaddrinfo_async_start\0", get_handle)
+        sys::dlsym_with_handle!(GetaddrinfoAsyncStart, "getaddrinfo_async_start", get_handle())
     }
 
     pub fn getaddrinfo_async_handle_reply() -> Option<GetaddrinfoAsyncHandleReply> {
         bun_core::Environment::only_mac();
-        sys::dlsym_with_handle::<GetaddrinfoAsyncHandleReply>(
-            b"getaddrinfo_async_handle_reply\0",
-            get_handle,
+        sys::dlsym_with_handle!(
+            GetaddrinfoAsyncHandleReply,
+            "getaddrinfo_async_handle_reply",
+            get_handle()
         )
     }
 
-    pub fn get() -> Option<GetaddrinfoAsyncCancel> {
+    pub fn getaddrinfo_async_cancel() -> Option<GetaddrinfoAsyncCancel> {
         bun_core::Environment::only_mac();
-        sys::dlsym_with_handle::<GetaddrinfoAsyncCancel>(b"getaddrinfo_async_cancel\0", get_handle)
+        sys::dlsym_with_handle!(GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", get_handle())
     }
 
     pub fn lookup(this: &mut Resolver, query: GetAddrInfo, global_this: &JSGlobalObject) -> JSValue {
@@ -224,7 +225,7 @@ pub mod lib_info {
         let rc = poll.register_with_fd(
             this.vm().event_loop_handle.unwrap(),
             Async::PollKind::Machport,
-            Async::PollMode::OneShot,
+            Async::posix_event_loop::OneShotFlag::OneShot,
             // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
             sys::Fd::from_native(unsafe { core::mem::transmute::<u32, i32>(machport) }),
         );

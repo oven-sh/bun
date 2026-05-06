@@ -138,8 +138,12 @@ impl RouteBundle {
             // Dropping the Arc == bundle.deref(); setting None == rb.client_bundle = null
             self.client_bundle = None;
         }
-        // TODO(port): std.crypto.random.int(u32) — route through Bun's RNG wrapper.
-        self.client_script_generation = bun_core::random::next_u32();
+        // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
+        self.client_script_generation = {
+            let mut buf = [0u8; 4];
+            bun_core::csprng(&mut buf);
+            u32::from_ne_bytes(buf)
+        };
         match &mut self.data {
             Data::Framework(fw) => fw.cached_client_bundle_url.clear_without_deallocation(),
             Data::Html(html) => {

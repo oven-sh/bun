@@ -1732,7 +1732,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         self.owner().graph_safety_lock.assert_locked();
 
         if cfg!(feature = "debug_logs") {
-            DevServer::ig_log(format_args!(
+            ig_log!(
                 "traceImports(.{}, .{}, {}{})",
                 <&'static str>::from(S::SIDE),
                 <&'static str>::from(goal),
@@ -1742,7 +1742,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 } else {
                     ""
                 }
-            ));
+            );
         }
 
         if gts.bits(S::SIDE).is_set(file_index.get() as usize) {
@@ -1854,7 +1854,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
     ) -> Result<FileIndex, bun_alloc::AllocError> {
         self.owner().graph_safety_lock.assert_locked();
 
-        DevServer::debug_log(format_args!("Insert stale: {}", bstr::BStr::new(abs_path)));
+        debug_log!("Insert stale: {}", bstr::BStr::new(abs_path));
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let file_index = FileIndex::init(u32::try_from(gop.index).unwrap());
 

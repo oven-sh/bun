@@ -2,7 +2,7 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::{env_var, Global, Output};
-use bun_paths::{self as resolve_path, PathBuffer, WPathBuffer};
+use bun_paths::{platform, resolve_path, PathBuffer, WPathBuffer};
 use bun_str::strings;
 use bun_sys::{self, Dir, File};
 
@@ -41,7 +41,7 @@ impl InstallCompletionsCommand {
             &mut target_buf,
             format_args!(
                 "{}/{}",
-                bstr::BStr::new(bun_paths::dirname(exe).expect("exe has dirname")),
+                bstr::BStr::new(bun_core::dirname(exe).expect("exe has dirname")),
                 Self::BUNX_NAME
             ),
         );
@@ -302,7 +302,7 @@ impl InstallCompletionsCommand {
                         let input: &[u8] = &argv[i + 1];
 
                         if !bun_paths::is_absolute(input) {
-                            completions_dir = resolve_path::join_abs(cwd, resolve_path::Platform::Auto, input);
+                            completions_dir = resolve_path::join_abs::<platform::Auto>(cwd, input);
                         } else {
                             completions_dir = input;
                         }

@@ -84,7 +84,6 @@ use bun_threading::{Futex, Mutex};
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, JSGlobalObject, JSValue};
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(Worker, hidden);
 
 macro_rules! log {

@@ -482,7 +482,7 @@ impl ProxyEnvStorage {
         macro_rules! sync_one {
             ($name:literal, $field:ident) => {
                 if let Some(val) = &self.$field {
-                    map.put($name, &val.bytes);
+                    bun_core::handle_oom(map.put($name, &val.bytes));
                 }
             };
         }

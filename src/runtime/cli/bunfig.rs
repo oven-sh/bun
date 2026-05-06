@@ -477,7 +477,8 @@ impl<'a> Parser<'a> {
                         }
 
                         self.expect(&expr, ExprTag::EArray)?;
-                        let items = expr.data.e_array().unwrap().items.slice();
+                        let arr = expr.data.e_array().unwrap();
+                        let items = arr.items.slice();
                         for item in items {
                             self.expect_string(item)?;
                             let item_str = expr_as_string(item, self.bump).unwrap_or(b"");

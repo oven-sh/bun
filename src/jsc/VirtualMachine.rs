@@ -111,6 +111,12 @@ pub struct VirtualMachine {
     pub node_fs: Option<*mut c_void>,
     // TODO(b2-cycle): `timer` is `bun_runtime::api::Timer::All`.
     pub timer: (),
+    /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
+    /// `ServerEntryPoint` + …). Set by `RuntimeHooks::init_runtime_state` in
+    /// [`init`]; reclaimed by `RuntimeHooks::deinit_runtime_state` in
+    /// [`destroy`]. Null when no high tier is installed (e.g. `bun_jsc` unit
+    /// tests). Aggregates the `()` placeholder fields above until they widen.
+    pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
     pub pending_unref_counter: i32,
     pub preload: Vec<Box<[u8]>>,
@@ -706,6 +712,13 @@ pub struct RuntimeHooks {
     /// `vm.global` / `vm.jsc_vm` are populated (spec VirtualMachine.zig:1313+);
     /// returns the opaque per-VM runtime state pointer (or null).
     pub init_runtime_state: unsafe fn(vm: *mut VirtualMachine, opts: &InitOptions) -> RuntimeState,
+    /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
+    /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
+    /// pointer `init_runtime_state` returned (or null). The high tier
+    /// `Box::from_raw`s it and clears its thread-local cache. Spec
+    /// VirtualMachine.zig: `timer`/`entry_point` are value fields freed in
+    /// worker `destroy()`; without this slot every worker leaked one box.
+    pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).

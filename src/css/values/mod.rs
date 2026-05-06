@@ -74,9 +74,9 @@ pub mod percentage;
 // Un-gate alongside the css_parser/generics surface they depend on.
 pub mod length;
 pub mod position;
-gated_value!(size);
+pub mod size;
 pub mod rect;
-gated_value!(easing);
+pub mod easing;
 gated_value!(syntax);
 gated_value!(gradient);
 gated_value!(image);

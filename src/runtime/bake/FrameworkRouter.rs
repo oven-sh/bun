@@ -7,8 +7,9 @@ use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
+use bun_collections::array_hash_map::ArrayHashContext;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StrongOptional, StringJsc};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::{DirInfo, Resolver};
 use bun_str::strings;
@@ -144,7 +145,7 @@ pub enum FileKind {
     // NotFound,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct RouteIndex(u32); // Zig: u31
 impl RouteIndex {
@@ -197,7 +198,7 @@ pub struct Type {
     /// `FrameworkRouter` itself does not use this value.
     pub server_file: OpaqueFileId,
     /// `FrameworkRouter` itself does not use this value.
-    pub server_file_string: Strong,
+    pub server_file_string: StrongOptional,
 }
 
 impl Default for Type {
@@ -215,7 +216,7 @@ impl Default for Type {
             allow_layouts: false,
             client_file: None,
             server_file: OpaqueFileId(0),
-            server_file_string: Strong::empty(),
+            server_file_string: StrongOptional::empty(),
         }
     }
 }
@@ -264,7 +265,7 @@ impl FrameworkRouter {
                 file_page: None,
                 file_layout: None,
                 // file_not_found: None,
-                bundle: RouteBundleIndexOptional::none(),
+                bundle: RouteBundleIndexOptional::None,
             });
         }
         Ok(FrameworkRouter {
@@ -285,8 +286,10 @@ impl FrameworkRouter {
         let mut cost: usize = size_of::<FrameworkRouter>();
         cost += self.routes.capacity() * size_of::<Route>();
         // TODO(port): StaticRouteMap/DynamicRouteMap DataList::capacity_in_bytes equivalent
-        cost += self.static_routes.capacity_in_bytes();
-        cost += self.dynamic_routes.capacity_in_bytes();
+        // (`bun_collections::ArrayHashMap` does not yet expose capacity_in_bytes; approximate as 0).
+        // cost += self.static_routes.capacity_in_bytes();
+        // cost += self.dynamic_routes.capacity_in_bytes();
+        let _ = (&self.static_routes, &self.dynamic_routes);
         cost
     }
 
@@ -333,12 +336,12 @@ impl EncodedPattern {
     pub fn init_from_parts(parts: &[Part], arena: &Arena) -> Result<EncodedPattern, AllocError> {
         let len = Self::pattern_serialized_length(parts);
         let slice = arena.alloc_slice_fill_default::<u8>(len);
-        let mut cursor: &mut [u8] = slice;
+        let mut fbs = bun_io::FixedBufferStream::new(&mut slice[..]);
         for part in parts {
-            part.write_as_serialized(&mut cursor)
+            part.write_as_serialized(&mut fbs)
                 .expect("unreachable: enough space");
         }
-        debug_assert!(cursor.is_empty());
+        debug_assert!(fbs.pos() == len);
         Ok(EncodedPattern {
             data: &*slice as *const [u8],
         })
@@ -415,8 +418,8 @@ impl EncodedPattern {
                             bstr::BStr::new(path)
                         ));
                     }
-                    params.params.set_len(u32::try_from(param_num + 1).unwrap());
-                    params.params.buffer_mut()[param_num] = MatchedParamEntry {
+                    params.params.resize(param_num + 1).unwrap();
+                    params.params.slice()[param_num] = MatchedParamEntry {
                         key: name,
                         value: &path[i..end],
                     };
@@ -440,8 +443,8 @@ impl EncodedPattern {
                                         bstr::BStr::new(path)
                                     ));
                                 }
-                                params.params.set_len(u32::try_from(param_num + 1).unwrap());
-                                params.params.buffer_mut()[param_num] = MatchedParamEntry {
+                                params.params.resize(param_num + 1).unwrap();
+                                params.params.slice()[param_num] = MatchedParamEntry {
                                     key: name,
                                     value: &path[segment_start..segment_end],
                                 };
@@ -1194,7 +1197,7 @@ impl FrameworkRouter {
                     next_sibling: None,
                     file_page: None,
                     file_layout: None,
-                    bundle: RouteBundleIndexOptional::none(),
+                    bundle: RouteBundleIndexOptional::None,
                 })?;
 
                 if let Some(attach) = next {
@@ -1215,7 +1218,7 @@ impl FrameworkRouter {
                         next_sibling: None,
                         file_page: None,
                         file_layout: None,
-                        bundle: RouteBundleIndexOptional::none(),
+                        bundle: RouteBundleIndexOptional::None,
                     })?;
                     self.route_ptr_mut(new_route_index).first_child =
                         newer_route_index.to_optional();

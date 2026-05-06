@@ -3617,14 +3617,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // old_user_routes drops at scope end (RouteDeclaration impls Drop)
             let _ = old_user_routes;
             let mut paths_zig: Vec<ZigString> = Vec::with_capacity(user_routes_to_build_list.len());
-            // GC-safe: Vec<JSValue> backing storage is on the Rust heap (not stack-scanned).
-            // Use MarkedArgumentBuffer so earlier elements stay rooted while later ones are read.
-            let mut callbacks_js = bun_jsc::MarkedArgumentBuffer::new();
-            let _ = user_routes_to_build_list.len();
+            // GC-safe: each callback JSValue is read from a `Strong` (already rooted), so a
+            // plain Vec is sufficient for the contiguous-buffer FFI hand-off below.
+            // TODO(port): if/when callbacks are no longer Strong-held, switch to a scoped
+            // MarkedArgumentBuffer (closure-style API) so heap storage stays GC-rooted.
+            let mut callbacks_js: Vec<JSValue> = Vec::with_capacity(user_routes_to_build_list.len());
 
             for (i, builder) in user_routes_to_build_list.iter_mut().enumerate() {
                 paths_zig.push(ZigString::init(builder.route.path.to_bytes()));
-                callbacks_js.append(builder.callback.get());
+                callbacks_js.push(builder.callback.get());
                 // PERF(port): was assume_capacity
                 self.user_routes.push(UserRoute {
                     id: i as u32,
@@ -3917,7 +3918,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut route_list_value = JSValue::ZERO;
         if SSL {
             boringssl::load();
-            let ssl_config = self.config.ssl_config.as_ref().expect("Assertion failure: ssl_config");
+            // PORT NOTE: take a raw pointer so the immutable `ssl_config` borrow
+            // doesn't span the `self.set_routes()` (`&mut self`) calls below.
+            // The config slot is never reallocated for the lifetime of `listen()`.
+            let ssl_config_ptr: *const server_config::SSLConfig =
+                self.config.ssl_config.as_ref().expect("Assertion failure: ssl_config") as *const _;
+            // SAFETY: see PORT NOTE — config slot stable across set_routes().
+            let ssl_config = unsafe { &*ssl_config_ptr };
             // SAFETY: bun_uws::BunSocketContextOptions and bun_uws_sys::BunSocketContextOptions
             // are both #[repr(C)] mirrors of us_bun_socket_context_options_t.
             let ssl_options: bun_uws_sys::BunSocketContextOptions =
@@ -3956,6 +3963,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             route_list_value = self.set_routes();
 
+            // SAFETY: see PORT NOTE on ssl_config_ptr — reborrow after &mut self call.
+            let ssl_config = unsafe { &*ssl_config_ptr };
             // add serverName to the SSL context using default ssl options
             if let Some(server_name_cstr) = ssl_config.server_name.as_deref() {
                 let server_name = server_name_cstr.to_bytes();
@@ -3987,8 +3996,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // apply SNI routes if any
-            if let Some(sni) = &self.config.sni {
-                for sni_ssl_config in sni.slice() {
+            // PORT NOTE: snapshot SNI list as a raw slice so the loop body's
+            // `self.set_routes()` (&mut self) doesn't conflict with the iterator.
+            // `config.sni` storage is never reallocated during `listen()`.
+            let sni_slice: &[server_config::SSLConfig] = match &self.config.sni {
+                Some(sni) => unsafe { core::slice::from_raw_parts(sni.slice().as_ptr(), sni.slice().len()) },
+                None => &[],
+            };
+            {
+                for sni_ssl_config in sni_slice {
                     let sni_name_cstr = sni_ssl_config.server_name.as_deref().unwrap();
                     let sni_servername = sni_name_cstr.to_bytes();
                     // SAFETY: same #[repr(C)] mirror as `ssl_options` above.
@@ -4096,7 +4112,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // Same UDP port as the TCP listener so Alt-Svc works.
                         let h3_port: u16 = if let Some(ls) = self.listener {
                             // SAFETY: listener is a live uws ListenSocket FFI handle (just set by on_listen)
-                            u16::try_from(unsafe { &*ls }.get_local_port()).unwrap()
+                            u16::try_from(unsafe { &mut *ls }.get_local_port()).unwrap()
                         } else {
                             tcp_port
                         };
@@ -4121,7 +4137,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             return JSValue::ZERO;
                         }
                         if !self.config.h1 {
-                            self.vm.event_loop_handle = Some(AsyncLoop::get());
+                            self.vm_mut().event_loop_handle = Some(AsyncLoop::get());
                         }
                     }
                 }

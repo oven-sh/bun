@@ -2630,7 +2630,8 @@ pub mod JSZlib {
                 ) {
                     Ok(r) => r,
                     Err(err) => {
-                        drop(list);
+                        // `list` is still mutably borrowed by the match
+                        // scrutinee's temporary; it drops on `return` anyway.
                         if err == zlib::ZlibError::InvalidArgument {
                             return Err(global_this
                                 .throw("Zlib error: Invalid argument"));
@@ -2803,7 +2804,8 @@ pub mod JSZlib {
                 ) {
                     Ok(r) => r,
                     Err(err) => {
-                        drop(list);
+                        // `list` is still mutably borrowed by the match
+                        // scrutinee's temporary; it drops on `return` anyway.
                         if err == zlib::ZlibError::InvalidArgument {
                             return Err(global_this
                                 .throw("Zlib error: Invalid argument"));
@@ -3293,29 +3295,23 @@ pub mod JSZstd {
 // LazyProperty initializers for stdin/stderr/stdout
 pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    let store = rare_data.stdin();
-    store.ref_();
-    let _ = store;
-    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
+    // RareData::stdin() lives in the `#[cfg(any())] _accessor_body` block.
+    todo!("blocked_on: bun_jsc::rare_data::RareData::stdin + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    let store = rare_data.stderr();
-    store.ref_();
-    let _ = store;
-    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
+    // RareData::stderr() lives in the `#[cfg(any())] _accessor_body` block.
+    todo!("blocked_on: bun_jsc::rare_data::RareData::stderr + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    let store = rare_data.stdout();
-    store.ref_();
-    let _ = store;
-    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
+    // RareData::stdout() lives in the `#[cfg(any())] _accessor_body` block.
+    todo!("blocked_on: bun_jsc::rare_data::RareData::stdout + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 } // mod _jsc_gated

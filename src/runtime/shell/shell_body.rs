@@ -353,12 +353,9 @@ impl<'a> GlobalJS<'a> {
         // TODO(port): allocator param dropped (global mimalloc)
     ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
         // TODO(port): narrow error set
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        unsafe { &*self.global_this.bun_vm() }
-            .transpiler
-            .env
-            .map
-            .create_null_delimited_env_map()
+        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
+        // long-lived `*mut Loader` owned by the VM.
+        unsafe { (*(*self.global_this.bun_vm()).transpiler.env).map.create_null_delimited_env_map() }
     }
 
     #[inline]
@@ -371,14 +368,16 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        unsafe { &*self.global_this.bun_vm() }.transpiler.fs.top_level_dir()
+        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.fs` is a
+        // long-lived `*mut FileSystem` singleton.
+        unsafe { (*(*self.global_this.bun_vm()).transpiler.fs).top_level_dir }
     }
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        &unsafe { &*self.global_this.bun_vm() }.transpiler.env
+        // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
+        // long-lived `*mut Loader<'static>` owned by the VM. `'static` widens to `'a`.
+        unsafe { &*(*self.global_this.bun_vm()).transpiler.env }
     }
 
     #[inline]
@@ -408,7 +407,8 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        self.mini.env.as_ref().unwrap()
+        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
+        unsafe { self.mini.env.unwrap().as_ref() }
     }
 
     #[inline]
@@ -440,7 +440,8 @@ impl<'a> GlobalMini<'a> {
         self,
     ) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
         // TODO(port): narrow error set
-        self.mini.env.as_ref().unwrap().map.create_null_delimited_env_map()
+        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
+        unsafe { self.mini.env.unwrap().as_mut() }.map.create_null_delimited_env_map()
     }
 
     #[inline]
@@ -455,7 +456,7 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
-        self.mini.top_level_dir()
+        &self.mini.top_level_dir
     }
 
     #[inline]
@@ -4650,7 +4651,7 @@ pub fn handle_template_value(
             let blob = blob as *mut crate::webcore::Blob;
             // SAFETY: `as_` returns a live `*mut Blob` for the duration of this call;
             // `template_value` is rooted in `marked_argument_buffer` below before any GC.
-            if let Some(store) = unsafe { (*blob).store() } {
+            if let Some(store) = unsafe { (*blob).store.as_deref() } {
                 if let crate::webcore::blob::store::Data::File(file) = &store.data {
                     if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
                         let path: &[u8] = p.slice();
@@ -5521,7 +5522,7 @@ pub mod testing_apis {
             let utf8str = bunstr.to_utf8();
 
             for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
-                if utf8str.byte_slice() == <&'static str>::from(*disabled).as_bytes() {
+                if utf8str.slice() == <&'static str>::from(*disabled).as_bytes() {
                     return Ok(JSValue::TRUE);
                 }
             }

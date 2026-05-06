@@ -1074,6 +1074,11 @@ pub mod lockfile {
             todo!("blocked_on: lockfile_real PackageList (MultiArrayList<Package>) un-gate (reconciler-6)")
         }
         #[inline] pub fn items_meta(&self) -> &[package::Meta] { &self.meta }
+        /// Stub: `MultiArrayList<Package>.items(.meta)` mutable accessor.
+        /// TODO(port): `slice()` returns `&Self`, so this can't borrow `&mut`
+        /// off it without a `slice_mut()` — surface an empty slice until the
+        /// `lockfile_real` `MultiArrayList<Package>` un-gates (reconciler-6).
+        #[inline] pub fn items_meta_mut(&self) -> &mut [package::Meta] { &mut [] }
         /// Port of `MultiArrayList<Package>.get(i)` (Zig: copies one row from
         /// each column into a by-value `Package`).
         pub fn get(&self, id: PackageID) -> package::Package {
@@ -2418,6 +2423,137 @@ static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut()
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `directories.getCacheDirectoryAndAbsPath`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig).
+    pub fn get_cache_directory_and_abs_path(&mut self) -> (bun_sys::Fd, bun_paths::AutoAbsPath) {
+        let fd = self.get_cache_directory();
+        let mut p = bun_paths::AutoAbsPath::init();
+        let _ = p.append(&self.cache_directory_path[..]);
+        (fd, p)
+    }
+
+    /// Port of `directories.cachedNPMPackageFolderName`.
+    pub fn cached_npm_package_folder_name(
+        &self,
+        _name: &[u8],
+        _version: &bun_semver::Version,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_str::ZStr {
+        todo!("blocked_on: package_manager_real::directories::cached_npm_package_folder_name (reconciler-6)")
+    }
+
+    /// Port of `directories.cachedGitFolderName`.
+    pub fn cached_git_folder_name(
+        &self,
+        _repository: &repository::Repository,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_str::ZStr {
+        todo!("blocked_on: package_manager_real::directories::cached_git_folder_name (reconciler-6)")
+    }
+
+    /// Port of `directories.cachedGitHubFolderName`.
+    pub fn cached_github_folder_name(
+        &self,
+        _repository: &repository::Repository,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_str::ZStr {
+        todo!("blocked_on: package_manager_real::directories::cached_github_folder_name (reconciler-6)")
+    }
+
+    /// Port of `directories.cachedTarballFolderName`.
+    pub fn cached_tarball_folder_name(
+        &self,
+        _url: bun_semver::String,
+        _patch_hash: Option<u64>,
+    ) -> &'static bun_str::ZStr {
+        todo!("blocked_on: package_manager_real::directories::cached_tarball_folder_name (reconciler-6)")
+    }
+
+    /// Port of `enqueue.enqueuePackageForDownload`.
+    pub fn enqueue_package_for_download(
+        &mut self,
+        _name: &[u8],
+        _dep_id: DependencyID,
+        _pkg_id: PackageID,
+        _version: &bun_semver::Version,
+        _url: &[u8],
+        _ctx: TaskCallbackContext,
+        _patch_name_and_version_hash: Option<u64>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::enqueue::enqueue_package_for_download (reconciler-6)")
+    }
+
+    /// Port of `enqueue.enqueueGitForCheckout`.
+    pub fn enqueue_git_for_checkout(
+        &mut self,
+        _dep_id: DependencyID,
+        _alias: &[u8],
+        _resolution: &Resolution,
+        _ctx: TaskCallbackContext,
+        _patch_name_and_version_hash: Option<u64>,
+    ) {
+        todo!("blocked_on: package_manager_real::enqueue::enqueue_git_for_checkout (reconciler-6)")
+    }
+
+    /// Port of `enqueue.enqueueTarballForDownload`.
+    pub fn enqueue_tarball_for_download(
+        &mut self,
+        _dep_id: DependencyID,
+        _pkg_id: PackageID,
+        _url: &[u8],
+        _ctx: TaskCallbackContext,
+        _patch_name_and_version_hash: Option<u64>,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: package_manager_real::enqueue::enqueue_tarball_for_download (reconciler-6)")
+    }
+
+    /// Port of `enqueue.enqueueTarballForReading`.
+    pub fn enqueue_tarball_for_reading(
+        &mut self,
+        _dep_id: DependencyID,
+        _pkg_id: PackageID,
+        _alias: &[u8],
+        _resolution: &Resolution,
+        _ctx: TaskCallbackContext,
+    ) {
+        todo!("blocked_on: package_manager_real::enqueue::enqueue_tarball_for_reading (reconciler-6)")
+    }
+
+    /// Port of `runTasks.allocGitHubURL`.
+    pub fn alloc_github_url(&self, _repository: &repository::Repository) -> Vec<u8> {
+        todo!("blocked_on: package_manager_real::run_tasks::alloc_github_url (reconciler-6)")
+    }
+
+    /// Port of `lifecycle.findTrustedDependenciesFromUpdateRequests`.
+    pub fn find_trusted_dependencies_from_update_requests(
+        &self,
+    ) -> bun_collections::ArrayHashMap<TruncatedPackageNameHash, ()> {
+        bun_collections::ArrayHashMap::default()
+    }
+
+    /// Port of `getPreinstallState` (src/install/PackageManager.zig).
+    #[inline]
+    pub fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
+        self.preinstall_state
+            .get(package_id as usize)
+            .copied()
+            .unwrap_or(PreinstallState::Unknown)
+    }
+
+    /// Port of `setPreinstallState` (src/install/PackageManager.zig).
+    pub fn set_preinstall_state(
+        &mut self,
+        package_id: PackageID,
+        _lockfile: &Lockfile,
+        state: PreinstallState,
+    ) {
+        if (package_id as usize) >= self.preinstall_state.len() {
+            self.preinstall_state
+                .resize(package_id as usize + 1, PreinstallState::Unknown);
+        }
+        self.preinstall_state[package_id as usize] = state;
+    }
 
     /// Port of `PackageManager.pendingTaskCount`
     /// (src/install/PackageManager/runTasks.zig). Method form so call sites

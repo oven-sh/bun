@@ -1595,7 +1595,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 Status::Signaled(signal) => {
                     Output::err_generic(
                         "Security scanner was terminated by signal: {}",
-                        (signal.name().unwrap_or("unknown"),),
+                        (format_args!("{:?}", signal),),
                     );
                     return Err(err!("SecurityScannerTerminated"));
                 }

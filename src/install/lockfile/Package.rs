@@ -1277,7 +1277,8 @@ impl Diff {
             let cur_to_i = to_i;
             to_i += 1;
 
-            if to_deps[cur_to_i].eql(
+            if Dependency::eql(
+                &to_deps[cur_to_i],
                 from_dep,
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
@@ -1306,7 +1307,7 @@ impl Diff {
                         }
 
                         let Some(workspace_path) =
-                            to_lockfile.workspace_paths.get_ptr(from_dep.name_hash)
+                            to_lockfile.workspace_paths.get(&from_dep.name_hash).copied()
                         else {
                             break 'update_mapping false;
                         };

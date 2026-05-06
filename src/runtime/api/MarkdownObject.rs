@@ -737,12 +737,19 @@ impl<'a> ParseRenderer<'a> {
     // Span callbacks
     // ========================================
 
-    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail) -> JsResult<()> {
+    fn enter_span_impl(ptr: *mut c_void, _: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
             return self_.global_object.throw_stack_overflow();
         }
+
+        // SAFETY: `detail.href`/`.title` borrow from `self_.src_text`, which
+        // outlives this renderer; the `RendererImpl` trait erases that
+        // lifetime so we extend it here. The entry is popped (and the slices
+        // consumed) in `leave_span_impl` before `src_text` is dropped.
+        let detail: md::SpanDetail<'static> =
+            unsafe { core::mem::transmute::<md::SpanDetail<'_>, md::SpanDetail<'static>>(detail) };
 
         let array = JSValue::create_empty_array(self_.global_object, 0)?;
         self_.marked_args.append(array);

@@ -4080,7 +4080,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.get_url_as_string())
     }
 
-    pub fn vm(&self) -> &'static VirtualMachine {
+    pub fn vm(&self) -> &'static jsc::virtual_machine::VirtualMachine {
         any_server_dispatch!(self, |s| s.vm)
     }
 

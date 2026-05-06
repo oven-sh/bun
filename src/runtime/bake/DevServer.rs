@@ -2119,14 +2119,12 @@ impl DevServer<'_> {
         client_bundle.on_with_method(method, resp);
     }
 
-    pub fn on_src_request<R>(&mut self, req: &mut Request, resp: &mut R)
-    where
-        R: uws::ResponseLike, // TODO(port): resp: anytype
-    {
+    // TODO(port): resp: anytype — wrap_generic_request_handler always passes AnyResponse
+    pub fn on_src_request(&mut self, req: &mut Request, resp: AnyResponse) {
         if req.header("open-in-editor").is_none() {
-            resp.write_status("501 Not Implemented");
+            resp.write_status(b"501 Not Implemented");
             resp.end(
-                "Viewing source without opening in editor is not implemented yet!",
+                b"Viewing source without opening in editor is not implemented yet!",
                 false,
             );
             return;
@@ -2134,8 +2132,8 @@ impl DevServer<'_> {
 
         // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
         // This is already done in Next.js. we have to port this to Zig so we can use.
-        resp.write_status("501 Not Implemented");
-        resp.end("TODO", false);
+        resp.write_status(b"501 Not Implemented");
+        resp.end(b"TODO", false);
         let _ = self;
     }
 }
@@ -2165,8 +2163,8 @@ pub mod deferred_request {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     pub const MAX_PREALLOCATED: usize = 16;
 
-    pub type List = bun_collections::SinglyLinkedList<DeferredRequest>;
-    pub type Node = bun_collections::SinglyLinkedListNode<DeferredRequest>;
+    pub type List<'a> = bun_collections::pool::SinglyLinkedList<DeferredRequest<'a>>;
+    pub type Node<'a> = bun_collections::pool::Node<DeferredRequest<'a>>;
 
     bun_output::declare_scope!(DlogeferredRequest, hidden);
     macro_rules! debug_log_dr { ($($t:tt)*) => { bun_output::scoped_log!(DlogeferredRequest, $($t)*) }; }
@@ -2198,7 +2196,15 @@ pub mod deferred_request {
         BundledHtmlPage,
     }
 }
-use deferred_request::{Handler, PromiseResponse};
+use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
+
+/// `SavedRequest.Union` — local mirror of `crate::server::server_body::SavedRequestUnion`
+/// (the upstream enum is in a private module and is unnameable here).
+// TODO(port): replace with a `pub use` once `server::server_body` is public.
+pub enum SavedRequestUnion<'a> {
+    Stack(&'a mut uws::Request),
+    Saved(SavedRequest),
+}
 
 impl DeferredRequest<'_> {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
@@ -2274,14 +2280,14 @@ impl DeferredRequest<'_> {
     /// Deinitializes state by aborting the connection.
     fn abort(&mut self) {
         deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) abort", self as *const _ as usize);
-        let handler = core::mem::replace(&mut self.handler, Handler::Aborted);
+        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
             Handler::ServerHandler(mut saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
                     bstr::BStr::new(saved.request.url.byte_slice())
                 );
-                saved.ctx.set_signal_aborted(jsc::AbortReason::ConnectionClosed);
+                saved.ctx.set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
                 saved.js_request.deinit();
             }
             Handler::BundledHtmlPage(r) => {
@@ -2339,7 +2345,7 @@ impl DevServer<'_> {
 
         let bv2 = BundleV2::init(
             &mut self.server_transpiler,
-            bundler::BakeOptions {
+            bundler::bundle_v2::BakeOptions {
                 framework: self.framework.clone(),
                 client_transpiler: &mut self.client_transpiler,
                 ssr_transpiler: &mut self.ssr_transpiler,
@@ -2349,7 +2355,7 @@ impl DevServer<'_> {
             // SAFETY: vm is JSC_BORROW â valid for DevServer lifetime
             bundler::EventLoop::Js(unsafe { &*self.vm }.event_loop()),
             false, // watching is handled separately
-            bun_threading::WorkPool::get(),
+            bun_threading::work_pool::WorkPool::get(),
             heap,
         )?;
         bv2.bun_watcher = Some(&mut *self.bun_watcher);
@@ -2368,8 +2374,8 @@ impl DevServer<'_> {
             timer,
             start_data,
             had_reload_event,
-            requests: core::mem::take(&mut self.next_bundle.requests),
-            promise: core::mem::take(&mut self.next_bundle.promise),
+            requests: ::core::mem::take(&mut self.next_bundle.requests),
+            promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
         });
 
@@ -2386,17 +2392,16 @@ impl DevServer<'_> {
         if !resolution_failures.is_empty() {
             for (owner, log) in resolution_failures.keys().iter().zip(resolution_failures.values()) {
                 if log.has_errors() {
-                    match owner.decode() {
-                        serialized_failure::Owner::Client(index) => {
-                            self.client_graph
-                                .insert_failure(incremental_graph::FailureKey::Index, index, log, false)?
+                    // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
+                    let index = owner.file();
+                    match owner.side() {
+                        bake::Side::Client => {
+                            let _ = (&self.client_graph, index, log);
+                            todo!("blocked_on: IncrementalGraph::insert_failure")
                         }
-                        serialized_failure::Owner::Server(index) => {
-                            self.server_graph
-                                .insert_failure(incremental_graph::FailureKey::Index, index, log, true)?
-                        }
-                        serialized_failure::Owner::None | serialized_failure::Owner::Route(_) => {
-                            unreachable!()
+                        bake::Side::Server => {
+                            let _ = (&self.server_graph, index, log);
+                            todo!("blocked_on: IncrementalGraph::insert_failure")
                         }
                     }
                 }

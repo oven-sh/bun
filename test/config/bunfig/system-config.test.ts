@@ -239,10 +239,7 @@ describe("system-wide bunfig.toml", () => {
     const sysCachePath = join(String(dir), "sys-cache");
     const homeCachePath = join(String(dir), "home-cache");
     await Bun.write(join(String(dir), "sys.toml"), `[install]\ncache = ${JSON.stringify(sysCachePath)}\n`);
-    await Bun.write(
-      join(String(dir), "xdg", ".bunfig.toml"),
-      `[install]\ncache = ${JSON.stringify(homeCachePath)}\n`,
-    );
+    await Bun.write(join(String(dir), "xdg", ".bunfig.toml"), `[install]\ncache = ${JSON.stringify(homeCachePath)}\n`);
 
     // System + home: home wins (matches documented "later overrides earlier").
     await using mergeProc = Bun.spawn({

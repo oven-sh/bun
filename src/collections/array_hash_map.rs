@@ -310,16 +310,19 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
     /// Zig `putAssumeCapacityContext`: insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
-    /// owning `arg_buf`/`existing_buf`).
-    pub fn put_assume_capacity_context<Ctx: ArrayHashAdapter<K, K>>(
+    /// owning `arg_buf`/`existing_buf`). Takes closures rather than an
+    /// `ArrayHashAdapter` so callers with inherent-method contexts (no trait
+    /// impl, by-value receivers) don't need a wrapper struct.
+    pub fn put_assume_capacity_context(
         &mut self,
         key: K,
         value: V,
-        ctx: &Ctx,
+        hash: impl Fn(&K) -> u32,
+        eql: impl Fn(&K, &K, usize) -> bool,
     ) {
-        let h = ctx.hash(&key);
+        let h = hash(&key);
         for (i, kh) in self.hashes.iter().enumerate() {
-            if *kh == h && ctx.eql(&key, &self.keys[i], i) {
+            if *kh == h && eql(&key, &self.keys[i], i) {
                 self.keys[i] = key;
                 self.values[i] = value;
                 return;

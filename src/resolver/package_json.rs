@@ -1735,10 +1735,18 @@ impl PackageJSON {
                                             name_hash,
                                             behavior: group.behavior,
                                         };
-                                        // PERF(port): was putAssumeCapacityContext
-                                        package_json.dependencies.map.put_assume_capacity(
+                                        // Zig: `putAssumeCapacityContext(name, dep, ctx)` where
+                                        // `ctx = SemverString.ArrayHashContext{arg_buf, existing_buf}`.
+                                        let buf = package_json.dependencies.source_buf;
+                                        let ctx = Semver::semver_string::ArrayHashContext {
+                                            arg_buf: buf,
+                                            existing_buf: buf,
+                                        };
+                                        package_json.dependencies.map.put_assume_capacity_context(
                                             dependency.name,
                                             dependency,
+                                            |k| ctx.hash(*k),
+                                            |a, b, i| ctx.eql(*a, *b, i),
                                         );
                                     }
                                 }

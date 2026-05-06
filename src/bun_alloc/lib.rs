@@ -773,8 +773,8 @@ mod __bss_macro_smoke {
 // ──────────────────────────────────────────────────────────────────────────
 // heap_breakdown — macOS `malloc_zone_*` per-tag heaps (debug-only)
 //
-// Full draft lives in `heap_breakdown.rs` (gated below; depends on a richer
-// `Allocator` trait + a string-keyed map). This inline module exposes the
+// Full draft lives in `heap_breakdown.rs` (macOS-only; depends on a richer
+// `Allocator` surface + a string-keyed map). This inline module exposes the
 // symbols dependents reference (`ENABLED`, `Zone`, `get_zone`,
 // `malloc_zone_{calloc,free,malloc}`) and compiles on all targets — on
 // non-macOS the FFI surface is `unreachable!()` behind `ENABLED == false`.
@@ -2117,7 +2117,11 @@ pub fn default_allocator() -> &'static dyn Allocator {
 // `basic.zig` ported as `impl GlobalAlloc for Mimalloc` above (the real impl).
 // Draft kept for diff-pass only.
  #[path = "basic.rs"] pub mod basic;
- #[path = "heap_breakdown.rs"] mod heap_breakdown_full; // DEBUG-ONLY draft; superseded by inline `heap_breakdown` above
+// Full `heap_breakdown` port is macOS-only (every fn is a `malloc_zone_*`
+// libSystem call); the cross-platform surface is the inline `heap_breakdown`
+// module above. Legitimate platform gate — NOT `cfg(any())`.
+#[cfg(target_os = "macos")]
+ #[path = "heap_breakdown.rs"] mod heap_breakdown_full;
 pub mod memory;
 
 // ──────────────────────────────────────────────────────────────────────────

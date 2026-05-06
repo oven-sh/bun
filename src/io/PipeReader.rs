@@ -1422,7 +1422,11 @@ impl WindowsBufferedReader {
             return;
         }
 
-        // SAFETY: parent_ptr is *mut WindowsBufferedReader set via set_data.
+        // SAFETY: `parent_ptr` (= `fs.data`) is `*mut Self` set via `set_data`.
+        // `fs_ref`/`file` above point into the boxed `source::File` — a
+        // separate heap allocation — and their borrows end (NLL) before this
+        // point in the non-null path, so this is the sole live `&mut` to the
+        // reader (single-owner).
         let this: &mut WindowsBufferedReader =
             unsafe { &mut *(parent_ptr as *mut WindowsBufferedReader) };
 

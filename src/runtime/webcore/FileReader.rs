@@ -246,25 +246,30 @@ impl Lazy {
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
 impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
     const HAS_ON_READ_CHUNK: bool = true;
-    fn on_read_chunk(&mut self, chunk: &[u8], state: ReadState) -> bool {
-        FileReader::on_read_chunk(self, chunk, state)
+    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+    // `*mut Self` registered via `set_parent`; a `&mut self.reader` may be live
+    // on the caller's stack. These reborrow `&mut *this` only to forward to
+    // inherent impls; further aliasing audit lives with those impls.
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], state: ReadState) -> bool {
+        FileReader::on_read_chunk(unsafe { &mut *this }, chunk, state)
     }
-    fn on_reader_done(&mut self) {
-        FileReader::on_reader_done(self)
+    unsafe fn on_reader_done(this: *mut Self) {
+        FileReader::on_reader_done(unsafe { &mut *this })
     }
-    fn on_reader_error(&mut self, err: sys::Error) {
-        FileReader::on_reader_error(self, err)
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        FileReader::on_reader_error(unsafe { &mut *this }, err)
     }
-    fn loop_(&mut self) -> *mut bun_uws_sys::Loop {
-        FileReader::loop_(self)
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        FileReader::loop_(unsafe { &*this })
     }
-    fn event_loop(&mut self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void` whose
         // "concrete repr is bun_jsc::EventLoopHandle" (io/lib.rs). Hand it the
         // address of our stored handle; the FilePoll vtable derefs it back.
-        bun_io::EventLoopHandle(
-            &self.event_loop as *const EventLoopHandle as *mut core::ffi::c_void,
-        )
+        // Raw `addr_of!` — no `&Self` materialized (reader field may be borrowed).
+        bun_io::EventLoopHandle(unsafe {
+            core::ptr::addr_of!((*this).event_loop) as *mut core::ffi::c_void
+        })
     }
 }
 

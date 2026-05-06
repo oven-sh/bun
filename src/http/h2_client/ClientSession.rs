@@ -483,7 +483,11 @@ impl ClientSession {
         self.r#ref();
         // PORT NOTE: scopeguard borrows &self via raw ptr to avoid &mut overlap.
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr derives from &mut self (write provenance); guard
+            // runs last so no access follows the final deref.
+            unsafe { ClientSession::deref(self_ptr) }
+        });
         for &stream in self.streams.values() {
             // SAFETY: owned live Stream pointer.
             let stream = unsafe { &mut *stream };
@@ -503,7 +507,11 @@ impl ClientSession {
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr derives from &mut self (write provenance); guard
+            // runs last so no access follows the final deref.
+            unsafe { ClientSession::deref(self_ptr) }
+        });
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
@@ -599,7 +607,11 @@ impl ClientSession {
     pub fn on_data(&mut self, incoming: &[u8]) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr derives from &mut self (write provenance); guard
+            // runs last so no access follows the final deref.
+            unsafe { ClientSession::deref(self_ptr) }
+        });
         self.stream_progressed = false;
         if self.read_buffer.is_empty() {
             let consumed = dispatch::parse_frames(self, incoming);
@@ -697,7 +709,11 @@ impl ClientSession {
     pub fn on_writable(&mut self) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr derives from &mut self (write provenance); guard
+            // runs last so no access follows the final deref.
+            unsafe { ClientSession::deref(self_ptr) }
+        });
         if let Err(err) = self.flush() {
             return self.fail_all(err);
         }
@@ -734,9 +750,17 @@ impl ClientSession {
     pub fn on_close(&mut self, err: Error) {
         self.r#ref();
         let self_ptr = self as *const Self;
-        let _guard = scopeguard::guard((), move |_| unsafe { ClientSession::deref(self_ptr) });
-        // SAFETY: ctx back-ref is valid for the session's lifetime.
-        unsafe { (*self.ctx).h2_unregister(self) };
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: self_ptr derives from &mut self (write provenance); guard
+            // runs last so no access follows the final deref.
+            unsafe { ClientSession::deref(self_ptr) }
+        });
+        // SAFETY: ctx back-ref is valid for the session's lifetime. on_close is
+        // reachable synchronously from connect() → adopt() → attach() flush
+        // failure → fail_all() while connect() still holds `&mut HTTPContext`,
+        // so route through the raw-ptr helper instead of forming a second
+        // aliased `&mut NewHTTPContext` via autoref.
+        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self as *const _) };
         for client in core::mem::take(&mut self.pending_attach) {
             // SAFETY: pending_attach entries are live back-refs.
             unsafe { (*client).h2_fail(err) };

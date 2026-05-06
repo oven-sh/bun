@@ -333,9 +333,10 @@ impl PosixBufferedReader {
                 if let Err(err) = result {
                     // TODO(b2-blocked): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(format_args!(
-                        "error reading from memfd\n{}", err
-                    ));
+                    bun_core::output::debug_warn(
+                        "error reading from memfd\n{}",
+                        format_args!("{}", err),
+                    );
                     return self.buffer();
                 }
             }
@@ -817,9 +818,10 @@ impl PosixBufferedReader {
                         sys::Result::Err(err) => {
                             if err.is_retry() {
                                 if file_type == FileType::File {
-                                    bun_core::output::debug_warn(format_args!(
-                                        "Received EAGAIN while reading from a file. This is a bug."
-                                    ));
+                                    bun_core::output::debug_warn(
+                                        "Received EAGAIN while reading from a file. This is a bug.",
+                                        (),
+                                    );
                                 } else {
                                     parent.register_poll();
                                 }
@@ -893,9 +895,10 @@ impl PosixBufferedReader {
                 sys::Result::Err(err) => {
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(format_args!(
-                                "Received EAGAIN while reading from a file. This is a bug."
-                            ));
+                            bun_core::output::debug_warn(
+                                "Received EAGAIN while reading from a file. This is a bug.",
+                                (),
+                            );
                         } else {
                             parent.register_poll();
                         }
@@ -961,9 +964,10 @@ impl PosixBufferedReader {
 
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(format_args!(
-                                "Received EAGAIN while reading from a file. This is a bug."
-                            ));
+                            bun_core::output::debug_warn(
+                                "Received EAGAIN while reading from a file. This is a bug.",
+                                (),
+                            );
                         } else {
                             parent.register_poll();
                         }

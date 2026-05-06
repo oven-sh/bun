@@ -1448,7 +1448,7 @@ impl<'a> Parser<'a> {
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
-        Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(source.contents, map, value_buffer)
+        Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(&source.contents, map, value_buffer)
     }
 
     /// Same as [`parse`] but takes the source bytes directly. Exists so

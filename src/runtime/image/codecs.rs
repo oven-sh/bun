@@ -393,6 +393,7 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     Ok(Probe { format: fmt, width: w, height: h })
 }
 
+#[derive(Copy, Clone)]
 pub struct EncodeOptions {
     pub format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.

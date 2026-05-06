@@ -1769,7 +1769,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                         .to_bytes()
                 } else {
                     match &this.client.address {
-                        valkey::Address::Host(h) => h.host,
+                        valkey::Address::Host { host, .. } => &host[..],
                         valkey::Address::Unix(_) => b"",
                     }
                 };

@@ -301,7 +301,7 @@ impl BorderRadiusHandler {
                 let prefix = context
                     .targets
                     .prefixes(intersection, css::prefixes::Feature::BorderRadius);
-                dest.push(Property::BorderRadius(
+                dest.push(Property::BorderRadius((
                     BorderRadius {
                         top_left: tl.0.clone(),
                         top_right: tr.0.clone(),
@@ -309,7 +309,7 @@ impl BorderRadiusHandler {
                         bottom_left: bl.0.clone(),
                     },
                     prefix,
-                ));
+                )));
                 tl.1.remove(intersection);
                 tr.1.remove(intersection);
                 br.1.remove(intersection);
@@ -318,16 +318,17 @@ impl BorderRadiusHandler {
         }
 
         let logical_supported = !context.should_compile_logical(css::compat::Feature::LogicalBorderRadius);
+        let bump = dest.bump();
 
         single_property!(dest, context, BorderTopLeftRadius, top_left);
         single_property!(dest, context, BorderTopRightRadius, top_right);
         single_property!(dest, context, BorderBottomRightRadius, bottom_right);
         single_property!(dest, context, BorderBottomLeftRadius, bottom_left);
 
-        logical_property!(dest, context, start_start, BorderTopLeftRadius, BorderTopRightRadius, logical_supported);
-        logical_property!(dest, context, start_end, BorderTopRightRadius, BorderTopLeftRadius, logical_supported);
-        logical_property!(dest, context, end_end, BorderBottomRightRadius, BorderBottomLeftRadius, logical_supported);
-        logical_property!(dest, context, end_start, BorderBottomLeftRadius, BorderBottomRightRadius, logical_supported);
+        logical_property!(dest, context, bump, start_start, BorderTopLeftRadius, BorderTopRightRadius, logical_supported);
+        logical_property!(dest, context, bump, start_end, BorderTopRightRadius, BorderTopLeftRadius, logical_supported);
+        logical_property!(dest, context, bump, end_end, BorderBottomRightRadius, BorderBottomLeftRadius, logical_supported);
+        logical_property!(dest, context, bump, end_start, BorderBottomLeftRadius, BorderBottomRightRadius, logical_supported);
     }
 }
 

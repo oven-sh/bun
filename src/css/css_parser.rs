@@ -2675,15 +2675,22 @@ impl<AtRule> StyleSheet<AtRule> {
 
     pub fn parse(
         code: &[u8],
-        options: ParserOptions,
+        options: ParserOptions<'static>,
         import_records: Option<&mut BabyList<ImportRecord>>,
         source_index: SrcIndex,
-    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>>
-    where
-        AtRule: From<DefaultAtRule>,
-    {
+    ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
+        // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
+        // cannot vary `Self`'s `AtRule` param against `DefaultAtRuleParser`, so
+        // this returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
+        // need a custom at-rule call `parse_with` directly.
         let mut default_at_rule_parser = DefaultAtRuleParser;
-        Self::parse_with(code, options, &mut default_at_rule_parser, import_records, source_index)
+        StyleSheet::<DefaultAtRule>::parse_with(
+            code,
+            options,
+            &mut default_at_rule_parser,
+            import_records,
+            source_index,
+        )
     }
 
     pub fn parse_bundler(

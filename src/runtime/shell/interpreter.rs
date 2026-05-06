@@ -1435,6 +1435,60 @@ pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 
+/// Spec: `bun.sys.openNullDevice()` — open `/dev/null` (POSIX) / `NUL`
+/// (Windows) read-only. Used when a stdio stream was closed at process start
+/// so we have *something* to dup into the shell's root IO.
+fn open_null_device() -> bun_sys::Result<Fd> {
+    #[cfg(unix)]
+    {
+        bun_sys::open(
+            // SAFETY: static C string with NUL.
+            unsafe { bun_core::ZStr::from_raw(b"/dev/null\0".as_ptr(), 9) },
+            bun_sys::O::RDONLY,
+            0,
+        )
+    }
+    #[cfg(windows)]
+    {
+        bun_sys::open(
+            unsafe { bun_core::ZStr::from_raw(b"NUL\0".as_ptr(), 3) },
+            bun_sys::O::RDONLY,
+            0,
+        )
+    }
+}
+
+/// Spec: interpreter.zig `isPollable` (interpreter.zig:2116-2124).
+///
+/// PORT NOTE: spec takes a pre-cached `mode` from `event_loop.stdout().data
+/// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
+/// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
+/// (non-pollable → synchronous write path), matching Windows behavior.
+fn is_pollable(fd: Fd) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = fd;
+        false
+    }
+    #[cfg(unix)]
+    {
+        let mode = match bun_sys::fstat(fd) {
+            Ok(st) => st.st_mode,
+            Err(_) => return false,
+        };
+        let fmt = mode & libc::S_IFMT;
+        #[cfg(target_os = "macos")]
+        {
+            // macOS allows polling regular files, but our IOWriter has a
+            // better dedicated path for them — exclude S_ISREG explicitly.
+            if fmt == libc::S_IFREG {
+                return false;
+            }
+        }
+        fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK || bun_sys::isatty(fd)
+    }
+}
+
 /// Spec: interpreter.zig `closefd` → `fd.closeAllowingBadFileDescriptor`.
 /// Tolerates EBADF (already-closed) so cleanup paths that may double-close
 /// don't panic; skips stdin/stdout/stderr.

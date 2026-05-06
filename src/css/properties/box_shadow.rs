@@ -1,13 +1,14 @@
-use bun_css as css;
-use bun_css::SmallList;
-use bun_css::Printer;
-use bun_css::PrintErr;
-use bun_css::css_values::color::CssColor;
-use bun_css::css_values::length::Length;
-use bun_css::VendorPrefix;
-use bun_css::Property;
-use bun_css::prefixes::Feature;
-use bun_css::ColorFallbackKind;
+#![allow(dead_code, unused_imports)]
+use crate as css;
+use crate::SmallList;
+use crate::Printer;
+use crate::PrintErr;
+use crate::css_values::color::CssColor;
+use crate::css_values::length::Length;
+use crate::VendorPrefix;
+use crate::Property;
+use crate::prefixes::Feature;
+use crate::ColorFallbackKind;
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST crate)
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
@@ -126,13 +127,26 @@ impl BoxShadow {
     }
 
     pub fn deep_clone(&self, allocator: &Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field iteration — replace with derive in Phase B
-        css::implement_deep_clone(self, allocator)
+        // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
+        // explicitly here — keep in sync with the BoxShadow field list.
+        BoxShadow {
+            color: self.color.deep_clone(allocator),
+            x_offset: css::generic::deep_clone(&self.x_offset, allocator),
+            y_offset: css::generic::deep_clone(&self.y_offset, allocator),
+            blur: css::generic::deep_clone(&self.blur, allocator),
+            spread: css::generic::deep_clone(&self.spread, allocator),
+            inset: self.inset,
+        }
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        // TODO(port): css.implementEql uses @typeInfo field iteration — replace with derive in Phase B
-        css::implement_eql(self, rhs)
+        // PORT NOTE: Zig css.implementEql iterated @typeInfo fields. Expanded explicitly.
+        self.color.eql(&rhs.color)
+            && self.x_offset.eql(&rhs.x_offset)
+            && self.y_offset.eql(&rhs.y_offset)
+            && self.blur.eql(&rhs.blur)
+            && self.spread.eql(&rhs.spread)
+            && self.inset == rhs.inset
     }
 
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
@@ -157,6 +171,7 @@ impl BoxShadowHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
+        let allocator = dest.bump();
         match property {
             Property::BoxShadow(b) => {
                 let box_shadows: &SmallList<BoxShadow, 1> = &b.0;
@@ -168,32 +183,31 @@ impl BoxShadowHandler {
                     self.flush(dest, context);
                 }
 
+                // PORT NOTE: reshaped for borrowck — Zig held simultaneous &mut into
+                // self.box_shadows across self.flush(). Compute the predicate first,
+                // then either flush+replace or update in place.
+                let needs_flush = if let Some(bxs) = &self.box_shadows {
+                    !SmallList::eql(&bxs.0, box_shadows) && !bxs.1.contains(prefix)
+                } else {
+                    false
+                };
                 if let Some(bxs) = &mut self.box_shadows {
-                    let val: &mut SmallList<BoxShadow, 1> = &mut bxs.0;
-                    let prefixes: &mut VendorPrefix = &mut bxs.1;
-                    if !val.eql(box_shadows) && !prefixes.contains(prefix) {
-                        // PORT NOTE: reshaped for borrowck — drop borrow of self.box_shadows before flush
+                    if needs_flush {
                         self.flush(dest, context);
-                        self.box_shadows = Some((
-                            box_shadows.deep_clone(context.allocator),
-                            prefix,
-                        ));
+                        self.box_shadows = Some((box_shadows.deep_clone(allocator), prefix));
                     } else {
-                        *val = box_shadows.deep_clone(context.allocator);
-                        prefixes.insert(prefix);
+                        bxs.0 = box_shadows.deep_clone(allocator);
+                        bxs.1.insert(prefix);
                     }
                 } else {
-                    self.box_shadows = Some((
-                        box_shadows.deep_clone(context.allocator),
-                        prefix,
-                    ));
+                    self.box_shadows = Some((box_shadows.deep_clone(allocator), prefix));
                 }
             }
             Property::Unparsed(unp) => {
-                if unp.property_id == css::PropertyId::BoxShadow {
+                if unp.property_id.tag() == css::PropertyIdTag::BoxShadow {
                     self.flush(dest, context);
 
-                    let mut unparsed = unp.deep_clone(context.allocator);
+                    let mut unparsed = unp.deep_clone(allocator);
                     context.add_unparsed_fallbacks(&mut unparsed);
                     dest.push(Property::Unparsed(unparsed));
                     self.flushed = true;

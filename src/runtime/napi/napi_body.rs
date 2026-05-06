@@ -1431,7 +1431,10 @@ impl napi_async_work {
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
 
         Box::into_raw(Box::new(napi_async_work {
-            task: WorkPoolTask::new(Self::run_from_thread_pool),
+            task: WorkPoolTask {
+                node: bun_threading::thread_pool::Node::default(),
+                callback: Self::run_from_thread_pool,
+            },
             concurrent_task: ConcurrentTask::default(),
             global: global_static,
             env: NapiEnvRef::clone_from_raw(env),

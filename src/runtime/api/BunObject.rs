@@ -888,7 +888,7 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     if let Some(bin_path) =
-        Which::which(&path_buf, path_str.slice(), cwd_str.slice(), bin_str.slice())
+        bun_which::which(&mut *path_buf, path_str.slice(), cwd_str.slice(), bin_str.slice())
     {
         return Ok(ZigString::init(bin_path).with_encoding().to_js(global_this));
     }

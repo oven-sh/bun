@@ -421,7 +421,7 @@ impl ShellSubprocess {
             stdout: stdout_opt,
             stderr: stderr_opt,
             #[cfg(windows)]
-            windows: WindowsSpawnOptions::WindowsOptions {
+            windows: WindowsOptions {
                 hide_window: true,
                 loop_: event_loop,
             },

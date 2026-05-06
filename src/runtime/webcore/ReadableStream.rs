@@ -23,6 +23,9 @@ pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
 }
 
+/// Re-export under the qualified name callers expect (Zig: `webcore.ReadableStream.Strong`).
+pub type ReadableStreamStrong = Strong;
+
 impl Default for Strong {
     fn default() -> Self {
         Self { held: bun_jsc::strong::Optional::empty() }

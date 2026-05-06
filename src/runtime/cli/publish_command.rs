@@ -1773,6 +1773,7 @@ impl From<AllocError> for PublishError {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum GetOTPError {
+    #[error("OutOfMemory")]
     OutOfMemory,
 }
 impl From<AllocError> for GetOTPError {

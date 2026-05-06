@@ -236,7 +236,7 @@ impl Default for Options {
         Self {
             cols: 80,
             rows: 24,
-            term_name: ZigString::Slice::default(),
+            term_name: ZigStringSlice::default(),
             data_callback: None,
             exit_callback: None,
             drain_callback: None,
@@ -266,7 +266,7 @@ impl Options {
             }
         }
 
-        if let Some(slice) = js_options.get_optional::<ZigString::Slice>(global_object, "name")? {
+        if let Some(slice) = js_options.get_optional::<ZigStringSlice>(global_object, "name")? {
             if slice.len() > Self::MAX_TERM_NAME_LEN {
                 drop(slice);
                 return Err(global_object.throw(format_args!(

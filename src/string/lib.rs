@@ -588,18 +588,23 @@ impl From<&[u8]> for String {
     #[inline]
     fn from(s: &[u8]) -> Self { Self::from(ZigString::from_bytes(s)) }
 }
-impl<const N: usize> From<&[u8; N]> for String {
+impl<const N: usize> From<&'static [u8; N]> for String {
+    /// `*const [N:0]u8` arm — Zig string literal (string.zig:340-350): empty
+    /// → `Tag::Empty`, otherwise `String.static(value)` → `Tag::StaticZigString`.
+    /// Restricted to `&'static` so the static-tag invariant holds.
     #[inline]
-    fn from(s: &[u8; N]) -> Self { Self::from(&s[..]) }
+    fn from(s: &'static [u8; N]) -> Self {
+        if N == 0 { Self::EMPTY } else { Self::static_(s) }
+    }
 }
 impl From<&str> for String {
     #[inline]
     fn from(s: &str) -> Self { Self::from(ZigString::from_bytes(s.as_bytes())) }
 }
 impl From<&[u16]> for String {
-    /// `[]const u16` arm — `ZigString.from16Slice`.
+    /// `[]const u16` arm — `ZigString.from16Slice` (sets UTF-16 + global bits).
     #[inline]
-    fn from(s: &[u16]) -> Self { Self::from(ZigString::init_utf16(s)) }
+    fn from(s: &[u16]) -> Self { Self::from(ZigString::from16_slice(s)) }
 }
 
 impl Default for String {

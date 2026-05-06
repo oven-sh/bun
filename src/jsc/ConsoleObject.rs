@@ -1295,19 +1295,17 @@ pub fn format2(
 
     if len == 1 {
         // initialized later in this function.
-        let mut fmt = Formatter {
-            remaining_values: &[],
-            global_this: global,
-            ordered_properties: options.ordered_properties,
-            quote_strings: options.quote_strings,
-            max_depth: options.max_depth,
-            single_line: options.single_line,
-            indent: u32::from(options.default_indent),
-            stack_check: StackCheck::init(),
-            can_throw_stack_overflow: true,
-            error_display_level: options.error_display_level,
-            ..Formatter::new(global)
-        };
+        // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
+        // temporary is rejected (E0509). Construct via `new()` then mutate.
+        let mut fmt = Formatter::new(global);
+        fmt.ordered_properties = options.ordered_properties;
+        fmt.quote_strings = options.quote_strings;
+        fmt.max_depth = options.max_depth;
+        fmt.single_line = options.single_line;
+        fmt.indent = u32::from(options.default_indent);
+        fmt.stack_check = StackCheck::init();
+        fmt.can_throw_stack_overflow = true;
+        fmt.error_display_level = options.error_display_level;
         let tag = formatter::Tag::get(vals[0], global)?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
@@ -1331,9 +1329,14 @@ pub fn format2(
 
             let _ = writer.flush();
         } else {
-            let _flush = scopeguard::guard((), |_| {
+            // PORT NOTE: Zig `defer if (options.flush) writer.flush()`. Capture
+            // a raw pointer so the body can keep a unique `&mut *writer`.
+            let writer_ptr: *mut dyn bun_io::Write = writer;
+            let _flush = scopeguard::guard((), move |_| {
                 if options.flush {
-                    let _ = writer.flush();
+                    // SAFETY: `writer` outlives `_flush`; no other borrow is
+                    // live at the guard's drop point (end of this `else`).
+                    let _ = unsafe { (*writer_ptr).flush() };
                 }
             });
             if options.enable_colors {
@@ -1349,26 +1352,28 @@ pub fn format2(
         return Ok(());
     }
 
-    let _flush = scopeguard::guard((), |_| {
+    // PORT NOTE: Zig `defer if (options.flush) writer.flush()` — raw-ptr in the
+    // closure to avoid holding a unique borrow across the body (E0501).
+    let writer_ptr: *mut dyn bun_io::Write = writer;
+    let _flush = scopeguard::guard((), move |_| {
         if options.flush {
-            let _ = writer.flush();
+            // SAFETY: `writer` outlives `_flush`; only re-borrowed at drop.
+            let _ = unsafe { (*writer_ptr).flush() };
         }
     });
 
     let mut this_value: JSValue = vals[0];
-    let mut fmt = Formatter {
-        remaining_values: &vals[1..],
-        global_this: global,
-        ordered_properties: options.ordered_properties,
-        quote_strings: options.quote_strings,
-        max_depth: options.max_depth,
-        single_line: options.single_line,
-        indent: u32::from(options.default_indent),
-        stack_check: StackCheck::init(),
-        can_throw_stack_overflow: true,
-        error_display_level: options.error_display_level,
-        ..Formatter::new(global)
-    };
+    // PORT NOTE: see E0509 note above.
+    let mut fmt = Formatter::new(global);
+    fmt.remaining_values = &vals[1..];
+    fmt.ordered_properties = options.ordered_properties;
+    fmt.quote_strings = options.quote_strings;
+    fmt.max_depth = options.max_depth;
+    fmt.single_line = options.single_line;
+    fmt.indent = u32::from(options.default_indent);
+    fmt.stack_check = StackCheck::init();
+    fmt.can_throw_stack_overflow = true;
+    fmt.error_display_level = options.error_display_level;
     let mut tag: formatter::TagResult;
 
     if fmt.write_indent(writer).is_err() {
@@ -5119,19 +5124,19 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     };
     // SAFETY: see `vm_console` — single short-lived `&mut` for this entry point.
     let console = unsafe { &mut *vm_console(global) };
-    let writer = console.error_writer();
+    let mut writer = IoWriterAdapter(console.error_writer());
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { core::slice::from_raw_parts(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else { return };
-        let _ = writer.write_all(b" ");
+        let _ = bun_io::Write::write_all(&mut writer, b" ");
         if Output::enable_ansi_colors_stderr() {
-            let _ = fmt.format::<true>(tag, writer, arg, global);
+            let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
-            let _ = fmt.format::<false>(tag, writer, arg, global);
+            let _ = fmt.format::<false>(tag, &mut writer, arg, global);
         }
     }
-    let _ = writer.write_all(b"\n");
-    let _ = writer.flush();
+    let _ = bun_io::Write::write_all(&mut writer, b"\n");
+    let _ = bun_io::Write::flush(&mut writer);
 }
 
 #[unsafe(no_mangle)]
@@ -5163,15 +5168,23 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
-    message_with_type_and_level(
-        core::ptr::null_mut(), // Zig passes `undefined` here
-        MessageType::Log,
-        MessageLevel::Debug,
-        global_this,
-        snapshot.as_ptr(),
-        1,
-    );
+    // TODO(phase-c): `JSGlobalObject::generate_heap_snapshot` lives in the
+    // gated `JSGlobalObject.rs` impl; emit `undefined` until it un-gates.
+    let snapshot: [JSValue; 1] = [{
+        #[cfg(any())] { global_this.generate_heap_snapshot() }
+        #[cfg(not(any()))] { let _ = global_this; JSValue::UNDEFINED }
+    }];
+    // SAFETY: re-entry into our own host shim with a stack-local args slice.
+    unsafe {
+        message_with_type_and_level(
+            core::ptr::null_mut(), // Zig passes `undefined` here
+            MessageType::Log,
+            MessageLevel::Debug,
+            global_this,
+            snapshot.as_ptr(),
+            1,
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -5220,7 +5233,8 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     vals: *const JSValue,
     len: usize,
 ) {
-    message_with_type_and_level(ctype, message_type, level, global, vals, len);
+    // SAFETY: forwarding the same FFI args to the inner host shim.
+    unsafe { message_with_type_and_level(ctype, message_type, level, global, vals, len) };
 }
 
 

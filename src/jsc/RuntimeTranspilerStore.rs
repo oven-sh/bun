@@ -19,9 +19,11 @@ use bun_sys::Fd;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::{
-    ConcurrentTask, EventLoop, JSGlobalObject, JSInternalPromise, JSValue, JsResult,
-    ResolvedSource, RuntimeTranspilerCache, Strong, VirtualMachine,
+    JSGlobalObject, JSInternalPromise, JSValue, JsResult,
+    ResolvedSource, RuntimeTranspilerCache, Strong,
 };
+use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::virtual_machine::VirtualMachine;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 

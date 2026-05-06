@@ -12,7 +12,9 @@ use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_watcher::Watcher;
 
-use crate::{ConcurrentTask, EventLoop, MarkedArrayBuffer, Task as JscTask, VirtualMachine};
+use crate::{MarkedArrayBuffer, Task as JscTask};
+use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::virtual_machine::VirtualMachine;
 
 bun_core::declare_scope!(hot_reloader, visible);
 

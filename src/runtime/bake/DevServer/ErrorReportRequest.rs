@@ -550,6 +550,20 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 // and a `writer()` over an ArrayList. These tiny helpers cover exactly the
 // methods used here; Phase B may replace with a shared bun_io reader/writer.
 
+/// `DevServer.readString32` — local zero-copy variant over the body slice
+/// reader (the canonical allocating version lives in the gated `DevServer.rs`
+/// draft and is not yet re-exported from `super`).
+#[inline]
+fn read_string32<'a>(r: &mut &'a [u8]) -> Result<&'a [u8], bun_core::Error> {
+    let len = read_u32_le(r)? as usize;
+    if r.len() < len {
+        return Err(bun_core::err!("EndOfStream"));
+    }
+    let (head, tail) = r.split_at(len);
+    *r = tail;
+    Ok(head)
+}
+
 #[inline]
 fn read_u32_le(r: &mut &[u8]) -> Result<u32, bun_core::Error> {
     if r.len() < 4 {

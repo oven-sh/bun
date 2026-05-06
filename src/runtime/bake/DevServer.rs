@@ -8,8 +8,10 @@
 //! All work is held in-memory, using manually managed data-oriented design.
 //! For questions about DevServer, please consult the delusional @paperclover
 
-use core::ffi::c_void;
-use core::mem::offset_of;
+#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
+
+use ::core::ffi::c_void;
+use ::core::mem::offset_of;
 use std::io::Write as _;
 use std::time::Instant;
 
@@ -26,31 +28,42 @@ use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketBehavior, WebSocketUpgradeContext};
 use bun_wyhash::{hash, Wyhash};
 
-use bun_bake as bake;
+use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId, Route};
 use bun_bundler::{self as bundler, options::Loader, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_options_types::{ImportKind, ImportRecord};
 use crate::api::server::StaticRoute;
-use crate::api::timer::EventLoopTimer;
+use crate::timer::EventLoopTimer;
 use crate::api::{AnyServer, HTMLBundle, JSBundler, SavedRequest};
+use crate::server::html_bundle::HTMLBundleRoute;
 use crate::webcore::{Blob, Request as WebRequest, Response};
 use bun_safety::ThreadLock;
 use bun_sourcemap::SourceMap;
 use bun_watcher::Watcher;
 
-pub use crate::dev_server::assets::Assets;
-pub use crate::dev_server::directory_watch_store::DirectoryWatchStore;
-pub use crate::dev_server::error_report_request::ErrorReportRequest;
-pub use crate::dev_server::hmr_socket::HmrSocket;
-pub use crate::dev_server::hot_reload_event::HotReloadEvent;
-pub use crate::dev_server::incremental_graph::IncrementalGraph;
-pub use crate::dev_server::memory_cost::{self as MemoryCost, *};
-pub use crate::dev_server::packed_map::PackedMap;
-pub use crate::dev_server::route_bundle::RouteBundle;
-pub use crate::dev_server::serialized_failure::SerializedFailure;
-pub use crate::dev_server::source_map_store::SourceMapStore;
-pub use crate::dev_server::watcher_atomics::WatcherAtomics;
+pub use crate::bake::dev_server::assets::Assets;
+pub use crate::bake::dev_server::DirectoryWatchStore;
+// TODO(port): ErrorReportRequest body lives in the gated draft; stub until un-gated.
+pub struct ErrorReportRequest;
+impl ErrorReportRequest {
+    fn run<R>(_dev: &mut DevServer, _req: &mut Request, _resp: &mut R) {
+        todo!("blocked_on: ErrorReportRequest");
+    }
+}
+pub use crate::bake::dev_server::HmrSocket;
+pub use crate::bake::dev_server::HotReloadEvent;
+pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
+// TODO(port): memory_cost helpers live in the gated draft; stub the two referenced.
+impl DevServer<'_> {
+    fn memory_cost(&self) -> usize { todo!("blocked_on: memory_cost") }
+    fn memory_cost_detailed(&self) -> () { todo!("blocked_on: memory_cost_detailed") }
+}
+pub use crate::bake::dev_server::packed_map::PackedMap;
+pub use crate::bake::dev_server::route_bundle::RouteBundle;
+pub use crate::bake::dev_server::serialized_failure::SerializedFailure;
+pub use crate::bake::dev_server::source_map_store::SourceMapStore;
+pub use crate::bake::dev_server::WatcherAtomics;
 
 bun_output::declare_scope!(DevServer, visible);
 bun_output::declare_scope!(IncrementalGraph, visible);

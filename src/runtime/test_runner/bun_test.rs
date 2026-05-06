@@ -827,7 +827,9 @@ impl<'a> BunTest<'a> {
         let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, RunTestsTask::call);
         let vm = global_this.bun_vm();
         let Some(strong) = weak.upgrade() else {
-            if cfg!(feature = "ci_assert") {
+            // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
+            // see src/ptr/ref_count.rs / src/collections/baby_list.rs for the same mapping).
+            if cfg!(debug_assertions) {
                 debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             }
             return; // but just in case

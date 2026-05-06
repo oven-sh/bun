@@ -23,7 +23,7 @@ struct ScriptConfig {
     package_name: Box<[u8]>,
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
-    combined: ZStr<'static>, // TODO(port): lifetime — points into leaked copy_script buffer
+    combined: &'static ZStr, // TODO(port): lifetime — points into leaked copy_script buffer
     deps: DependencyMap,
 
     // $PATH must be set per script because it contains

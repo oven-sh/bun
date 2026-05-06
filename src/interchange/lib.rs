@@ -25,102 +25,11 @@ extern crate bun_string as bun_str;
 pub mod json_lexer;
 
 // ───── json ───────────────────────────────────────────────────────────────
-// Real port lives in `json.rs` and is wired against `crate::json_lexer` (the
-// cycle-break above). The inline `pub mod json` below is the live surface
-// re-exported as `json_parser`; `json.rs` replaces it once the remaining
-// `bun_logger::js_ast` shape mismatches in its body are reconciled.
-// PORT NOTE: `json.rs` is intentionally NOT `mod`-included here yet — it is
-// the _draft_ with duplicate symbols of the inline `json` mod (per phase-d
-// policy: drop the draft module from the build, keep the file on disk).
-
-pub mod json {
-    use bumpalo::Bump;
-    use bun_logger as logger;
-
-    // TODO(b2-blocked): bun_logger::js_printer
-    // TODO(b2-blocked): bun_js_parser::js_lexer (GENUINE cycle — needs js_lexer split)
-    /// `json::Expr` — re-export of the MOVE_DOWN'd `bun_logger::js_ast::Expr`
-    /// (Zig: `js_ast.Expr`). The full json.rs draft does the same re-export;
-    /// surfacing it here lets downstream `json_parser::Expr` callers resolve
-    /// against the real `{ loc, data }` shape instead of an opaque unit stub.
-    pub use bun_logger::js_ast::Expr;
-
-    /// Parse JSON.
-    ///
-    /// This leaves UTF-16 strings as UTF-16 strings; the JavaScript Printer
-    /// handles escaping if necessary.
-    // TODO(b2-blocked): body in json.rs draft — requires bun_js_parser::js_lexer
-    // (GENUINE T4 cycle) + bun_logger::js_ast.
-    pub fn parse<const FORCE_UTF8: bool>(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-
-    /// Parse JSON, eagerly transcoding UTF-16 → UTF-8.
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_utf8(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        parse_utf8_impl::<false>(source, log, bump)
-    }
-
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_utf8_impl<const CHECK_LEN: bool>(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_for_macro(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_env_json(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_ts_config<const FORCE_UTF8: bool>(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-
-    /// Parse package.json (allows trailing commas & comments, force UTF-8).
-    // TODO(b2-blocked): body in json.rs draft.
-    pub fn parse_package_json_utf8(
-        source: &logger::Source,
-        log: &mut logger::Log,
-        bump: &Bump,
-    ) -> Result<Expr, bun_core::Error> {
-        let _ = (source, log, bump);
-        todo!("b2-blocked: bun_js_parser::js_lexer + bun_logger::js_ast")
-    }
-}
+// Real port — wired against `crate::json_lexer` (the cycle-break above) and
+// `bun_logger::js_ast`. The earlier inline `todo!()` stub module has been
+// replaced now that `json.rs` resolves against the local lexer.
+#[path = "json.rs"]
+pub mod json;
 
 /// Zig-side import path is `bun.json` (the parser module). Downstream Rust
 /// crates name it both `json` and `json_parser`; alias the latter here.

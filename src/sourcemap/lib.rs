@@ -1046,21 +1046,201 @@ pub fn parse_url(
     parse_json(arena, json_bytes, hint)
 }
 
+/// Parses a JSON source-map
+///
+/// `source` must be in UTF-8 and can be freed after this call.
+/// The mappings are owned by the global allocator.
+/// Temporary allocations are made to the `arena` allocator, which
+/// should be an arena allocator (caller is assumed to call `reset`).
 pub fn parse_json(
-    _arena: &bun_alloc::Arena,
-    _source: &[u8],
-    _hint: ParseUrlResultHint,
+    arena: &bun_alloc::Arena,
+    source: &[u8],
+    hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    // TODO(b2-blocked): bun_logger::Source — `Source.contents` (and `fs::Path.text`)
-    // are typed `&'static [u8]` in Phase A, so `init_path_string(b"sourcemap.json",
-    // source)` rejects the non-`'static` `source` slice without a forbidden
-    // lifetime-extend. Un-gate once bun_logger threads a `'source` lifetime (or
-    // moves `contents` to `Cow<'static, [u8]>`).
-    //
-    // The previously-listed blockers (bun_interchange::json::parse signature,
-    // bun_logger::js_ast::Expr accessors / data_store_reset) are now available;
-    // full body preserved in `_phase_a_draft::parse_json` below.
-    todo!("B-2: parse_json — see _phase_a_draft (blocked on bun_logger::Source lifetime)")
+    use bun_logger::js_ast::{Expr as AstExpr, Stmt as AstStmt};
+    use crate::mapping::SourceMap as SourceMapLog;
+    use std::sync::Arc;
+
+    // TODO(port): narrow error set
+    let json_src = logger::Source::init_path_string("sourcemap.json", source);
+    let mut log = logger::Log::init();
+    // `defer log.deinit()` → Drop
+
+    // the allocator given to the JS parser is not respected for all parts
+    // of the parse, so we need to remember to reset the ast store
+    AstExpr::data_store_reset();
+    AstStmt::data_store_reset();
+    let _store_reset = scopeguard::guard((), |_| {
+        // the allocator given to the JS parser is not respected for all parts
+        // of the parse, so we need to remember to reset the ast store
+        AstExpr::data_store_reset();
+        AstStmt::data_store_reset();
+    });
+    bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
+    let json = match bun_interchange::json::parse::<false>(&json_src, &mut log, arena) {
+        Ok(j) => j,
+        Err(_) => return Err(bun_core::err!("InvalidJSON")),
+    };
+
+    if let Some(version) = json.get(b"version") {
+        // TODO(port): Expr.data variant matching — exact API TBD in bun_js_parser
+        if !version.data.is_e_number() || version.data.as_e_number().value != 3.0 {
+            return Err(bun_core::err!("UnsupportedVersion"));
+        }
+    }
+
+    let Some(mappings_str) = json.get(b"mappings") else {
+        return Err(bun_core::err!("UnsupportedVersion"));
+    };
+
+    if !mappings_str.data.is_e_string() {
+        return Err(bun_core::err!("InvalidSourceMap"));
+    }
+
+    let sources_content = match json
+        .get(b"sourcesContent")
+        .ok_or(bun_core::err!("InvalidSourceMap"))?
+        .data
+        .as_e_array()
+    {
+        Some(arr) => arr,
+        None => return Err(bun_core::err!("InvalidSourceMap")),
+    };
+
+    let sources_paths = match json
+        .get(b"sources")
+        .ok_or(bun_core::err!("InvalidSourceMap"))?
+        .data
+        .as_e_array()
+    {
+        Some(arr) => arr,
+        None => return Err(bun_core::err!("InvalidSourceMap")),
+    };
+
+    if sources_content.items.len() != sources_paths.items.len() {
+        return Err(bun_core::err!("InvalidSourceMap"));
+    }
+
+    let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
+
+    // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
+    // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
+    let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
+        let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len());
+        for item in sources_paths.items.slice() {
+            if !item.data.is_e_string() {
+                return Err(bun_core::err!("InvalidSourceMap"));
+            }
+            // TODO(port): e_string.string(alloc) — exact API TBD
+            let s = item.data.as_e_string().string(arena)?;
+            v.push(Box::<[u8]>::from(s));
+        }
+        Some(v)
+    } else {
+        None
+    };
+
+    let map: Option<Arc<ParsedSourceMap>> = if !source_only {
+        let mut map_data = match mapping::parse(
+            mappings_str.data.as_e_string().slice(arena),
+            None,
+            i32::MAX,
+            i32::MAX as usize,
+            mapping::ParseOptions {
+                allow_names: matches!(
+                    hint,
+                    ParseUrlResultHint::All { include_names: true, .. }
+                ),
+                sort: true,
+            },
+        ) {
+            ParseResult::Success(x) => x,
+            ParseResult::Fail(fail) => return Err(fail.err),
+        };
+
+        if let ParseUrlResultHint::All { include_names: true, .. } = hint {
+            if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
+                if let Some(names) = json.get(b"names") {
+                    if let Some(arr) = names.data.as_e_array() {
+                        let mut names_list: Vec<bun_semver::String> =
+                            Vec::with_capacity(arr.items.len());
+                        let mut names_buffer: Vec<u8> = Vec::new();
+
+                        for item in arr.items.slice() {
+                            if !item.data.is_e_string() {
+                                return Err(bun_core::err!("InvalidSourceMap"));
+                            }
+
+                            let str = item.data.as_e_string().string(arena)?;
+
+                            // PERF(port): was assume_capacity
+                            names_list.push(bun_semver::String::init_append_if_needed(
+                                &mut names_buffer,
+                                str,
+                            )?);
+                        }
+
+                        map_data.mappings.names = names_list.into_boxed_slice();
+                        map_data.mappings.names_buffer =
+                            bun_collections::BabyList::move_from_list(names_buffer);
+                    }
+                }
+            }
+        }
+
+        let mut psm = map_data;
+        psm.external_source_names = source_paths_slice.unwrap();
+        // TODO(port): ParsedSourceMap is ThreadSafeRefCount in Zig; LIFETIMES.tsv
+        // says Arc. Phase B: confirm whether intrusive Arc is required for FFI.
+        Some(Arc::new(psm))
+    } else {
+        None
+    };
+    // errdefer if (map) |m| m.deref(); → Arc drops on `?`
+
+    let (found_mapping, source_index): (Option<Mapping>, Option<u32>) = match hint {
+        ParseUrlResultHint::SourceOnly(index) => (None, Some(index)),
+        ParseUrlResultHint::All { line, column, .. } => 'brk: {
+            let Some(m) = map
+                .as_ref()
+                .unwrap()
+                .find_mapping(Ordinal::from_zero_based(line), Ordinal::from_zero_based(column))
+            else {
+                break 'brk (None, None);
+            };
+            let idx = u32::try_from(m.source_index).ok();
+            (Some(m), idx)
+        }
+        ParseUrlResultHint::MappingsOnly => (None, None),
+    };
+
+    let content_slice: Option<Box<[u8]>> = if !matches!(hint, ParseUrlResultHint::MappingsOnly)
+        && source_index.is_some()
+        && (source_index.unwrap() as usize) < sources_content.items.len()
+    {
+        'content: {
+            let item = &sources_content.items.slice()[source_index.unwrap() as usize];
+            if !item.data.is_e_string() {
+                break 'content None;
+            }
+
+            // bun.handleOom(...) → panic on OOM, do not propagate
+            let str = item.data.as_e_string().string(arena).expect("OOM");
+            if str.is_empty() {
+                break 'content None;
+            }
+
+            Some(Box::<[u8]>::from(str))
+        }
+    } else {
+        None
+    };
+
+    Ok(ParseUrl {
+        map,
+        mapping: found_mapping,
+        source_contents: content_slice,
+    })
 }
 
 // -- comment from esbuild --

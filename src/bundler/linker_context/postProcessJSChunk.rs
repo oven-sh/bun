@@ -1,4 +1,9 @@
 use bun_alloc::Arena;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::ungate_support::js_meta::JSMetaListExt as _;
+use crate::Graph::InputFileListExt as _;
+use crate::linker_graph::FileListExt as _;
+use crate::ungate_support::EntryPointListExt as _;
 use crate::analyze_transpiled_module::{self, ModuleInfo};
 use bun_js_printer::{self as js_printer, PrintResult};
 use crate::linker_context_mod::GenerateChunkCtx;
@@ -61,7 +66,7 @@ pub fn post_process_js_chunk(
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
-    let loader = c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index as usize];
+    let loader = c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
@@ -104,14 +109,14 @@ pub fn post_process_js_chunk(
             });
         }
 
-        let ast = c.graph.ast.get(chunk.entry_point.source_index);
+        let ast = c.graph.ast.get(chunk.entry_point.source_index());
 
         cross_chunk_prefix = js_printer::print(
             // TODO(port): allocator param — AST crate; thread &'bump Bump or drop
             worker.allocator,
             c.resolver.opts.target,
             ast.to_ast(),
-            c.get_source(chunk.entry_point.source_index),
+            c.get_source(chunk.entry_point.source_index()),
             print_options,
             cross_chunk_import_records.slice(),
             &[Part {
@@ -125,7 +130,7 @@ pub fn post_process_js_chunk(
             worker.allocator,
             c.resolver.opts.target,
             ast.to_ast(),
-            c.get_source(chunk.entry_point.source_index),
+            c.get_source(chunk.entry_point.source_index()),
             print_options,
             &[],
             &[Part {
@@ -322,7 +327,7 @@ pub fn post_process_js_chunk(
                 c,
                 to_common_js_ref,
                 to_esm_ref,
-                chunk.entry_point.source_index,
+                chunk.entry_point.source_index(),
                 worker.allocator,
                 &arena,
                 chunk.renamer,
@@ -367,7 +372,7 @@ pub fn post_process_js_chunk(
     // Extract hashbang and banner for entry points
     let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
         'brk: {
-            let source_hashbang = c.graph.ast.items_hashbang()[chunk.entry_point.source_index as usize];
+            let source_hashbang = c.graph.ast.items_hashbang()[chunk.entry_point.source_index() as usize];
 
             // If source file has a hashbang, use it
             if !source_hashbang.is_empty() {
@@ -405,7 +410,7 @@ pub fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index as usize].is_bun();
+    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if ctx.c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             // Zig `++` literal concat → single byte literal (concat! yields &str, not &[u8])
@@ -441,7 +446,7 @@ pub fn post_process_js_chunk(
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
     if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags: JSAst::Flags = c.graph.ast.items_flags()[chunk.entry_point.source_index as usize];
+        let flags: JSAst::Flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
 
         if flags.has_explicit_use_strict_directive {
             j.push_static(b"\"use strict\";\n");
@@ -652,7 +657,7 @@ pub fn post_process_js_chunk(
             }
             {
                 let input =
-                    &c.parse_graph.input_files.items_source()[chunk.entry_point.source_index as usize].path;
+                    &c.parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize].path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.allocator is an arena in Zig
                 js_printer::quote_for_json(input.pretty, &mut buf, true);

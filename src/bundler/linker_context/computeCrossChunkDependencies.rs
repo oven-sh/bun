@@ -1,4 +1,9 @@
 use bun_collections::{ArrayHashMap, BabyList};
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::ungate_support::js_meta::JSMetaListExt as _;
+use crate::Graph::InputFileListExt as _;
+use crate::linker_graph::FileListExt as _;
+use crate::ungate_support::EntryPointListExt as _;
 use bun_js_parser as js_ast;
 use bun_js_parser::{Part, Symbol};
 use bun_logger as Logger;
@@ -220,14 +225,14 @@ impl<'a> CrossChunkDependencies<'a> {
 
         // Include the exports if this is an entry point chunk
         if matches!(chunk.content, chunk::Content::Javascript(_)) {
-            if chunk.entry_point.is_entry_point {
-                let flags = deps.flags[chunk.entry_point.source_index as usize];
+            if chunk.entry_point.is_entry_point() {
+                let flags = deps.flags[chunk.entry_point.source_index() as usize];
                 if flags.wrap != JSMeta::Wrap::Cjs {
                     let resolved_exports =
-                        &deps.resolved_exports[chunk.entry_point.source_index as usize];
+                        &deps.resolved_exports[chunk.entry_point.source_index() as usize];
                     let sorted_and_filtered_export_aliases =
                         &deps.sorted_and_filtered_export_aliases
-                            [chunk.entry_point.source_index as usize];
+                            [chunk.entry_point.source_index() as usize];
                     for alias in sorted_and_filtered_export_aliases.iter() {
                         let export_ = resolved_exports.get(alias).unwrap();
                         let mut target_ref = export_.data.import_ref;
@@ -268,7 +273,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 if flags.force_include_exports_for_entry_point {
                     chunk_meta
                         .imports
-                        .put(deps.exports_refs[chunk.entry_point.source_index as usize], ());
+                        .put(deps.exports_refs[chunk.entry_point.source_index() as usize], ());
                 }
 
                 // Include the wrapper if present
@@ -276,7 +281,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 if flags.wrap != JSMeta::Wrap::None {
                     chunk_meta
                         .imports
-                        .put(deps.wrapper_refs[chunk.entry_point.source_index as usize], ());
+                        .put(deps.wrapper_refs[chunk.entry_point.source_index() as usize], ());
                 }
             }
         }
@@ -353,8 +358,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // If this is an entry point, make sure we import all chunks belonging to
         // this entry point, even if there are no imports. We need to make sure
         // these chunks are evaluated for their side effects too.
-        if chunks[chunk_index].entry_point.is_entry_point {
-            let entry_point_id = chunks[chunk_index].entry_point.entry_point_id;
+        if chunks[chunk_index].entry_point.is_entry_point() {
+            let entry_point_id = chunks[chunk_index].entry_point.entry_point_id();
             for other_chunk_index in 0..chunks.len() {
                 if other_chunk_index == chunk_index
                     || !matches!(

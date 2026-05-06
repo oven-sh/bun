@@ -250,11 +250,16 @@ impl<const SSL: bool> WebSocket<SSL> {
             // after we've already handled a clean close.
             // PORT NOTE: `RefPtr<T>` has no `Deref` (intentional — explicit
             // ref-count tracking); reach the inner via `.data`.
-            // SAFETY: `tunnel` holds a live ref; `clear_connected_web_socket`
-            // and `shutdown` mutate tunnel state on the owning thread.
-            let inner = unsafe { &mut *tunnel.data.as_ptr() };
-            inner.clear_connected_web_socket();
-            inner.shutdown();
+            let tunnel_ptr = tunnel.data.as_ptr();
+            // SAFETY: `tunnel` holds a live ref. `clear_connected_web_socket`
+            // is a single non-reentrant field write; the brief auto-ref `&mut`
+            // is the only Rust borrow of the tunnel at this point.
+            unsafe { (*tunnel_ptr).clear_connected_web_socket() };
+            // SAFETY: `tunnel` holds a live ref. `shutdown` may synchronously
+            // fire SSLWrapper callbacks that re-enter the tunnel allocation,
+            // so call the raw-ptr overload which never holds a `&mut Self`
+            // across the dispatch (see WebSocketProxyTunnel::shutdown).
+            unsafe { WebSocketProxyTunnel::shutdown(tunnel_ptr) };
             // tunnel.deref() → IntrusiveArc::drop decrements the embedded refcount
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
@@ -270,19 +275,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    pub extern "C" fn cancel(this: *mut Self) {
+    pub extern "C" fn cancel(this_ptr: *mut Self) {
         // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &mut *this };
+        let this = unsafe { &mut *this_ptr };
         log!("cancel");
         // clear_data() may drop the tunnel's I/O-layer ref; keep `this`
         // alive until we've finished closing the socket below.
         this.r#ref();
-        // PORT NOTE: reshaped for borrowck — `scopeguard` capturing `&this`
-        // would freeze it for the whole scope. Capture a raw ptr instead;
-        // the ref taken on the line above guarantees `this` outlives the guard.
-        let _guard = scopeguard::guard(this as *mut Self, |p| {
-            // SAFETY: `p` is `this`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // PORT NOTE: capture the ORIGINAL raw `this_ptr` (parent provenance of
+        // `this`'s Unique tag) — re-deriving `*mut Self` from `this` would be
+        // popped by later `this.` uses under Stacked Borrows. The `r#ref()`
+        // above guarantees the allocation outlives the guard.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the C++-owned `Box::into_raw` pointer, kept alive
+            // by the `r#ref()` above; `this`'s borrow has ended (LIFO drop).
             unsafe { Self::deref(p) }
         });
 
@@ -623,45 +629,72 @@ impl<const SSL: bool> WebSocket<SSL> {
         data.len()
     }
 
-    // PORT NOTE: `socket` taken by ref — `NewSocketHandler<SSL>` is not `Copy`
-    // in Rust (Zig passed by value). Dispatch-table thunks own the value and
-    // pass `&socket`; internal callers pass `&self.tcp` via raw-ptr reborrow.
-    pub fn handle_data(&mut self, socket: &Socket<SSL>, data_: &[u8]) {
+    // PORT NOTE: takes a raw `*mut Self` instead of `&mut self` because
+    // `handle_without_deinit()` re-enters this very function on the same
+    // allocation (spec .zig:398-402 / 1242-1253). A live outer `&mut self`
+    // across that re-entry would yield two `&mut WebSocket` to one allocation
+    // (Stacked-Borrows UB), so the preamble works through `this_ptr` and only
+    // materializes `&mut *this_ptr` once re-entry is no longer possible.
+    //
+    // The Zig `socket` parameter is dropped: every caller passed `this.tcp`
+    // (the dispatch thunk wraps the same `us_socket_t*` that `adopt_group`
+    // stored into `self.tcp`), so the parse loop reads `self.tcp` directly.
+    //
+    /// # Safety
+    /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
+    /// `Box::into_raw` (see `init` / `init_with_tunnel`); no `&`/`&mut`
+    /// borrow of `*this_ptr` may be live across this call.
+    pub unsafe fn handle_data(this_ptr: *mut Self, data_: &[u8]) {
         // after receiving close we should ignore the data
-        if self.close_received {
+        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
+        if unsafe { (*this_ptr).close_received } {
             return;
         }
-        self.r#ref();
-        // PORT NOTE: reshaped for borrowck — capture a raw ptr so `self` stays
-        // mutably borrowable below. The ref taken above keeps `self` alive.
-        let _guard = scopeguard::guard(self as *mut Self, |p| {
-            // SAFETY: `p` is `self`, kept alive by the `r#ref()` above;
-            // derived from `&mut Self` so it carries write provenance.
+        // SAFETY: caller contract — `this_ptr` is live; `r#ref` takes `&self`.
+        unsafe { (&*this_ptr).r#ref() };
+        // PORT NOTE: capture the parent raw `this_ptr` so the guard's
+        // `deref(p)` runs after every `&mut *this_ptr` reborrow has ended.
+        let _guard = scopeguard::guard(this_ptr, |p| {
+            // SAFETY: `p` is the `Box::into_raw` pointer, kept alive by the
+            // `r#ref()` above; no Rust borrow of `*p` is live at drop time.
             unsafe { Self::deref(p) }
         });
-        // TODO(port): scopeguard captures &self while &mut self is used below;
-        // Phase B: convert to manual ref/deref at exit points or use raw ptr in guard.
 
         // Due to scheduling, it is possible for the websocket onData
         // handler to run with additional data before the microtask queue is
         // drained.
-        if let Some(initial_handler) = self.initial_data_handler {
+        // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
+        if let Some(initial_handler) = unsafe { (*this_ptr).initial_data_handler } {
             // This calls `handle_data`
             // We deliberately do not set self.initial_data_handler to None here, that's done in handle_without_deinit.
             // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
-            // SAFETY: initial_handler is valid (managed by microtask queue)
-            unsafe { initial_handler.as_ptr().as_mut().unwrap().handle_without_deinit() };
+            // SAFETY: `initial_handler` is valid (managed by microtask queue).
+            // `handle_without_deinit` re-enters `Self::handle_data` via the
+            // `adopted` raw ptr (same `Box::into_raw` provenance as
+            // `this_ptr`); no `&mut *this_ptr` is live here, so the nested
+            // call may freely form its own exclusive reborrow.
+            unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
             // to prevent an infinite loop
-            debug_assert!(self.initial_data_handler.is_none());
+            // SAFETY: caller contract — `this_ptr` is live; raw read of a `Copy` field.
+            debug_assert!(unsafe { (*this_ptr).initial_data_handler.is_none() });
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-            if self.outgoing_websocket.is_none() || !self.has_tcp() {
+            // SAFETY: caller contract — `this_ptr` is live; brief `&Self` for `has_tcp`.
+            if unsafe { (*this_ptr).outgoing_websocket.is_none() || !(&*this_ptr).has_tcp() } {
                 return;
             }
         }
 
+        // No further `handle_data` re-entry on this stack frame; hand the
+        // remainder to the `&mut self` parse loop. The reborrow ends before
+        // `_guard` drops (LIFO), so `deref(this_ptr)` observes a clean stack.
+        // SAFETY: caller contract — `this_ptr` is live, sole owner on this thread.
+        unsafe { (*this_ptr).handle_data_loop(data_) };
+    }
+
+    fn handle_data_loop(&mut self, data_: &[u8]) {
         let mut data = data_;
         let mut receive_state = self.receive_state;
         let mut terminated = false;
@@ -926,7 +959,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.ping_received = false;
 
                     // we need to send all pongs to pass autobahn tests
-                    let _ = self.send_pong(&socket);
+                    let _ = self.send_pong();
                     if data.is_empty() {
                         break;
                     }
@@ -1041,7 +1074,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                             }
                             let mut buf: [u8; 125] = [0; 125];
                             buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(&socket, code, Some(&mut buf), ping_len - 2);
+                            self.send_close_with_body(code, Some(&mut buf), ping_len - 2);
                         } else {
                             self.send_close();
                         }
@@ -1074,21 +1107,22 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `&mut self` + `&self.tcp` overlap.
-        let tcp: *const Socket<SSL> = &self.tcp;
-        // SAFETY: `tcp` points into `*self`; `send_close_with_body` only reads
-        // the socket handle (no aliasing write to `self.tcp`).
-        self.send_close_with_body(unsafe { &*tcp }, 1000, None, 0);
+        self.send_close_with_body(1000, None, 0);
     }
 
-    // PORT NOTE: `socket` taken by ref — `NewSocketHandler<SSL>` is not `Copy`
-    // in Rust (Zig passed by value). All write paths only call `&self` methods.
-    fn enqueue_encoded_bytes(&mut self, socket: &Socket<SSL>, bytes: &[u8]) -> bool {
+    // PORT NOTE: Zig passed `socket` by value (a copy of `this.tcp`). Every
+    // Rust caller would have passed `self.tcp`, and threading a `&Socket<SSL>`
+    // alongside `&mut self` is a Stacked-Borrows hazard (the receiver retag
+    // covers `self.tcp` and invalidates any prior `&self.tcp`-derived pointer
+    // before the argument is even retagged). Read `self.tcp` directly instead.
+    fn enqueue_encoded_bytes(&mut self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = &self.proxy_tunnel {
-            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`);
-            // `write` mutates the SSL wrapper on the owning thread.
-            let wrote = match unsafe { &mut *tunnel.data.as_ptr() }.write(bytes) {
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+            // `write_data()` may fire `write_encrypted(ctx)` which reborrows
+            // the tunnel allocation, so call the raw-ptr overload that never
+            // holds a `&mut WebSocketProxyTunnel` across the dispatch.
+            let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.data.as_ptr(), bytes) } {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
@@ -1105,7 +1139,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // fast path: no backpressure, no queue, just send the bytes.
         if !self.has_backpressure() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            let wrote = socket.write(bytes);
+            let wrote = self.tcp.write(bytes);
             let expected = c_int::try_from(bytes.len()).unwrap();
             if wrote == expected {
                 return true;

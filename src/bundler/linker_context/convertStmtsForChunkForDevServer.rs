@@ -1,15 +1,16 @@
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_js_parser::ast as js_ast;
 use bun_js_parser::ast::{
-    Binding, Expr, ExprNodeList, Stmt, StmtData,
+    b, Binding, Expr, ExprNodeList, Stmt, StmtData,
     BundledAst as JSAst,
-    B, E, G, S,
+    E, G, S,
 };
 use bun_js_parser::ArrayBinding;
 use bun_logger::Loc;
 use bun_options_types::{ImportRecordTag, Loader};
 use bun_options_types::import_record::Flags as ImportRecordFlags;
 
+use crate::Graph::InputFileListExt as _;
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
@@ -56,22 +57,23 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         bumpalo::collections::Vec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
+    // SAFETY: `parse_graph` backref valid for the link pass.
+    let input_files = unsafe { &(*c.parse_graph).input_files };
+    let loaders = input_files.items_loader();
+    let sources = input_files.items_source();
     for record in ast.import_records.slice_mut() {
         if record.path.is_disabled {
             continue;
         }
         if record.source_index.is_valid()
-            // TODO(port): MultiArrayList column accessor API
-            && c.parse_graph.input_files.items().loader[record.source_index.get() as usize]
-                == Loader::Css
+            && loaders[record.source_index.get() as usize] == Loader::Css
         {
             record.path.is_disabled = true;
             continue;
         }
         // Make sure the printer gets the resolved path
         if record.source_index.is_valid() {
-            record.path =
-                c.parse_graph.input_files.items().source[record.source_index.get() as usize].path;
+            record.path = sources[record.source_index.get() as usize].path.clone();
         }
     }
 
@@ -88,7 +90,9 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // Barrel optimization: this import was deferred (unused submodule).
                     // Don't add to dep array, but declare the namespace ref as an
                     // empty object so body code referencing it doesn't throw.
-                    if st.star_name_loc.is_some() || st.items.len() > 0 || st.default_name.is_some()
+                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
+                    let items_len = st.items.len();
+                    if st.star_name_loc.is_some() || items_len > 0 || st.default_name.is_some()
                     {
                         stmts.inside_wrapper_prefix.append_non_dependency(Stmt::alloc(
                             S::Local {
@@ -96,7 +100,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 decls: G::DeclList::from_slice(&[G::Decl {
                                     binding: Binding::alloc(
                                         bump,
-                                        B::Identifier { r#ref: st.namespace_ref },
+                                        b::Identifier { r#ref: st.namespace_ref },
                                         stmt.loc,
                                     ),
                                     value: Some(Expr::init(
@@ -159,7 +163,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 decls: G::DeclList::from_slice(&[G::Decl {
                                     binding: Binding::alloc(
                                         bump,
-                                        B::Identifier { r#ref: st.namespace_ref },
+                                        b::Identifier { r#ref: st.namespace_ref },
                                         st.star_name_loc.unwrap_or(stmt.loc),
                                     ),
                                     value: Some(call),
@@ -173,14 +177,14 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     let loc = st.star_name_loc.unwrap_or(stmt.loc);
                     if is_bare_import {
                         esm_decls.push(ArrayBinding {
-                            binding: Binding { data: B::B::BMissing(B::Missing {}), loc: Loc::EMPTY },
+                            binding: Binding { data: b::B::BMissing(b::Missing {}), loc: Loc::EMPTY },
                             default_value: None,
                         });
                         // PERF(port): was assume_capacity-adjacent (arena append)
                         esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
                     } else {
                         let binding =
-                            Binding::alloc(bump, B::Identifier { r#ref: st.namespace_ref }, loc);
+                            Binding::alloc(bump, b::Identifier { r#ref: st.namespace_ref }, loc);
                         esm_decls.push(ArrayBinding { binding, default_value: None });
                         // SAFETY: arena-owned slice — `E::Arrow.args` is `&'static [G::Arg]`
                         // pending Phase-B arena-lifetime threading; erase the bump lifetime
@@ -189,7 +193,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             &*(core::slice::from_ref(bump.alloc(G::Arg {
                                 binding: Binding::alloc(
                                     bump,
-                                    B::Identifier { r#ref: ast.module_ref },
+                                    b::Identifier { r#ref: ast.module_ref },
                                     Loc::EMPTY,
                                 ),
                                 ..Default::default()
@@ -237,7 +241,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 decls: G::DeclList::from_slice(&[G::Decl {
                     binding: Binding::alloc(
                         bump,
-                        B::Array {
+                        b::Array {
                             items: esm_decls.into_bump_slice_mut() as *mut [ArrayBinding],
                             has_spread: false,
                             is_single_line: true,

@@ -615,6 +615,10 @@ use bun_resolver::{self as _resolver, Resolver, is_package_path};
 use bun_threading::ThreadPool as ThreadPoolLib;
 use crate::options_impl::{TargetExt, LoaderExt};
 use crate::Graph::InputFileListExt;
+use bun_js_parser::ast::bundled_ast::{BundledAstListExt as _, BundledAstSliceExt as _};
+use bun_js_parser::ast::server_component_boundary::{
+    ServerComponentBoundaryListExt as _, ServerComponentBoundarySliceExt as _,
+};
 // TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
 use self::bake_types as bake;
 

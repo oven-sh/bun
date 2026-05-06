@@ -1,4 +1,9 @@
 use std::io::Write as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use crate::ungate_support::js_meta::JSMetaListExt as _;
+use crate::Graph::InputFileListExt as _;
+use crate::linker_graph::FileListExt as _;
+use crate::ungate_support::EntryPointListExt as _;
 use std::borrow::Cow;
 
 use bun_core::Output;
@@ -353,8 +358,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 for &chunk in dup.sources.iter() {
                     // SAFETY: chunk pointers were taken from `chunks` slice above and remain valid.
                     let chunk = unsafe { &*chunk };
-                    if chunk.entry_point.is_entry_point {
-                        if kinds[chunk.entry_point.source_index as usize] == EntryPoint::Kind::UserSpecified {
+                    if chunk.entry_point.is_entry_point() {
+                        if kinds[chunk.entry_point.source_index() as usize] == EntryPoint::Kind::UserSpecified {
                             entry_naming = Some(&chunk.template.data);
                         } else {
                             chunk_naming = Some(&chunk.template.data);
@@ -363,7 +368,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         asset_naming = Some(&chunk.template.data);
                     }
 
-                    let source_index = chunk.entry_point.source_index;
+                    let source_index = chunk.entry_point.source_index();
                     let file: &Logger::Source =
                         &c.parse_graph.input_files.items_source()[source_index as usize];
                     write!(&mut msg, "    from input {}\n", bstr::BStr::new(&file.path.pretty))?;
@@ -634,8 +639,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;
-            let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point {
-                c.parse_graph.input_files.items_source()[chunk.entry_point.source_index as usize]
+            let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
+                c.parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize]
                     .path
                     .text
                     .as_ref()
@@ -727,7 +732,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if matches!(chunk.content, Chunk::Content::Css(_)) || chunk.flags.is_browser_chunk_from_server_build {
                     options::Side::Client
                 } else {
-                    match c.graph.ast.items_target()[chunk.entry_point.source_index as usize] {
+                    match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
                         options::Target::Browser => options::Side::Client,
                         _ => options::Side::Server,
                     }
@@ -735,8 +740,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
-                    let loader: Loader = if chunk.entry_point.is_entry_point {
-                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index as usize]
+                    let loader: Loader = if chunk.entry_point.is_entry_point() {
+                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -847,8 +852,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     && c.options.output_format == options::Format::Esm
                     && c.options.compile
                 {
-                    let loader: Loader = if chunk.entry_point.is_entry_point {
-                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index as usize]
+                    let loader: Loader = if chunk.entry_point.is_entry_point() {
+                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -911,8 +916,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let output_kind = if matches!(chunk.content, Chunk::Content::Css(_)) {
                 options::OutputKind::Asset
-            } else if chunk.entry_point.is_entry_point {
-                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index as usize].output_kind()
+            } else if chunk.entry_point.is_entry_point() {
+                c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize].output_kind()
             } else {
                 options::OutputKind::Chunk
             };
@@ -927,8 +932,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 input_path,
                 display_size: display_size as u32,
                 output_kind,
-                input_loader: if chunk.entry_point.is_entry_point {
-                    c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index as usize]
+                input_loader: if chunk.entry_point.is_entry_point() {
+                    c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
                 } else {
                     Loader::Js
                 },
@@ -940,7 +945,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 side: Some(side),
                 entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                     Some(
-                        chunk.entry_point.source_index
+                        chunk.entry_point.source_index()
                             - (if let Some(fw) = &c.framework {
                                 if fw.server_components.is_some() { 3 } else { 1 }
                             } else {
@@ -969,7 +974,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if output_kind == options::OutputKind::EntryPoint && side == options::Side::Server {
                         extra.is_route = true;
                         extra.fully_static =
-                            !static_route_visitor.has_transitive_use_client(chunk.entry_point.source_index);
+                            !static_route_visitor.has_transitive_use_client(chunk.entry_point.source_index());
                     }
 
                     break 'brk extra;

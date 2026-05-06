@@ -282,158 +282,18 @@ pub use cache::Set as Cache;
 pub use cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt};
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs
-// without depending on bun_runtime::bake (T6). Extracted from the gated
-// `bundle_v2.rs::bake_types` so `options.rs` / `LinkerContext.rs` resolve
-// `crate::bake_types::*`. The full set (HmrRuntime, EntryPointMap, virtual
-// sources) stays gated until bun_logger::Source / OUT_DIR codegen are real.
+// CYCLEBREAK(b0) TYPE_ONLY: re-export the canonical `bake_types` defs from
+// `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.
+// across the crate (the previous inline copy here diverged and produced
+// "expected `bake_types::Graph`, found `bake_types::Graph`" errors).
 // ──────────────────────────────────────────────────────────────────────────
-pub mod bake_types {
-    /// Mirrors src/bake/lib.zig `Side`.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub enum Side {
-        Client = 0,
-        Server = 1,
-    }
-    /// Mirrors src/bake/lib.zig `Graph`.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub enum Graph {
-        Client = 0,
-        Server = 1,
-        Ssr = 2,
-    }
-    impl Side {
-        pub fn graph(self) -> Graph {
-            match self {
-                Side::Client => Graph::Client,
-                Side::Server => Graph::Server,
-            }
-        }
-    }
-    /// Mirrors src/bake/DevServer.zig `FileKind`.
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub enum CacheKind {
-        Unknown = 0,
-        Js = 1,
-        Asset = 2,
-        Css = 3,
-    }
-    #[derive(Copy, Clone)]
-    pub struct CacheEntry {
-        pub kind: CacheKind,
-    }
-    /// Mirrors src/bake/DevServer.zig `ASSET_PREFIX`.
-    pub const ASSET_PREFIX: &str = "/_bun/asset";
-    pub const DEV_SERVER_ASSET_PREFIX: &str = ASSET_PREFIX;
-
-    /// Mirrors src/bake/bake.zig:355 `BuiltInModule`.
-    pub enum BuiltInModule {
-        Import(Box<[u8]>),
-        Code(Box<[u8]>),
-    }
-
-    /// Mirrors src/bake/bake.zig `Framework` — only the fields bundler reads
-    /// (`built_in_modules`, `server_components`). Remaining fields are opaque
-    /// until tier-6 collapse.
-    pub struct Framework {
-        pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-        /// Mirrors `Framework.server_components`.
-        pub server_components: Option<ServerComponents>,
-        /// Legacy `options.Framework.client_css_in_js` — read by
-        /// `entry_points::{FallbackEntryPoint,ClientEntryPoint}::generate`. The
-        /// Zig spec keeps this on the legacy `options.Framework`; both shapes
-        /// are unified under `bake_types::Framework` in the Rust port until the
-        /// tier-6 collapse splits them.
-        pub client_css_in_js: crate::options::ClientCssInJs,
-        // TODO(b0-genuine): remaining Framework fields (react_fast_refresh,
-        // file_system_router_types, ...) — bake constructs.
-        _opaque_tail: (),
-    }
-
-    /// Mirrors src/bake/bake.zig `Framework.ServerComponents` — TYPE_ONLY subset
-    /// of fields read by the bundler (BundleV2 / ServerComponentParseTask /
-    /// ParseTask).
-    #[derive(Default, Clone)]
-    pub struct ServerComponents {
-        pub separate_ssr_graph: bool,
-        pub server_runtime_import: Box<[u8]>,
-        pub server_register_client_reference: Box<[u8]>,
-    }
-
-    /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
-    pub type HmrRuntimeSide = Side;
-}
+pub use bundle_v2::bake_types;
 
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK(b0) §Dispatch: erased DevServer handle. Extracted from the gated
-// `bundle_v2.rs::dispatch` so `LinkerContext.rs` / `barrel_imports.rs` /
-// `options.rs` resolve `crate::dispatch::DevServerHandle`. PERF(port): was
-// inline switch in Zig.
+// CYCLEBREAK(b0) §Dispatch: re-export the canonical `dispatch` module from
+// `bundle_v2` (full vtable slot set) so there is one `DevServerHandle` type.
 // ──────────────────────────────────────────────────────────────────────────
-pub mod dispatch {
-    /// Erased handle to bake::DevServer.
-    #[derive(Clone, Copy)]
-    pub struct DevServerHandle {
-        pub owner: *mut (),
-        pub vtable: &'static DevServerVTable,
-    }
-    pub struct DevServerVTable {
-        /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128.
-        pub is_file_cached:
-            unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> Option<super::bake_types::CacheEntry>,
-        /// `dev.allocator().dupe(u8, ..)` — DevServer-owned bump for barrel keys.
-        /// Returns an owned `Box<[u8]>` (caller stores it in the barrel map);
-        /// previously `&'static [u8]` via `Box::leak`, which leaked on every
-        /// incremental rebuild.
-        pub dupe: unsafe fn(*mut (), &[u8]) -> Box<[u8]>,
-        /// `dev.barrel_needed_exports.getOrPut(path)` etc. Opaque body lives in
-        /// bun_runtime; bundler only registers.
-        pub register_barrel_export: unsafe fn(*mut (), &[u8], &[u8]),
-        /// `&mut dev.barrel_needed_exports` — read by `barrel_imports::
-        /// apply_barrel_optimization` to seed needed records from prior builds.
-        pub barrel_needed_exports: unsafe fn(
-            *mut (),
-        )
-            -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,
-        /// `dev.barrel_files_with_deferrals.getOrPut(path)` + key dupe — see
-        /// `barrel_imports::apply_barrel_optimization`.
-        pub register_barrel_with_deferrals:
-            unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
-        // ── full slot set (finalize_bundle, handle_parse_task_failure,
-        //    put_or_overwrite_asset, …) stays in the gated bundle_v2.rs draft
-        //    until BundleV2/DevServerOutput types are real here.
-    }
-    impl DevServerHandle {
-        #[inline]
-        pub fn is_file_cached(
-            &self,
-            abs_path: &[u8],
-            side: super::bake_types::Graph,
-        ) -> Option<super::bake_types::CacheEntry> {
-            // SAFETY: owner is a live *mut DevServer per handle invariant.
-            unsafe { (self.vtable.is_file_cached)(self.owner, abs_path, side) }
-        }
-    }
-
-    /// Bytecode generation hook (jsc::CachedBytecode + jsc::initialize +
-    /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). Registered
-    /// by runtime at init; null = bytecode disabled.
-    pub static BYTECODE_HOOK: core::sync::atomic::AtomicPtr<BytecodeVTable> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    pub struct BytecodeVTable {
-        pub set_bundler_thread: unsafe fn(bool),
-        pub initialize_jsc: unsafe fn(bool),
-        /// Returns (bytes, source_provider_url_dupe) on success.
-        pub generate: unsafe fn(
-            format: super::options::Format,
-            source: &[u8],
-            source_url: &[u8],
-        ) -> Option<(Box<[u8]>, Box<[u8]>)>,
-    }
-}
+pub use bundle_v2::dispatch;
 
 // `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
 // default-initializers). Kept here rather than in `OutputFile.rs` so the

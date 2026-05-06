@@ -2410,6 +2410,27 @@ pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
 // Hex formatters
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Port of Zig `std.fmt`'s `{x}` / `{X}` on a `[]const u8` — prints each byte
+/// as two hex digits with no separator. `LOWER == true` → lowercase, else
+/// uppercase. Used by `Lockfile::MetaHashFormatter` and tmp-lockfile naming.
+pub struct HexBytes<'a, const LOWER: bool>(pub &'a [u8]);
+
+impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let table = if LOWER { &LOWER_HEX_TABLE } else { &UPPER_HEX_TABLE };
+        let mut buf = [0u8; 2];
+        for &b in self.0 {
+            buf[0] = table[(b >> 4) as usize];
+            buf[1] = table[(b & 0x0f) as usize];
+            // SAFETY: hex alphabet is ASCII.
+            f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })?;
+        }
+        Ok(())
+    }
+}
+
+const UPPER_HEX_TABLE: [u8; 16] =
+    [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F'];
 const LOWER_HEX_TABLE: [u8; 16] =
     [b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f'];
 const UPPER_HEX_TABLE: [u8; 16] =

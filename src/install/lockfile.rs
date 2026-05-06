@@ -60,10 +60,11 @@ pub mod catalog_map;
 pub mod override_map;
 #[path = "lockfile/lockfile_json_stringify_for_debugging.rs"]
 pub mod lockfile_json_stringify_for_debugging;
+#[path = "lockfile/printer"]
 pub mod printer_mods {
-    #[path = "../lockfile/printer/tree_printer.rs"]
+    #[path = "tree_printer.rs"]
     pub mod tree_printer;
-    #[path = "../lockfile/printer/Yarn.rs"]
+    #[path = "Yarn.rs"]
     pub mod yarn;
 }
 
@@ -1354,7 +1355,7 @@ impl Lockfile {
     ) -> Result<(), tree::SubtreeError> {
         self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
-            manager,
+            Some(manager),
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
@@ -1395,8 +1396,8 @@ impl Lockfile {
         // TODO(port): Tree::Builder field set may differ; verify in Phase B.
 
         Tree::default().process_subtree(
-            Tree::ROOT_DEP_ID,
-            Tree::INVALID_ID,
+            tree::ROOT_DEP_ID,
+            tree::INVALID_ID,
             &mut builder,
         )?;
 
@@ -1592,12 +1593,12 @@ impl<'a> Printer<'a> {
         if !bun_paths::is_absolute(path) {
             let cwd = bun_sys::getcwd(&mut lockfile_path_buf1)?;
             let parts = [path];
-            let lockfile_path__ =
-                resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut lockfile_path_buf2, &parts);
-            lockfile_path_buf2[lockfile_path__.len()] = 0;
+            let lockfile_path__len =
+                resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut lockfile_path_buf2.0, &parts).len();
+            lockfile_path_buf2[lockfile_path__len] = 0;
             // SAFETY: NUL written at [len] above.
             lockfile_path =
-                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__.len()) };
+                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
         } else if !path.is_empty() {
             lockfile_path_buf1[..path.len()].copy_from_slice(path);
             lockfile_path_buf1[path.len()] = 0;
@@ -2513,19 +2514,18 @@ impl Lockfile {
         let mut r_buf = &mut r_buf_full[..];
 
         let mut path_buf = PathBuffer::uninit();
-        let mut depth_buf = Tree::DepthBuf::default();
+        let mut depth_buf = tree::DepthBuf::default();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
 
         let mut i: usize = 0;
         for l_tree in l.buffers.trees.iter() {
-            let (rel_path, _) = Tree::relative_path_and_depth(
+            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 l,
                 l_tree.id,
                 &mut path_buf,
                 &mut depth_buf,
-                Tree::PathStyle::PkgPath,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path);
             let tree_path_ptr: *const [u8] = &*tree_path;
@@ -2549,12 +2549,11 @@ impl Lockfile {
 
         i = 0;
         for r_tree in r.buffers.trees.iter() {
-            let (rel_path, _) = Tree::relative_path_and_depth(
+            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 r,
                 r_tree.id,
                 &mut path_buf,
                 &mut depth_buf,
-                Tree::PathStyle::PkgPath,
             );
             let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path);
             let tree_path_ptr: *const [u8] = &*tree_path;

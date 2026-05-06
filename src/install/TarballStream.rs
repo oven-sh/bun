@@ -32,8 +32,13 @@ use bun_sys::{self, Dir, Fd, FdDirExt, FileKind, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 
 use crate::bun_fs::FileSystem;
-use crate::{NetworkTask, PackageManager, Task};
+use crate::{NetworkTask, PackageManager};
 use crate::integrity::{self, Integrity};
+
+// `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
+// `'static` is sound here because we only ever hold raw `*mut Task` and never
+// materialise a `&'static` borrow of the inner `Request` lifetime.
+type Task = crate::package_manager_task::Task<'static>;
 
 bun_output::declare_scope!(TarballStream, hidden);
 
@@ -508,11 +513,11 @@ impl TarballStream {
         // bidding would try to read-ahead before any bytes have arrived.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_append_filter(archive.cast(), 1) } != 0 {
+        if unsafe { lib::archive_read_append_filter(archive, 1) } != 0 {
             return Err(bun_core::err!("Fail"));
         }
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_set_format(archive.cast(), 0x30000) } != 0 {
+        if unsafe { lib::archive_read_set_format(archive, 0x30000) } != 0 {
             return Err(bun_core::err!("Fail"));
         }
         // SAFETY: archive is a valid handle.
@@ -521,7 +526,7 @@ impl TarballStream {
         // SAFETY: archive is a valid handle; callback/data pointers outlive the read.
         let rc_raw: c_int = unsafe {
             lib::archive_read_open(
-                archive.cast(),
+                archive,
                 self as *mut Self as *mut c_void,
                 None,
                 Some(archive_read_callback),
@@ -849,9 +854,9 @@ impl TarballStream {
 
         // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
         // `(*this).extract_task` is a raw `*mut Task` (not `&mut`), so this
-        // is the only `&mut Task` in existence — no aliasing with a stored
-        // reference. `populate_result` does not touch `(*this).extract_task`.
-        (*this).populate_result(&mut *task);
+        // is the only writer — no aliasing with a stored reference.
+        // `populate_result` does not touch `(*this).extract_task`.
+        (*this).populate_result(task);
 
         // Temp-dir cleanup must happen before we release the stream or
         // publish the task: both `(*this).tmpname` and
@@ -897,12 +902,18 @@ impl TarballStream {
         (*manager).wake();
     }
 
-    fn populate_result(&mut self, task: &mut Task) {
-        let tarball = &task.request.extract.tarball;
-        task.data = TaskData { extract: ManuallyDrop::new(Default::default()) };
+    /// # Safety
+    /// `task` must be live and exclusively owned by this drain. Takes a raw
+    /// pointer (Zig: freely-aliasing `*Task`) so `tarball` (a borrow into
+    /// `task.request`) can coexist with writes to `task.log`/`task.data`.
+    unsafe fn populate_result(&mut self, task: *mut Task) {
+        // SAFETY: union field `extract` is the active variant for streaming
+        // tarballs (set by `enqueueExtractNPMPackage`).
+        let tarball = &(*task).request.extract.tarball;
+        (*task).data = TaskData { extract: ManuallyDrop::new(Default::default()) };
 
         if let Some(err) = self.fail {
-            task.log
+            (*task).log
                 .add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
@@ -913,14 +924,14 @@ impl TarballStream {
                     ),
                 )
                 .expect("unreachable");
-            task.err = Some(err);
-            task.status = TaskStatus::Fail;
+            (*task).err = Some(err);
+            (*task).status = TaskStatus::Fail;
             return;
         }
 
         if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
             if !self.hasher.verify() {
-                task.log
+                (*task).log
                     .add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
@@ -930,8 +941,8 @@ impl TarballStream {
                         ),
                     )
                     .expect("unreachable");
-                task.err = Some(bun_core::err!("IntegrityCheckFailed"));
-                task.status = TaskStatus::Fail;
+                (*task).err = Some(bun_core::err!("IntegrityCheckFailed"));
+                (*task).status = TaskStatus::Fail;
                 return;
             }
         }
@@ -943,7 +954,7 @@ impl TarballStream {
                 }
                 let Ok(gh_tag) = bun_sys::openat(
                     self.dest.unwrap(),
-                    c".bun-tag",
+                    bun_core::zstr!(".bun-tag"),
                     O::WRONLY | O::CREAT | O::TRUNC,
                     0o644,
                 ) else {
@@ -952,7 +963,7 @@ impl TarballStream {
                 let r = (bun_sys::File { handle: gh_tag }).write_all(self.resolved_github_dirname);
                 gh_tag.close();
                 if r.is_err() {
-                    let _ = bun_sys::unlinkat(self.dest.unwrap(), c".bun-tag");
+                    let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
                 }
             }
         }
@@ -965,7 +976,7 @@ impl TarballStream {
         let (name, basename) = tarball.name_and_basename();
 
         let mut result = match tarball.move_to_cache_directory(
-            &mut task.log,
+            &mut (*task).log,
             self.tmpname.as_bytes(),
             name,
             basename,
@@ -973,8 +984,8 @@ impl TarballStream {
         ) {
             Ok(r) => r,
             Err(err) => {
-                task.err = Some(err);
-                task.status = TaskStatus::Fail;
+                (*task).err = Some(err);
+                (*task).status = TaskStatus::Fail;
                 return;
             }
         };
@@ -1000,8 +1011,8 @@ impl TarballStream {
             Output::flush();
         }
 
-        task.data = TaskData { extract: ManuallyDrop::new(result) };
-        task.status = TaskStatus::Success;
+        (*task).data = TaskData { extract: ManuallyDrop::new(result) };
+        (*task).status = TaskStatus::Success;
     }
 
     /// Prepare this stream for another HTTP attempt after a failed request
@@ -1138,16 +1149,16 @@ fn open_output_file(
     {
         return match bun_sys::openat_windows(dest_fd, path, flags, 0) {
             Ok(fd) => Ok(fd),
-            Err(e) => match e.errno {
-                x if x == bun_sys::E::PERM as _ || x == bun_sys::E::NOENT as _ => 'brk: {
+            Err(e) => match e.get_errno() {
+                bun_sys::E::EPERM | bun_sys::E::ENOENT => 'brk: {
                     let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
-                        return Err(bun_sys::errno_to_error(e.errno));
+                        return Err(e.to_zig_err());
                     };
-                    let _ = dest_fd.make_path::<u16>(dir);
+                    let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
-                        .map_err(|e| bun_sys::errno_to_error(e.errno));
+                        .map_err(|e| e.to_zig_err());
                 }
-                _ => Err(bun_sys::errno_to_error(e.errno)),
+                _ => Err(e.to_zig_err()),
             },
         };
     }
@@ -1190,7 +1201,7 @@ fn make_directory(
     }
     #[cfg(windows)]
     {
-        let _ = dest_fd.make_path::<u16>(path.as_slice());
+        let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), &path[..]);
         let _ = (path_slice, mode);
     }
     #[cfg(not(windows))]

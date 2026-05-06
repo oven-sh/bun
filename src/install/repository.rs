@@ -832,7 +832,7 @@ impl Repository {
                     'insert_tag: {
                         let Ok(git_tag) = dir.create_file_z(
                             b".bun-tag\0",
-                            bun_sys::CreateFlags { truncate: true },
+                            bun_sys::CreateFlags { truncate: true, ..Default::default() },
                         ) else {
                             break 'insert_tag;
                         };

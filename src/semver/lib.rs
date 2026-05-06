@@ -18,6 +18,25 @@ pub use crate::semver_query::Query;
 pub use crate::semver_range as range;
 pub use crate::semver_query as query;
 
+/// Duck-typed surface for `Lockfile::str` (src/install/lockfile.zig:`str`): any
+/// value that can project itself into a string-bytes buffer. Implemented by
+/// `String` / `ExternalString` (and any other `slice(buf)`-shaped types).
+pub trait Slicable {
+    fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
+}
+impl Slicable for crate::semver_string::String {
+    #[inline]
+    fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        crate::semver_string::String::slice(self, buf)
+    }
+}
+impl Slicable for crate::external_string::ExternalString {
+    #[inline]
+    fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        crate::external_string::ExternalString::slice(self, buf)
+    }
+}
+
 /// Alias so callers can name `bun_semver::string::Formatter` etc.
 pub use crate::semver_string as string;
 

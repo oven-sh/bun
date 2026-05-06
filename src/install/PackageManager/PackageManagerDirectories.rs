@@ -971,7 +971,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
         );
     }
 
-    tmpfile.promote_to_cwd(tmpname, b"yarn.lock")?;
+    tmpfile.promote_to_cwd(tmpname, ZStr::from_static(b"yarn.lock\0"))?;
     Ok(())
 }
 

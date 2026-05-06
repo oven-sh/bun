@@ -134,6 +134,27 @@ pub use env as Environment;
 pub use feature_flags as FeatureFlags;
 #[inline] pub fn start_time() -> i128 { 0 } // TODO(port): wire to a global set at main()
 
+/// `bun.Timer` / `std.time.Timer` — minimal monotonic stopwatch. Mirrors Zig's
+/// `std.time.Timer.{start,read}` so callers ported verbatim (e.g.
+/// `Lockfile::clean_with_logger`, `LifecycleScriptSubprocess`) compile against
+/// the tier-0 surface without pulling in `bun_perf`.
+pub mod time {
+    pub const NS_PER_MS: u64 = 1_000_000;
+
+    #[derive(Clone, Copy)]
+    pub struct Timer { started: std::time::Instant }
+    impl Timer {
+        #[inline]
+        pub fn start() -> core::result::Result<Self, crate::Error> {
+            Ok(Self { started: std::time::Instant::now() })
+        }
+        #[inline]
+        pub fn read(&self) -> u64 {
+            self.started.elapsed().as_nanos() as u64
+        }
+    }
+}
+
 /// `bun.schema` — `src/options_types/schema.zig`. The full generated API
 /// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
 /// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports

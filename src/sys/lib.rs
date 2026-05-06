@@ -4761,10 +4761,33 @@ impl Dir {
 }
 
 /// `std.fs.File.CreateFlags` — subset used by `Dir::createFileZ` callers
-/// (e.g. `repository.zig:649`).
+/// (e.g. `repository.zig:649`, `PackageManagerDirectories.zig`).
 #[derive(Clone, Copy, Default)]
 pub struct CreateFlags {
     pub truncate: bool,
+    /// Open for reading as well as writing (Zig: `read: bool = false`).
+    pub read: bool,
+}
+
+impl Dir {
+    /// `std.fs.Dir.createFileZ` — create (or truncate) `sub_path` relative to
+    /// this dir and return a `File` handle. Zig stdlib semantics: `O_CREAT`,
+    /// `O_WRONLY` (or `O_RDWR` if `flags.read`), `O_TRUNC` if `flags.truncate`.
+    pub fn create_file_z(&self, sub_path: &ZStr, flags: CreateFlags)
+        -> core::result::Result<File, bun_core::Error>
+    {
+        let mut o = O::CREAT | O::CLOEXEC;
+        o |= if flags.read { O::RDWR } else { O::WRONLY };
+        if flags.truncate { o |= O::TRUNC; }
+        let fd = openat(self.fd, sub_path, o, 0o666)?;
+        Ok(File::from_fd(fd))
+    }
+
+    /// `std.fs.Dir.deleteFileZ` — `unlinkat(self.fd, sub_path, 0)`.
+    #[inline]
+    pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
+        unlinkat(self.fd, sub_path).unwrap().map_err(Into::into)
+    }
 }
 
 /// bun.zig — `bun.openDir(dir, path)`. Opens `path` relative to `dir` as a
@@ -5272,6 +5295,9 @@ pub mod fs {
             unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
         pub dirname_store_append_lower_case:
             unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+        /// Zig: `FileSystem.RealFS.getDefaultTempDir()` (fs.zig) — `BUN_TMPDIR`
+        /// or the platform fallback. Process-static once-computed.
+        pub get_default_temp_dir: fn() -> &'static [u8],
     }
 
     /// Installed by `bun_resolver::fs::install_sys_fs_vtable()` at startup.

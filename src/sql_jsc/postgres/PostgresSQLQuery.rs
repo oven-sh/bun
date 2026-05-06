@@ -82,8 +82,15 @@ impl Flags {
     #[inline] pub fn pipelined(self) -> bool { self.0 & Self::PIPELINED != 0 }
     #[inline] pub fn set_pipelined(&mut self, v: bool) { if v { self.0 |= Self::PIPELINED } else { self.0 &= !Self::PIPELINED } }
     #[inline] pub fn result_mode(self) -> PostgresSQLQueryResultMode {
-        // SAFETY: bits 5..=6 always written via set_result_mode with a valid discriminant.
-        unsafe { mem::transmute::<u8, PostgresSQLQueryResultMode>((self.0 >> 5) & 0b11) }
+        // PORT NOTE: Zig backed this with `enum(u2)` inside a packed struct, so any
+        // 2-bit pattern is representable. Rust `#[repr(u8)]` enum with discriminants
+        // 0/1/2 makes 3 instant UB via transmute — use a checked match instead.
+        match (self.0 >> 5) & 0b11 {
+            0 => PostgresSQLQueryResultMode::Objects,
+            1 => PostgresSQLQueryResultMode::Values,
+            2 => PostgresSQLQueryResultMode::Raw,
+            _ => PostgresSQLQueryResultMode::Objects,
+        }
     }
     #[inline] pub fn set_result_mode(&mut self, m: PostgresSQLQueryResultMode) {
         self.0 = (self.0 & !(0b11 << 5)) | ((m as u8 & 0b11) << 5);

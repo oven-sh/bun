@@ -3679,23 +3679,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
                     uses.put(name, crate::parser::ParsePassSymbolUse {
                         r#ref,
+                        used: false,
                         import_record_index: stmt.import_record_index,
-                        ..Default::default()
                     })
                     .expect("unreachable");
                 }
             }
 
-            item_refs.put_assume_capacity(item.alias, item.name);
-            stmt.items[end] = item;
+            item_refs.put_assume_capacity(alias, item.name);
+            items_slice[end] = item;
             end += 1;
         }
-        stmt.items = &mut stmt.items[..end];
+        stmt.items = &mut items_slice[..end];
 
         // If we remapped the entire import away
         // i.e. import {graphql} "react-relay"
 
-        if remap_count > 0 && stmt.items.is_empty() && stmt.default_name.is_none() {
+        // SAFETY: arena-owned `*mut [ClauseItem]` (just resliced above) valid for 'a.
+        if remap_count > 0 && unsafe { &*stmt.items }.is_empty() && stmt.default_name.is_none() {
             self.import_records.items_mut()[stmt.import_record_index as usize].path.namespace = js_ast::Macro::NAMESPACE;
             self.import_records.items_mut()[stmt.import_record_index as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
@@ -3706,7 +3707,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             return Ok(self.s(S::Empty {}, loc));
         } else if remap_count > 0 {
-            item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
+            // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+            item_refs.shrink_and_free(unsafe { &*stmt.items }.len() + usize::from(stmt.default_name.is_some()));
         }
 
         if path.import_tag != bun_options_types::ImportRecordTag::None || path.loader.is_some() {
@@ -3714,7 +3716,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         // Track the items for this namespace
-        self.import_items_for_namespace.put(self.allocator, stmt.namespace_ref, item_refs)?;
+        self.import_items_for_namespace.insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
     }
 

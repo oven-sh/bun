@@ -1490,12 +1490,9 @@ impl<'a> Putter<'a> {
             let tag = if (types::short::MAX as i32) < oid {
                 types::Tag::Text
             } else {
-                // SAFETY: types::Tag is #[repr(short)]; oid fits in `short` per check above.
-                unsafe {
-                    core::mem::transmute::<types::short, types::Tag>(
-                        types::short::try_from(oid).unwrap(),
-                    )
-                }
+                // types::Tag is `#[repr(transparent)] struct Tag(pub Short)` —
+                // construct via from_raw, no transmute needed.
+                types::Tag::from_raw(types::short::try_from(oid).unwrap())
             };
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(

@@ -2115,12 +2115,24 @@ impl Data {
 // only these method bodies wait. The round-B verify gate covers what's live.
 
 impl Data {
-    pub fn clone(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
+    /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
+    /// arena slot) but don't recurse into children. Zig: `Data.clone`.
+    ///
+    /// PORT NOTE: the `E::*` payloads do not derive `Clone` (they hold raw arena
+    /// pointers / `BabyList`). Zig copied struct bytes (`el.*`); we mirror that
+    /// with a `core::ptr::read` of the payload, which is sound because every
+    /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `BabyList`
+    /// stores a raw pointer + len/cap into the arena).
+    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
         // TODO(port): narrow error set
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
-                let item = bump.alloc((**$el).clone());
-                return Ok(Data::$variant(item));
+                // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
+                // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy ==
+                // Zig's `el.*` struct copy.
+                let copied = unsafe { core::ptr::read($el.as_ptr()) };
+                let item = bump.alloc(copied);
+                return Ok(Data::$variant(StoreRef::from_bump(item)));
             }};
         }
         match &this {
@@ -2150,7 +2162,8 @@ impl Data {
         }
     }
 
-    pub fn deep_clone(this: Data, bump: &Bump) -> Result<Data, AllocError> {
+    pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
+        let this = *self;
         match &this {
             Data::EArray(el) => {
                 let items = el.items.deep_clone(bump)?;

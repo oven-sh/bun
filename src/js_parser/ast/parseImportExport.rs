@@ -230,19 +230,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     original_name = p.lexer.identifier;
                     name = LocRef {
                         loc: alias_loc,
-                        ref_: p.store_name_in_ref(original_name)?,
+                        ref_: Some(p.store_name_in_ref(original_name)?),
                     };
                     p.lexer.expect(T::TIdentifier)?;
                 } else if !is_identifier {
                     // An import where the name is a keyword must have an alias
-                    p.lexer.expected_string("\"as\"")?;
+                    p.lexer.expected_string(b"\"as\"")?;
                 }
 
                 // Reject forbidden names
                 if is_eval_or_arguments(original_name) {
                     let r = js_lexer::range_of_identifier(p.source, name.loc);
                     p.log.add_range_error_fmt(
-                        p.source,
+                        Some(p.source),
                         r,
                         format_args!(
                             "Cannot use \"{}\" as an identifier here",
@@ -287,17 +287,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 false
             },
-        });
-        } // end 
-        todo!("b2-ast-D: parse_import_clause body")
+        })
     }
 
-    pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult, Error> {
-        
-        // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
-        //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8];
-        //   ExportClauseResult.clauses is &'a [ClauseItem] (need into_bump_slice).
-        {
+    pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
         // TODO(port): narrow error set
         let mut items =
@@ -308,12 +301,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut had_type_only_exports = false;
 
         while p.lexer.token != T::TCloseBrace {
-            let mut alias = p.parse_clause_alias(b"export")?;
+            let mut alias = p.parse_clause_alias("export")?;
             let mut alias_loc = p.lexer.loc();
 
             let name = LocRef {
                 loc: alias_loc,
-                ref_: p.store_name_in_ref(alias).expect("unreachable"),
+                ref_: Some(p.store_name_in_ref(alias).expect("unreachable")),
             };
             let original_name = alias;
 
@@ -341,7 +334,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.lexer.next()?;
 
                         if p.lexer.is_contextual_keyword(b"as") {
-                            alias = p.parse_clause_alias(b"export")?;
+                            alias = p.parse_clause_alias("export")?;
                             alias_loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -349,7 +342,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // "export { type as as as }"
                                 // "export { type as as foo }"
                                 // "export { type as as 'foo' }"
-                                let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
+                                let _ = p.parse_clause_alias("export").unwrap_or(b"");
                                 had_type_only_exports = true;
                                 p.lexer.next()?;
                             } else {
@@ -366,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         {
                             // "export { type as xxx }"
                             // "export { type as 'xxx' }"
-                            alias = p.parse_clause_alias(b"export")?;
+                            alias = p.parse_clause_alias("export")?;
                             alias_loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -401,12 +394,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // "export { type default as if } from 'path'"
                         // "export { type xx as 'yy' }"
                         // "export { type 'xx' } from 'mod'"
-                        let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
+                        let _ = p.parse_clause_alias("export").unwrap_or(b"");
                         p.lexer.next()?;
 
                         if p.lexer.is_contextual_keyword(b"as") {
                             p.lexer.next()?;
-                            let _ = p.parse_clause_alias(b"export").unwrap_or(b"");
+                            let _ = p.parse_clause_alias("export").unwrap_or(b"");
                             p.lexer.next()?;
                         }
 
@@ -415,7 +408,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } else {
                     if p.lexer.is_contextual_keyword(b"as") {
                         p.lexer.next()?;
-                        alias = p.parse_clause_alias(b"export")?;
+                        alias = p.parse_clause_alias("export")?;
                         alias_loc = p.lexer.loc();
 
                         p.lexer.next()?;
@@ -431,7 +424,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {
                     p.lexer.next()?;
-                    alias = p.parse_clause_alias(b"export")?;
+                    alias = p.parse_clause_alias("export")?;
                     alias_loc = p.lexer.loc();
 
                     p.lexer.next()?;
@@ -479,13 +472,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Err(bun_core::err!("SyntaxError"));
         }
 
-        return Ok(ExportClauseResult {
+        Ok(ExportClauseResult {
             clauses: items.into_bump_slice(),
             is_single_line,
             had_type_only_exports,
-        });
-        } // end 
-        todo!("b2-ast-D: parse_export_clause body")
+        })
     }
 }
 

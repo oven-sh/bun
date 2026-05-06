@@ -2118,9 +2118,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     break 'try_record_hook;
                 }
                 if p.options.features.react_fast_refresh {
-                    // blocked_on: P::handle_react_refresh_hook_call gated (round-D impl).
-                    let _ = (&mut *e_, original_name);
-                    todo!("e_call: P::handle_react_refresh_hook_call (gated)");
+                    p.handle_react_refresh_hook_call(&mut e_, original_name);
                 } else if
                 // If we're here it means we're in server component.
                 // Error if the user is using the `useState` hook as it

@@ -377,18 +377,25 @@ impl<'a> Parser<'a> {
         // Symbol use counts are unavailable
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
-        if self.options.jsx.parse && p.needs_jsx_import {
+        if p.options.jsx.parse && p.needs_jsx_import {
+            // PORT NOTE: Zig's `string` aliased the long-lived option storage
+            // directly. `add_import_record` requires `&'a [u8]`, but borrowing
+            // `p.options` would conflict with `&mut p`, so copy into the arena.
+            let allocator = p.allocator;
+            let import_source: &'a [u8] = allocator.alloc_slice_copy(p.options.jsx.import_source());
+            let classic_import_source: &'a [u8] =
+                allocator.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(
                 bun_options_types::ImportKind::Require,
                 logger::Loc { start: 0 },
-                p.options.jsx.import_source(),
+                import_source,
             );
             // Ensure we have both classic and automatic
             // This is to handle cases where they use fragments in the automatic runtime
             let _ = p.add_import_record(
                 bun_options_types::ImportKind::Require,
                 logger::Loc { start: 0 },
-                p.options.jsx.classic_import_source,
+                classic_import_source,
             );
         }
 
@@ -406,14 +413,30 @@ impl<'a> Parser<'a> {
         // TODO(port): narrow error set
         let mut p = JavaScriptParser::init(
             self.bump,
-            self.log,
+            // SAFETY: `log` was created from the `&'a mut Log` passed to
+            // `Parser::init`; the unique borrow is being handed off to `P`
+            // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            self.lexer,
-            self.options,
+            // Zig moves lexer/options by value into `P` (Parser.zig) and only
+            // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+            // on `Parser.lexer`. In Rust we move them out and leave inert
+            // placeholders so `self` may drop without double-free.
+            core::mem::replace(
+                &mut self.lexer,
+                js_lexer::Lexer::init_without_reading(
+                    // SAFETY: see above — reborrow of the unique Log handle for
+                    // the inert placeholder lexer (never actually read).
+                    unsafe { &mut *self.log.as_ptr() },
+                    self.source,
+                    self.bump,
+                ),
+            ),
+            core::mem::take(&mut self.options),
         )?;
 
-        p.lexer.track_comments = self.options.features.minify_identifiers;
+        p.lexer.track_comments = p.options.features.minify_identifiers;
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
         if p.options.features.minify_syntax || p.options.features.inlining {

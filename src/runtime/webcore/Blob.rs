@@ -3214,7 +3214,7 @@ impl Blob {
         #[cfg(not(windows))]
         {
             let mut sink = webcore::FileSink::init(
-                bun_sys::INVALID_FD,
+                bun_sys::Fd::INVALID,
                 // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                 unsafe { (*self.global_this).bun_vm() }.event_loop(),
             );
@@ -3224,14 +3224,16 @@ impl Blob {
                 p => webcore::PathOrFileDescriptor::Path(ZigString::Slice::init_dupe(p.slice())),
             };
 
-            let mut stream_start = streams::Start::FileSink(streams::FileSinkStart {
+            let mut stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                 input_path: input_path.clone(),
-                ..Default::default()
+                chunk_size: 0,
             });
 
             if !arguments.is_empty() && arguments[0].is_object() {
-                stream_start = streams::Start::from_js_with_tag(global_this, arguments[0], streams::Tag::FileSink)?;
-                stream_start.as_file_sink_mut().input_path = input_path;
+                stream_start = streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arguments[0])?;
+                if let streams::Start::FileSink(ref mut opts) = stream_start {
+                    opts.input_path = input_path;
+                }
             }
 
             match sink.start(stream_start) {
@@ -3389,7 +3391,7 @@ impl Blob {
 
     pub fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set {
-            return Some(bun_http_types::MimeType::init(self.content_type_slice(), None, None));
+            return Some(MimeType::init(self.content_type_slice(), false, None));
         }
         self.store.as_ref().map(|s| s.mime_type)
     }
@@ -3437,7 +3439,7 @@ impl Blob {
         if value.is_empty_or_undefined_or_null() {
             self.name.deref();
             self.name = BunString::dead();
-            js::name_set_cached(js_this, global_this, value);
+            bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
             return Ok(());
         }
         if value.is_string() {
@@ -3445,7 +3447,7 @@ impl Blob {
             // errdefer this.name = bun.String.empty — handled by the replace above.
             self.name = BunString::from_js(value, global_this)?;
             // We don't need to increment the reference count since try_from_js already did it.
-            js::name_set_cached(js_this, global_this, value);
+            bun_jsc::generated::JSBlob::name_set_cached(js_this, global_this, value);
             old_name.deref();
         }
         Ok(())
@@ -3473,7 +3475,7 @@ impl Blob {
 
     pub fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_bundler::options::Loader> {
         if let Some(filename) = self.get_file_name() {
-            let current_path = bun_core::fs::Path::init(filename);
+            let current_path = bun_resolver::fs::Path::init(filename);
             return Some(
                 current_path
                     .loader(&jsc_vm.transpiler.options.loaders)
@@ -3649,10 +3651,11 @@ impl Blob {
         match &store.data {
             Store::Data::File(file) => match &file.pathlike {
                 node::PathLike::Path(path_like) => {
-                    return Ok(node::fs::Async::stat::create(
+                    return Ok(node::fs::async_::Stat::create(
                         global_this,
-                        (),
-                        node::fs::StatArgs {
+                        // SAFETY: `Binding` is a zero-sized opaque marker; `create()` ignores it.
+                        unsafe { &mut *core::ptr::NonNull::<node::fs::Binding>::dangling().as_ptr() },
+                        node::fs::args::Stat {
                             path: node::PathLike::EncodedSlice(match path_like {
                                 node::PathLike::EncodedSlice(slice) => slice.to_owned()?,
                                 _ => ZigString::from_utf8(path_like.slice()).to_slice_clone()?,
@@ -3663,12 +3666,16 @@ impl Blob {
                     ));
                 }
                 node::PathLike::Fd(fd) => {
-                    return Ok(node::fs::Async::fstat::create(
-                        global_this, (), node::fs::FstatArgs { fd: *fd }, global_this.bun_vm(),
+                    return Ok(node::fs::async_::Fstat::create(
+                        global_this,
+                        // SAFETY: `Binding` is a zero-sized opaque marker; `create()` ignores it.
+                        unsafe { &mut *core::ptr::NonNull::<node::fs::Binding>::dangling().as_ptr() },
+                        node::fs::args::Fstat { fd: *fd, big_int: false },
+                        global_this.bun_vm(),
                     ));
                 }
             },
-            Store::Data::S3(_) => return S3File::get_stat(self, global_this, callback),
+            Store::Data::S3(_) => return crate::webcore::s3_file::get_stat(self, global_this, callback),
             _ => Ok(JSValue::UNDEFINED),
         }
     }
@@ -3742,13 +3749,13 @@ fn resolve_file_stat(store: &Store) {
             let mut buffer = bun_paths::PathBuffer::uninit();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::is_regular_file(stat.mode) || stat.size > 0 {
+                    file.max_size = if bun_sys::S::ISREG(stat.mode as _) || stat.size > 0 {
                         ((stat.size.max(0)) as u64) as SizeType
                     } else {
                         MAX_SIZE
                     };
                     file.mode = stat.mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::is_regular_file(stat.mode));
+                    file.seekable = Some(bun_sys::S::ISREG(stat.mode as _));
                     file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
                 }
                 // the file may not exist yet. That's okay.
@@ -3758,13 +3765,13 @@ fn resolve_file_stat(store: &Store) {
         node::PathLike::Fd(fd) => {
             match bun_sys::fstat(*fd) {
                 bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::is_regular_file(stat.mode) || stat.size > 0 {
+                    file.max_size = if bun_sys::S::ISREG(stat.mode as _) || stat.size > 0 {
                         ((stat.size.max(0)) as u64) as SizeType
                     } else {
                         MAX_SIZE
                     };
                     file.mode = stat.mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::is_regular_file(stat.mode));
+                    file.seekable = Some(bun_sys::S::ISREG(stat.mode as _));
                     file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
                 }
                 _ => {}
@@ -3897,8 +3904,8 @@ impl Blob {
     ) -> Result<Blob, bun_alloc::AllocError> {
         #[cfg(target_os = "linux")]
         {
-            if bun_sys::linux::MemFdAllocator::should_use(bytes_) {
-                if let bun_sys::Result::Ok(result) = bun_sys::linux::MemFdAllocator::create(bytes_) {
+            if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
+                if let bun_sys::Result::Ok(result) = crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_) {
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
                         ref_count: AtomicU32::new(1),
@@ -4002,10 +4009,10 @@ impl Blob {
         self.calculate_estimated_byte_size();
 
         if self.is_s3() {
-            return S3File::to_js_unchecked(global_object, self);
+            return crate::webcore::s3_file::to_js_unchecked(global_object, self as *mut Blob);
         }
 
-        js::to_js_unchecked(global_object, self)
+        js::to_js_unchecked(global_object, self as *mut Blob as *mut ())
     }
 
     /// Tear down owned resources. If heap-allocated, also frees the heap box.
@@ -5816,7 +5823,7 @@ pub trait FileOpener: Sized {
                                 .with_path(path_string_2.slice())
                                 .to_system_error(),
                         );
-                        self_.set_opened_fd(bun_sys::INVALID_FD);
+                        self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
                         self_.set_opened_fd(result.to_fd());
                     }
@@ -5848,8 +5855,8 @@ pub trait FileOpener: Sized {
                         .with_path(path_string.slice())
                         .to_system_error(),
                 );
-                self.set_opened_fd(bun_sys::INVALID_FD);
-                callback(self, bun_sys::INVALID_FD);
+                self.set_opened_fd(bun_sys::Fd::INVALID);
+                callback(self, bun_sys::Fd::INVALID);
             }
             // SAFETY: req() borrows self; re-borrow to set data after rc check.
             self.req().data = self_ptr.cast();

@@ -943,13 +943,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // not the CTX-level arg (shared across the listener).
                             // SAFETY: BoringSSL FFI; `self` outlives the SSL handshake.
                             unsafe {
-                                boringssl::SSL_set_ex_data(
+                                boringssl_ffi::SSL_set_ex_data(
                                     ssl_ptr.as_ptr(),
                                     0,
                                     self as *mut Self as *mut c_void,
                                 );
-                                boringssl::SSL_CTX_set_alpn_select_cb(
-                                    boringssl::SSL_get_SSL_CTX(ssl_ptr.as_ptr()),
+                                boringssl_ffi::SSL_CTX_set_alpn_select_cb(
+                                    boringssl_ffi::SSL_get_SSL_CTX(ssl_ptr.as_ptr()),
                                     Some(select_alpn_callback),
                                     ptr::null_mut(),
                                 );
@@ -957,7 +957,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         } else {
                             // SAFETY: BoringSSL FFI.
                             unsafe {
-                                boringssl::SSL_set_alpn_protos(
+                                boringssl_ffi::SSL_set_alpn_protos(
                                     ssl_ptr.as_ptr(),
                                     protos.as_ptr(),
                                     c_uint::try_from(protos.len()).unwrap(),

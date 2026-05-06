@@ -388,9 +388,11 @@ impl Response {
         if let BodyValue::Locked(locked) = &mut self.body.value {
             locked.size_hint = size_hint;
             if let Some(readable) = locked.readable.get(locked.global) {
-                if let super::readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
+                if let super::readable_stream::Source::Bytes(bytes) = &readable.ptr {
                     // TODO(port): lifetime — readable.ptr.Bytes is a back-pointer; verify mutability
-                    bytes.size_hint = size_hint;
+                    // SAFETY: `bytes` is a live `*mut ByteStream` back-pointer owned by the
+                    // ReadableStream; mutating its `size_hint` is the Zig contract.
+                    unsafe { (**bytes).size_hint = size_hint; }
                 }
             }
         }
@@ -449,7 +451,7 @@ pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
             if blob.is_bun_file() {
                 return JSValue::UNDEFINED;
             }
-            let result = match blob.to_array_buffer(global_object, super::blob::Lifetime::Transfer) {
+            let result = match blob.to_array_buffer(global_object, crate::webcore::Lifetime::Transfer) {
                 Ok(v) => v,
                 Err(_) => JSValue::ZERO,
             };
@@ -621,7 +623,7 @@ impl Response {
 
             formatter.write_indent(writer)?;
             writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \""))?;
-            write!(writer, "{}", Output::pretty_args::<ENABLE_ANSI_COLORS>("<r><b>{}<r>", &self.url))?;
+            write!(writer, "{}", Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (&self.url,)))?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;

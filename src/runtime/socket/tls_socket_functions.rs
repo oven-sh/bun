@@ -827,7 +827,6 @@ pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFra
     unsafe { boringssl::SSL_set_verify(ssl_ptr, verify_mode, Some(always_allow_ssl_verify_callback)) };
     Ok(JSValue::UNDEFINED)
 }
-} // impl This
 
 extern "C" fn always_allow_ssl_verify_callback(_preverify_ok: c_int, _ctx: *mut boringssl::X509_STORE_CTX) -> c_int {
     1

@@ -1037,8 +1037,9 @@ impl FetchTasklet {
     /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
     fn clear_stream_cancel_handler(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(self.global_this) {
-            if let readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
-                let source = bytes.parent();
+            if let readable_stream::Source::Bytes(bytes) = readable.ptr {
+                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+                let source = unsafe { (*bytes).parent() };
                 source.cancel_handler = None;
                 source.cancel_ctx = None;
             }

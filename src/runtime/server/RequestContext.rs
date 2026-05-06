@@ -1941,12 +1941,14 @@ where
         // if we cannot, we have to reject pending promises
         // first, we reject the request body promise
         if let Some(body) = &mut self.request_body {
+            // SAFETY: pooled HiveRef slot is live while held.
+            let body = unsafe { body.as_mut() };
             // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
             // but we received nothing or the connection was aborted
-            if matches!(body.value, Body::Value::Locked(_)) {
+            if matches!(body, Body::Value::Locked(_)) {
                 // SAFETY: BACKREF
                 let global_this = unsafe { (*self.server.unwrap()).global_this() };
-                body.value.to_error_instance(
+                body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
                 )?;

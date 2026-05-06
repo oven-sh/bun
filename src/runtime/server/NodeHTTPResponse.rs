@@ -1545,10 +1545,10 @@ impl NodeHTTPResponse {
     #[bun_jsc::host_fn(setter)]
     pub fn set_on_writable(
         &mut self,
-        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> JsResult<bool> {
+        let this_value = self.get_this_value();
         if self.is_done() || value.is_undefined() {
             js::on_writable_set_cached(this_value, global_object, JSValue::UNDEFINED);
         } else {
@@ -1558,30 +1558,31 @@ impl NodeHTTPResponse {
                 value.with_async_context_if_needed(global_object),
             );
         }
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::on_writable_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    pub fn get_on_writable(&self, _global: &JSGlobalObject) -> JSValue {
+        js::on_writable_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_on_abort(&self, _global: &JSGlobalObject) -> JSValue {
         if self.flags.contains(Flags::SOCKET_CLOSED) || self.flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
         }
-        js::on_aborted_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+        js::on_aborted_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(setter)]
     pub fn set_on_abort(
         &mut self,
-        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> JsResult<bool> {
+        let this_value = self.get_this_value();
         if self.flags.contains(Flags::SOCKET_CLOSED) || self.flags.contains(Flags::UPGRADED) {
-            return;
+            return Ok(true);
         }
 
         if self.is_requested_completed_or_ended() || value.is_undefined() {
@@ -1593,11 +1594,12 @@ impl NodeHTTPResponse {
                 value.with_async_context_if_needed(global_object),
             );
         }
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_on_data(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::on_data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    pub fn get_on_data(&self, _global: &JSGlobalObject) -> JSValue {
+        js::on_data_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(getter)]

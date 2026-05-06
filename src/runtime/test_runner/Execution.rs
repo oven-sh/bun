@@ -694,7 +694,8 @@ impl Execution {
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,
-                    sequence.test_entry.unwrap_or(first_entry),
+                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
+                    unsafe { &mut *sequence.test_entry.unwrap_or(first_entry).as_ptr() },
                     elapsed_ns,
                 );
             }

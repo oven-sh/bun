@@ -452,7 +452,14 @@ pub struct Run<'a> {
     pub function_name: &'a [u8],
     pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
-    // allocator field deleted — always default_allocator
+    // PORT NOTE: Zig carried `allocator: std.mem.Allocator` (always
+    // `default_allocator`). The Rust AST uses arena-owned slices
+    // (`EString::init` lifetime-erases its borrow), so `coerce` needs a bump
+    // arena to back property keys / UTF-16 string data / `from_blob` JSON
+    // sub-parsing. Owned here so it drops when the `Run` does — the `Expr`
+    // tree it backs is consumed/printed before `MacroContext::call` returns
+    // (Store reset is disabled for that window).
+    pub bump: bun_alloc::Arena,
     pub id: i32,
     pub log: &'a mut Log,
     pub source: &'a Source,

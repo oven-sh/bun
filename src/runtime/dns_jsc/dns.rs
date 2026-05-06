@@ -1520,6 +1520,21 @@ impl GetAddrInfoRequest {
     }
 }
 
+// Wires `GetAddrInfoRequest` into `Channel::get_addr_info`. Zig:
+// `channel.getAddrInfo(query.name, query.port, hints_buf, GetAddrInfoRequest,
+// request, GetAddrInfoRequest.onCaresComplete)`.
+impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
+    fn on_addr_info(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: *mut c_ares::AddrInfo,
+    ) {
+        let result = if results.is_null() { None } else { Some(results) };
+        Self::on_cares_complete(self as *mut Self, status, timeouts, result);
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CAresReverse
 // ──────────────────────────────────────────────────────────────────────────
@@ -2906,11 +2921,18 @@ pub enum PendingCacheField {
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! impl_cares_record_type {
-    ($ty:ty, $tag:literal, $syscall:literal, $field:ident, $to_js:path, $destroy:expr) => {
+    (
+        $ty:ty, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident,
+        $handler_trait:path, $handler_method:ident,
+        $to_js:path, $destroy:expr
+    ) => {
         impl CAresRecordType for $ty {
             const TYPE_NAME: &'static str = $tag;
             const SYSCALL: &'static str = $syscall;
             const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
+            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
+            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+                <$ty>::callback_wrapper::<ResolveInfoRequest<$ty>>;
             fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
                 $to_js(self, global, type_name.as_bytes())
             }
@@ -2920,59 +2942,146 @@ macro_rules! impl_cares_record_type {
                 unsafe { ($destroy)(this) }
             }
         }
-    };
-}
-
-impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", "querySrv", PendingSrvCacheCares,
-    super::cares_jsc::srv_reply_to_js_response, c_ares::struct_ares_srv_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", "querySoa", PendingSoaCacheCares,
-    super::cares_jsc::soa_reply_to_js_response, c_ares::struct_ares_soa_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", "queryTxt", PendingTxtCacheCares,
-    super::cares_jsc::txt_reply_to_js_response, c_ares::struct_ares_txt_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", "queryNaptr", PendingNaptrCacheCares,
-    super::cares_jsc::naptr_reply_to_js_response, c_ares::struct_ares_naptr_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", "queryMx", PendingMxCacheCares,
-    super::cares_jsc::mx_reply_to_js_response, c_ares::struct_ares_mx_reply::destroy);
-impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", "queryCaa", PendingCaaCacheCares,
-    super::cares_jsc::caa_reply_to_js_response, c_ares::struct_ares_caa_reply::destroy);
-impl_cares_record_type!(c_ares::struct_any_reply, "any", "queryAny", PendingAnyCacheCares,
-    super::cares_jsc::any_reply_to_js_response,
-    // `struct_any_reply` is heap-boxed (parser returns `Box<_>`); Drop frees inner replies.
-    |p: *mut c_ares::struct_any_reply| drop(Box::from_raw(p)));
-
-/// Transparent newtype over `struct_hostent` carrying the comptime `type_name` tag.
-macro_rules! hostent_newtype {
-    ($name:ident, $inner:ty, $tag:literal, $syscall:literal, $field:ident, $to_js:path, $destroy:expr) => {
-        #[repr(transparent)]
-        pub struct $name(pub $inner);
-        impl CAresRecordType for $name {
-            const TYPE_NAME: &'static str = $tag;
-            const SYSCALL: &'static str = $syscall;
-            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
-            fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
-                $to_js(&mut self.0, global, type_name.as_bytes())
-            }
-            unsafe fn destroy(this: *mut Self) {
-                // SAFETY: `#[repr(transparent)]` — `*mut Self` is `*mut $inner`.
-                unsafe { ($destroy)(this as *mut $inner) }
+        // Per-reply-type handler trait — forwards to `on_cares_complete`. Zig
+        // monomorphized this via `cares_type.Callback(ResolveInfoRequest(..))`.
+        impl $handler_trait for ResolveInfoRequest<$ty> {
+            fn $handler_method(
+                &mut self,
+                status: Option<c_ares::Error>,
+                timeouts: i32,
+                results: *mut $ty,
+            ) {
+                let result = if results.is_null() { None } else { Some(results) };
+                Self::on_cares_complete(self as *mut Self, status, timeouts, result);
             }
         }
     };
 }
 
-hostent_newtype!(NsHostent, c_ares::struct_hostent, "ns", "queryNs", PendingNsCacheCares,
-    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(PtrHostent, c_ares::struct_hostent, "ptr", "queryPtr", PendingPtrCacheCares,
-    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(CnameHostent, c_ares::struct_hostent, "cname", "queryCname", PendingCnameCacheCares,
-    super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(AHostentWithTtls, c_ares::hostent_with_ttls, "a", "queryA", PendingACacheCares,
-    super::cares_jsc::hostent_with_ttls_to_js_response,
-    // `hostent_with_ttls` is heap-boxed (parser returns `Box<_>`); Drop calls `ares_free_hostent`.
-    |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
-hostent_newtype!(AaaaHostentWithTtls, c_ares::hostent_with_ttls, "aaaa", "queryAaaa", PendingAaaaCacheCares,
-    super::cares_jsc::hostent_with_ttls_to_js_response,
-    |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
+impl_cares_record_type!(c_ares::struct_ares_srv_reply, "srv", "querySrv", PendingSrvCacheCares, ns_t_srv,
+    c_ares::SrvHandler, on_srv,
+    super::cares_jsc::srv_reply_to_js_response, c_ares::struct_ares_srv_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_soa_reply, "soa", "querySoa", PendingSoaCacheCares, ns_t_soa,
+    c_ares::SoaHandler, on_soa,
+    super::cares_jsc::soa_reply_to_js_response, c_ares::struct_ares_soa_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_txt_reply, "txt", "queryTxt", PendingTxtCacheCares, ns_t_txt,
+    c_ares::TxtHandler, on_txt,
+    super::cares_jsc::txt_reply_to_js_response, c_ares::struct_ares_txt_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_naptr_reply, "naptr", "queryNaptr", PendingNaptrCacheCares, ns_t_naptr,
+    c_ares::NaptrHandler, on_naptr,
+    super::cares_jsc::naptr_reply_to_js_response, c_ares::struct_ares_naptr_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_mx_reply, "mx", "queryMx", PendingMxCacheCares, ns_t_mx,
+    c_ares::MxHandler, on_mx,
+    super::cares_jsc::mx_reply_to_js_response, c_ares::struct_ares_mx_reply::destroy);
+impl_cares_record_type!(c_ares::struct_ares_caa_reply, "caa", "queryCaa", PendingCaaCacheCares, ns_t_caa,
+    c_ares::CaaHandler, on_caa,
+    super::cares_jsc::caa_reply_to_js_response, c_ares::struct_ares_caa_reply::destroy);
+
+// `any` — handler receives `Option<Box<struct_any_reply>>` (parser allocates the
+// aggregate); convert via `Box::into_raw` so the rest of the pipeline sees a
+// uniform `*mut T` and `CAresRecordType::destroy` reclaims it with `Box::from_raw`.
+impl CAresRecordType for c_ares::struct_any_reply {
+    const TYPE_NAME: &'static str = "any";
+    const SYSCALL: &'static str = "queryAny";
+    const CACHE_FIELD: PendingCacheField = PendingCacheField::PendingAnyCacheCares;
+    const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_any;
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+        c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest<c_ares::struct_any_reply>>;
+    fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
+        super::cares_jsc::any_reply_to_js_response(self, global, type_name.as_bytes())
+    }
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: `this` was `Box::into_raw`'d in `on_any` below; Drop frees inner replies.
+        unsafe { drop(Box::from_raw(this)) }
+    }
+}
+impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
+    fn on_any(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        results: Option<Box<c_ares::struct_any_reply>>,
+    ) {
+        Self::on_cares_complete(self as *mut Self, status, timeouts, results.map(Box::into_raw));
+    }
+}
+
+/// Transparent newtype over `struct_hostent` carrying the comptime `type_name` tag.
+macro_rules! hostent_newtype {
+    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $wrapper:ident) => {
+        #[repr(transparent)]
+        pub struct $name(pub c_ares::struct_hostent);
+        impl CAresRecordType for $name {
+            const TYPE_NAME: &'static str = $tag;
+            const SYSCALL: &'static str = $syscall;
+            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
+            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
+            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+                c_ares::struct_hostent::$wrapper::<ResolveInfoRequest<$name>>;
+            fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
+                super::cares_jsc::hostent_to_js_response(&mut self.0, global, type_name.as_bytes())
+            }
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: `#[repr(transparent)]` — `*mut Self` is `*mut struct_hostent`.
+                unsafe { c_ares::struct_hostent::destroy(this as *mut c_ares::struct_hostent) }
+            }
+        }
+        impl c_ares::HostentHandler for ResolveInfoRequest<$name> {
+            fn on_hostent(
+                &mut self,
+                status: Option<c_ares::Error>,
+                timeouts: i32,
+                results: *mut c_ares::struct_hostent,
+            ) {
+                // SAFETY: `#[repr(transparent)]` — `*mut struct_hostent` casts to `*mut $name`.
+                let result = if results.is_null() { None } else { Some(results as *mut $name) };
+                Self::on_cares_complete(self as *mut Self, status, timeouts, result);
+            }
+        }
+    };
+}
+
+/// Transparent newtype over `hostent_with_ttls` for A/AAAA records.
+macro_rules! hostent_ttls_newtype {
+    ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $wrapper:ident) => {
+        #[repr(transparent)]
+        pub struct $name(pub c_ares::hostent_with_ttls);
+        impl CAresRecordType for $name {
+            const TYPE_NAME: &'static str = $tag;
+            const SYSCALL: &'static str = $syscall;
+            const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
+            const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
+            const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+                c_ares::hostent_with_ttls::$wrapper::<ResolveInfoRequest<$name>>;
+            fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
+                super::cares_jsc::hostent_with_ttls_to_js_response(&mut self.0, global, type_name.as_bytes())
+            }
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: `#[repr(transparent)]`; allocated via `Box::into_raw` in
+                // `on_hostent_with_ttls` below — Drop calls `ares_free_hostent`.
+                unsafe { drop(Box::from_raw(this as *mut c_ares::hostent_with_ttls)) }
+            }
+        }
+        impl c_ares::HostentWithTtlsHandler for ResolveInfoRequest<$name> {
+            fn on_hostent_with_ttls(
+                &mut self,
+                status: Option<c_ares::Error>,
+                timeouts: i32,
+                results: Option<Box<c_ares::hostent_with_ttls>>,
+            ) {
+                // SAFETY: `#[repr(transparent)]` — `*mut hostent_with_ttls` casts to `*mut $name`.
+                let result = results.map(|b| Box::into_raw(b) as *mut $name);
+                Self::on_cares_complete(self as *mut Self, status, timeouts, result);
+            }
+        }
+    };
+}
+
+hostent_newtype!(NsHostent, "ns", "queryNs", PendingNsCacheCares, ns_t_ns, callback_wrapper_ns);
+hostent_newtype!(PtrHostent, "ptr", "queryPtr", PendingPtrCacheCares, ns_t_ptr, callback_wrapper_ptr);
+hostent_newtype!(CnameHostent, "cname", "queryCname", PendingCnameCacheCares, ns_t_cname, callback_wrapper_cname);
+hostent_ttls_newtype!(AHostentWithTtls, "a", "queryA", PendingACacheCares, ns_t_a, callback_wrapper_a);
+hostent_ttls_newtype!(AaaaHostentWithTtls, "aaaa", "queryAaaa", PendingAaaaCacheCares, ns_t_aaaa, callback_wrapper_aaaa);
 
 pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
 type SrvPendingCache = HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;

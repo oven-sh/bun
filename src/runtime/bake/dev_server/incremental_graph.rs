@@ -225,16 +225,14 @@ pub enum ReceiveChunkContent {
     Css(u64),
 }
 
-pub struct TakeJSBundleOptionsClient {
+pub struct TakeJSBundleOptionsClient<'a> {
     pub kind: ChunkKind,
     pub script_id: source_map_store::Key,
-    // TODO(port): lifetime — callers pass non-'static path slices; Phase A
-    // forbids struct lifetimes so `&'static [u8]` stands in for `[]const u8`.
-    pub initial_response_entry_point: &'static [u8],
-    pub react_refresh_entry_point: &'static [u8],
+    pub initial_response_entry_point: &'a [u8],
+    pub react_refresh_entry_point: &'a [u8],
     pub console_log: bool,
 }
-impl Default for TakeJSBundleOptionsClient {
+impl Default for TakeJSBundleOptionsClient<'_> {
     fn default() -> Self {
         Self {
             kind: ChunkKind::InitialResponse,

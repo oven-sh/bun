@@ -509,7 +509,7 @@ pub mod js_bundler {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
-            if let Some(exec_argv) = object.get_array(global_this, "execArgv")? {
+            if let Some(exec_argv) = object.get_own_array(global_this, "execArgv")? {
                 let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {
@@ -803,8 +803,7 @@ pub mod js_bundler {
                         };
                     }
                 } else if !source_map_js.is_empty_or_undefined_or_null() {
-                    this.source_map = to_enum_from_map(
-                        source_map_js,
+                    this.source_map = source_map_js.to_enum_from_map(
                         global_this,
                         "sourcemap",
                         &options::SOURCE_MAP_OPTION_MAP,
@@ -852,8 +851,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(packages) = get_optional_enum_from_map(
-                config,
+            if let Some(packages) = config.get_optional_enum_from_map(
                 global_this,
                 "packages",
                 &options::PACKAGES_OPTION_MAP,
@@ -925,8 +923,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(format) = get_optional_enum_from_map(
-                config,
+            if let Some(format) = config.get_optional_enum_from_map(
                 global_this,
                 "format",
                 &options::Format::MAP,
@@ -1291,8 +1288,7 @@ pub mod js_bundler {
                     drop(prop_slice);
 
                     // PERF(port): was assume_capacity
-                    loader_values.push(to_enum_from_map(
-                        loader_iter.value,
+                    loader_values.push(loader_iter.value.to_enum_from_map(
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,

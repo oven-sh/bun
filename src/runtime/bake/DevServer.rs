@@ -2973,25 +2973,32 @@ impl DevServer<'_> {
         match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
-                let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).source_maps.unref(script_id) });
-                // TODO(port): errdefer — disarm on success
+                let guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).source_maps.unref(script_id) });
                 gts.clear_and_free();
-                // PERF(port): was ArenaAllocator
-                // TODO(port): `take_source_map` is typed against the keystone
-                // `source_map_store::Entry`; the body-module `Entry` will unify
-                // once `source_map_store_body` is folded in.
-                let _ = entry;
-                let _: () = todo!("blocked_on: source_map_store::Entry unification with source_map_store_body::Entry");
-                #[allow(unreachable_code)]
-                scopeguard::ScopeGuard::into_inner(_guard);
+                // PERF(port): was ArenaAllocator scratch — `take_source_map`
+                // allocates internally with the global allocator in the port.
+                // SAFETY: see `self_ptr` SAFETY above; `client_graph` is a
+                // disjoint field from `source_maps`.
+                unsafe { &mut (*self_ptr).client_graph }.take_source_map(entry)?;
+                scopeguard::ScopeGuard::into_inner(guard);
             }
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
-        let _ = (client_file, react_fast_refresh_id, script_id);
-        // TODO(port): `TakeJSBundleOptionsClient` borrow fields are `'static`; the
-        // local-slice form here cannot be expressed until that struct gets a lifetime.
-        let client_bundle: Vec<u8> = todo!("blocked_on: IncrementalGraph::take_js_bundle (client)");
+        let initial_entry: &[u8] = if let Some(idx) = client_file {
+            &self.client_graph.bundled_files.keys()[idx.get() as usize]
+        } else {
+            b""
+        };
+        let client_bundle = self.client_graph.take_js_bundle(
+            &incremental_graph::TakeJSBundleOptionsClient {
+                kind: crate::bake::dev_server::ChunkKind::InitialResponse,
+                initial_response_entry_point: initial_entry,
+                react_refresh_entry_point: react_fast_refresh_id,
+                script_id,
+                console_log: self.should_receive_console_log_from_browser(),
+            },
+        )?;
         Ok(client_bundle)
     }
 
@@ -3891,12 +3898,10 @@ pub fn finalize_bundle(
                 map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
                 let entry = match dev.source_maps.put_or_increment_ref_count(script_id, sockets)? {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        // TODO(port): `take_source_map` is typed against the
-                        // keystone `Entry`; the body-module `Entry` will unify
-                        // once `source_map_store_body` is folded in.
-                        let _ = &entry;
-                        let _: () = todo!("blocked_on: source_map_store::Entry unification with source_map_store_body::Entry");
-                        #[allow(unreachable_code)]
+                        // PORT NOTE: reborrow `client_graph` via `dev_ptr` so the
+                        // `&mut Entry` borrow inside `source_maps` does not alias.
+                        // SAFETY: `dev_ptr` is live for this fn; disjoint fields.
+                        unsafe { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,

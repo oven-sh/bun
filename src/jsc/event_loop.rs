@@ -574,14 +574,21 @@ impl EventLoop {
     }
 
     pub fn usockets_loop(&self) -> *mut uws::Loop {
+        // Spec event_loop.zig:359-365 unwraps `.?` (panic on null). Preserve
+        // that fail-fast contract — callers immediately materialize `&mut *`,
+        // so a null return would be instant UB instead of a clean panic.
         #[cfg(windows)]
         {
-            return self.uws_loop.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+            return self
+                .uws_loop
+                .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
+                .as_ptr();
         }
         #[cfg(not(windows))]
         {
             // SAFETY: vm() returns the live owning VM; field read only.
-            unsafe { (*self.vm()).event_loop_handle }.unwrap_or(core::ptr::null_mut())
+            unsafe { (*self.vm()).event_loop_handle }
+                .expect("usockets_loop: event_loop_handle not initialized (call ensure_waker first)")
         }
     }
 
@@ -679,7 +686,9 @@ impl EventLoop {
         self.next_immediate_tasks = Vec::new();
     }
 
-    pub fn enqueue_immediate_task(&mut self, task: *mut ImmediateObject) {
+    /// PORT NOTE (§Dispatch): `task` is an erased
+    /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
+    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.immediate_tasks.push(task);
     }
 
@@ -687,12 +696,13 @@ impl EventLoop {
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
     ///
-    /// PORT NOTE: `ImmediateObject` is opaque at this tier; the per-task body
-    /// dispatches through [`RUN_IMMEDIATE_HOOK`] (installed by `bun_runtime`).
-    /// When no hook is installed (unit tests) the swap still happens — this is
-    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
-    /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
-    /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
+    /// PORT NOTE: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
+    /// the per-task body dispatches through [`RUN_IMMEDIATE_HOOK`] (installed
+    /// by `bun_runtime`). When no hook is installed (unit tests) the swap still
+    /// happens — this is load-bearing for `auto_tick`'s `has_pending_immediate`
+    /// read, which must observe the post-swap `immediate_tasks` (next-tick
+    /// immediates), not the un-drained current batch (busy-spin hazard, spec
+    /// Timer.zig:251-256).
     pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         let mut to_run_now = core::mem::take(&mut self.immediate_tasks);
 
@@ -813,10 +823,22 @@ impl EventLoop {
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
-    /// `promise` settles or execution is forbidden.
+    /// `promise` settles or execution is forbidden (spec event_loop.zig:553-576).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
-        // SAFETY: `vm()` is the live owning VM; reborrow uniquely.
-        unsafe { (*self.vm()).wait_for_promise(promise) };
+        // SAFETY: vm() returns the live owning VM; `jsc_vm` is the live JSC::VM.
+        let jsc_vm = unsafe { &*(*self.vm()).jsc_vm };
+        if promise.status() != PromiseStatus::Pending {
+            return;
+        }
+        while promise.status() == PromiseStatus::Pending {
+            if jsc_vm.execution_forbidden() {
+                break;
+            }
+            self.tick();
+            if promise.status() == PromiseStatus::Pending {
+                self.auto_tick();
+            }
+        }
     }
 
     pub fn wakeup(&self) {
@@ -948,25 +970,6 @@ impl EventLoop {
         self.tick();
     }
 
-    pub fn _wait_for_promise_body(&mut self, promise: jsc::AnyPromise) {
-        // SAFETY: vm() returns the live owning VM; `jsc_vm` is the live JSC::VM.
-        let jsc_vm = unsafe { &*(*self.vm()).jsc_vm };
-        match promise.status() {
-            PromiseStatus::Pending => {
-                while promise.status() == PromiseStatus::Pending {
-                    if jsc_vm.execution_forbidden() {
-                        break;
-                    }
-                    self.tick();
-                    if promise.status() == PromiseStatus::Pending {
-                        self.auto_tick();
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
         // SAFETY: vm() returns the live owning VM; `worker` is a heap `WebWorker`
         // owned by C++ that outlives this VM (BACKREF — see field decl).
@@ -997,6 +1000,13 @@ impl EventLoop {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
+        // Spec event_loop.zig:667 unwraps `batch.front.?`/`batch.last.?` —
+        // preserve the panic-on-empty contract; `push_batch`'s first line is
+        // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.
+        assert!(
+            !batch.front.is_null() && !batch.last.is_null(),
+            "enqueue_task_concurrent_batch: empty batch",
+        );
         self.concurrent_tasks.push_batch(batch.front, batch.last);
         self.wakeup();
     }
@@ -1094,7 +1104,8 @@ pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
 //   confidence: high
 //   notes:      Full bodies ported. Task / ImmediateObject / WTFTimer dispatch
 //               hoisted to bun_runtime via TICK_QUEUE_HOOK / RUN_IMMEDIATE_HOOK
-//               / RUN_WTF_TIMER_HOOK; auto_tick / auto_tick_active dispatch via
-//               virtual_machine::RuntimeHooks (need Timer::All for poll
-//               deadline). All re-exports resolve to real types.
+//               / RUN_WTF_TIMER_HOOK (low tier stores `*mut ()`, high tier owns
+//               the cast — PORTING.md §Dispatch); auto_tick / auto_tick_active
+//               dispatch via virtual_machine::RuntimeHooks (need Timer::All for
+//               poll deadline). All re-exports resolve to real types.
 // ──────────────────────────────────────────────────────────────────────────

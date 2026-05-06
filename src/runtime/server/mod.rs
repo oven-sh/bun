@@ -8,6 +8,63 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
+
+/// Codegen `${ServerType}__create(ptr, global)` shim — one extern per
+/// `(SSL, DEBUG)` monomorphization. Hand-dispatched until `.classes.ts`
+/// Rust output lands.
+pub(crate) fn server_js_create(
+    ptr: *mut c_void,
+    global: &jsc::JSGlobalObject,
+    ssl: bool,
+    debug: bool,
+) -> jsc::JSValue {
+    unsafe extern "C" {
+        fn HTTPServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
+        fn HTTPSServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
+        fn DebugHTTPServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
+        fn DebugHTTPSServer__create(ptr: *mut c_void, global: *const jsc::JSGlobalObject) -> jsc::JSValue;
+    }
+    // SAFETY: `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
+    // wrapper takes ownership.
+    unsafe {
+        match (ssl, debug) {
+            (false, false) => HTTPServer__create(ptr, global),
+            (true, false) => HTTPSServer__create(ptr, global),
+            (false, true) => DebugHTTPServer__create(ptr, global),
+            (true, true) => DebugHTTPSServer__create(ptr, global),
+        }
+    }
+}
+
+/// `jsc.Debugger.HTTPServerAgent.{notifyServerStarted, notifyServerRoutesUpdated}`
+/// — the agent body lives in the (still-gated) inspector module; these free
+/// fns take the `bun_jsc::debugger::HTTPServerAgent` opaque handle and the
+/// runtime-tier `AnyServer` so callers in this crate don't need a vtable hop.
+pub mod http_server_agent {
+    use super::AnyServer;
+    use bun_jsc::debugger::HTTPServerAgent;
+
+    pub fn notify_server_started(agent: &mut HTTPServerAgent, server: AnyServer) {
+        if !agent.is_enabled() {
+            return;
+        }
+        // TODO(port): emit `Network.serverStarted` over the inspector socket
+        // once `InspectorBunFrontendDevServerAgent` is wired (server.zig:notifyServerStarted).
+        let _ = server;
+    }
+
+    pub fn notify_server_routes_updated(
+        agent: &mut HTTPServerAgent,
+        server: AnyServer,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if !agent.is_enabled() {
+            return Ok(());
+        }
+        // TODO(port): emit `Network.serverRoutesUpdated` (see above).
+        let _ = server;
+        Ok(())
+    }
+}
 use std::rc::Rc;
 
 use bun_aio::KeepAlive;

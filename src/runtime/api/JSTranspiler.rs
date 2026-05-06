@@ -2,7 +2,7 @@
 
 use std::io::Write as _;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_bundler::options::{self, Loader, PackagesOption, SourceMapOption, Target};
 use bun_bundler::{self as Transpiler};
 use bun_bundler::transpiler::{MacroJSCtx, ParseResult, ParseOptions};
@@ -145,13 +145,6 @@ fn source_map_option_from_js(
     value: JSValue,
 ) -> JsResult<Option<SourceMapOption>> {
     options::SOURCE_MAP_OPTION_MAP.from_js(global, value)
-}
-
-fn packages_option_from_js(
-    global: &JSGlobalObject,
-    value: JSValue,
-) -> JsResult<Option<PackagesOption>> {
-    options::PACKAGES_OPTION_MAP.from_js(global, value)
 }
 
 fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<logger::Level>> {
@@ -481,10 +474,13 @@ impl Config {
             }
         }
 
-        if let Some(packages_value) = object.get(global, "packages")? {
-            if let Some(packages) = packages_option_from_js(global, packages_value)? {
-                self.transform.packages = Some(PackagesOption::to_api(Some(packages)));
-            }
+        if let Some(packages) = object.get_optional_enum_from_map(
+            global,
+            "packages",
+            &options::PACKAGES_OPTION_MAP,
+            "\"bundle\" or \"external\"",
+        )? {
+            self.transform.packages = Some(PackagesOption::to_api(Some(packages)));
         }
 
         let mut tree_shaking: Option<bool> = None;

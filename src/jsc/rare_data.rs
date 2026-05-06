@@ -3,10 +3,9 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate as jsc;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_aio::{self as Async};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
@@ -16,7 +15,7 @@ use bun_event_loop::MiniEventLoop::STDIO_BLOB_STORE_CTOR;
 use bun_http::MimeType as mime_type;
 use bun_paths::MAX_PATH_BYTES;
 use bun_string::{self as strings};
-use bun_sys::{self as syscall, Fd, Mode};
+use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;

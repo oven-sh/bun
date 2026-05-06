@@ -31,7 +31,11 @@ pub struct FileRoute {
     blob: Blob,
     headers: Headers,
     status_code: u16,
-    stat_hash: StatHash,
+    // Mutated on every request (`on()` runs `hash()`); FileRoute is reached via
+    // a shared `*const Self` from the route table, so wrap for interior
+    // mutability. Sound: `on()` runs to completion synchronously on the
+    // single-threaded JS event loop — no overlapping `&mut StatHash`.
+    stat_hash: UnsafeCell<StatHash>,
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
@@ -59,10 +63,12 @@ unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) 
     // scratch state on the C++ side, hence the const→mut cast.
     unsafe { (*(owner as *mut FetchHeaders)).count(header_count, buf_len) }
 }
-unsafe fn fh_fast_has(owner: *const (), _name: bun_http::headers::HeaderName) -> bool {
-    // SAFETY: see `fh_count`. Only ever called with HeaderName::ContentType
-    // (see Headers::from).
-    unsafe { (*(owner as *mut FetchHeaders)).fast_has(bun_jsc::HTTPHeaderName::ContentType) }
+unsafe fn fh_fast_has(owner: *const (), name: bun_http::headers::HeaderName) -> bool {
+    // SAFETY: see `fh_count`. `bun_http::headers::HeaderName` re-exports
+    // `bun_http_types::Method::HeaderName`, which is `#[repr(u8)]` with
+    // discriminants identical to `bun_jsc::HTTPHeaderName` (both mirror
+    // WebCore's `HTTPHeaderNames.in`); `fast_has_` takes the raw `u8`.
+    unsafe { (*(owner as *mut FetchHeaders)).fast_has_(name as u8) }
 }
 unsafe fn fh_copy_to(
     owner: *const (),
@@ -162,8 +168,11 @@ impl FileRoute {
             }
         }
 
-        if self.stat_hash.last_modified_u64 > 0 {
-            return Ok(Some(self.stat_hash.last_modified_u64));
+        // SAFETY: single-threaded event loop; no concurrent &mut to stat_hash
+        // (see field comment).
+        let last_modified_u64 = unsafe { (*self.stat_hash.get()).last_modified_u64 };
+        if last_modified_u64 > 0 {
+            return Ok(Some(last_modified_u64));
         }
 
         Ok(None)
@@ -180,7 +189,7 @@ impl FileRoute {
             blob,
             headers,
             status_code: opts.status_code,
-            stat_hash: StatHash::default(),
+            stat_hash: UnsafeCell::new(StatHash::default()),
         }))
     }
 
@@ -232,7 +241,7 @@ impl FileRoute {
                     blob,
                     headers,
                     status_code,
-                    stat_hash: StatHash::default(),
+                    stat_hash: UnsafeCell::new(StatHash::default()),
                 }))));
             }
         }
@@ -253,7 +262,7 @@ impl FileRoute {
                     has_last_modified_header: false,
                     has_content_range_header: false,
                     status_code: 200,
-                    stat_hash: StatHash::default(),
+                    stat_hash: UnsafeCell::new(StatHash::default()),
                 }))));
             }
         }
@@ -307,7 +316,9 @@ impl FileRoute {
         }
 
         if !self.has_last_modified_header {
-            if let Some(last_modified) = self.stat_hash.last_modified() {
+            // SAFETY: single-threaded event loop; no concurrent &mut to
+            // stat_hash (see field comment).
+            if let Some(last_modified) = unsafe { (*self.stat_hash.get()).last_modified() } {
                 resp.write_header(b"last-modified", last_modified);
             }
         }
@@ -347,23 +358,29 @@ impl FileRoute {
         Self::on(this, req, resp, method);
     }
 
-    // PORT NOTE: takes `*mut FileRoute` (not `&mut self`) because the
-    // intrusive-refcounted heap object is captured into a `scopeguard` that
-    // outlives later borrows AND `on_response_complete` may free `*this` via
-    // `deref()`. Any `&mut self` would dangle across that drop.
+    // PORT NOTE: takes `*mut FileRoute` (not `&self`) because the
+    // intrusive-refcounted heap object is captured raw into a `scopeguard`
+    // whose closure may free `*this` via `deref()` before the local `&Self`
+    // borrow lexically ends. Derive a single `&FileRoute` for all field reads;
+    // the only per-request mutation (`stat_hash.hash`) goes through
+    // `UnsafeCell`, so no `&mut Self` is ever materialized and the shared
+    // borrow stays valid under Stacked Borrows across that write.
     pub fn on(this_ptr: *mut FileRoute, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        // SAFETY: `this_ptr` is live for the duration of this fn body — the
-        // ref taken below keeps it alive until `on_response_complete`.
-        let this = unsafe { &mut *this_ptr };
+        // SAFETY: `this_ptr` is a live heap FileRoute for the duration of this
+        // fn body — the `ref_()` taken below keeps it alive until
+        // `on_response_complete`. All mutation through `this` goes via
+        // `Cell`/`UnsafeCell`, so the shared borrow is sound.
+        let this = unsafe { &*this_ptr };
         debug_assert!(this.server.get().is_some());
         this.ref_();
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // PORT NOTE: clone the path to break the shared borrow on `self.blob`
-        // so the `&mut self` calls below (stat_hash.hash) don't conflict. Zig
-        // had no borrowck here.
+        // PORT NOTE: clone the path so the borrow into `this.blob.store`
+        // doesn't span the scopeguard creation (the guard's closure may free
+        // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
+        // slice — profile in Phase B.
         let path_buf: Vec<u8> = match this.blob.store.as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
@@ -420,9 +437,15 @@ impl FileRoute {
             }
         });
 
-        // PORT NOTE: Zig `dateForHeader(..) catch return` — the Rust hook
-        // (`PARSE_DATE_HOOK`) maps any JS exception to `None`, so the
-        // `catch return` arm collapses into `Option`.
+        // PORT NOTE (intentional spec divergence): Zig writes
+        // `req.dateForHeader(..) catch return` — i.e. on a JS parse exception
+        // the handler bails with NO response written (the defer above closes
+        // the fd and decrements the route ref, leaving the client hung until
+        // timeout). That `catch return` is itself flagged as a TODO in the
+        // .zig. The Rust `PARSE_DATE_HOOK` instead maps a parse failure to
+        // `None`, so a malformed If-Modified-Since header degrades to "serve
+        // the file unconditionally" — the RFC 9110 §13.1.3-correct behaviour
+        // and what the Zig TODO is asking for. Kept divergent on purpose.
         let input_if_modified_since_date: Option<u64> = req.date_for_header(b"if-modified-since");
 
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
@@ -440,7 +463,10 @@ impl FileRoute {
                 break 'brk (false, 0, FileType::File, false);
             }
 
-            this.stat_hash.hash(&stat, path);
+            // SAFETY: single-threaded event loop; `this: &FileRoute` is the
+            // only live borrow and `stat_hash` is `UnsafeCell`, so this write
+            // does not invalidate `this`'s shared tag.
+            unsafe { (*this.stat_hash.get()).hash(&stat, path) };
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
                 break 'brk (true, _size, FileType::Pipe, true);
@@ -647,7 +673,11 @@ impl FileRoute {
 //   confidence: high
 //   todos:      0
 //   notes:      on()/on_response_complete take *mut Self (intrusive RC freed
-//               via deref); StatHash from bun_resolver::fs; Headers::from
-//               bridged via cycle-break vtable (FetchHeadersRef shared with
-//               StaticRoute, AnyBlobRef local for &Blob).
+//               via deref); on() derives a single &Self — stat_hash wrapped in
+//               UnsafeCell for the per-request hash() write so the shared
+//               borrow stays SB-valid; StatHash from bun_resolver::fs;
+//               Headers::from bridged via cycle-break vtable (FetchHeadersRef
+//               shared with StaticRoute, AnyBlobRef local for &Blob);
+//               date_for_header intentionally diverges from Zig's
+//               `catch return` (see PORT NOTE in on()).
 // ──────────────────────────────────────────────────────────────────────────

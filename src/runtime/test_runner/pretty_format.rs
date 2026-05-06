@@ -2180,6 +2180,11 @@ impl<'a> Formatter<'a> {
                         self.indent += 1;
                         let old_quote_strings = self.quote_strings;
                         self.quote_strings = true;
+                        // PORT NOTE: Zig registers `defer this.indent -|= 1` and
+                        // `defer this.quote_strings = old_quote_strings` here so state
+                        // is restored even when `fastGet` / `Tag.get` / `format` throw.
+                        // Wrap the fallible body and restore unconditionally afterward.
+                        let inner: JsResult<()> = (|| {
                         self.write_indent(writer.ctx).expect("unreachable");
 
                         writer.print(format_args!(
@@ -2258,9 +2263,12 @@ impl<'a> Formatter<'a> {
                             }
                             _ => unreachable!(),
                         }
+                        Ok(())
+                        })();
 
                         self.quote_strings = old_quote_strings;
                         self.indent = self.indent.saturating_sub(1);
+                        inner?;
                     }
 
                     self.write_indent(writer.ctx).expect("unreachable");
@@ -2331,14 +2339,16 @@ impl<'a> Formatter<'a> {
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
 
-                            self.format::<W, ENABLE_ANSI_COLORS>(
-                                Tag::get(key_value, self.global_this)?,
-                                writer.ctx,
-                                key_value,
-                                self.global_this,
-                            )?;
-
+                            let inner: JsResult<()> = (|| {
+                                self.format::<W, ENABLE_ANSI_COLORS>(
+                                    Tag::get(key_value, self.global_this)?,
+                                    writer.ctx,
+                                    key_value,
+                                    self.global_this,
+                                )
+                            })();
                             self.quote_strings = old_quote_strings;
+                            inner?;
                             needs_space = true;
                         }
                     }
@@ -2613,17 +2623,21 @@ impl<'a> Formatter<'a> {
                         parent: value,
                     };
 
-                    value.for_each_property_ordered(
+                    let result = value.for_each_property_ordered(
                         global,
                         &mut iter as *mut _ as *mut c_void,
                         PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                    )?;
+                    );
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
                     drop(iter);
+                    // PORT NOTE: Zig `defer this.always_newline_scope = prev` /
+                    // `defer this.quote_strings = prev` run on every exit — restore
+                    // before propagating any exception from the property iterator.
                     self.always_newline_scope = prev_always_newline_scope;
                     self.quote_strings = prev_quote_strings;
+                    result?;
 
                     if iter_i == 0 {
                         let mut object_name = ZigString::EMPTY;

@@ -467,7 +467,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     }
 }
 
-impl<Owner: ChannelOwner> Drop for Channel<Owner> {
+impl<Owner> Drop for Channel<Owner> {
     fn drop(&mut self) {
         self.done = true;
         #[cfg(windows)]

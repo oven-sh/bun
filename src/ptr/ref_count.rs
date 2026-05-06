@@ -748,6 +748,18 @@ impl<T: AnyRefCounted> RefPtr<T> {
     }
 }
 
+impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: holding a `RefPtr` means we own at least one ref, so the
+        // pointee is live for the borrow. Single-threaded `RefCount` hosts are
+        // !Send/!Sync so no concurrent mutation; thread-safe hosts coordinate
+        // their own interior mutability.
+        unsafe { self.data.as_ref() }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // TrackedRef / TrackedDeref
 // ──────────────────────────────────────────────────────────────────────────

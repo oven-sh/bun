@@ -5170,7 +5170,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
-        Maybe::<ret::Rmdir>::errno_sys_p(unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::rmdir, args.path.slice())
+        Maybe::<ret::Rmdir>::errno_sys_p(unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -5365,7 +5365,7 @@ impl NodeFS {
         }
         let _ = flags;
         // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-        Maybe::<ret::Truncate>::errno_sys_p(unsafe { bun_sys::c::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr(), i64::try_from(len).unwrap()) }, sys::Tag::truncate, path.slice())
+        Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), i64::try_from(len).unwrap()) }, sys::Tag::truncate, path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
@@ -5385,7 +5385,7 @@ impl NodeFS {
             };
         }
         // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
-        Maybe::<ret::Unlink>::errno_sys_p(unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr()) }, sys::Tag::unlink, args.path.slice())
+        Maybe::<ret::Unlink>::errno_sys_p(unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) }, sys::Tag::unlink, args.path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 

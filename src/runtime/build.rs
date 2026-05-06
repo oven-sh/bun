@@ -30,7 +30,25 @@ fn main() {
         );
     }
 
+    let gen_js2native_rs = codegen_dir.join("generated_js2native.rs");
+    if !gen_js2native_rs.exists() {
+        panic!(
+            "generated_js2native.rs not found at {} — run `bun bd` (bundle-modules codegen) first",
+            gen_js2native_rs.display()
+        );
+    }
+
+    let gen_jssink_rs = codegen_dir.join("generated_jssink.rs");
+    if !gen_jssink_rs.exists() {
+        panic!(
+            "generated_jssink.rs not found at {} — run `bun src/codegen/generate-jssink.ts` (or `bun bd`) first",
+            gen_jssink_rs.display()
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", gen_rs.display());
+    println!("cargo:rerun-if-changed={}", gen_js2native_rs.display());
+    println!("cargo:rerun-if-changed={}", gen_jssink_rs.display());
     println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
 }

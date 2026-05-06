@@ -36,6 +36,8 @@ pub mod dispatch;
 pub mod jsc_hooks;
 pub mod hw_exports;
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
+pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
+pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 // ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
 //     re-gated *inside* those files) ────────────────────────────────────────

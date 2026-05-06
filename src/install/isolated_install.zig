@@ -996,10 +996,22 @@ pub fn installIsolatedPackages(
                             // `bun unlink` (collision-is-success keeps the
                             // stale entry). Force linked packages
                             // project-local.
-                            var link_buf: bun.PathBuffer = undefined;
-                            const pkg_name_slice = pkg_names[pkg_id].slice(string_buf);
-                            if (manager.linkedPackagePath(pkg_name_slice, &link_buf) != null) {
-                                break :eligible false;
+                            //
+                            // Gate on the backend: `--backend=symlink` skips
+                            // the override entirely (see Installer.zig:571
+                            // and the `has_active_link` guard below), so
+                            // the producer-body-into-shared-cache risk
+                            // doesn't exist. Marking linked packages
+                            // ineligible here would still cascade through
+                            // the dep-propagation below and force every
+                            // transitive consumer project-local, losing
+                            // GVS warm-hits for no protective benefit.
+                            if (PackageInstall.supported_method != .symlink) {
+                                var link_buf: bun.PathBuffer = undefined;
+                                const pkg_name_slice = pkg_names[pkg_id].slice(string_buf);
+                                if (manager.linkedPackagePath(pkg_name_slice, &link_buf) != null) {
+                                    break :eligible false;
+                                }
                             }
                             break :eligible true;
                         },

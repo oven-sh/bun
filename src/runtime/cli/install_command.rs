@@ -1,8 +1,11 @@
 #![allow(unused_imports, dead_code)]
 use core::ffi::c_void;
+use std::sync::LazyLock;
 
-use bun_core::{err, Error, Global, Output};
+use bun_clap as clap;
+use bun_core::{self as bun, err, Error, Global, Output};
 use bun_install::package_manager::{PackageManager, Subcommand};
+use crate::cli::concat_params;
 // PORT NOTE: `bun_install::package_manager` is a stub that only re-exports `PackageManager` +
 // `Subcommand`; the real `CommandLineArguments` lives under the file-backed
 // `package_manager_real::command_line_arguments` module, which is currently gated out
@@ -38,10 +41,30 @@ impl InstallCommand {
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
     // TODO(port): narrow error set
     let _ = ctx;
-    todo!(
-        "blocked_on: bun_install::package_manager_real::command_line_arguments::CommandLineArguments \
-         (reconciler-6 gate; see PORT NOTE at top of file)"
-    )
+
+    // PORT NOTE: `CommandLineArguments::parse` (which would normally handle `--help`
+    // before any install work) lives behind the reconciler-6 gate. Until that un-gates,
+    // handle `--help` / `-h` here directly so `bun install --help` prints real help text
+    // instead of panicking. The remaining install path stays blocked on the gate.
+    for arg in bun::argv().iter().skip(2) {
+        let a = arg.as_bytes();
+        if a == b"--help" || a == b"-h" {
+            print_help();
+            Global::exit(0);
+        }
+        if a == b"--" {
+            break;
+        }
+    }
+
+    // Real install path is still blocked on `CommandLineArguments` / `PackageManager::init`.
+    // Degrade gracefully (clean error + exit) instead of `todo!()` panic so unrelated CLI
+    // probes (e.g. help scanners) don't abort the process with a backtrace.
+    Output::pretty(format_args!(
+        "<r><red>error<r>: <b>bun install<r> is not yet available in this build (package manager port pending)\n"
+    ));
+    Output::flush();
+    Global::exit(1);
     // ── real body, blocked on `CommandLineArguments` un-gate ──────────────
     // let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
     //
@@ -155,6 +178,100 @@ fn install_with_cli(ctx: &mut ContextData /* , cli: CommandLineArguments */) -> 
     // }
     //
     // Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun install --help` — lifted from `CommandLineArguments::print_help`
+// (src/install/PackageManager/CommandLineArguments.zig, `.install` arm) so the
+// help path works while `package_manager_real` remains `#![cfg(any())]`-gated.
+// When that module un-gates this block should be deleted in favour of
+// `CommandLineArguments::parse` handling `--help` itself.
+// ──────────────────────────────────────────────────────────────────────────
+
+type ParamType = clap::Param<clap::Help>;
+
+static SHARED_PARAMS: &[ParamType] = &[
+    clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
+    clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
+    clap::param!("-p, --production                      Don't install devDependencies"),
+    clap::param!("-P, --prod"),
+    clap::param!("--no-save                             Don't update package.json or save a lockfile"),
+    clap::param!("--save                                Save to package.json (true by default)"),
+    clap::param!("--ca <STR>...                         Provide a Certificate Authority signing certificate"),
+    clap::param!("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate"),
+    clap::param!("--dry-run                             Perform a dry run without making changes"),
+    clap::param!("--frozen-lockfile                     Disallow changes to lockfile"),
+    clap::param!("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies"),
+    clap::param!("--cache-dir <PATH>                    Store & load cached data from a specific directory path"),
+    clap::param!("--no-cache                            Ignore manifest cache entirely"),
+    clap::param!("--silent                              Don't log anything"),
+    clap::param!("--quiet                               Only show tarball name when packing"),
+    clap::param!("--verbose                             Excessively verbose logging"),
+    clap::param!("--no-progress                         Disable the progress bar"),
+    clap::param!("--no-summary                          Don't print a summary"),
+    clap::param!("--no-verify                           Skip verifying integrity of newly downloaded packages"),
+    clap::param!("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"),
+    clap::param!("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"),
+    clap::param!("-g, --global                          Install globally"),
+    clap::param!("--cwd <STR>                           Set a specific cwd"),
+    // PORT NOTE: Zig builds the `--backend` help string at comptime with the
+    // platform-specific suffix; `clap::param!` only accepts a literal token, so
+    // duplicate per-platform here.
+    #[cfg(target_os = "macos")]
+    clap::param!("--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""),
+    #[cfg(not(target_os = "macos"))]
+    clap::param!("--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""),
+    clap::param!("--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"),
+    clap::param!("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"),
+    clap::param!("--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"),
+    clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
+    clap::param!("--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"),
+    clap::param!("--lockfile-only                       Generate a lockfile without installing dependencies"),
+    clap::param!("--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")"),
+    clap::param!("--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"),
+    clap::param!("--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"),
+    clap::param!("--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"),
+    clap::param!("-h, --help                            Print this help menu"),
+];
+
+static INSTALL_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(SHARED_PARAMS, [
+        clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
+        clap::param!("-D, --development"),
+        clap::param!("--optional                        Add dependency to \"optionalDependencies\""),
+        clap::param!("--peer                        Add dependency to \"peerDependencies\""),
+        clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
+        clap::param!("--filter <STR>...                 Install packages for the matching workspaces"),
+        clap::param!("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)"),
+        clap::param!("--only-missing                  Only add dependencies to package.json if they are not already present"),
+        clap::param!("<POS> ...                         "),
+    ])
+});
+
+fn print_help() {
+    // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
+    let intro_text = "\n\
+<b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\\<name\\><r><d>@\\<version\\><r>\n\
+<b>Alias<r>: <b><green>bun i<r>\n\
+\n\
+  Install the dependencies listed in package.json.\n\
+\n\
+<b>Flags:<r>";
+    let outro_text = "\n\
+\n\
+<b>Examples:<r>\n\
+  <d>Install the dependencies for the current project<r>\n\
+  <b><green>bun install<r>\n\
+\n\
+  <d>Skip devDependencies<r>\n\
+  <b><green>bun install<r> <cyan>--production<r>\n\
+\n\
+Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.\n";
+
+    Output::pretty(format_args!("{}", intro_text));
+    clap::simple_help(&INSTALL_PARAMS);
+    Output::pretty(format_args!("{}", outro_text));
+    Output::flush();
 }
 
 // ──────────────────────────────────────────────────────────────────────────

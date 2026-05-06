@@ -82,12 +82,22 @@ impl GarbageCollectionController {
             }
         }
 
-        // SAFETY: `transpiler.env` is the process-global env loader allocated during
-        // VM construction; it outlives this controller and is read-only here.
-        let env = unsafe { &*vm.transpiler.env };
+        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
+        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
+        // Rust port defers `Transpiler::init` to the high-tier
+        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
+        // `vm.transpiler.env` is still the zeroed null ptr here on the main
+        // boot path. Fall back to defaults when null — these are debug/tuning
+        // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
+        // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
+        // just be reading process env anyway.
+        // SAFETY: when non-null, `transpiler.env` is the process-global env
+        // loader allocated during VM construction; it outlives this controller
+        // and is read-only here.
+        let env = unsafe { vm.transpiler.env.as_ref() };
 
         let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = env.get(b"BUN_GC_TIMER_INTERVAL") {
+        if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
             if let Some(parsed) = parse_int_i32(timer) {
                 if parsed > 0 {
                     gc_timer_interval = parsed;
@@ -96,7 +106,7 @@ impl GarbageCollectionController {
         }
         self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = env.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS") {
+        if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
             if let Some(parsed) = parse_int_c_int(val) {
                 if parsed >= 0 {
                     // SAFETY: single-threaded init; mirrors Zig assignment to extern var
@@ -107,7 +117,7 @@ impl GarbageCollectionController {
             }
         }
 
-        self.disabled = env.has(b"BUN_GC_TIMER_DISABLE");
+        self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
 
         if !self.disabled {
             // SAFETY: gc_repeating_timer was just created above and is non-null

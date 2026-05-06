@@ -50,7 +50,10 @@ pub struct BundledAst<'arena> {
 
     pub hashbang: &'arena [u8],
     pub parts: part::List,
-    pub css: Option<&'arena BundlerStyleSheet>,
+    // Zig: `?*bun.css.BundlerStyleSheet` (nullable mutable raw ptr). Downstream
+    // bundler binds the SoA column as `&[Option<*mut css::BundlerStyleSheet>]`,
+    // so this must be a raw `*mut`, not a `&'arena` borrow.
+    pub css: Option<*mut BundlerStyleSheet>,
     pub url_for_css: &'arena [u8],
     pub symbols: symbol::List,
     pub module_scope: Scope,

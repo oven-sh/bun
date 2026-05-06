@@ -210,7 +210,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         for arg in args.iter_mut() {
-            if arg.ts_decorators.len() > 0 {
+            if arg.ts_decorators.len > 0 {
                 arg.ts_decorators = self.visit_ts_decorators(arg.ts_decorators);
             }
 
@@ -620,6 +620,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
+    // PORT NOTE: P::stmts_to_single_stmt is `#[cfg(any())]`-gated (P.rs:6267, blocked on
+    // S::Block Default). Inline a local copy until that un-gates.
+    fn stmts_to_single_stmt_(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
+        if stmts.is_empty() {
+            return Stmt { data: StmtData::SEmpty(S::Empty {}), loc };
+        }
+
+        if stmts.len() == 1 && !crate::parser::statement_cares_about_scope(&stmts[0]) {
+            // "let" and "const" must be put in a block when in a single-statement context
+            return stmts[0];
+        }
+
+        self.s(
+            S::Block { stmts: stmts as *mut [Stmt], close_brace_loc: logger::Loc::EMPTY },
+            loc,
+        )
+    }
+
     pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
@@ -728,7 +746,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .put(
                     original_name,
                     ScopeMember {
-                        r#ref: name.ref_.unwrap_or(Ref::NONE),
+                        ref_: name.ref_.unwrap_or(Ref::NONE),
                         loc: name.loc,
                     },
                 )
@@ -789,8 +807,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.allocator);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
-                    csb.stmts =
-                        bun_collections::BabyList::from_owned_bump_slice(list.into_bump_slice_mut());
+                    // SAFETY: bump-arena slice; BabyList marked Borrowed (no growth, no free).
+                    csb.stmts = unsafe {
+                        bun_collections::BabyList::from_bump_slice(list.into_bump_slice_mut())
+                    };
                     self.pop_scope();
 
                     self.fn_or_arrow_data_visit = old_fn_or_arrow_data;

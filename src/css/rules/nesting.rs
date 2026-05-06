@@ -10,9 +10,6 @@ pub struct NestingRule<R> {
     pub loc: Location,
 }
 
-// ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on: StyleRule::to_css (gated in rules/style.rs) + DeepClone derive.
-#[cfg(any())]
 impl<R> NestingRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -20,9 +17,15 @@ impl<R> NestingRule<R> {
         if dest.context().is_none() {
             dest.write_str("@nest ")?;
         }
+        // NOTE: dispatches to the `StyleRule` to_css shim in rules/mod.rs until
+        // style.rs un-gates its real body (selector serialize + Property::Composes).
         self.style.to_css(dest)
     }
+}
 
+// blocked_on: DeepClone derive.
+#[cfg(any())]
+impl<R> NestingRule<R> {
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection; Phase B should
         // replace with a #[derive(DeepClone)] or hand-written per-field clone into the arena.

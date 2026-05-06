@@ -328,7 +328,10 @@ impl ThreadPool {
         self.schedule_with_options(parse_task, true);
     }
 
-    pub fn get_worker(&mut self, id: ThreadId) -> &mut Worker {
+    // PORT NOTE: returns `&'static mut` — the `Worker` is `Box::into_raw`'d
+    // below and lives until `Worker::deinit`; detaching from `&mut self` lets
+    // callers re-borrow `ThreadPool` while holding the worker (Zig: `*Worker`).
+    pub fn get_worker(&mut self, id: ThreadId) -> &'static mut Worker {
         let worker: *mut Worker;
         {
             self.workers_assignments_lock.lock();

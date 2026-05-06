@@ -12,10 +12,6 @@ pub struct MozDocumentRule<R> {
     pub loc: Location,
 }
 
-// ─── behavior bodies ──────────────────────────────────────────────────────
-// blocked_on: CssRuleList::to_css (gated in rules/mod.rs until leaf rules
-// un-gate together) and DeepClone trait derive.
-#[cfg(any())]
 impl<R> MozDocumentRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
@@ -31,7 +27,11 @@ impl<R> MozDocumentRule<R> {
         dest.write_char(b'}')?;
         Ok(())
     }
+}
 
+// blocked_on: DeepClone trait derive.
+#[cfg(any())]
+impl<R> MozDocumentRule<R> {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone uses @typeInfo field reflection — map to a
         // DeepClone trait/derive in Phase B. For now defer to the crate helper.

@@ -314,9 +314,20 @@ mod allocator_interface {
     /// and the caller must own one outstanding ref on it. No `&Self`/`&mut Self`
     /// borrow of `*ptr` may be live across this call — when the refcount hits
     /// zero, `*ptr` is dropped and freed.
+    ///
+    /// `buf_ptr`/`buf_len` must describe the exact `mmap` region previously
+    /// returned for this allocator. The region is unmapped on return; the
+    /// caller must not access it afterwards.
     pub(super) unsafe fn free(
         ptr: *mut c_void,
-        buf: &mut [u8],
+        // Zig `buf: []u8` — raw ptr+len pair. Kept as raw pointers (NOT
+        // `&mut [u8]`) because (a) this is `MAP_SHARED` memfd memory that may
+        // be concurrently mapped elsewhere, so a `&mut` uniqueness assertion
+        // is unsound, and (b) once `munmap` returns the pages are gone and any
+        // still-live reference would dangle (UB). Raw pointers carry no
+        // validity/aliasing invariants, matching the Zig slice semantics.
+        buf_ptr: *mut u8,
+        buf_len: usize,
         _alignment: usize,
         _ret_addr: usize,
     ) {
@@ -330,7 +341,7 @@ mod allocator_interface {
         // provenance and the `Box::from_raw` → `Drop` write would be UB under
         // Stacked Borrows.
         let this = ptr as *mut LinuxMemFdAllocator;
-        match sys::munmap(buf) {
+        match sys::munmap(buf_ptr, buf_len) {
             Ok(()) => {}
             Err(err) => {
                 bun_core::output::debug_warn!("Failed to munmap memfd: {}", err);

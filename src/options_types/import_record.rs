@@ -8,10 +8,11 @@ use crate::BundleEnums::Index as AstIndex;
 use enum_map::{Enum, EnumMap};
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Enum, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Enum, strum::IntoStaticStr)]
 pub enum ImportKind {
     /// An entry point provided to `bun run` or `bun`
     #[strum(serialize = "entry_point_run")]
+    #[default]
     EntryPointRun = 0,
     /// An entry point provided to `bun build` or `Bun.build`
     #[strum(serialize = "entry_point_build")]

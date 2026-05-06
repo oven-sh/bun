@@ -974,7 +974,7 @@ where
             let len = p3_images.len();
             for i in 0..len {
                 let in_ = this.r#mut(i);
-                let out_val = in_.get_fallback(ColorFallbackKind { p3: true, ..Default::default() });
+                let out_val = in_.get_fallback(allocator, ColorFallbackKind { p3: true, ..Default::default() });
                 *p3_images.r#mut(i) = out_val;
             }
             res.push(p3_images);

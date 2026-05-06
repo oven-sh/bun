@@ -2345,59 +2345,27 @@ pub mod environment_variables {
     ) {
         // SAFETY: caller is C++ with live pointers.
         let global_object = unsafe { &*global_object };
-        let vm = global_object.bun_vm();
+        // SAFETY: bun_vm() returns the live thread-local VM.
+        let vm = unsafe { &mut *global_object.bun_vm() };
         let name_slice = unsafe { (*name).to_utf8() };
 
-        let storage = &mut vm.proxy_env_storage;
-
-        // Synchronize the slot swap + env.map.put against a concurrently
-        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
-        // this, the worker could load the slot pointer between our deref
-        // (refcount → 0 → free) and the null write below, then call ref()
-        // on freed memory.
-        let _guard = storage.lock.lock();
-
-        let Some(slot) = storage.slot(name_slice.slice()) else {
-            return;
-        };
-
-        // Deref our previous value. If a worker still holds a ref, the
-        // bytes stay alive; if not, they're freed now.
-        if let Some(old) = slot.ptr.take() {
-            old.deref();
-        }
-
-        if unsafe { (*value).is_empty() } {
-            // Store a static empty string rather than removing, so that
-            // process.env.X reads back as "" (Node.js semantics) instead
-            // of undefined. isNoProxy treats empty strings the same as
-            // absent — no bypass.
-            vm.transpiler.env.map.put(slot.key, b"");
-            return;
-        }
-
-        let value_slice = unsafe { (*value).to_utf8() };
-        let new_val = jsc::RareData::RefCountedEnvValue::create(value_slice.slice());
-        *slot.ptr = Some(new_val);
-        // slot.key is a static-lifetime string literal (the struct field
-        // name); value bytes live in the ref-counted wrapper. map.put
-        // stores both slice headers without duping.
-        vm.transpiler.env.map.put(slot.key, new_val.bytes);
+        // `VirtualMachine.proxy_env_storage` is currently a `()` placeholder
+        // (see src/jsc/VirtualMachine.rs:207); the typed `ProxyEnvStorage`
+        // (rare_data.rs) hasn't been threaded through yet.
+        let _ = (vm, name_slice, value);
+        todo!("blocked_on: bun_jsc::VirtualMachine.proxy_env_storage typed as rare_data::ProxyEnvStorage")
     }
 
     pub fn get_env_names(global_object: &JSGlobalObject, names: &mut [ZigString]) -> usize {
-        let vm = global_object.bun_vm();
-        let keys = vm.transpiler.env.map.map.keys();
-        let len = names.len().min(keys.len());
-        debug_assert_eq!(keys[..len].len(), names[..len].len());
-        for (key, name) in keys[..len].iter().zip(names[..len].iter_mut()) {
-            *name = ZigString::init_utf8(key);
-        }
-        len
+        // SAFETY: bun_vm() returns the live thread-local VM.
+        let vm = unsafe { &*global_object.bun_vm() };
+        let _ = (vm, names);
+        todo!("blocked_on: bun_dotenv::Map indexed keys()")
     }
 
     pub fn get_env_value(global_object: &JSGlobalObject, name: ZigString) -> Option<ZigString> {
-        let vm = global_object.bun_vm();
+        // SAFETY: bun_vm() returns the live thread-local VM.
+        let vm = unsafe { &*global_object.bun_vm() };
         let sliced = name.to_slice();
         let value = vm.transpiler.env.get(sliced.slice())?;
         Some(ZigString::init_utf8(value))

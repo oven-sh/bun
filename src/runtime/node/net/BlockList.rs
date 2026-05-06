@@ -51,7 +51,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_str::{String as BunString, ZStr};
 use bun_threading::Mutex;
 
-use crate::socket::socket_address::{self, sockaddr, SocketAddress};
+use crate::socket::socket_address::{sockaddr, SocketAddress};
 use crate::node::util::validators;
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
@@ -491,7 +491,7 @@ fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
     None
 }
 
-fn _compare_ipv6(l: &socket_address::inet::sockaddr_in6, r: &socket_address::inet::sockaddr_in6) -> Ordering {
+fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let l128 = u128::from_ne_bytes(l.addr).swap_bytes();
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)

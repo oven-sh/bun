@@ -681,6 +681,24 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
+/// `printException` / `printErrorlikeObject` — formats `value` to stderr via
+/// `ConsoleObject::Formatter`. Spec `runErrorHandler` body
+/// (VirtualMachine.zig:2164-2188). Dispatched here so the high tier owns the
+/// formatter.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn print_exception(
+    vm: *mut VirtualMachine,
+    value: JSValue,
+    exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
+) {
+    let _ = (vm, value, exception_list);
+    // TODO(b2-cycle): port `printErrorlikeObject` body — needs
+    // `ConsoleObject::Formatter` + `Exception::value()` un-gated.
+    todo!("blocked_on: bun_jsc::console_object::Formatter (print_exception hook body)")
+}
+
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
@@ -689,6 +707,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     load_preloads,
     ensure_debugger,
     auto_tick,
+    print_exception,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

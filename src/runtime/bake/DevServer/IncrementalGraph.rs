@@ -2451,9 +2451,9 @@ impl IncrementalGraph<Server> {
         self.owner().graph_safety_lock.assert_locked();
         debug_assert!(self.current_chunk_len > 0);
 
-        let runtime: HmrRuntime = match kind {
-            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(Side::Server),
-            ChunkKind::HmrChunk => HmrRuntime::init(b"({"),
+        let runtime_code: &[u8] = match kind {
+            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server).code.as_bytes(),
+            ChunkKind::HmrChunk => b"({",
         };
 
         // PERF(port): was stack-fallback (65536)

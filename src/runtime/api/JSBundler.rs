@@ -1378,23 +1378,24 @@ pub mod js_bundler {
                 // errdefer: Vec<Box<[u8]>> drops automatically
                 let mut loader_values: Vec<api::Loader> = Vec::new();
 
-                loader_names.reserve_exact(loader_iter.len() as usize);
-                loader_values.reserve_exact(loader_iter.len() as usize);
+                loader_names.reserve_exact(loader_iter.len);
+                loader_values.reserve_exact(loader_iter.len);
 
                 while let Some(prop) = loader_iter.next()? {
-                    if !prop.has_prefix(b".") || prop.length() < 2 {
+                    let prop_slice = prop.to_utf8();
+                    if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
                         return Err(global_this.throw_invalid_arguments(
                             "loader property names must be file extensions, such as '.txt'",
                         ));
                     }
+                    drop(prop_slice);
 
                     // PERF(port): was assume_capacity
-                    loader_values.push(loader_iter.value.to_enum_from_map::<api::Loader>(
-                        global_this,
-                        "loader",
-                        &options::Loader::API_NAMES,
-                    )?);
-                    loader_names.push(prop.to_owned_slice()?);
+                    let _ = loader_iter.value;
+                    loader_values.push(todo!(
+                        "blocked_on: bun_jsc::JSValue::to_enum_from_map::<api::Loader>"
+                    ));
+                    loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }
 
                 this.loaders = Some(api::LoaderMap {

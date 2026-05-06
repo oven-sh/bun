@@ -242,7 +242,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         // as 0 until that module lands; compile_exec_argv handling below is
         // unaffected.
         let bun_options_argc: usize = 0;
-        if !graph.compile_exec_argv().is_empty() || bun_options_argc > 0 {
+        if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
             let mut args: Vec<BunString> = Vec::new();
             // `defer args.deinit()` + `defer for args |*a| a.deref()` → Drop on Vec<BunString>
 
@@ -258,11 +258,11 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
                 }
             }
 
-            if !graph.compile_exec_argv().is_empty() {
+            if !graph.compile_exec_argv.is_empty() {
                 for token in graph
-                    .compile_exec_argv()
+                    .compile_exec_argv
                     .split(|b| matches!(*b, b' ' | b'\t' | b'\n' | b'\r'))
-                    .filter(|s| !s.is_empty())
+                    .filter(|s: &&[u8]| !s.is_empty())
                 {
                     args.push(BunString::clone_utf8(token));
                 }

@@ -260,7 +260,7 @@ impl BlobOrStringOrBuffer {
                 if allow_request_response {
                     // TODO(b2-blocked): `Request`/`Response` do not implement
                     // `JsClass` yet — generated bindings pending.
-                    let _ = (Request::js_type_hint as fn(), Response::js_type_hint as fn());
+                    let _: (Option<&Request>, Option<&Response>) = (None, None);
                     todo!("blocked_on: bun_jsc::JsClass for webcore::Request/Response");
                 }
             }

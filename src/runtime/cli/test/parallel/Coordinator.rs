@@ -135,17 +135,19 @@ impl<'a> Coordinator<'a> {
     fn abort_all(&mut self) -> ! {
         abort_handler::uninstall();
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = &w.process {
+            if let Some(p) = w.process {
                 #[cfg(unix)]
                 {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
+                    // FFI call; -pid targets the worker's process group.
                     unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
+                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
                 {
-                    let _ = p.kill(1);
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+                    let _ = unsafe { (*p).kill(1) };
                 }
             }
         }

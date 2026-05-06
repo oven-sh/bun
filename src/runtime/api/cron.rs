@@ -1763,16 +1763,16 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         } else if args[1].js_type() == jsc::JSType::JSDate {
             args[1].to_number(global)?
         } else {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)"
-            ));
+            )));
         }
     } else {
         bun_core::time::milli_timestamp() as f64
     };
 
     if from_ms.is_nan() || from_ms.is_infinite() {
-        return global.throw_invalid_arguments(format_args!("Invalid date value"));
+        return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
     let Some(next_ms) = parsed.next(global, from_ms)? else {

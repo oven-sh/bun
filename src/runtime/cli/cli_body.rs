@@ -1275,8 +1275,10 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 Output::pretty(format_args!("{}", INTRO_TEXT));
                 Output::pretty(format_args!("\n\n"));
                 Output::flush();
-                Output::pretty(OUTRO_TEXT, format_args!("{}{}{}", args.0, args.1, args.2));
-                // TODO(port): Output::pretty positional substitution
+                // TODO(port): Output::pretty positional substitution — OUTRO_TEXT
+                // contains `{}` slots; printed unsubstituted until pretty-fmt lands.
+                let _ = &args;
+                Output::pretty(format_args!("{}", OUTRO_TEXT));
                 Output::flush();
             }
             Tag::ReplCommand => {

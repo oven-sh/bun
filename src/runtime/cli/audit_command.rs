@@ -28,6 +28,7 @@ struct VulnerabilityInfo {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct PackageInfo {
     package_id: u32,
     name: Box<[u8]>,

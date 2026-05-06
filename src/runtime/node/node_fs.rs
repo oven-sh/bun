@@ -8,6 +8,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_aio::KeepAlive;
+use bun_sys::FdExt as _;
+use bun_sys_jsc::ErrorJsc as _;
+use bun_jsc::EventLoopTaskPtr;
+use crate::api::bun::process::event_loop_handle_to_ctx;
 use bun_threading::UnboundedQueue;
 use bun_core::Environment;
 use bun_jsc::{
@@ -1834,6 +1838,13 @@ impl IntoResultListEntry for Buffer {
 }
 impl IntoResultListEntry for BunString {
     fn into_variant(v: Vec<Self>) -> ResultListEntryValue { ResultListEntryValue::Files(v) }
+}
+
+// Route `Task::init(self)` in `finish_concurrently` to the event-loop dispatch
+// table. The `task_tag::ReaddirRecursive` arm is wired in
+// `crate::dispatch::run_task` to call `run_from_js_thread`.
+impl bun_event_loop::Taskable for AsyncReaddirRecursiveTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReaddirRecursive;
 }
 
 impl ResultListEntryValue {

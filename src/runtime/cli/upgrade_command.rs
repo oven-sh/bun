@@ -828,7 +828,7 @@ impl UpgradeCommand {
                         unzip_exe.as_bytes(),
                         b"-q",
                         b"-o",
-                        tmpname,
+                        tmpname.as_bytes(),
                     ];
 
                     // TODO(port): Zig used std.process.Child here directly; PORTING.md bans

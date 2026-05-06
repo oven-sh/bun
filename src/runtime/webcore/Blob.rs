@@ -177,6 +177,7 @@ pub trait ReadBytesHandler {
 
 /// The `m_ctx` payload of the codegen'd `JSBlob` wrapper.
 // TODO(b2-blocked): #[bun_jsc::JsClass]
+#[repr(C)]
 pub struct Blob {
     pub reported_estimated_size: usize,
 
@@ -5010,7 +5011,10 @@ pub use _jsc_gated::write_format_for_size;
 // FFI: S3-backed Blob → JS wrapper. Declared locally because `webcore::s3_file`
 // is not yet a wired module; the C++ symbol is already linked.
 unsafe extern "C" {
-    fn BUN__createJSS3FileUnsafely(global: *const JSGlobalObject, blob: *mut Blob) -> JSValue;
+    fn BUN__createJSS3FileUnsafely(
+        global: *const JSGlobalObject,
+        blob: *mut core::ffi::c_void,
+    ) -> JSValue;
 }
 
 impl Blob {

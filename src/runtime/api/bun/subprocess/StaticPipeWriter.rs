@@ -277,7 +277,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         );
         let len = self.buffer.len();
         // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
-        self.buffer = unsafe { &(*self.buffer)[amount.min(len)..] } as *const [u8];
+        // Explicit `&*` avoids the implicit-autoref-on-raw-pointer lint when slicing.
+        self.buffer = unsafe { &(&*self.buffer)[amount.min(len)..] } as *const [u8];
         if status == WriteStatus::EndOfFile || self.buffer.len() == 0 {
             self.writer.close();
         }

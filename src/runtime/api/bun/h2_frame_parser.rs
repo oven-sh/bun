@@ -553,7 +553,7 @@ impl FrameHeader {
 // packed struct(u48): type: u16, value: u32
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-struct SettingsPayloadUnit {
+pub struct SettingsPayloadUnit {
     type_: u16,
     value: u32,
 }

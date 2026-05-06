@@ -64,6 +64,10 @@ macro_rules! impl_js_class_codegen {
     ($ty:ident) => {
         const _: () = {
             use bun_jsc::{JSGlobalObject, JSValue};
+            // `*mut $ty` is opaque to C++ (linked by symbol name only); the
+            // pointee's Rust layout is irrelevant to the FFI boundary, but
+            // `bun_logger::Msg` lacks `#[repr(C)]` so rustc lints anyway.
+            #[allow(improper_ctypes)]
             #[cfg(all(windows, target_arch = "x86_64"))]
             unsafe extern "sysv64" {
                 #[link_name = concat!(stringify!($ty), "__fromJS")]
@@ -75,6 +79,7 @@ macro_rules! impl_js_class_codegen {
                 #[link_name = concat!(stringify!($ty), "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
             }
+            #[allow(improper_ctypes)]
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
                 #[link_name = concat!(stringify!($ty), "__fromJS")]

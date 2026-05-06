@@ -2009,10 +2009,13 @@ fn run_with_source_code(
     }
     *step = Step::Parse;
 
-    let is_empty = strings::is_all_whitespace(entry.contents);
+    let entry_contents: &[u8] = entry.contents.as_slice();
+    let is_empty = strings::is_all_whitespace(entry_contents);
 
-    let use_directive: UseDirective = if !is_empty && transpiler.options.server_components {
-        UseDirective::parse(entry.contents).unwrap_or(UseDirective::None)
+    // SAFETY: `transpiler` derived from a live `&mut` above.
+    let transpiler_ref = unsafe { &mut *transpiler };
+    let use_directive: UseDirective = if !is_empty && transpiler_ref.options.server_components {
+        UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
     } else {
         UseDirective::None
     };

@@ -12,7 +12,8 @@ pub struct ContentOptions {
 // plus `JsRef`/`Strong`) are below; re-exported here so callers see
 // `crate::api::html_rewriter::HTMLRewriter` directly.
 pub use _jsc_gated::{
-    AttributeIterator, Comment, DocEnd, DocType, Element, EndTag, HTMLRewriter, TextChunk,
+    AttributeIterator, BufferOutputSink, Comment, DocEnd, DocType, Element, EndTag, HTMLRewriter,
+    TextChunk,
 };
 
 mod _jsc_gated {

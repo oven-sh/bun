@@ -217,8 +217,7 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
     if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    // SAFETY: caller guarantees `icc_profile` points to valid bytes for the duration of encode().
-    embed_iccp(ctx, icc_profile.map(|p| unsafe { p.as_ref() }));
+    embed_iccp(ctx, icc_profile);
     // SAFETY: ctx is valid; rgba is a valid readable buffer.
     if unsafe { spng_encode_image(ctx, rgba.as_ptr(), rgba.len(), SPNG_FMT_PNG, SPNG_ENCODE_FINALIZE) } != 0 {
         return Err(codecs::Error::EncodeFailed);
@@ -285,8 +284,7 @@ pub fn encode_indexed(
     if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    // SAFETY: caller guarantees `icc_profile` points to valid bytes for the duration of encode().
-    embed_iccp(ctx, icc_profile.map(|p| unsafe { p.as_ref() }));
+    embed_iccp(ctx, icc_profile);
 
     let mut plte = Plte { n_entries: u32::from(q.colors), entries: [[0u8; 4]; 256] };
     let mut trns = Trns {

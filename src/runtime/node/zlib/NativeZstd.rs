@@ -270,9 +270,9 @@ impl Context {
                 let state = unsafe { c::ZSTD_createCCtx() };
                 if state.is_null() {
                     return Error::init(
-                        c"Could not initialize zstd instance".as_ptr(),
+                        "Could not initialize zstd instance",
                         -1,
-                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        "ERR_ZLIB_INITIALIZATION_FAILED",
                     );
                 }
                 self.state = Some(state.cast());
@@ -284,9 +284,9 @@ impl Context {
                     let _ = unsafe { c::ZSTD_freeCCtx(state) };
                     self.state = None;
                     return Error::init(
-                        c"Could not set pledged src size".as_ptr(),
+                        "Could not set pledged src size",
                         -1,
-                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        "ERR_ZLIB_INITIALIZATION_FAILED",
                     );
                 }
                 Error::OK

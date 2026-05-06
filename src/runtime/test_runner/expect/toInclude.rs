@@ -102,5 +102,5 @@ pub fn to_include(
 //   source:     src/test_runner/expect/toInclude.zig (64 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      defer post_match needs borrowck reshape; concat! duplicates fmt literals since Rust concat! rejects const refs; get_signature must be const fn
+//   notes:      scopeguard owns &mut Expect for `defer postMatch`; second Formatter for dual to_fmt borrow; concat! duplicates fmt literals since Rust concat! rejects const refs; get_signature must be const fn
 // ──────────────────────────────────────────────────────────────────────────

@@ -112,7 +112,10 @@ pub fn enqueue_dependency_list(
             let note_fmt = "error occurred while resolving {}";
             let note_args = format_args!(
                 "error occurred while resolving {}",
-                bun_fmt::fmt_path(this.lockfile.str(&dependency.realname()), path_sep)
+                bun_fmt::fmt_path_u8(
+                    this.lockfile.str(&dependency.realname()),
+                    bun_fmt::PathFormatOptions { path_sep, escape_backslashes: false },
+                )
             );
             // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
 

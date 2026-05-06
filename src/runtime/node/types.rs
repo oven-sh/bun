@@ -518,10 +518,10 @@ impl StringOrBuffer {
         is_async: bool,
         allow_string_object: bool,
     ) -> JsResult<Option<StringOrBuffer>> {
-        use jsc::JSType::*;
+        use jsc::JSType;
         match value.js_type() {
-            str_type @ (String | StringObject | DerivedStringObject) => {
-                if !allow_string_object && str_type != String {
+            str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
+                if !allow_string_object && str_type != JSType::String {
                     return Ok(None);
                 }
                 let str = bun_str::String::from_js(value, global)?;
@@ -541,20 +541,20 @@ impl StringOrBuffer {
                 }
             }
 
-            ArrayBuffer
-            | Int8Array
-            | Uint8Array
-            | Uint8ClampedArray
-            | Int16Array
-            | Uint16Array
-            | Int32Array
-            | Uint32Array
-            | Float32Array
-            | Float16Array
-            | Float64Array
-            | BigInt64Array
-            | BigUint64Array
-            | DataView => {
+            JSType::ArrayBuffer
+            | JSType::Int8Array
+            | JSType::Uint8Array
+            | JSType::Uint8ClampedArray
+            | JSType::Int16Array
+            | JSType::Uint16Array
+            | JSType::Int32Array
+            | JSType::Uint32Array
+            | JSType::Float32Array
+            | JSType::Float16Array
+            | JSType::Float64Array
+            | JSType::BigInt64Array
+            | JSType::BigUint64Array
+            | JSType::DataView => {
                 let buffer = Buffer::from_array_buffer(global, value);
 
                 if is_async {

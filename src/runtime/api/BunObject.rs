@@ -2168,7 +2168,8 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
 }
 
 pub fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    SemverObject::create(global_this)
+    let _ = global_this;
+    todo!("blocked_on: bun_semver_jsc::SemverObject (crate not in bun_runtime deps)")
 }
 
 pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

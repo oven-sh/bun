@@ -19,7 +19,7 @@
 // plus the bundler-cycle-broken `Path::loader`/`package_name`.
 pub mod data_url;
 pub mod dir_info;
-#[cfg(any())] #[path = "fs.rs"] mod fs_full;
+#[path = "fs.rs"] pub mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;
@@ -3884,7 +3884,6 @@ impl<'a> Resolver<'a> {
                                     let esm_resolution = esmodule.resolve(b"/", esm.subpath, &exports_map.root);
                                     // PORT NOTE: drop `esmodule` (which mut-borrows `self.debug_logs`)
                                     // before calling `&mut self` methods below.
-                                    drop(esmodule);
 
                                     if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                         let mut result_copy = result;
@@ -5457,7 +5456,10 @@ impl<'a> Resolver<'a> {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
                 _ => self.opts.conditions.import.clone().expect("oom"),
             },
-            debug_logs: self.debug_logs.as_mut(),
+            // PORT NOTE: detach &mut DebugLogs from `self` via raw ptr so `esmodule`
+            // doesn't pin `&mut self` across handle_esm_resolution / load_node_modules.
+            // SAFETY: `self.debug_logs` outlives this scope; not aliased while esmodule is live.
+            debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut DebugLogs) }),
             module_type: &mut module_type,
         };
 

@@ -40,32 +40,25 @@ type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 // `crate::generics` bound on those traits, which the selector grammar types
 // don't implement yet. These local shims keep the method *surface* (so
 // `Component::eql(a, b)` etc. resolve for cross-module callers) while
-// deferring the bodies to the derive pass.
-macro_rules! protocol_eql_hash_clone {
-    () => {
-        #[inline]
-        pub fn eql(&self, _rhs: &Self) -> bool {
-            todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
-        }
-        #[inline]
-        pub fn hash(&self, _hasher: &mut Wyhash) {
-            todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
-        }
-        #[inline]
-        pub fn deep_clone(&self) -> Self {
-            todo!("bun_css selector grammar: #[derive(DeepClone)] — Phase B codegen")
-        }
-    };
-    (no_clone) => {
-        #[inline]
-        pub fn eql(&self, _rhs: &Self) -> bool {
-            todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
-        }
-        #[inline]
-        pub fn hash(&self, _hasher: &mut Wyhash) {
-            todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
-        }
-    };
+// deferring the bodies to the derive pass. Every callsite below was
+// `css::implement_*(self, ..)`; sed-rewritten to `protocol_shims::implement_*`.
+mod protocol_shims {
+    use super::Wyhash;
+    #[track_caller]
+    #[inline(always)]
+    pub fn implement_eql<T>(_a: &T, _b: &T) -> bool {
+        todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
+    }
+    #[track_caller]
+    #[inline(always)]
+    pub fn implement_hash<T>(_a: &T, _h: &mut Wyhash) {
+        todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
+    }
+    #[track_caller]
+    #[inline(always)]
+    pub fn implement_deep_clone<T>(_a: &T) -> T {
+        todo!("bun_css selector grammar: #[derive(DeepClone)] — Phase B codegen")
+    }
 }
 
 /// Instantiation of generic selector structs using our implementation of the `SelectorImpl` trait.
@@ -99,17 +92,17 @@ pub fn valid_selector_impl<T: SelectorImpl>() {
 // `DeepClone`/`CssHash`, so the std bounds were never load-bearing.
 pub trait SelectorImpl: Sized {
     type ExtraMatchingData;
-    type AttrValue;
-    type Identifier;
-    type LocalIdentifier;
-    type LocalName;
-    type NamespaceUrl;
-    type NamespacePrefix;
+    type AttrValue: Clone;
+    type Identifier: Clone;
+    type LocalIdentifier: Clone;
+    type LocalName: Clone;
+    type NamespaceUrl: Clone;
+    type NamespacePrefix: Clone;
     type BorrowedNamespaceUrl;
     type BorrowedLocalName;
-    type NonTSPseudoClass;
-    type VendorPrefix;
-    type PseudoElement;
+    type NonTSPseudoClass: Clone;
+    type VendorPrefix: Clone;
+    type PseudoElement: Clone;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,13 +119,13 @@ pub mod attrs {
 
     impl<Impl: SelectorImpl> NamespaceUrl<Impl> {
         pub fn eql(&self, rhs: &Self) -> bool {
-            css::implement_eql(self, rhs)
+            protocol_shims::implement_eql(self, rhs)
         }
         pub fn deep_clone(&self) -> Self {
-            css::implement_deep_clone(self)
+            protocol_shims::implement_deep_clone(self)
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            css::implement_hash(self, hasher)
+            protocol_shims::implement_hash(self, hasher)
         }
     }
 
@@ -182,13 +175,13 @@ pub mod attrs {
         }
 
         pub fn eql(&self, rhs: &Self) -> bool {
-            css::implement_eql(self, rhs)
+            protocol_shims::implement_eql(self, rhs)
         }
         pub fn deep_clone(&self) -> Self {
-            css::implement_deep_clone(self)
+            protocol_shims::implement_deep_clone(self)
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            css::implement_hash(self, hasher)
+            protocol_shims::implement_hash(self, hasher)
         }
     }
 
@@ -201,13 +194,13 @@ pub mod attrs {
 
     impl<N: PartialEq + Clone> NamespaceConstraint<N> {
         pub fn eql(&self, rhs: &Self) -> bool {
-            css::implement_eql(self, rhs)
+            protocol_shims::implement_eql(self, rhs)
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            css::implement_hash(self, hasher)
+            protocol_shims::implement_hash(self, hasher)
         }
         pub fn deep_clone(&self) -> Self {
-            css::implement_deep_clone(self)
+            protocol_shims::implement_deep_clone(self)
         }
     }
 
@@ -223,13 +216,13 @@ pub mod attrs {
 
     impl<A: PartialEq + Clone> ParsedAttrSelectorOperation<A> {
         pub fn deep_clone(&self) -> Self {
-            css::implement_deep_clone(self)
+            protocol_shims::implement_deep_clone(self)
         }
         pub fn eql(&self, rhs: &Self) -> bool {
-            css::implement_eql(self, rhs)
+            protocol_shims::implement_eql(self, rhs)
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            css::implement_hash(self, hasher)
+            protocol_shims::implement_hash(self, hasher)
         }
     }
 
@@ -258,7 +251,7 @@ pub mod attrs {
         }
 
         pub fn hash(&self, hasher: &mut Wyhash) {
-            css::implement_hash(self, hasher)
+            protocol_shims::implement_hash(self, hasher)
         }
     }
 
@@ -745,7 +738,8 @@ pub fn valid_selector_parser<T>() {
 }
 
 /// The [:dir()](https://drafts.csswg.org/selectors-4/#the-dir-pseudo) pseudo class.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum Direction {
     /// Left to right
     Ltr,
@@ -755,13 +749,22 @@ pub enum Direction {
 
 impl Direction {
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        *self == *rhs
     }
     pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
+    // PORT NOTE: `enum_property_util::parse` bounds on `EnumProperty` (a
+    // strum-driven case-insensitive `from_name`). Two variants — hand-roll.
     pub fn parse(input: &mut CssParser) -> CResult<Self> {
-        css::enum_property_util::parse(input)
+        let ident = input.expect_ident()?;
+        if strings::eql_case_insensitive_ascii_check_length(ident, b"ltr") {
+            Ok(Direction::Ltr)
+        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"rtl") {
+            Ok(Direction::Rtl)
+        } else {
+            Err(input.new_unexpected_token_error(Token::Ident(ident)))
+        }
     }
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         css::enum_property_util::to_css(self, dest)
@@ -946,15 +949,15 @@ impl PseudoClass {
     }
 
     pub fn eql(&self, rhs: &PseudoClass) -> bool {
-        css::implement_eql(self, rhs)
+        protocol_shims::implement_eql(self, rhs)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
 
     pub fn get_prefix(&self) -> css::VendorPrefix {
@@ -1667,7 +1670,7 @@ impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 }
 
@@ -1751,11 +1754,11 @@ impl<Impl: SelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        css::implement_eql(self, other)
+        protocol_shims::implement_eql(self, other)
     }
 
     pub fn has_combinator(&self) -> bool {
@@ -1819,7 +1822,7 @@ impl<Impl: SelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 }
 
@@ -1976,11 +1979,11 @@ impl<Impl: SelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        protocol_shims::implement_eql(self, rhs)
     }
 
     pub fn as_combinator(&self) -> Option<Combinator> {
@@ -2016,7 +2019,7 @@ impl<Impl: SelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 }
 
@@ -2125,11 +2128,11 @@ impl NthSelectorData {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        protocol_shims::implement_eql(self, rhs)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 }
 
@@ -2144,13 +2147,13 @@ pub struct NthOfSelectorData<Impl: SelectorImpl> {
 
 impl<Impl: SelectorImpl> NthOfSelectorData<Impl> {
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        protocol_shims::implement_eql(self, rhs)
     }
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
     pub fn nth_data(&self) -> NthSelectorData {
         self.data
@@ -2257,13 +2260,13 @@ pub struct SpecificityAndFlags {
 
 impl SpecificityAndFlags {
     pub fn eql(&self, other: &Self) -> bool {
-        css::implement_eql(self, other)
+        protocol_shims::implement_eql(self, other)
     }
     pub fn has_pseudo_element(&self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
     pub fn deep_clone(&self) -> Self {
         *self
@@ -2386,35 +2389,44 @@ pub enum SelectorParseErrorKind {
 
 impl SelectorParseErrorKind {
     pub fn into_default_parser_error(self) -> css::ParserError {
-        css::ParserError::SelectorError(self.into_selector_error())
+        css::ParserError::selector_error(self.into_selector_error())
     }
 
     pub fn into_selector_error(self) -> css::SelectorError {
+        // PORT NOTE: `error.rs::SelectorError` variants are snake_case
+        // (`#[allow(non_camel_case_types)]` Zig-tagName parity).
         use css::SelectorError as S;
         use SelectorParseErrorKind as K;
         match self {
-            K::InvalidState => S::InvalidState,
-            K::ClassNeedsIdent(token) => S::ClassNeedsIdent(token),
-            K::PseudoElementExpectedIdent(token) => S::PseudoElementExpectedIdent(token),
-            K::UnsupportedPseudoClassOrElement(name) => S::UnsupportedPseudoClassOrElement(name),
-            K::NoQualifiedNameInAttributeSelector(token) => S::NoQualifiedNameInAttributeSelector(token),
-            K::UnexpectedTokenInAttributeSelector(token) => S::UnexpectedTokenInAttributeSelector(token),
-            K::InvalidQualNameInAttr(token) => S::InvalidQualNameInAttr(token),
-            K::ExpectedBarInAttr(token) => S::ExpectedBarInAttr(token),
-            K::EmptySelector => S::EmptySelector,
-            K::DanglingCombinator => S::DanglingCombinator,
-            K::InvalidPseudoClassBeforeWebkitScrollbar => S::InvalidPseudoClassBeforeWebkitScrollbar,
-            K::InvalidPseudoClassAfterWebkitScrollbar => S::InvalidPseudoClassAfterWebkitScrollbar,
-            K::InvalidPseudoClassAfterPseudoElement => S::InvalidPseudoClassAfterPseudoElement,
-            K::MissingNestingSelector => S::MissingNestingSelector,
-            K::MissingNestingPrefix => S::MissingNestingPrefix,
-            K::ExpectedNamespace(name) => S::ExpectedNamespace(name),
-            K::BadValueInAttr(token) => S::BadValueInAttr(token),
-            K::ExplicitNamespaceUnexpectedToken(token) => S::ExplicitNamespaceUnexpectedToken(token),
-            K::UnexpectedIdent(ident) => S::UnexpectedIdent(ident),
-            K::UnexpectedSelectorAfterPseudoElement(tok) => S::UnexpectedSelectorAfterPseudoElement(tok),
-            K::AmbiguousCssModuleClass(name) => S::AmbiguousCssModuleClass(name),
+            K::InvalidState => S::invalid_state,
+            K::ClassNeedsIdent(token) => S::class_needs_ident(token),
+            K::PseudoElementExpectedIdent(token) => S::pseudo_element_expected_ident(token),
+            K::UnsupportedPseudoClassOrElement(name) => S::unsupported_pseudo_class_or_element(name),
+            K::NoQualifiedNameInAttributeSelector(token) => S::no_qualified_name_in_attribute_selector(token),
+            K::UnexpectedTokenInAttributeSelector(token) => S::unexpected_token_in_attribute_selector(token),
+            K::InvalidQualNameInAttr(token) => S::invalid_qual_name_in_attr(token),
+            K::ExpectedBarInAttr(token) => S::expected_bar_in_attr(token),
+            K::EmptySelector => S::empty_selector,
+            K::DanglingCombinator => S::dangling_combinator,
+            K::InvalidPseudoClassBeforeWebkitScrollbar => S::invalid_pseudo_class_before_webkit_scrollbar,
+            K::InvalidPseudoClassAfterWebkitScrollbar => S::invalid_pseudo_class_after_webkit_scrollbar,
+            K::InvalidPseudoClassAfterPseudoElement => S::invalid_pseudo_class_after_pseudo_element,
+            K::MissingNestingSelector => S::missing_nesting_selector,
+            K::MissingNestingPrefix => S::missing_nesting_prefix,
+            K::ExpectedNamespace(name) => S::expected_namespace(name),
+            K::BadValueInAttr(token) => S::bad_value_in_attr(token),
+            K::ExplicitNamespaceUnexpectedToken(token) => S::explicit_namespace_unexpected_token(token),
+            K::UnexpectedIdent(ident) => S::unexpected_ident(ident),
+            K::UnexpectedSelectorAfterPseudoElement(tok) => S::unexpected_selector_after_pseudo_element(tok),
+            K::AmbiguousCssModuleClass(name) => S::ambiguous_css_module_class(name),
         }
+    }
+}
+
+// `SourceLocation::new_custom_error` accepts `impl IntoParserError`.
+impl css::IntoParserError for SelectorParseErrorKind {
+    fn into_parser_error(self) -> css::ParserError {
+        self.into_default_parser_error()
     }
 }
 
@@ -2510,15 +2522,15 @@ impl PseudoElement {
     }
 
     pub fn eql(&self, other: &PseudoElement) -> bool {
-        css::implement_eql(self, other)
+        protocol_shims::implement_eql(self, other)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
 
     pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
@@ -3567,15 +3579,15 @@ impl ViewTransitionPartName {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        protocol_shims::implement_eql(self, rhs)
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
+        protocol_shims::implement_hash(self, hasher)
     }
 
     pub fn deep_clone(&self) -> Self {
-        css::implement_deep_clone(self)
+        protocol_shims::implement_deep_clone(self)
     }
 }
 

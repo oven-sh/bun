@@ -1513,12 +1513,70 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
 // Hook installation
 // ════════════════════════════════════════════════════════════════════════════
 
+// ──────────────────────────────────────────────────────────────────────────
+// Event-loop per-task hook bodies — `bun_jsc::event_loop` stores opaque
+// `*mut ImmediateObject` / `*mut WTFTimer` and dispatches through these.
+// Gated alongside the Phase-A `timer::ImmediateObject::run_immediate_task` /
+// `timer::WTFTimer::run` drafts (see `timer/mod.rs` `#[cfg(any())]` blocks);
+// the `set_*_hook` calls in [`install_jsc_hooks`] un-gate together so the
+// low-tier `debug_assert!` in `tick_immediate_tasks` stays quiet in live
+// builds once the drafts compile.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `RUN_IMMEDIATE_HOOK` body — cast the opaque low-tier pointer to the real
+/// `bun_runtime::timer::ImmediateObject` and call `run_immediate_task(vm)`.
+///
+/// # Safety
+/// `task` was produced by `enqueue_immediate_task` from a live
+/// `timer::ImmediateObject`; `vm` is the live per-thread VM.
+#[cfg(any())]
+unsafe fn run_immediate_task_hook(
+    task: *mut bun_jsc::event_loop::ImmediateObject,
+    vm: *mut VirtualMachine,
+) -> bool {
+    // SAFETY: per fn contract — the opaque low-tier `ImmediateObject` is the
+    // same allocation as `crate::timer::ImmediateObject` (both `#[repr(C)]`;
+    // the low tier never dereferences it).
+    let real = unsafe { &mut *task.cast::<crate::timer::ImmediateObject>() };
+    // SAFETY: per fn contract.
+    real.run_immediate_task(unsafe { &mut *vm })
+}
+
+/// `RUN_WTF_TIMER_HOOK` body — cast the opaque low-tier pointer to the real
+/// `bun_runtime::timer::WTFTimer` and call `run(vm)`.
+///
+/// # Safety
+/// `timer` was published by `WTFTimer::update` into `imminent_gc_timer`;
+/// `vm` is the live per-thread VM.
+#[cfg(any())]
+unsafe fn run_wtf_timer_hook(
+    timer: *mut bun_jsc::event_loop::WTFTimer,
+    vm: *mut VirtualMachine,
+) {
+    // SAFETY: per fn contract — the opaque low-tier `WTFTimer` is the same
+    // allocation as `crate::timer::WTFTimer`.
+    let real = unsafe { &mut *timer.cast::<crate::timer::WTFTimer>() };
+    // SAFETY: per fn contract.
+    real.run(unsafe { &mut *vm });
+}
+
 /// Wire the high-tier `RuntimeHooks` / `LoaderHooks` into `bun_jsc`. Called
 /// once from `main.rs` immediately after [`crate::dispatch::install_dispatch_hooks`]
 /// (and before the first `VirtualMachine::init`).
 pub fn install_jsc_hooks() {
     bun_jsc::virtual_machine::set_runtime_hooks(&RUNTIME_HOOKS_INSTANCE);
     bun_jsc::module_loader::set_loader_hooks(&LOADER_HOOKS_INSTANCE);
+
+    // Event-loop per-task dispatchers — gated with the `timer::*` Phase-A
+    // drafts (see hook bodies above). Un-gates together with
+    // `dispatch::install_dispatch_hooks`'s `set_tick_queue_hook` block.
+    // TODO(b2-blocked): un-gate once `timer::ImmediateObject::run_immediate_task`
+    // / `timer::WTFTimer::run` lose their `#[cfg(any())]`.
+    #[cfg(any())]
+    {
+        bun_jsc::event_loop::set_run_immediate_hook(run_immediate_task_hook);
+        bun_jsc::event_loop::set_run_wtf_timer_hook(run_wtf_timer_hook);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -62,7 +62,6 @@ enum EasingKeyword {
     StepEnd,
 }
 
-// TODO(port): phf custom hasher — Zig used getASCIIICaseInsensitive
 static EASING_MAP: phf::Map<&'static [u8], EasingKeyword> = phf::phf_map! {
     b"linear" => EasingKeyword::Linear,
     b"ease" => EasingKeyword::Ease,
@@ -72,6 +71,20 @@ static EASING_MAP: phf::Map<&'static [u8], EasingKeyword> = phf::phf_map! {
     b"step-start" => EasingKeyword::StepStart,
     b"step-end" => EasingKeyword::StepEnd,
 };
+
+/// Zig: `Map.getASCIIICaseInsensitive(ident)` — phf's `get` is byte-exact, so
+/// lowercase into a stack buffer first (same pattern as `CalcUnit::get_any_case`).
+fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
+    // Longest key is "ease-in-out" / "step-start" (11 bytes).
+    if ident.len() > 11 {
+        return None;
+    }
+    let mut buf = [0u8; 11];
+    for (i, b) in ident.iter().enumerate() {
+        buf[i] = b.to_ascii_lowercase();
+    }
+    EASING_MAP.get(&buf[..ident.len()]).copied()
+}
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
@@ -83,8 +96,7 @@ impl EasingFunction {
         let location = input.current_source_location();
         let tok = input.next()?.clone();
         if let Token::Ident(ident) = tok {
-            // TODO(port): case-insensitive lookup (Zig: Map.getASCIIICaseInsensitive)
-            let keyword = if let Some(e) = EASING_MAP.get(ident) {
+            let keyword = if let Some(e) = easing_map_get_any_case(ident) {
                 match e {
                     EasingKeyword::Linear => EasingFunction::Linear,
                     EasingKeyword::Ease => EasingFunction::Ease,
@@ -204,8 +216,7 @@ impl EasingFunction {
 
     /// Returns whether the given string is a valid easing function name.
     pub fn is_ident(s: &[u8]) -> bool {
-        // TODO(port): case-insensitive lookup (Zig: Map.getASCIIICaseInsensitive)
-        EASING_MAP.get(s).is_some()
+        easing_map_get_any_case(s).is_some()
     }
 
     /// Returns whether the easing function is equivalent to the `ease` keyword.
@@ -247,7 +258,6 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-// TODO(port): phf custom hasher — Zig used getASCIIICaseInsensitive
 static STEP_POSITION_MAP: phf::Map<&'static [u8], StepPositionKeyword> = phf::phf_map! {
     b"start" => StepPositionKeyword::Start,
     b"end" => StepPositionKeyword::End,
@@ -256,6 +266,20 @@ static STEP_POSITION_MAP: phf::Map<&'static [u8], StepPositionKeyword> = phf::ph
     b"jump-start" => StepPositionKeyword::JumpStart,
     b"jump-end" => StepPositionKeyword::JumpEnd,
 };
+
+/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer
+/// before the phf lookup (same pattern as `CalcUnit::get_any_case`).
+fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
+    // Longest key is "jump-start" (10 bytes).
+    if ident.len() > 10 {
+        return None;
+    }
+    let mut buf = [0u8; 10];
+    for (i, b) in ident.iter().enumerate() {
+        buf[i] = b.to_ascii_lowercase();
+    }
+    STEP_POSITION_MAP.get(&buf[..ident.len()]).copied()
+}
 
 impl StepPosition {
     // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
@@ -270,8 +294,7 @@ impl StepPosition {
         let Token::Ident(ident) = tok else {
             return Err(location.new_unexpected_token_error(tok));
         };
-        // TODO(port): case-insensitive lookup (Zig: Map.getASCIIICaseInsensitive)
-        let keyword = if let Some(e) = STEP_POSITION_MAP.get(ident) {
+        let keyword = if let Some(e) = step_position_map_get_any_case(ident) {
             match e {
                 StepPositionKeyword::Start => StepPosition::Start,
                 StepPositionKeyword::End => StepPosition::End,

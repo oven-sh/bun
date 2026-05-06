@@ -913,14 +913,10 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
 //
-// blocked_on: rules/ + selectors/ + media_query — AtRulePrelude variants and
-// the Top/Nested rule-parser impls reference concrete types from those hubs
-// (KeyframesName, PageSelector, ContainerCondition, CssRule, CssRuleList,
-// SelectorList, MediaList, DeclarationBlock). Wrapped in a gated module so
-// the Parser/Tokenizer core below compiles standalone; un-wrap once those
-// hubs un-gate.
-#[cfg(any())]
-mod rule_parsers { use super::*;
+// B-2 round 5: un-gated. Variant payload types are now real (rules/ +
+// selectors/ + media_query/ hubs compile). The few leaf-module payload types
+// not yet exposed by `rules/mod.rs` (KeyframesName, PageSelector,
+// ContainerName, ContainerCondition) come from `gated_shims` above.
 
 pub enum AtRulePrelude<T> {
     FontFace,
@@ -949,15 +945,19 @@ pub enum AtRulePrelude<T> {
     Supports(SupportsCondition),
     Viewport(VendorPrefix),
     Keyframes {
-        name: css_rules::keyframes::KeyframesName,
+        // TODO(port): real type is `css_rules::keyframes::KeyframesName` —
+        // leaf module gated in rules/mod.rs.
+        name: KeyframesName,
         prefix: VendorPrefix,
     },
-    Page(Vec<css_rules::page::PageSelector>),
+    // TODO(port): real type is `Vec<css_rules::page::PageSelector>` — gated.
+    Page(Vec<PageSelector>),
     MozDocument,
     Layer(SmallList<LayerName, 1>),
     Container {
-        name: Option<css_rules::container::ContainerName>,
-        condition: css_rules::container::ContainerCondition,
+        // TODO(port): real types in `css_rules::container` — gated.
+        name: Option<ContainerName>,
+        condition: ContainerCondition,
     },
     StartingStyle,
     Nest(SelectorList),
@@ -1010,7 +1010,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // TODO: think about memory management
     pub rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
     pub composes: &'a mut ComposesMap,
-    pub composes_refs: SmallList<bun_js_parser::Ref, 2>,
+    pub composes_refs: SmallList<ast::Ref, 2>,
     pub local_properties: &'a mut LocalPropertyUsage,
 }
 
@@ -1033,6 +1033,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         }
     }
 
+    #[cfg(any())] // blocked_on: DeclarationList<'bump> arena threading (NestedRuleParser fields)
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         NestedRuleParser {
             options: self.options,
@@ -1049,6 +1050,150 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         }
     }
 }
+
+// ───────────────────────────── NestedRuleParser ─────────────────────────────
+
+#[derive(Clone, Copy)]
+pub enum ComposesState {
+    Allow(SourceLocation),
+    DisallowNested(SourceLocation),
+    DisallowNotSingleClass(SourceLocation),
+    DisallowEntirely,
+}
+
+/// Dispatch trait for `parse_declaration_impl` (replaces Zig
+/// `composes_ctx: anytype`). Implemented by `NestedRuleParser`.
+pub trait ComposesCtx {
+    fn composes_state(&self) -> ComposesState;
+    fn record_composes(&mut self, composes: &mut Composes);
+}
+/// Unit `ComposesCtx` for callers that don't track `composes:` (Zig `void`).
+pub struct NoComposesCtx;
+impl ComposesCtx for NoComposesCtx {
+    #[inline] fn composes_state(&self) -> ComposesState { ComposesState::DisallowEntirely }
+    #[inline] fn record_composes(&mut self, _: &mut Composes) {}
+}
+
+pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
+    pub options: &'a ParserOptions<'a>,
+    pub at_rule_parser: &'a mut T,
+    // todo_stuff.think_mem_mgmt
+    // PORT NOTE: `DeclarationList<'bump>` borrows the parser arena. Threading
+    // `'bump` here cascades into every rule type; deferred (matches
+    // `StyleRule`'s `'static` erasure in rules/style.rs).
+    pub declarations: DeclarationList<'static>,
+    // todo_stuff.think_mem_mgmt
+    pub important_declarations: DeclarationList<'static>,
+    // todo_stuff.think_mem_mgmt
+    pub rules: &'a mut CssRuleList<T::AtRule>,
+    pub is_in_style_rule: bool,
+    pub allow_declarations: bool,
+
+    pub composes_state: ComposesState,
+    pub composes_refs: &'a mut SmallList<ast::Ref, 2>,
+    pub composes: &'a mut ComposesMap,
+    pub local_properties: &'a mut LocalPropertyUsage,
+}
+
+impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
+    pub fn get_loc(&self, start: &ParserState) -> Location {
+        let loc = start.source_location();
+        Location {
+            source_index: self.options.source_index,
+            line: loc.line,
+            column: loc.column,
+        }
+    }
+}
+
+// ───────────────────── DeclarationParser / RuleBodyItemParser ────────────────
+
+pub trait DeclarationParser {
+    type Declaration;
+    fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Declaration>;
+}
+
+pub trait RuleBodyItemParser: AtRuleParser + QualifiedRuleParser + DeclarationParser {
+    fn parse_qualified(this: &Self) -> bool;
+    fn parse_declarations(this: &Self) -> bool;
+}
+
+// ───────────────────────────── StyleSheetParser ─────────────────────────────
+
+pub struct StyleSheetParser<'i, 't, P: AtRuleParser + QualifiedRuleParser> {
+    pub input: &'i mut Parser<'t>,
+    pub parser: &'i mut P,
+    pub any_rule_so_far: bool,
+}
+
+impl<'i, 't, P> StyleSheetParser<'i, 't, P>
+where
+    P: AtRuleParser + QualifiedRuleParser<QualifiedRule = <P as AtRuleParser>::AtRule>,
+{
+    pub fn new(input: &'i mut Parser<'t>, parser: &'i mut P) -> Self {
+        Self { input, parser, any_rule_so_far: false }
+    }
+
+    pub fn next(&mut self) -> Option<CssResult<<P as AtRuleParser>::AtRule>> {
+        loop {
+            self.input.skip_cdc_and_cdo();
+
+            let start = self.input.state();
+            let at_keyword: Option<&[u8]> = match self.input.next_byte()? {
+                b'@' => 'brk: {
+                    let at_keyword: &Token = match self.input.next_including_whitespace_and_comments() {
+                        Ok(vv) => vv,
+                        Err(_) => {
+                            self.input.reset(&start);
+                            break 'brk None;
+                        }
+                    };
+                    if let Token::AtKeyword(kw) = at_keyword {
+                        break 'brk Some(*kw);
+                    }
+                    self.input.reset(&start);
+                    None
+                }
+                _ => None,
+            };
+
+            if let Some(name) = at_keyword {
+                let first_stylesheet_rule = !self.any_rule_so_far;
+                self.any_rule_so_far = true;
+
+                if first_stylesheet_rule
+                    && strings::eql_case_insensitive_ascii(name, b"charset", true)
+                {
+                    let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
+                    let _ = self.input.parse_until_after(delimiters, |p| Parser::parse_empty(p));
+                } else {
+                    return Some(parse_at_rule(&start, name, self.input, self.parser));
+                }
+            } else {
+                self.any_rule_so_far = true;
+                return Some(parse_qualified_rule(
+                    &start,
+                    self.input,
+                    self.parser,
+                    Delimiters::CURLY_BRACKET,
+                ));
+            }
+        }
+    }
+}
+
+// ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
+// blocked_on: rules/ leaf modules (keyframes, page, container, font_face,
+// font_palette_values, viewport, property, scope, document, nesting,
+// starting_style, counter_style — all `gated_rule!`-stubbed in rules/mod.rs),
+// declaration::parse_declaration_impl (gated), MediaList::parse (gated),
+// LayerName::parse 'bump signature, properties_generated (Property variants).
+// The struct/trait *definitions* above are real; only the `AtRuleParser` /
+// `QualifiedRuleParser` / `DeclarationParser` / `RuleBodyItemParser` impl
+// bodies for `TopLevelRuleParser`/`NestedRuleParser` and the
+// `parse_nested`/`parse_style_block`/`record_composes` helpers stay gated.
+#[cfg(any())]
+mod rule_parsers { use super::*;
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<'a, AtRuleParserT> {
     type Prelude = AtRulePrelude<AtRuleParserT::Prelude>;
@@ -1256,43 +1401,9 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> QualifiedRuleParser
     }
 }
 
-// ───────────────────────────── NestedRuleParser ─────────────────────────────
-
-pub enum ComposesState {
-    Allow(SourceLocation),
-    DisallowNested(SourceLocation),
-    DisallowNotSingleClass(SourceLocation),
-    DisallowEntirely,
-}
-
-pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
-    pub options: &'a ParserOptions<'a>,
-    pub at_rule_parser: &'a mut T,
-    // todo_stuff.think_mem_mgmt
-    pub declarations: DeclarationList,
-    // todo_stuff.think_mem_mgmt
-    pub important_declarations: DeclarationList,
-    // todo_stuff.think_mem_mgmt
-    pub rules: &'a mut CssRuleList<T::AtRule>,
-    pub is_in_style_rule: bool,
-    pub allow_declarations: bool,
-
-    pub composes_state: ComposesState,
-    pub composes_refs: &'a mut SmallList<bun_js_parser::Ref, 2>,
-    pub composes: &'a mut ComposesMap,
-    pub local_properties: &'a mut LocalPropertyUsage,
-}
+// ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
 impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
-    pub fn get_loc(&self, start: &ParserState) -> Location {
-        let loc = start.source_location();
-        Location {
-            source_index: self.options.source_index,
-            line: loc.line,
-            column: loc.column,
-        }
-    }
-
     /// If css modules is enabled, we want to record each occurrence of the
     /// `composes` property for the bundler so we can generate the lazy JS
     /// import object later.
@@ -1944,11 +2055,6 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
     }
 }
 
-pub trait RuleBodyItemParser: AtRuleParser + QualifiedRuleParser + DeclarationParser {
-    fn parse_qualified(this: &Self) -> bool;
-    fn parse_declarations(this: &Self) -> bool;
-}
-
 impl<'a, T: CustomAtRuleParser> RuleBodyItemParser for NestedRuleParser<'a, T> {
     fn parse_qualified(_this: &Self) -> bool {
         true
@@ -1956,11 +2062,6 @@ impl<'a, T: CustomAtRuleParser> RuleBodyItemParser for NestedRuleParser<'a, T> {
     fn parse_declarations(this: &Self) -> bool {
         this.allow_declarations
     }
-}
-
-pub trait DeclarationParser {
-    type Declaration;
-    fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Declaration>;
 }
 
 impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {

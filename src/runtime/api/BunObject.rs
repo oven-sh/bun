@@ -351,7 +351,8 @@ fn get_main(global_this: &JSGlobalObject) -> JSValue {
             };
 
             let _close = scopeguard::guard(fd, |fd| {
-                let _ = bun_sys::close(fd);
+                use bun_sys::FdExt as _;
+                fd.close();
             });
             #[cfg(windows)]
             {

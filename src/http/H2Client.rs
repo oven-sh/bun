@@ -48,34 +48,105 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// TODO(b2-blocked): ClientSession/dispatch/encode bottom out on the full
-// `impl HTTPClient` state machine + uws socket write/ext/flush methods —
-// un-gate once the lib.rs `_phase_a_draft` impl block lands.
-#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
-#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;
-#[path = "h2_client/PendingConnect.rs"]               pub mod pending_connect;
-#[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
-#[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
+#[path = "h2_client/Stream.rs"]         pub mod stream;
+#[path = "h2_client/ClientSession.rs"]  pub mod client_session;
+#[path = "h2_client/PendingConnect.rs"] pub mod pending_connect;
+#[path = "h2_client/dispatch.rs"]       pub mod dispatch;
+#[path = "h2_client/encode.rs"]         pub mod encode;
 
-// ── type-only stubs so the HTTPClient/HTTPContext cluster can name
-//    `h2::Stream`/`h2::ClientSession` while the impl modules stay gated ──
-// TODO(b2-blocked): replace with `pub use stream::Stream` once un-gated.
-pub struct Stream(());
-pub struct ClientSession(());
-impl ClientSession {
-    pub fn registry_index(&self) -> u32 { u32::MAX }
-    pub fn set_registry_index(&self, _i: u32) {}
-}
+pub use stream::Stream;
+pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
 // — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the
 // `*_jsc` crate via extension traits; the base crate has no mention of jsc.
 
+// ═══════════════════════════════════════════════════════════════════════
+// B-2 bridge stubs: methods on HTTPClient / HTTPContext that the h2_client
+// modules call but which are still gated behind lib.rs `_phase_a_draft` /
+// HTTPContext.rs `_phase_a_draft`. `todo!()` bodies so the call sites
+// type-check; replaced by the real impls once those blocks un-gate.
+// TODO(b2-bridge): delete this section once `_phase_a_draft` lands.
+// ═══════════════════════════════════════════════════════════════════════
+pub(crate) mod bridge {
+    use crate::http_context::HTTPSocket;
+    use crate::{HTTPClient, NewHTTPContext, ShouldContinue};
+    use bun_picohttp as picohttp;
+
+    /// Socket helper missing from `bun_uws::NewSocketHandler`.
+    #[inline]
+    pub fn socket_is_closed_or_has_error(socket: &HTTPSocket<true>) -> bool {
+        socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0
+    }
+
+    impl HTTPClient {
+        pub fn h2_register_abort_tracker(&mut self, _socket: HTTPSocket<true>) {
+            todo!("HTTPClient::register_abort_tracker — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_retry_after_coalesce(&mut self) {
+            todo!("HTTPClient::retry_after_h2_coalesce — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_retry(&mut self) {
+            todo!("HTTPClient::retry_from_h2 — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_fail(&mut self, _err: bun_core::Error) {
+            todo!("HTTPClient::fail_from_h2 — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_progress_update(
+            &mut self,
+            _ctx: *mut NewHTTPContext<true>,
+            _socket: HTTPSocket<true>,
+        ) {
+            todo!("HTTPClient::progress_update — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_do_redirect(
+            &mut self,
+            _ctx: *mut NewHTTPContext<true>,
+            _socket: HTTPSocket<true>,
+        ) {
+            todo!("HTTPClient::do_redirect — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_clone_metadata(&mut self) {
+            todo!("HTTPClient::clone_metadata — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_handle_response_metadata(
+            &mut self,
+            _response: &mut picohttp::Response<'_>,
+        ) -> Result<ShouldContinue, bun_core::Error> {
+            todo!("HTTPClient::handle_response_metadata — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_handle_response_body(
+            &mut self,
+            _buf: &[u8],
+            _is_only_buffer: bool,
+        ) -> Result<bool, bun_core::Error> {
+            todo!("HTTPClient::handle_response_body — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_drain_response_body(&mut self, _socket: HTTPSocket<true>) {
+            todo!("HTTPClient::drain_response_body — gated in lib.rs _phase_a_draft")
+        }
+        pub fn h2_build_request(&mut self, _body_len: usize) -> picohttp::Request<'static> {
+            todo!("HTTPClient::build_request — gated in lib.rs _phase_a_draft")
+        }
+    }
+
+    impl NewHTTPContext<true> {
+        pub fn h2_register(&mut self, _session: *mut super::ClientSession) {
+            todo!("HTTPContext::register_h2 — gated in HTTPContext.rs _phase_a_draft")
+        }
+        pub fn h2_unregister(&mut self, _session: &super::ClientSession) {
+            todo!("HTTPContext::unregister_h2 — gated in HTTPContext.rs _phase_a_draft")
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/H2Client.zig (45 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      thin re-export hub; u31 widened to u32; *_jsc alias dropped
+//   notes:      thin re-export hub; u31 widened to u32; *_jsc alias dropped;
+//               bridge stubs for gated HTTPClient/HTTPContext state-machine
+//               methods (delete once _phase_a_draft un-gates)
 // ──────────────────────────────────────────────────────────────────────────

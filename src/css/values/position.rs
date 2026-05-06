@@ -451,6 +451,7 @@ impl_position_keyword!(HorizontalPositionKeyword { b"left" => Left, b"right" => 
 impl_position_keyword!(VerticalPositionKeyword { b"top" => Top, b"bottom" => Bottom });
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum HorizontalPositionKeyword {
     /// The `left` keyword.
     Left,
@@ -491,6 +492,7 @@ impl HorizontalPositionKeyword {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum VerticalPositionKeyword {
     /// The `top` keyword.
     Top,

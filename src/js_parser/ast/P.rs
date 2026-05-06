@@ -3396,22 +3396,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.create_default_name(loc).expect("unreachable")
     }
 
-    #[cfg(any())] // blocked_on: BabyList<NonNull<Scope>> Copy/ordered_remove; child.scope NonNull eq *mut
     pub fn discard_scopes_up_to(&mut self, scope_index: usize) {
         // Remove any direct children from their parent
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        let scope = unsafe { &mut *self.current_scope };
-        let mut children = scope.children;
-        // PORT NOTE: Zig used `defer scope.children = children;` — we write back at end.
+        let current_scope_ptr: *mut js_ast::Scope = self.current_scope;
+        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding.
+        // The raw deref does not borrow `self`, so the immutable iter over scopes_in_order is fine.
+        let children = unsafe { &mut (*current_scope_ptr).children };
+        // PORT NOTE: Zig copied `var children = scope.children` + `defer scope.children = children`.
+        // BabyList isn't Copy in Rust; mutate the field in place via the raw ptr instead.
 
         for _child in &self.scopes_in_order[scope_index..] {
             let Some(child) = _child else { continue };
 
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if unsafe { &*child.scope }.parent == Some(self.current_scope) {
+            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding.
+            let parent = unsafe { (*child.scope).parent };
+            if parent.map(|p| p.as_ptr()) == Some(current_scope_ptr) {
                 let mut i: usize = (children.len - 1) as usize;
                 loop {
-                    if children.mut_(i) == &child.scope {
+                    if children.mut_(i).as_ptr() == child.scope {
                         let _ = children.ordered_remove(i);
                         break;
                     }
@@ -3422,8 +3424,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
             }
         }
-
-        scope.children = children;
 
         // Truncate the scope order where we started to pretend we never saw this scope
         self.scopes_in_order.truncate(scope_index);
@@ -4250,7 +4250,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: binding_can_be_removed_if_unused_without_dce_check
     fn binding_can_be_removed_if_unused(&mut self, binding: Binding) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -4298,7 +4297,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         true
     }
 
-    #[cfg(any())] // blocked_on: stmts_can_be_removed_if_unused_without_dce_check
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {
         if !self.options.features.dead_code_elimination {
             return false;
@@ -5092,36 +5090,39 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: mark_exported_binding_inside_namespace
     pub fn mark_exported_decls_inside_namespace(&mut self, ns_ref: Ref, decls: &[G::Decl]) {
         for decl in decls {
             self.mark_exported_binding_inside_namespace(ns_ref, decl.binding);
         }
     }
 
-    #[cfg(any())] // blocked_on: S::Block stmts field type; statement_cares_about_scope arg type
     pub fn append_if_body_preserving_scope(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         body: Stmt,
     ) -> Result<(), bun_core::Error> {
         if let js_ast::StmtData::SBlock(block) = &body.data {
+            // SAFETY: S::Block.stmts is `*mut [Stmt]` arena-owned for parser 'a; no aliasing &mut.
+            let block_stmts: &[Stmt] = unsafe { &*block.stmts };
             let mut keep_block = false;
-            for stmt in block.stmts.iter() {
-                if statement_cares_about_scope(*stmt) {
+            for stmt in block_stmts {
+                if statement_cares_about_scope(stmt) {
                     keep_block = true;
                     break;
                 }
             }
-            if !keep_block && !block.stmts.is_empty() {
-                stmts.extend_from_slice(block.stmts);
+            if !keep_block && !block_stmts.is_empty() {
+                stmts.extend_from_slice(block_stmts);
                 return Ok(());
             }
         }
 
-        if statement_cares_about_scope(body) {
+        if statement_cares_about_scope(&body) {
             let block_stmts = self.allocator.alloc_slice_copy(&[body]);
-            stmts.push(self.s(S::Block { stmts: block_stmts, ..Default::default() }, body.loc));
+            stmts.push(self.s(
+                S::Block { stmts: block_stmts, close_brace_loc: logger::Loc::EMPTY },
+                body.loc,
+            ));
             return Ok(());
         }
 
@@ -5129,20 +5130,26 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: B::Array/Object payload deref; is_exported_inside_namespace.put (std HashMap no allocator)
     fn mark_exported_binding_inside_namespace(&mut self, r#ref: Ref, binding: BindingNodeIndex) {
         match binding.data {
-            Binding::Data::BMissing(_) => {}
-            Binding::Data::BIdentifier(ident) => {
-                self.is_exported_inside_namespace.put(self.allocator, ident.r#ref, r#ref).expect("unreachable");
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(ident) => {
+                // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
+                let ident = unsafe { &*ident };
+                // RefRefMap derefs to std::collections::HashMap; Zig `put(allocator, k, v)` → insert.
+                self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
             }
-            Binding::Data::BArray(array) => {
-                for item in array.items.iter() {
+            js_ast::b::B::BArray(array) => {
+                // SAFETY: arena-owned `*mut Array` / `*mut [ArrayBinding]` valid for parser 'a.
+                let array = unsafe { &*array };
+                for item in unsafe { &*array.items } {
                     self.mark_exported_binding_inside_namespace(r#ref, item.binding);
                 }
             }
-            Binding::Data::BObject(obj) => {
-                for item in obj.properties.iter() {
+            js_ast::b::B::BObject(obj) => {
+                // SAFETY: arena-owned `*mut Object` / `*mut [Property]` valid for parser 'a.
+                let obj = unsafe { &*obj };
+                for item in unsafe { &*obj.properties } {
                     self.mark_exported_binding_inside_namespace(r#ref, item.value);
                 }
             }

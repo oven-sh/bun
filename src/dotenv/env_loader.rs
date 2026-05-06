@@ -1,6 +1,6 @@
 use core::ffi::c_char;
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::OnceLock;
 
 use bun_alloc::AllocError;
@@ -1487,8 +1487,20 @@ pub struct HashTableValue {
 // An issue with this exact implementation is unicode characters can technically appear in these
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
-// TODO(b2-blocked): bun_collections::CaseInsensitiveAsciiStringArrayHashMap (Windows only)
+// Spec: env_loader.zig:1220 — `bun.CaseInsensitiveASCIIStringArrayHashMap` on Windows.
+// TODO(b2-blocked): bun_collections::CaseInsensitiveAsciiStringArrayHashMap not yet ported.
+// Until it lands, gate Windows builds with a compile_error so we cannot silently ship a
+// case-sensitive env map there (would break `Path` vs `PATH` precedence / dedup).
+#[cfg(windows)]
+compile_error!(
+    "dotenv HashTable requires bun_collections::CaseInsensitiveAsciiStringArrayHashMap on Windows; \
+     port that collection before enabling this crate for Windows targets"
+);
+#[cfg(not(windows))]
 pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
+// Once the case-insensitive map lands:
+//   #[cfg(windows)]
+//   pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
 
 pub struct Map {
     pub map: HashTable,
@@ -1741,26 +1753,33 @@ impl StdEnvMapWrapper {
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
-// Zig: `pub var instance: ?*Loader = null;` — global mutable singleton, set once at CLI init.
-// PORTING.md §Concurrency: OnceLock for set-once globals.
-// PORT NOTE: stores a raw ptr (Loader is !Sync via &mut Map borrow; same single-thread
-// invariant the Zig had). Callers `unsafe`-deref under that invariant.
-pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new();
+// Zig: `pub var instance: ?*Loader = null;` — global mutable raw pointer, freely re-assignable.
+// PORT NOTE: Loader is !Sync (holds `&mut Map`); same single-thread invariant the Zig had.
+// We store a raw `*mut` in an AtomicPtr (overwritable, matches `pub var` semantics) and hand
+// the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
+// site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
+// moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
+// via `unsafe { &*(p as *const _) }`).
+pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Read the global singleton — `Some(&mut Loader)` once `set_instance` has been called.
-/// SAFETY: same single-thread CLI-init invariant the Zig `var instance: ?*Loader` had;
-/// callers must not alias the returned `&mut` (mirrors raw `*Loader` deref in Zig).
+/// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
+/// Callers must `unsafe { &mut *ptr }` at point of use under the same single-thread CLI-init
+/// invariant the Zig `var instance: ?*Loader` had (mirrors raw `*Loader` deref in Zig).
 #[inline]
-pub fn instance() -> Option<&'static mut Loader<'static>> {
-    INSTANCE
-        .get()
-        .map(|&addr| unsafe { &mut *(addr as *mut Loader<'static>) })
+pub fn instance() -> Option<*mut Loader<'static>> {
+    let ptr = INSTANCE.load(Ordering::Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(ptr)
+    }
 }
 
-/// Install the global singleton. First-writer-wins (OnceLock); subsequent calls are no-ops.
+/// Install the global singleton. Overwrites any previous value (matches Zig `pub var` re-assign
+/// semantics — test harnesses / worker re-init may call this more than once).
 #[inline]
-pub fn set_instance(loader: &'static mut Loader<'static>) {
-    let _ = INSTANCE.set(loader as *mut Loader<'static> as usize);
+pub fn set_instance(loader: *mut Loader<'static>) {
+    INSTANCE.store(loader, Ordering::Release);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

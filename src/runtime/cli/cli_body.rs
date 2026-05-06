@@ -793,8 +793,8 @@ pub mod command {
 
                 ctx.args.target = Some(api::Target::Bun);
                 use bun_options_types::GlobalCache::GlobalCache;
-                if ctx.debug.global_cache == GlobalCache::Auto {
-                    ctx.debug.global_cache = GlobalCache::Disable;
+                if ctx.debug.global_cache == GlobalCache::auto {
+                    ctx.debug.global_cache = GlobalCache::disable;
                 }
 
                 ctx.passthrough = bun::argv()

@@ -236,7 +236,7 @@ pub struct DevServer<'a> {
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
-    pub html_router: HTMLRouter,
+    pub html_router: HTMLRouter<'a>,
     /// Assets are accessible via `/_bun/asset/<key>`
     /// This store is not thread safe.
     pub assets: Assets,

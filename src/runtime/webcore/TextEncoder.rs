@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 
+use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSValue, TypedArrayType};
 use bun_str::strings;
 

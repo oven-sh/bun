@@ -315,6 +315,15 @@ pub fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> Result<bun_sys::F
     Err(bun_core::err!("Missing global bin directory: try setting $BUN_INSTALL"))
 }
 
+// PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
+// arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
+// per Phase-A "no struct lifetime params". Leak a clone to bridge — these are
+// one-shot config strings that live until process exit anyway.
+#[inline]
+fn leak_static(s: &[u8]) -> &'static [u8] {
+    Box::leak(s.to_vec().into_boxed_slice())
+}
+
 impl Options {
     pub fn load(
         &mut self,
@@ -328,13 +337,7 @@ impl Options {
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
-        let mut base = Api::NpmRegistry {
-            url: b"",
-            username: b"",
-            password: b"",
-            token: b"",
-            email: b"",
-        };
+        let mut base = Api::NpmRegistry::default();
         // PORT NOTE: reshaped for borrowck — Zig captures `*Api.BunInstall` twice via `if (bun_install_) |config|`.
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
@@ -347,15 +350,15 @@ impl Options {
         }
 
         if base.url.is_empty() {
-            base.url = Npm::registry::DEFAULT_URL;
+            base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
         self.scope = Npm::registry::Scope::from_api(b"", base, env)?;
         // PORT NOTE: Zig `defer { this.did_override_default_scope = ... }` moved to end of fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
         if let Some(config) = bun_install_ref {
-            if let Some(cache_directory) = config.cache_directory {
-                self.cache_directory = cache_directory;
+            if let Some(cache_directory) = config.cache_directory.as_deref() {
+                self.cache_directory = leak_static(cache_directory);
             }
 
             if let Some(scoped) = &config.scoped {
@@ -363,7 +366,7 @@ impl Options {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
                     let mut registry = registry_.clone();
                     if registry.url.is_empty() {
-                        registry.url = base.url;
+                        registry.url = base.url.clone();
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
@@ -385,20 +388,26 @@ impl Options {
             }
 
             if let Some(node_linker) = config.node_linker {
-                self.node_linker = node_linker;
+                // CYCLEBREAK: Api::NodeLinker is a #[repr(u8)] mirror of
+                // bun_install_types::NodeLinker — map by variant.
+                self.node_linker = match node_linker {
+                    Api::NodeLinker::Auto => NodeLinker::Auto,
+                    Api::NodeLinker::Hoisted => NodeLinker::Hoisted,
+                    Api::NodeLinker::Isolated => NodeLinker::Isolated,
+                };
             }
 
             if let Some(global_store) = config.global_store {
                 self.enable.set(Enable::GLOBAL_VIRTUAL_STORE, global_store);
             }
 
-            if let Some(security_scanner) = config.security_scanner {
-                self.security_scanner = Some(security_scanner);
+            if let Some(security_scanner) = config.security_scanner.as_deref() {
+                self.security_scanner = Some(leak_static(security_scanner));
                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
             }
 
-            if let Some(cafile) = config.cafile {
-                self.ca_file_name = cafile;
+            if let Some(cafile) = config.cafile.as_deref() {
+                self.ca_file_name = leak_static(cafile);
             }
 
             if config.disable_cache.unwrap_or(false) {

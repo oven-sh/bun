@@ -216,6 +216,8 @@ pub mod features {
     #[inline] pub fn pnpm_migration_inc(n: usize) { PNPM_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
     /// install crate calls `bun_core::analytics::Features::text_lockfile_inc()`.
     #[inline] pub fn text_lockfile_inc() { TEXT_LOCKFILE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    /// install/migration crate calls `bun_core::analytics::Features::lockfile_migration_from_package_lock_inc()`.
+    #[inline] pub fn lockfile_migration_from_package_lock_inc() { LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
 }
 /// Re-export under the `analytics` name so `bun_core::analytics::Features::*` resolves
 /// (per movein-skipped [dotenv] entry).

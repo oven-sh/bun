@@ -56,54 +56,54 @@ impl FileCopier {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
                     if e == err!("AccessDenied") {
-                        E::PERM
+                        E::EPERM
                     } else if e == err!("FileTooBig") {
-                        E::FBIG
+                        E::EFBIG
                     } else if e == err!("SymLinkLoop") {
-                        E::LOOP
+                        E::ELOOP
                     } else if e == err!("ProcessFdQuotaExceeded") {
-                        E::NFILE
+                        E::ENFILE
                     } else if e == err!("NameTooLong") {
-                        E::NAMETOOLONG
+                        E::ENAMETOOLONG
                     } else if e == err!("SystemFdQuotaExceeded") {
-                        E::MFILE
+                        E::EMFILE
                     } else if e == err!("SystemResources") {
-                        E::NOMEM
+                        E::ENOMEM
                     } else if e == err!("ReadOnlyFileSystem") {
-                        E::ROFS
+                        E::EROFS
                     } else if e == err!("FileSystem") {
-                        E::IO
+                        E::EIO
                     } else if e == err!("FileBusy") {
-                        E::BUSY
+                        E::EBUSY
                     } else if e == err!("DeviceBusy") {
-                        E::BUSY
+                        E::EBUSY
                     }
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     else if e == err!("NotDir") {
-                        E::NOTDIR
+                        E::ENOTDIR
                     }
                     // On Windows, file paths must be valid Unicode.
                     else if e == err!("InvalidUtf8") {
-                        E::INVAL
+                        E::EINVAL
                     } else if e == err!("InvalidWtf8") {
-                        E::INVAL
+                        E::EINVAL
                     }
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
                     else if e == err!("BadPathName") {
-                        E::INVAL
+                        E::EINVAL
                     } else if e == err!("FileNotFound") {
-                        E::NOENT
+                        E::ENOENT
                     } else if e == err!("IsDir") {
-                        E::ISDIR
+                        E::EISDIR
                     } else {
-                        E::FAULT
+                        E::EFAULT
                     }
                 };
                 #[cfg(windows)]
-                if errno == E::NOTDIR {
-                    errno = E::NOENT;
+                if errno == E::ENOTDIR {
+                    errno = E::ENOENT;
                 }
 
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
@@ -192,7 +192,7 @@ impl FileCopier {
                     continue;
                 }
 
-                let src = match entry.dir.openat(entry.basename, bun_sys::O::RDONLY, 0) {
+                let src: Fd = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
                     sys::Result::Ok(fd) => fd,
                     sys::Result::Err(err) => {
                         return sys::Result::Err(err);
@@ -207,7 +207,7 @@ impl FileCopier {
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
                             let _ = bun_sys::make_path::make_path::<OSPathChar>(
-                                &dest_dir,
+                                dest_dir,
                                 entry_dirname,
                             );
                         }
@@ -229,7 +229,7 @@ impl FileCopier {
 
                 #[cfg(unix)]
                 {
-                    let stat = match src.stat() {
+                    let stat = match bun_sys::fstat(src) {
                         sys::Result::Ok(s) => s,
                         sys::Result::Err(_) => continue,
                     };
@@ -237,7 +237,7 @@ impl FileCopier {
                     unsafe {
                         // TODO(port): confirm @intCast target type for mode (libc::mode_t vs bun_sys::Mode)
                         let _ = bun_sys::c::fchmod(
-                            dest.handle(),
+                            dest.handle().native(),
                             libc::mode_t::try_from(stat.mode).unwrap(),
                         );
                     }
@@ -245,7 +245,7 @@ impl FileCopier {
 
                 match bun_sys::copy_file::copy_file_with_state(
                     src,
-                    Fd::from_std_file(&dest),
+                    dest.handle(),
                     &mut copy_file_state,
                 ) {
                     sys::Result::Ok(()) => {}

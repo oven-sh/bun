@@ -14,7 +14,7 @@ use super::{
     ExternalStringBuffer, Lockfile, PackageIDList, Stream, StringBuffer, Tree,
 };
 use crate::{
-    invalid_package_id, Aligner, Dependency, DependencyID, PackageID, PackageManager,
+    dependency, invalid_package_id, Aligner, Dependency, DependencyID, PackageID, PackageManager,
 };
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 
@@ -84,8 +84,9 @@ mod sizes {
 
 pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Error> {
     // TODO(port): narrow error set (CorruptLockfile | OOM)
-    let mut reader = stream.reader();
-    let start_pos = reader.read_int_le::<u64>()?;
+    // PORT NOTE: Zig went through `stream.reader()`; `FixedBufferStream` exposes
+    // `read_int_le` directly, so the intermediate reader handle is elided.
+    let start_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     if start_pos == 0xDEAD_BEEF {
@@ -103,7 +104,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
         return Err(bun_core::err!("CorruptLockfile"));
     }
 
-    let end_pos = reader.read_int_le::<u64>()?;
+    let end_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
     // That shouldn't happen.

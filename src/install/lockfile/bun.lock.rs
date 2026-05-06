@@ -91,7 +91,7 @@ impl Stringifier {
     pub fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
-        options: &PackageManager::Options,
+        options: &PackageManagerOptions,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
         // bun.handleOom → drop wrapper; allocation aborts on OOM in Rust.
@@ -101,7 +101,7 @@ impl Stringifier {
     pub fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
-        options: &PackageManager::Options,
+        options: &PackageManagerOptions,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
         // TODO(port): narrow error set
@@ -172,7 +172,7 @@ impl Stringifier {
             write!(writer, "\"lockfileVersion\": {},\n", Version::CURRENT as u32)?;
             Self::write_indent(writer, indent)?;
 
-            let config_version: bun_core::ConfigVersion = options.config_version.unwrap_or(bun_core::ConfigVersion::CURRENT);
+            let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
             write!(writer, "\"configVersion\": {},\n", config_version as u32)?;
             Self::write_indent(writer, indent)?;
 
@@ -203,7 +203,7 @@ impl Stringifier {
                 for _pkg_id in 0..pkgs.len() {
                     let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
                     let res = &pkg_resolutions[pkg_id as usize];
-                    if res.tag != Resolution::Tag::Workspace {
+                    if res.tag != ResolutionTag::Workspace {
                         continue;
                     }
                     workspace_sort_buf.push(pkg_id);
@@ -282,18 +282,18 @@ impl Stringifier {
                         use std::io::Write;
                         write!(&mut temp_buf, "{}@", bstr::BStr::new(pkg_name.slice(buf))).ok();
                         match res.tag {
-                            Resolution::Tag::Workspace => {
+                            ResolutionTag::Workspace => {
                                 if let Some(workspace_version) = lockfile.workspace_versions.get(pkg_name_hash) {
                                     write!(&mut temp_buf, "{}", workspace_version.fmt(buf)).ok();
                                 }
                             }
                             _ => {
-                                write!(&mut temp_buf, "{}", res.fmt(buf, bun_paths::Style::Posix)).ok();
+                                write!(&mut temp_buf, "{}", res.fmt(buf, bun_core::fmt::PathSep::Posix)).ok();
                             }
                         }
 
                         let name_and_version = temp_buf.as_slice();
-                        let name_and_version_hash = String::Builder::string_hash(name_and_version);
+                        let name_and_version_hash = StringBuilder::string_hash(name_and_version);
 
                         if let Some(patch) = lockfile.patched_dependencies.get(name_and_version_hash) {
                             found_patched_dependencies.insert(
@@ -456,18 +456,18 @@ impl Stringifier {
 
                     let res = &pkg_resolutions[pkg_id as usize];
                     match res.tag {
-                        Resolution::Tag::Root
-                        | Resolution::Tag::Npm
-                        | Resolution::Tag::Folder
-                        | Resolution::Tag::LocalTarball
-                        | Resolution::Tag::Github
-                        | Resolution::Tag::Git
-                        | Resolution::Tag::Symlink
-                        | Resolution::Tag::Workspace
-                        | Resolution::Tag::RemoteTarball => {}
-                        Resolution::Tag::Uninitialized => continue,
+                        ResolutionTag::Root
+                        | ResolutionTag::Npm
+                        | ResolutionTag::Folder
+                        | ResolutionTag::LocalTarball
+                        | ResolutionTag::Github
+                        | ResolutionTag::Git
+                        | ResolutionTag::Symlink
+                        | ResolutionTag::Workspace
+                        | ResolutionTag::RemoteTarball => {}
+                        ResolutionTag::Uninitialized => continue,
                         // should not be possible, just being safe
-                        Resolution::Tag::SingleFileModule => continue,
+                        ResolutionTag::SingleFileModule => continue,
                         _ => continue,
                     }
 
@@ -485,7 +485,7 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}",
-                        bun_core::fmt::format_json_string_utf8(relative_path, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                        bun_core::fmt::format_json_string_utf8(relative_path, JsonOpts { quote: false }),
                     )?;
 
                     if *depth != 0 {
@@ -498,7 +498,7 @@ impl Stringifier {
                     write!(
                         writer,
                         "{}\": ",
-                        bun_core::fmt::format_json_string_utf8(dep_name, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                        bun_core::fmt::format_json_string_utf8(dep_name, JsonOpts { quote: false }),
                     )?;
 
                     let pkg_name = pkg_names[pkg_id as usize];
@@ -538,36 +538,36 @@ impl Stringifier {
                     // github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
 
                     match res.tag {
-                        Resolution::Tag::Root => {
+                        ResolutionTag::Root => {
                             write!(
                                 writer,
                                 "[\"{}@root:\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
                                 // we don't read the root package version into the binary lockfile
                             )?;
 
                             writer.write_byte(b'{')?;
-                            if pkg_bin.tag != Bin::Tag::None {
-                                writer.write_all(if pkg_bin.tag == Bin::Tag::Dir {
+                            if pkg_bin.tag != BinTag::None {
+                                writer.write_all(if pkg_bin.tag == BinTag::Dir {
                                     b" \"binDir\": "
                                 } else {
                                     b" \"bin\": "
                                 })?;
 
                                 // TODO(dylan-conway) move this to "workspaces" object
-                                pkg_bin.to_json(Bin::JsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
+                                pkg_bin.to_json(ToJsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
 
                                 writer.write_all(b" }]")?;
                             } else {
                                 writer.write_all(b"}]")?;
                             }
                         }
-                        Resolution::Tag::Folder => {
+                        ResolutionTag::Folder => {
                             write!(
                                 writer,
                                 "[\"{}@file:{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
-                                res.value.folder.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
+                                res.value.folder.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -587,12 +587,12 @@ impl Stringifier {
 
                             writer.write_byte(b']')?;
                         }
-                        Resolution::Tag::LocalTarball => {
+                        ResolutionTag::LocalTarball => {
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
-                                res.value.local_tarball.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
+                                res.value.local_tarball.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -616,12 +616,12 @@ impl Stringifier {
                                 writer.write_byte(b']')?;
                             }
                         }
-                        Resolution::Tag::RemoteTarball => {
+                        ResolutionTag::RemoteTarball => {
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
-                                res.value.remote_tarball.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
+                                res.value.remote_tarball.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -645,12 +645,12 @@ impl Stringifier {
                                 writer.write_byte(b']')?;
                             }
                         }
-                        Resolution::Tag::Symlink => {
+                        ResolutionTag::Symlink => {
                             write!(
                                 writer,
                                 "[\"{}@link:{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
-                                res.value.symlink.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
+                                res.value.symlink.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -670,11 +670,11 @@ impl Stringifier {
 
                             writer.write_byte(b']')?;
                         }
-                        Resolution::Tag::Npm => {
+                        ResolutionTag::Npm => {
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
                                 res.value.npm.version.fmt(buf),
                             )?;
 
@@ -685,7 +685,7 @@ impl Stringifier {
                                 "\"{}\", ",
                                 bstr::BStr::new(if strings::has_prefix(
                                     url_slice,
-                                    strings::without_trailing_slash(Npm::Registry::DEFAULT_URL),
+                                    strings::without_trailing_slash(Npm::Registry::DEFAULT_URL.as_bytes()),
                                 ) {
                                     b""
                                 } else {
@@ -710,26 +710,26 @@ impl Stringifier {
 
                             write!(writer, ", \"{}\"]", pkg_meta.integrity)?;
                         }
-                        Resolution::Tag::Workspace => {
+                        ResolutionTag::Workspace => {
                             write!(
                                 writer,
                                 "[\"{}@workspace:{}\"]",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
-                                res.value.workspace.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
+                                res.value.workspace.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
                         }
-                        tag @ (Resolution::Tag::Git | Resolution::Tag::Github) => {
+                        tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                             // inline .git, .github
-                            let repo: &Repository = if tag == Resolution::Tag::Git {
+                            let repo: &Repository = if tag == ResolutionTag::Git {
                                 &res.value.git
                             } else {
                                 &res.value.github
                             };
-                            let prefix: &str = if tag == Resolution::Tag::Git { "git+" } else { "github:" };
+                            let prefix: &str = if tag == ResolutionTag::Git { "git+" } else { "github:" };
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
-                                pkg_name.fmt_json(buf, bun_core::fmt::JsonOpts { quote: false, ..Default::default() }),
+                                pkg_name.fmt_json(buf, JsonOpts { quote: false }),
                                 repo.fmt(prefix, buf),
                             )?;
 
@@ -784,7 +784,7 @@ impl Stringifier {
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn write_package_info_object(
         writer: &mut Writer,
-        dep_behavior: Dependency::Behavior,
+        dep_behavior: Behavior,
         deps_buf: &[Dependency],
         pkg_dep_ids: &[DependencyID],
         meta: &Meta,
@@ -910,18 +910,18 @@ impl Stringifier {
             Negatable::<Npm::Architecture>::to_json(meta.arch, writer)?;
         }
 
-        if bin.tag != Bin::Tag::None {
+        if bin.tag != BinTag::None {
             if any {
                 writer.write_byte(b',')?;
             } else {
                 any = true;
             }
-            writer.write_all(if bin.tag == Bin::Tag::Dir {
+            writer.write_all(if bin.tag == BinTag::Dir {
                 b" \"binDir\": "
             } else {
                 b" \"bin\": "
             })?;
-            bin.to_json(Bin::JsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
+            bin.to_json(ToJsonStyle::SingleLine, (), buf, extern_strings, writer, &Self::write_indent)?;
         }
 
         if any {
@@ -946,7 +946,7 @@ impl Stringifier {
         buf: &[u8],
         extern_strings: &[ExternalString],
         deps_buf: &[Dependency],
-        workspace_versions: &BinaryLockfile::VersionHashMap,
+        workspace_versions: &VersionHashMap,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
         relative_path: &[u8],
@@ -997,16 +997,16 @@ impl Stringifier {
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
             }
 
-            if pkg_bins[pkg_id as usize].tag != Bin::Tag::None {
+            if pkg_bins[pkg_id as usize].tag != BinTag::None {
                 let bin = &pkg_bins[pkg_id as usize];
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, indent)?;
-                if bin.tag == Bin::Tag::Dir {
+                if bin.tag == BinTag::Dir {
                     writer.write_all(b"\"binDir\": ")?;
                 } else {
                     writer.write_all(b"\"bin\": ")?;
                 }
-                bin.to_json(Bin::JsonStyle::MultiLine, indent, buf, extern_strings, writer, &Self::write_indent)?;
+                bin.to_json(ToJsonStyle::MultiLine, indent, buf, extern_strings, writer, &Self::write_indent)?;
             }
 
             any = true;
@@ -1128,13 +1128,13 @@ impl Stringifier {
     }
 }
 
-const WORKSPACE_DEPENDENCY_GROUPS: [(&str, Dependency::Behavior); 4] = [
-    ("dependencies", Dependency::Behavior { prod: true, ..Dependency::Behavior::EMPTY }),
-    ("devDependencies", Dependency::Behavior { dev: true, ..Dependency::Behavior::EMPTY }),
-    ("optionalDependencies", Dependency::Behavior { optional: true, ..Dependency::Behavior::EMPTY }),
-    ("peerDependencies", Dependency::Behavior { peer: true, ..Dependency::Behavior::EMPTY }),
+const WORKSPACE_DEPENDENCY_GROUPS: [(&str, Behavior); 4] = [
+    ("dependencies", Behavior { prod: true, ..Behavior::EMPTY }),
+    ("devDependencies", Behavior { dev: true, ..Behavior::EMPTY }),
+    ("optionalDependencies", Behavior { optional: true, ..Behavior::EMPTY }),
+    ("peerDependencies", Behavior { peer: true, ..Behavior::EMPTY }),
 ];
-// TODO(port): Dependency::Behavior is a packed-struct/bitflags in Zig — confirm const construction shape in Phase B.
+// TODO(port): Behavior is a packed-struct/bitflags in Zig — confirm const construction shape in Phase B.
 
 #[derive(thiserror::Error, Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ParseError {
@@ -1308,7 +1308,7 @@ pub fn parse_into_binary_lockfile(
     let lockfile_version_num: u32 = 'lockfile_version: {
         'err: {
             match &lockfile_version_expr.data {
-                Expr::Data::ENumber(num) => {
+                ExprData::ENumber(num) => {
                     if num.value < 0.0 || num.value > u32::MAX as f64 {
                         break 'err;
                     }
@@ -1336,7 +1336,7 @@ pub fn parse_into_binary_lockfile(
 
     // configVersion is not required
     if let Some(config_version_expr) = root.get(b"configVersion") {
-        lockfile.saved_config_version = match bun_core::ConfigVersion::from_expr(&config_version_expr) {
+        lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
             Some(v) => Some(v),
             None => {
                 log.add_error(source, config_version_expr.loc, "Invalid \"configVersion\". Expected a number")?;
@@ -1348,7 +1348,7 @@ pub fn parse_into_binary_lockfile(
     let mut string_buf = lockfile.string_buf();
 
     if let Some(trusted_dependencies_expr) = root.get(b"trustedDependencies") {
-        let mut trusted_dependencies = BinaryLockfile::TrustedDependenciesSet::default();
+        let mut trusted_dependencies = TrustedDependenciesSet::default();
         if !trusted_dependencies_expr.is_array() {
             log.add_error(source, trusted_dependencies_expr.loc, "Expected an array")?;
             return Err(ParseError::InvalidTrustedDependenciesSet);
@@ -1360,7 +1360,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             }
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash(String::Builder::string_hash)?.unwrap() as TruncatedPackageNameHash;
+                dep.as_string_hash(StringBuilder::string_hash)?.unwrap() as TruncatedPackageNameHash;
             trusted_dependencies.insert(name_hash, ());
         }
 
@@ -1386,10 +1386,10 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPatchedDependencies);
             }
 
-            let key_hash = key.as_string_hash(String::Builder::string_hash)?.unwrap();
+            let key_hash = key.as_string_hash(StringBuilder::string_hash)?.unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
-                BinaryLockfile::PatchedDependency { path: string_buf.append(value.as_string().unwrap())? },
+                PatchedDep { path: string_buf.append(value.as_string().unwrap())? },
             );
         }
     }
@@ -1410,7 +1410,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let name_str = key.as_string().unwrap();
-            let name_hash = String::Builder::string_hash(name_str);
+            let name_hash = StringBuilder::string_hash(name_str);
             let name = string_buf.append_with_hash(name_str, name_hash)?;
 
             // TODO(dylan-conway) also accept object when supported
@@ -1420,14 +1420,14 @@ pub fn parse_into_binary_lockfile(
             }
 
             let version_str = value.as_string().unwrap();
-            let version_hash = String::Builder::string_hash(version_str);
+            let version_hash = StringBuilder::string_hash(version_str);
             let version = string_buf.append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(string_buf.bytes.as_slice());
 
             let dep = Dependency {
                 name,
                 name_hash,
-                version: match Dependency::parse(
+                version: match dependency::parse(
                     name,
                     name_hash,
                     version_sliced.slice,
@@ -1464,7 +1464,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let dep_name_str = key.as_string().unwrap();
-            let dep_name_hash = String::Builder::string_hash(dep_name_str);
+            let dep_name_hash = StringBuilder::string_hash(dep_name_str);
             let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
 
             if !value.is_string() {
@@ -1473,14 +1473,14 @@ pub fn parse_into_binary_lockfile(
             }
 
             let version_str = value.as_string().unwrap();
-            let version_hash = String::Builder::string_hash(version_str);
+            let version_hash = StringBuilder::string_hash(version_str);
             let version = string_buf.append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(string_buf.bytes.as_slice());
 
             let dep = Dependency {
                 name: dep_name,
                 name_hash: dep_name_hash,
-                version: match Dependency::parse(
+                version: match dependency::parse(
                     dep_name,
                     dep_name_hash,
                     version_sliced.slice,
@@ -1499,7 +1499,7 @@ pub fn parse_into_binary_lockfile(
 
             let entry = lockfile.catalogs.default.get_or_put_context(
                 dep_name,
-                String::array_hash_context(lockfile, None),
+                string_array_hash_context(lockfile, None),
             )?;
 
             if entry.found_existing {
@@ -1546,7 +1546,7 @@ pub fn parse_into_binary_lockfile(
                 }
 
                 let dep_name_str = key.as_string().unwrap();
-                let dep_name_hash = String::Builder::string_hash(dep_name_str);
+                let dep_name_hash = StringBuilder::string_hash(dep_name_str);
                 let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
 
                 if !value.is_string() {
@@ -1555,14 +1555,14 @@ pub fn parse_into_binary_lockfile(
                 }
 
                 let version_str = value.as_string().unwrap();
-                let version_hash = String::Builder::string_hash(version_str);
+                let version_hash = StringBuilder::string_hash(version_str);
                 let version = string_buf.append_with_hash(version_str, version_hash)?;
                 let version_sliced = version.sliced(string_buf.bytes.as_slice());
 
                 let dep = Dependency {
                     name: dep_name,
                     name_hash: dep_name_hash,
-                    version: match Dependency::parse(
+                    version: match dependency::parse(
                         dep_name,
                         dep_name_hash,
                         version_sliced.slice,
@@ -1581,7 +1581,7 @@ pub fn parse_into_binary_lockfile(
 
                 let entry = group.get_or_put_context(
                     dep_name,
-                    String::array_hash_context(lockfile, None),
+                    string_array_hash_context(lockfile, None),
                 )?;
 
                 if entry.found_existing {
@@ -1630,7 +1630,7 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
-        let Some(name_hash) = name_expr.as_string_hash(String::Builder::string_hash)? else {
+        let Some(name_hash) = name_expr.as_string_hash(StringBuilder::string_hash)? else {
             log.add_error(source, name_expr.loc, "Expected a string name property")?;
             return Err(ParseError::InvalidWorkspaceObject);
         };
@@ -1690,10 +1690,10 @@ pub fn parse_into_binary_lockfile(
             Some(&workspaces_obj),
         )?;
 
-        let mut root_pkg = BinaryLockfile::Package::default();
+        let mut root_pkg = Package::default();
 
         if let Some(name) = maybe_name {
-            let name_hash = String::Builder::string_hash(name);
+            let name_hash = StringBuilder::string_hash(name);
             root_pkg.name = string_buf.append_with_hash(name, name_hash)?;
             root_pkg.name_hash = name_hash;
         }
@@ -1723,15 +1723,15 @@ pub fn parse_into_binary_lockfile(
                     continue;
                 }
 
-                let mut pkg = BinaryLockfile::Package::default();
+                let mut pkg = Package::default();
 
                 pkg.resolution = Resolution {
-                    tag: Resolution::Tag::Workspace,
-                    value: Resolution::Value { workspace: string_buf.append(path)? },
+                    tag: ResolutionTag::Workspace,
+                    value: ResolutionValue { workspace: string_buf.append(path)? },
                 };
 
                 let name = value.get(b"name").unwrap().as_string().unwrap();
-                let name_hash = String::Builder::string_hash(name);
+                let name_hash = StringBuilder::string_hash(name);
 
                 pkg.name = string_buf.append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
@@ -1862,7 +1862,7 @@ pub fn parse_into_binary_lockfile(
                     break 'name_and_res (b"" as &[u8], &res_info_str[1..]);
                 }
 
-                match Dependency::split_name_and_version(res_info_str) {
+                match dependency::split_name_and_version(res_info_str) {
                     Ok(pair) => break 'name_and_res pair,
                     Err(_) => {
                         log.add_error(source, res_info.loc, "Invalid package resolution")?;
@@ -1871,7 +1871,7 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
-            let name_hash = String::Builder::string_hash(name_str);
+            let name_hash = StringBuilder::string_hash(name_str);
             let name = string_buf.append(name_str)?;
 
             let mut res = match Resolution::from_text_lockfile(res_str, &mut string_buf) {
@@ -1889,7 +1889,7 @@ pub fn parse_into_binary_lockfile(
             };
             // TODO(port): Resolution::from_text_lockfile error type — switch to local enum match in Phase B
 
-            if res.tag == Resolution::Tag::Npm {
+            if res.tag == ResolutionTag::Npm {
                 if i >= pkg_info.len() {
                     log.add_error(source, value.loc, "Missing npm registry")?;
                     return Err(ParseError::InvalidPackageInfo);
@@ -1907,7 +1907,7 @@ pub fn parse_into_binary_lockfile(
                     let registry_url = if let Some(mgr) = manager.as_deref() {
                         mgr.scope_for_package_name(name_str).url.href
                     } else {
-                        Npm::Registry::DEFAULT_URL
+                        Npm::Registry::DEFAULT_URL.as_bytes()
                     };
 
                     let url = ExtractTarball::build_url(
@@ -1924,7 +1924,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             if lockfile_version != Version::V0 {
-                if res.tag == Resolution::Tag::Workspace {
+                if res.tag == ResolutionTag::Workspace {
                     let entry = pkg_map.get_or_put(pkg_path);
                     if entry.found_existing {
                         // this workspace package is already in the package map, because
@@ -1979,20 +1979,20 @@ pub fn parse_into_binary_lockfile(
                 }
             }
 
-            let mut pkg = BinaryLockfile::Package::default();
+            let mut pkg = Package::default();
 
             // dependencies, os, cpu, libc
             'workspace_and_not_v0: {
                 match res.tag {
-                    Resolution::Tag::Npm
-                    | Resolution::Tag::Folder
-                    | Resolution::Tag::Git
-                    | Resolution::Tag::Github
-                    | Resolution::Tag::LocalTarball
-                    | Resolution::Tag::RemoteTarball
-                    | Resolution::Tag::Symlink
-                    | Resolution::Tag::Workspace => {
-                        if res.tag == Resolution::Tag::Workspace && lockfile_version != Version::V0 {
+                    ResolutionTag::Npm
+                    | ResolutionTag::Folder
+                    | ResolutionTag::Git
+                    | ResolutionTag::Github
+                    | ResolutionTag::LocalTarball
+                    | ResolutionTag::RemoteTarball
+                    | ResolutionTag::Symlink
+                    | ResolutionTag::Workspace => {
+                        if res.tag == ResolutionTag::Workspace && lockfile_version != Version::V0 {
                             break 'workspace_and_not_v0;
                         }
 
@@ -2029,7 +2029,7 @@ pub fn parse_into_binary_lockfile(
                             pkg.bin = Bin::parse_append_from_directories(bin_dir, &mut string_buf)?;
                         }
 
-                        if res.tag != Resolution::Tag::Workspace {
+                        if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
                                 pkg.meta.os = Negatable::<Npm::OperatingSystem>::from_json(os)?;
                             }
@@ -2042,7 +2042,7 @@ pub fn parse_into_binary_lockfile(
                             // }
                         }
                     }
-                    Resolution::Tag::Root => {
+                    ResolutionTag::Root => {
                         if i >= pkg_info.len() {
                             log.add_error(source, value.loc, "Missing package binaries object")?;
                             return Err(ParseError::InvalidPackageInfo);
@@ -2066,7 +2066,7 @@ pub fn parse_into_binary_lockfile(
 
             // integrity
             match res.tag {
-                Resolution::Tag::Npm => {
+                ResolutionTag::Npm => {
                     if i >= pkg_info.len() {
                         log.add_error(source, value.loc, "Missing integrity")?;
                         return Err(ParseError::InvalidPackageInfo);
@@ -2080,7 +2080,7 @@ pub fn parse_into_binary_lockfile(
 
                     pkg.meta.integrity = Integrity::parse(integrity_str);
                 }
-                Resolution::Tag::LocalTarball | Resolution::Tag::RemoteTarball => {
+                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
                     if i < pkg_info.len() {
                         let integrity_expr = pkg_info.at(i);
@@ -2090,7 +2090,7 @@ pub fn parse_into_binary_lockfile(
                         }
                     }
                 }
-                tag @ (Resolution::Tag::Git | Resolution::Tag::Github) => {
+                tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                     // .bun-tag
                     if i >= pkg_info.len() {
                         log.add_error(source, value.loc, "Missing git dependency tag")?;
@@ -2106,7 +2106,7 @@ pub fn parse_into_binary_lockfile(
                     };
 
                     let resolved = string_buf.append(bun_tag_str)?;
-                    if tag == Resolution::Tag::Git {
+                    if tag == ResolutionTag::Git {
                         res.value.git.resolved = resolved;
                     } else {
                         res.value.github.resolved = resolved;
@@ -2159,8 +2159,8 @@ pub fn parse_into_binary_lockfile(
 
         {
             // first the root dependencies are resolved
-            pkg_resolutions[0] = Resolution::init(Resolution::Value::root(()));
-            pkg_metas[0].origin = Meta::Origin::Local;
+            pkg_resolutions[0] = Resolution::init(ResolutionValue::root(()));
+            pkg_metas[0].origin = Origin::Local;
 
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
@@ -2253,7 +2253,7 @@ pub fn parse_into_binary_lockfile(
 
             let res = &pkg_resolutions[pkg_id as usize];
 
-            if res.tag == Resolution::Tag::Workspace {
+            if res.tag == ResolutionTag::Workspace {
                 // we've already resolved the workspace dependencies above
                 continue;
             }
@@ -2305,9 +2305,9 @@ fn map_dep_to_pkg(
 
     if lockfile.text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
-        if res.tag == Resolution::Tag::Workspace {
-            dep.version.tag = Dependency::Version::Tag::Workspace;
-            dep.version.value = Dependency::Version::Value { workspace: res.value.workspace };
+        if res.tag == ResolutionTag::Workspace {
+            dep.version.tag = DependencyVersionTag::Workspace;
+            dep.version.value = DependencyVersionValue { workspace: res.value.workspace };
         }
     }
 }
@@ -2380,7 +2380,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         }
 
         for item in optional_peers.data.e_array().items.slice() {
-            let Some(name_hash) = item.as_string_hash(String::Builder::string_hash)? else {
+            let Some(name_hash) = item.as_string_hash(StringBuilder::string_hash)? else {
                 log.add_error(source, item.loc, "Expected a string")?;
                 return Err(ParseError::InvalidPackageInfo);
             };
@@ -2413,7 +2413,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     return Err(ParseError::InvalidDependencyName);
                 };
 
-                let name_hash = String::Builder::string_hash(name_str);
+                let name_hash = StringBuilder::string_hash(name_str);
                 let name = buf.append_external_with_hash(name_str, name_hash)?;
 
                 let Some(version_str) = value.as_string() else {
@@ -2428,11 +2428,11 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                     name: name.value,
                     name_hash: name.hash,
                     behavior: if group_behavior.peer && optional_peers_buf.contains_key(&name.hash) {
-                        group_behavior.add(Dependency::Behavior::OPTIONAL)
+                        group_behavior.add(Behavior::OPTIONAL)
                     } else {
                         group_behavior
                     },
-                    version: match Dependency::parse(
+                    version: match dependency::parse(
                         name.value,
                         name.hash,
                         version_sliced.slice,
@@ -2481,15 +2481,15 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 }
 
                 let name = value.get(b"name").unwrap().as_string().unwrap();
-                let name_hash = String::Builder::string_hash(name);
+                let name_hash = StringBuilder::string_hash(name);
 
                 let dep = Dependency {
                     name: buf.append_with_hash(name, name_hash)?,
                     name_hash,
-                    behavior: Dependency::Behavior { workspace: true, ..Dependency::Behavior::EMPTY },
-                    version: Dependency::Version {
-                        tag: Dependency::Version::Tag::Workspace,
-                        value: Dependency::Version::Value {
+                    behavior: Behavior { workspace: true, ..Behavior::EMPTY },
+                    version: DependencyVersion {
+                        tag: DependencyVersionTag::Workspace,
+                        value: DependencyVersionValue {
                             workspace: buf.append(path)?,
                         },
                         ..Default::default()
@@ -2527,5 +2527,5 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 //   source:     src/install/lockfile/bun.lock.zig (2298 lines)
 //   confidence: medium
 //   todos:      18
-//   notes:      MultiArrayList field accessors (.items(.field)), Expr accessors (e_object/e_array/as_string), Resolution::Value union access, and bun_io::Write trait shape are all assumed; heavy borrowck reshaping will be needed in parse_into_binary_lockfile (lockfile vs string_buf overlapping &mut). Writer is dyn-dispatched (Zig anytype) — see PERF(port) at type alias.
+//   notes:      MultiArrayList field accessors (.items(.field)), Expr accessors (e_object/e_array/as_string), ResolutionValue union access, and bun_io::Write trait shape are all assumed; heavy borrowck reshaping will be needed in parse_into_binary_lockfile (lockfile vs string_buf overlapping &mut). Writer is dyn-dispatched (Zig anytype) — see PERF(port) at type alias.
 // ──────────────────────────────────────────────────────────────────────────

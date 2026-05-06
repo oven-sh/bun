@@ -5162,19 +5162,11 @@ pub fn construct_bun_file(
 
         if let PathOrFileDescriptor::Path(ref p) = path {
             if p.slice().starts_with(b"s3://") {
-                // PORT NOTE: `construct_internal_js` takes the real
-                // `crate::node::types::PathLike`; convert from the webcore stub.
-                let real_path = match p.clone() {
-                    crate::webcore::node_types::PathLike::String(s) => {
-                        crate::node::types::PathLike::String(s)
-                    }
-                    crate::webcore::node_types::PathLike::Buffer(b) => {
-                        crate::node::types::PathLike::String(bun_str::PathString::init(b.as_slice()))
-                    }
-                };
+                // `webcore::node_types::PathLike` re-exports the real
+                // `crate::node::types::PathLike`, so no bridging is needed.
                 return crate::webcore::s3_file::construct_internal_js(
                     global_object,
-                    real_path,
+                    p.clone(),
                     options,
                 );
             }

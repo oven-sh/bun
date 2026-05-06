@@ -646,13 +646,7 @@ impl Stdio {
                             return Ok(());
                         }
                         PathOrFileDescriptor::Path(ref path) => {
-                            // PORT NOTE: `webcore::node_types::PathLike` has no
-                            // `Clone` derive yet; reconstruct by variant.
-                            let cloned = match path {
-                                PathLike::String(s) => PathLike::String(*s),
-                                PathLike::Buffer(b) => PathLike::Buffer(b.clone()),
-                            };
-                            *self = Stdio::Path(cloned);
+                            *self = Stdio::Path(path.clone());
                             return Ok(());
                         }
                     }

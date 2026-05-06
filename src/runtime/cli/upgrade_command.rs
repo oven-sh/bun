@@ -333,9 +333,9 @@ impl UpgradeCommand {
         // defer if SILENT log.deinit() — Drop handles this
         let source = logger::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         initialize_store();
-        // PORT NOTE: `JSON::parse_utf8` and `Expr::as_string` need a bump arena;
-        // this is a one-shot CLI path so leak it (Zig used the global Expr/Stmt
-        // store which is process-lifetime anyway).
+        // PORT NOTE: `JSON::parse_utf8` needs a bump arena; this is a one-shot
+        // CLI path so leak it (Zig used the global Expr/Stmt store which is
+        // process-lifetime anyway).
         let bump: &'static Bump = Box::leak(Box::new(Bump::new()));
         let expr = match JSON::parse_utf8(&source, &mut log, bump) {
             Ok(e) => e,

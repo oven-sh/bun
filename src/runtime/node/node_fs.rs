@@ -3390,7 +3390,7 @@ pub mod args {
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = FileSystemFlags::from_js_number_only::<{ FileSystemFlagsKind::Access }>(ctx, arg)?;
+                mode = FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlagsKind::Access)?;
             }
             Ok(Access { path, mode })
         }
@@ -3425,7 +3425,7 @@ pub mod args {
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only::<{ FileSystemFlagsKind::CopyFile }>(ctx, arg)?.as_int());
+                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlagsKind::CopyFile)?.as_int());
             }
             Ok(CopyFile { src, dest, mode })
         }

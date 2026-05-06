@@ -1,7 +1,5 @@
 use core::ffi::c_void;
-use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;

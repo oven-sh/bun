@@ -130,7 +130,7 @@ pub fn generate(
 // Create a file with given contents, returns if file was newly created
 fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Check if file exists and has same contents
-    if let Some(source_contents) = bun_sys::File::read_from(Fd::cwd(), filename).as_value() {
+    if let Ok(source_contents) = bun_sys::File::read_from(Fd::cwd(), filename) {
         // `source_contents` is a Vec<u8>; freed on drop.
         if strings::eql_long(&source_contents, contents, true) {
             return bun_sys::Result::Ok(false);
@@ -140,7 +140,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(Fd::cwd(), dirname);
+        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
     }
 
     // Open file for writing
@@ -157,7 +157,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     let close_guard = scopeguard::guard(fd, |fd| fd.close());
 
     // Write contents
-    match bun_sys::File::from_handle(*close_guard).write_all(contents) {
+    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }
@@ -243,7 +243,7 @@ fn string_with_replacements(
 }
 
 fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
-    Output::command_out(argv);
+    Output::command_out(Output::CommandArgv::List(argv.as_slice()));
     Output::flush();
 
     argv[0] = bun_core::self_exe_path()?;
@@ -264,26 +264,26 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
     }) {
         Ok(p) => p,
         Err(err) => {
-            Output::err(err, format_args!("failed to install dependencies"));
+            Output::err(err, "failed to install dependencies", ());
             Global::crash();
         }
     };
 
     match process {
         bun_sys::Result::Err(err) => {
-            Output::err(err, format_args!("failed to install dependencies"));
+            Output::err(err, "failed to install dependencies", ());
             Global::crash();
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
                 if let Some(signal) = spawn_result.status.signal_code() {
                     if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code);
+                        Global::exit(exit_code as u32);
                     }
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code);
+                    Global::exit(exited.code as u32);
                 }
 
                 Global::crash();
@@ -297,7 +297,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
 // Generate all project files from template
 pub fn generate_files(
     entry_point: &[u8],
-    dependencies: &[&[u8]],
+    dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
     template: Template,
     react_component_export: &[u8],
@@ -362,7 +362,8 @@ pub fn generate_files(
                     bun_sys::Result::Err(err) => {
                         Output::err(
                             err,
-                            format_args!("failed to create {}", bstr::BStr::new(&file_name)),
+                            "failed to create {}",
+                            (bstr::BStr::new(&file_name),),
                         );
                         Global::crash();
                     }
@@ -393,7 +394,7 @@ pub fn generate_files(
         argv.push(b"bun");
         argv.push(b"--only-missing");
         argv.push(b"install");
-        argv.extend_from_slice(dependencies);
+        argv.extend(dependencies.iter().map(|d| &d[..]));
         run_install(&mut argv)?;
     }
 
@@ -521,12 +522,12 @@ pub fn generate_files(
             if !spawn_result.status.is_ok() {
                 if let Some(signal) = spawn_result.status.signal_code() {
                     if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code);
+                        Global::exit(exit_code as u32);
                     }
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
-                    Global::exit(exited.code);
+                    Global::exit(exited.code as u32);
                 }
 
                 Global::crash();

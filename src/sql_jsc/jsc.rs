@@ -27,8 +27,28 @@ impl Default for JSValue {
 }
 
 /// `bun_jsc::JSGlobalObject` — opaque, always borrowed.
+///
+/// `_opaque` is `UnsafeCell` so a shared `&JSGlobalObject` does **not** assert
+/// immutability of the pointee. The Zig spec passes `*JSGlobalObject`
+/// everywhere and the C++ side mutates through it; modelling that as `&T`
+/// without interior mutability would make every `&T -> *mut T` cast (and any
+/// C++ write behind it) UB under Stacked Borrows. Mirrors `src/jsc/lib.rs`.
 #[repr(C)]
-pub struct JSGlobalObject { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+pub struct JSGlobalObject {
+    _opaque: core::cell::UnsafeCell<[u8; 0]>,
+    _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+
+impl JSGlobalObject {
+    /// Raw `*mut JSGlobalObject` for FFI. Sound for callees that mutate:
+    /// `JSGlobalObject` contains `UnsafeCell`, so `&Self` carries
+    /// interior-mutable provenance and no read-only pointer is laundered.
+    #[inline]
+    pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
+        // UnsafeCell::get yields `*mut` with write provenance from `&self`.
+        self._opaque.get() as *mut JSGlobalObject
+    }
+}
 
 /// `bun_jsc::CallFrame` — opaque, always borrowed.
 #[repr(C)]

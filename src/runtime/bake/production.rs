@@ -764,7 +764,7 @@ pub fn build_with_vm(
         source_maps,
     };
 
-    *pt = PerThread::init(unsafe { &*vm_ptr }, per_thread_options)?;
+    *pt = PerThread::init(vm_ptr, per_thread_options)?;
     pt.attach();
 
     // Static site generator
@@ -1499,12 +1499,12 @@ unsafe extern "C" {
 
 impl<'a> PerThread<'a> {
     /// After initializing, call `attach`
-    pub fn init(vm: &'a VirtualMachine, opts: PerThreadOptions<'a>) -> Result<PerThread<'a>, bun_core::Error> {
+    pub fn init(vm: *mut VirtualMachine, opts: PerThreadOptions<'a>) -> Result<PerThread<'a>, bun_core::Error> {
         let loaded_files = AutoBitSet::init_empty(opts.output_indexes.len())?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // SAFETY: vm.global is a live *mut JSGlobalObject for the VM's lifetime.
-        let global = unsafe { &*vm.global };
+        // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
+        let global = unsafe { &*(*vm).global };
         let all_server_files = bun_jsc::Strong::create(
             JSValue::create_empty_array(global, opts.output_indexes.len())?,
             global,

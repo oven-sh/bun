@@ -113,8 +113,10 @@ macro_rules! extern_crypto_job {
                         let _guard = scopeguard::guard((), |_| {
                             vm.enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
                         });
-                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`.
-                        unsafe { ctx_run_task(job.ctx, vm.global as *const _ as *mut _) };
+                        // SAFETY: ctx is the FFI-owned opaque handle passed in `create`;
+                        // `vm.global` is the VM's `*mut JSGlobalObject` field (mut provenance,
+                        // live for the VM lifetime) — no const→mut cast needed.
+                        unsafe { ctx_run_task(job.ctx, vm.global) };
                     }
 
                     pub fn run_from_js(this: *mut Job) {

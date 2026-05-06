@@ -896,10 +896,13 @@ impl Runner {
             jsc::mark_binding(core::panic::Location::caller());
             CALL_STATE.with(|s| s.set(&mut data as *mut _ as *mut c_void));
             unsafe {
-                // SAFETY: `call` only reads CALL_STATE which we just set; global is valid.
+                // SAFETY: `call` only reads CALL_STATE which we just set. Spec Macro.zig:581
+                // passes the raw `vm.global: *JSGlobalObject` field directly — read it via
+                // raw-ptr field access (NOT the `&`-returning `.global()` accessor) so the
+                // `*mut` provenance is preserved across FFI.
                 Bun__startMacro(
                     call as *const c_void,
-                    VirtualMachine::get().global() as *const _ as *mut c_void,
+                    (*VirtualMachine::get()).global as *mut c_void,
                 );
             }
             CALL_STATE.with(|s| s.set(core::ptr::null_mut()));

@@ -1267,8 +1267,18 @@ impl GetAddrInfoRequest {
                 next: None,
             },
             tail: ptr::null_mut(),
-            // SAFETY: all-zero is a valid `Task` (POD callback+ctx pair).
-            task: unsafe { core::mem::zeroed() },
+            // Zig: `task: bun.ThreadPool.Task = undefined`. The callback is
+            // overwritten before scheduling; use a trapping stub so the
+            // non-null fn-pointer invariant holds without `mem::zeroed()` UB.
+            task: thread_pool::Task {
+                node: Default::default(),
+                callback: {
+                    unsafe fn unset(_: *mut thread_pool::Task) {
+                        unreachable!("GetAddrInfoRequest.task scheduled without callback");
+                    }
+                    unset
+                },
+            },
         }));
         // SAFETY: request just allocated; head is an inline field.
         unsafe { (*request).tail = &mut (*request).head };
@@ -2185,6 +2195,9 @@ pub mod internal {
     }
 
     // TODO(port): move to <area>_sys
+    // `Request` is passed opaquely to usockets and round-tripped back into
+    // Rust; the C side never dereferences fields, so layout is irrelevant.
+    #[allow(improper_ctypes)]
     unsafe extern "C" {
         fn us_internal_dns_callback(socket: *mut ConnectingSocket, req: *mut Request);
         fn us_internal_dns_callback_threadsafe(socket: *mut ConnectingSocket, req: *mut Request);
@@ -2457,8 +2470,8 @@ pub mod internal {
 
         let poll = FilePoll::init(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
-            // SAFETY: bitcast u32 mach_port → i32 fd, matches Zig @bitCast
-            sys::Fd::from_native(unsafe { core::mem::transmute::<u32, i32>(machport) }),
+            // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
+            sys::Fd::from_native(machport as i32),
             Default::default(),
             // TODO(port): FilePoll generic owner type InternalDNSRequest
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req as *mut ()),

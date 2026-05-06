@@ -351,7 +351,7 @@ impl Listener {
             );
             log!("Failed to listen {}", errno);
             if errno != 0 {
-                err.put(global, b"syscall", jsc::bun_string_jsc::create_utf8_for_js(global, b"listen"));
+                err.put(global, b"syscall", jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?);
                 err.put(global, b"errno", JSValue::js_number(errno as f64));
                 err.put(global, b"address", ZigString::init_utf8(hostname_bytes).to_js(global));
                 if let Some(p) = port {
@@ -406,7 +406,7 @@ impl Listener {
 
     // PORT NOTE: no #[bun_jsc::host_fn] — JsClass codegen emits the constructor shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Listener> {
-        Err(global.throw("Cannot construct Listener"))
+        Err(global.throw("{}", format_args!("Cannot construct Listener")))
     }
 
     pub fn on_name_pipe_created<const SSL: bool>(listener: &mut Listener) -> *mut NewSocket<SSL> {
@@ -1078,7 +1078,7 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         // SAFETY: from_js returned a non-null *mut Listener; the JS wrapper holds it.
         return Listener::add_server_name(unsafe { &mut *this }, global, arguments.ptr[1], arguments.ptr[2]);
     }
-    Err(global.throw("Expected a Listener instance"))
+    Err(global.throw("{}", format_args!("Expected a Listener instance")))
 }
 
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {

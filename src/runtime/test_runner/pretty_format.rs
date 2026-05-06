@@ -2334,7 +2334,12 @@ impl<'a> Formatter<'a> {
                                 let count_without_children =
                                     props_iter.len - usize::from(children_prop.is_some());
 
+                                // PORT NOTE: `JSPropertyIterator::i` is private upstream;
+                                // track the 1-based iteration index locally (matches the
+                                // post-`next()` value of the Zig spec's `props_iter.i`).
+                                let mut iter_i: usize = 0;
                                 while let Some(prop) = props_iter.next()? {
+                                    iter_i += 1;
                                     if prop.eql_comptime(b"children") {
                                         continue;
                                     }

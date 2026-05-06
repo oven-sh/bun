@@ -66,6 +66,7 @@ const INET6_ADDRSTRLEN: usize = 65;
 const INET6_ADDRSTRLEN: usize = 46;
 
 // TODO(port): move to runtime_sys / bun_sys
+#[allow(dead_code)]
 unsafe extern "C" {
     fn ntohs(nshort: u16) -> u16;
     fn htonl(hlong: u32) -> u32;

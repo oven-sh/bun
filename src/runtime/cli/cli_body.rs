@@ -1717,7 +1717,7 @@ pub use command as Command;
 #[cold]
 pub fn print_version_and_exit() -> ! {
     let _ = Output::writer().write_all(
-        const_format::concatcp!(Global::PACKAGE_JSON_VERSION, "\n").as_bytes(),
+        const_format::concatcp!(Global::package_json_version, "\n").as_bytes(),
     );
     Global::exit(0);
 }
@@ -1725,7 +1725,7 @@ pub fn print_version_and_exit() -> ! {
 #[cold]
 pub fn print_revision_and_exit() -> ! {
     let _ = Output::writer().write_all(
-        const_format::concatcp!(Global::PACKAGE_JSON_VERSION_WITH_REVISION, "\n").as_bytes(),
+        const_format::concatcp!(Global::package_json_version_with_revision, "\n").as_bytes(),
     );
     Global::exit(0);
 }

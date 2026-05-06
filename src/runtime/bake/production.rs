@@ -774,6 +774,7 @@ pub fn build_with_vm(
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
+            let client_file = OpaqueFileId::init(client_file.get());
             let str = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),

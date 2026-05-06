@@ -491,9 +491,35 @@ impl Order {
     }
 }
 
-// TODO(port): `pub const internal = bun.api.dns.internal;` — re-export of
-// runtime DNS internals. Phase B: decide crate boundary (likely
-// `bun_runtime::api::dns::internal`); omitted here to avoid base→runtime dep.
+/// Zig: `pub const internal = bun.api.dns.internal;` — the process-wide DNS
+/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
+/// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
+/// rather than a `bun_runtime` crate dep, which would cycle.
+pub mod internal {
+    use core::ffi::c_void;
+
+    unsafe extern "C" {
+        // Defined in `bun_runtime::dns_jsc::internal` alongside the other
+        // `Bun__addrinfo_*` exports; resolved at link time.
+        fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
+    }
+
+    /// Register `pc` to be notified when the addrinfo `request` resolves.
+    /// Mirrors `us_getaddrinfo_set` for the QUIC client connect path, which
+    /// has no `us_connecting_socket_t` to hang the callback on.
+    ///
+    /// SAFETY: `request` must be the live addrinfo request handle returned by
+    /// `us_quic_pending_connect_addrinfo`; `pc` must be a live
+    /// `bun_http::H3::PendingConnect` that stays valid until its
+    /// `on_dns_resolved[_threadsafe]` fires.
+    #[inline]
+    pub unsafe fn register_quic(request: *mut c_void, pc: *mut c_void) {
+        // SAFETY: forwarded to the runtime export; both pointers are opaque on
+        // this side of the crate boundary and re-typed by the callee.
+        unsafe { Bun__addrinfo_registerQuic(request, pc) }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

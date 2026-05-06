@@ -159,6 +159,8 @@ pub use bun_windows_sys::FILE_WRITE_THROUGH;
 pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
+pub use bun_windows_sys::FILE_DIRECTORY_INFORMATION;
+pub use bun_windows_sys::FILE_INFORMATION_CLASS;
 pub use bun_windows_sys::user32;
 pub use bun_windows_sys::advapi32;
 

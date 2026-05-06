@@ -436,7 +436,10 @@ impl DirEntry {
                 entry: result,
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
-                    query: query_, // TODO(port): lifetime — Zig stored caller's slice
+                    // TODO(port): lifetime — Zig stored caller's slice; widened to 'a.
+                    // SAFETY: extended for borrowck reshape; consumed before caller's
+                    // buffer is overwritten (see resolver call sites).
+                    query: unsafe { &*(query_ as *const [u8]) },
                     actual: basename,
                 }),
             });
@@ -630,7 +633,7 @@ impl Entry {
 // }
 
 impl FileSystem {
-    pub fn normalize(&self, str: &[u8]) -> &'static [u8] {
+    pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
         // PERF(port): was @call(bun.callmod_inline, ...)
         path_handler::normalize_string::<true, platform::Auto>(str)
     }
@@ -1088,10 +1091,11 @@ impl ModKey {
         let hex_int = self.hash();
 
         HASH_NAME_BUF.with_borrow_mut(|buf| {
+            let len = buf.len();
             let mut cursor = &mut buf[..];
             write!(&mut cursor, "{}-{:x}", BStr::new(basename), hex_int)
                 .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
-            let written = buf.len() - cursor.len();
+            let written = len - cursor.len();
             // SAFETY: threadlocal buffer outlives caller's use (matches Zig pattern)
             Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
         })
@@ -1625,8 +1629,8 @@ impl RealFS {
         shared_buffer: &mut MutableString,
     ) -> Result<PathContentsPair, bun_core::Error> {
         // PORT NOTE: allocator param dropped (global mimalloc)
-        FileSystem::set_max_fd(std_file.handle());
-        let file = bun_sys::File::from(std_file);
+        FileSystem::set_max_fd(std_file.handle().native());
+        let file = std_file;
 
         let mut file_contents: &[u8] = b"";
         // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
@@ -1642,6 +1646,7 @@ impl RealFS {
                 None => match file.get_end_pos() {
                     Ok(s) => s,
                     Err(err) => {
+                        let err: bun_core::Error = err.into();
                         self.read_file_error(path, err);
                         return Err(err);
                     }
@@ -1667,7 +1672,10 @@ impl RealFS {
 
             let mut bytes_read: u64 = 0;
             shared_buffer.grow_by(size + 1)?;
-            shared_buffer.list.expand_to_capacity();
+            // PORT NOTE: Zig `ArrayList.expandToCapacity()` — `Vec<u8>` has no equivalent.
+            // SAFETY: u8 is always-init; `set_len(capacity)` only exposes uninit-but-valid bytes
+            // that `read_all` immediately overwrites before any read.
+            unsafe { shared_buffer.list.set_len(shared_buffer.list.capacity()) };
 
             // if you press save on a large file we might not read all the
             // bytes in the first few pread() calls. we only handle this on
@@ -1678,6 +1686,7 @@ impl RealFS {
                 let read_count = match file.read_all(&mut shared_buffer.list[bytes_read as usize..]) {
                     Ok(n) => n,
                     Err(err) => {
+                        let err: bun_core::Error = err.into();
                         self.read_file_error(path, err);
                         return Err(err);
                     }
@@ -1692,6 +1701,7 @@ impl RealFS {
                     let new_size = match file.get_end_pos() {
                         Ok(s) => s,
                         Err(err) => {
+                            let err: bun_core::Error = err.into();
                             self.read_file_error(path, err);
                             return Err(err);
                         }
@@ -1706,7 +1716,10 @@ impl RealFS {
 
                     if (bytes_read as usize) < new_size {
                         shared_buffer.grow_by(new_size - size)?;
-                        shared_buffer.list.expand_to_capacity();
+                        // PORT NOTE: Zig `ArrayList.expandToCapacity()` — `Vec<u8>` has no equivalent.
+            // SAFETY: u8 is always-init; `set_len(capacity)` only exposes uninit-but-valid bytes
+            // that `read_all` immediately overwrites before any read.
+            unsafe { shared_buffer.list.set_len(shared_buffer.list.capacity()) };
                         size = new_size;
                         continue;
                     }
@@ -1731,9 +1744,10 @@ impl RealFS {
             // that we need to dynamically allocate memory to read it.
             let initial_read: &[u8] = if size_hint.is_none() {
                 let buf: &mut [u8] = &mut initial_buf;
-                let read_count = match file.read_all(buf).unwrap() {
+                let read_count = match file.read_all(buf) {
                     Ok(n) => n,
                     Err(err) => {
+                        let err: bun_core::Error = err.into();
                         self.read_file_error(path, err);
                         return Err(err);
                     }
@@ -1761,9 +1775,10 @@ impl RealFS {
             // Skip the extra file.stat() call when possible
             let size = match size_hint {
                 Some(s) => s,
-                None => match file.get_end_pos().unwrap() {
+                None => match file.get_end_pos() {
                     Ok(s) => s,
                     Err(err) => {
+                        let err: bun_core::Error = err.into();
                         self.read_file_error(path, err);
                         return Err(err);
                     }
@@ -1781,9 +1796,10 @@ impl RealFS {
             // stick a zero at the end
             buf[size] = 0;
 
-            let read_count = match file.read_all(&mut buf[initial_read.len()..]).unwrap() {
+            let read_count = match file.read_all(&mut buf[initial_read.len()..]) {
                 Ok(n) => n,
                 Err(err) => {
+                    let err: bun_core::Error = err.into();
                     self.read_file_error(path, err);
                     return Err(err);
                 }

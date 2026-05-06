@@ -62,7 +62,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         };
         } // end #[cfg(any())]
         let _ = (decls, mode);
-        RelocateVars { ok: false, ..Default::default() }
+        // Spec maybe.zig:25-43: once the hoisted scope IS module_scope, the return is ALWAYS
+        // `ok: true` (with or without a comma-joined assignment stmt). Returning `ok: false`
+        // here silently breaks bundler scope-hoisting for `var` decls. Fail loudly until the
+        // Binding2ExprWrapperHoisted dep un-gates the real loop above.
+        todo!("maybe_relocate_vars_to_top_level: blocked_on Binding2ExprWrapperHoisted; spec returns ok=true here")
     }
 
     // EDot nodes represent a property access. This function may return an

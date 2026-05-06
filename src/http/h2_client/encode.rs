@@ -324,9 +324,9 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { core::slice::from_raw_parts(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
-            // Re-acquire isn't needed — we still hold &mut sb; just bump cursor.
+            // Re-acquire isn't needed — we still hold the lock from line 315; just bump cursor.
             // SAFETY: sb is still locked; buffer fields are accessible.
-            let buffer = unsafe { &mut *sb_ptr.as_ptr() }.acquire();
+            let buffer = unsafe { &mut (*sb_ptr.as_ptr()).buffer };
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {

@@ -367,11 +367,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // The handling of binary expressions is convoluted because we're using
         // iteration on the heap instead of recursion on the call stack to avoid
         // stack overflow for deeply-nested ASTs.
+        //
+        // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `StoreRef<E::Binary>` wraps a
+        // `NonNull` but its `DerefMut` borrows the *handle*, not the arena, so the
+        // resulting `&mut` is tied to a stack local. Detach via raw ptr → `&'static mut`
+        // (the actual lifetime is the AST arena, same contract as Zig's `*E.Binary`).
+        macro_rules! arena_mut {
+            ($store:expr) => {{
+                let mut __h = $store;
+                unsafe { &mut *(&mut *__h as *mut E::Binary) }
+            }};
+        }
         let mut v = BinaryExpressionVisitor {
-            // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `StoreRef<E::Binary>` is a
-            // Copy `NonNull` wrapper with `DerefMut`, so taking `&mut *e_` re-borrows the
-            // arena slot for the visitor's lifetime; the underlying storage is the same.
-            e: &mut *e_,
+            e: arena_mut!(e_),
             loc: expr.loc,
             in_,
             left_in: ExprIn::default(),
@@ -387,10 +395,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // `visit_binary_expression::BinaryExpressionVisitor<'_>`. Until that field
         // is retyped, fall back to a function-local stack so the iterative descent
         // is structurally correct (loses cross-call buffer reuse only).
-        let mut local_stack: Vec<BinaryExpressionVisitor<'_>> = Vec::new();
+        let mut local_stack: Vec<BinaryExpressionVisitor<'static>> = Vec::new();
         let stack_bottom = local_stack.len();
 
-        let mut current = Expr { data: Data::EBinary(e_), loc: v.loc };
+        let mut current = expr;
 
         // Iterate down into the AST along the left node of the binary operation.
         // Continue iterating until we encounter something that's not a binary node.
@@ -424,9 +432,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // on the heap) when there are nested binary expressions. A single binary
             // expression doesn't add anything to the stack.
             local_stack.push(v);
-            let mut lb = left_binary.unwrap();
             v = BinaryExpressionVisitor {
-                e: &mut *lb,
+                e: arena_mut!(left_binary.unwrap()),
                 loc: left.loc,
                 in_: left_in,
                 left_in: ExprIn::default(),

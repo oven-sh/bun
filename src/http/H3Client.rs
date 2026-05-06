@@ -17,27 +17,16 @@
 
 use core::sync::atomic::AtomicU32;
 
-// TODO(b2-blocked): ClientSession/ClientContext/callbacks/encode bottom out on
-// the full `impl HTTPClient` state machine (build_request/progress_update_h3/
-// handle_response_metadata) — un-gate once the lib.rs `_phase_a_draft` impl
-// block lands.
-#[path = "h3_client/Stream.rs"]                        pub mod stream;
-#[cfg(any())] #[path = "h3_client/ClientSession.rs"]   pub mod client_session;
-#[cfg(any())] #[path = "h3_client/ClientContext.rs"]   pub mod client_context;
-#[path = "h3_client/PendingConnect.rs"]                pub mod pending_connect;
-#[path = "h3_client/AltSvc.rs"]                        pub mod AltSvc;
-#[cfg(any())] #[path = "h3_client/callbacks.rs"]       pub mod callbacks;
-#[cfg(any())] #[path = "h3_client/encode.rs"]          pub mod encode;
+#[path = "h3_client/Stream.rs"]          pub mod stream;
+#[path = "h3_client/ClientSession.rs"]   pub mod client_session;
+#[path = "h3_client/ClientContext.rs"]   pub mod client_context;
+#[path = "h3_client/PendingConnect.rs"]  pub mod pending_connect;
+#[path = "h3_client/AltSvc.rs"]          pub mod AltSvc;
+#[path = "h3_client/callbacks.rs"]       pub mod callbacks;
+#[path = "h3_client/encode.rs"]          pub mod encode;
 
-// ── type-only stubs so the HTTPClient cluster can name `h3::ClientSession`/
-//    `h3::ClientContext` while the impl modules stay gated ──
-// TODO(b2-blocked): replace with `pub use client_session::ClientSession` etc.
-pub struct ClientSession(());
-impl ClientSession {
-    pub fn ref_(&self) {}
-    pub fn deref(&self) {}
-}
-pub struct ClientContext(());
+pub use client_session::ClientSession;
+pub use client_context::ClientContext;
 pub use stream::Stream;
 pub use pending_connect::PendingConnect;
 

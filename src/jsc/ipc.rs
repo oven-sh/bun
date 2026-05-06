@@ -1479,8 +1479,14 @@ impl SendQueue {
 
         vm.event_loop().exit();
     }
-    fn get_global_this(&self) -> &JSGlobalObject {
-        self.owner.global_this()
+    fn get_global_this(&self) -> &'static JSGlobalObject {
+        // PORT NOTE: lifetime detached from `&self` so callers can hold the
+        // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
+        // raw pointer everywhere). The owner (Subprocess / IPCInstance)
+        // outlives this SendQueue and the JSGlobalObject is heap-allocated by
+        // JSC for the VM's lifetime, so the 'static erase is sound here.
+        // SAFETY: see above — BACKREF through owner vtable.
+        unsafe { &*(self.owner.vtable.global_this)(self.owner.ptr) }
     }
 
     #[cfg(windows)]

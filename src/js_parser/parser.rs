@@ -234,8 +234,15 @@ pub use bun_options_types::import_record as importRecord;
 // `runtime` mod is gated; provide a local Runtime stub so RuntimeFeatures/Imports
 // resolve. Real surface arrives when runtime.rs un-gates.
 pub mod Runtime {
+    use bun_collections::StringSet;
+
     #[derive(Default, Clone, Copy)]
     pub struct Features {
+        pub commonjs_named_exports: bool,
+        pub repl_mode: bool,
+        /// Zig `bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags`.
+        /// `None` ≡ the empty static set (contributes nothing to the hash).
+        pub bundler_feature_flags: Option<&'static StringSet>,
         pub allow_runtime: bool,
         pub auto_import_jsx: bool,
         pub commonjs_at_runtime: bool,
@@ -274,16 +281,14 @@ pub mod Runtime {
         // Zig: `hashForRuntimeTranspiler` — comptime tuple of field-name enum
         // literals iterated with `inline for` + `@field`. Rust has no field
         // reflection; expanded by hand. Keep in sync with `runtime.rs::Features`
-        // (the real impl) and the Zig tuple. Only the fields present on this
-        // stub are hashed; missing ones (`commonjs_named_exports`, `repl_mode`)
-        // are tracked in blocked_on until `runtime.rs` un-gates and replaces
-        // this stub wholesale.
+        // (the real impl) and the Zig `hash_fields_for_runtime_transpiler` tuple.
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
-            let bools: [bool; 15] = [
+            let bools: [bool; 17] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
                 self.inlining,
+                self.commonjs_named_exports,
                 self.minify_syntax,
                 self.minify_identifiers,
                 self.minify_keep_names,
@@ -295,14 +300,26 @@ pub mod Runtime {
                 self.emit_decorator_metadata,
                 self.standard_decorators,
                 self.lower_using,
+                self.repl_mode,
             ];
             // SAFETY: [bool; N] is POD; matches Zig `std.mem.asBytes`.
             hasher.update(unsafe {
                 core::slice::from_raw_parts(
                     bools.as_ptr().cast::<u8>(),
-                    core::mem::size_of::<[bool; 15]>(),
+                    core::mem::size_of::<[bool; 17]>(),
                 )
             });
+
+            // Hash --feature flags. These directly affect transpiled output via
+            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // nothing to the hash so existing cache entries remain valid.
+            // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
+            if let Some(flags) = self.bundler_feature_flags {
+                for flag in flags.keys() {
+                    hasher.update(flag);
+                    hasher.update(b"\x00");
+                }
+            }
         }
     }
     /// Stub of `runtime.rs::Imports` — only the fields/methods touched by

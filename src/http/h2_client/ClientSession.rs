@@ -836,11 +836,10 @@ impl ClientSession {
         let ctx = unsafe { &mut *self.ctx };
         ctx.h2_unregister(self);
         if self.can_pool() && !socket_is_closed_or_has_error(&self.socket) {
-            // PORT NOTE: lib.rs bridge `release_socket` signature ends in
-            // `Option<AlpnOffer>`; the real (gated) one ends in
-            // `Option<Arc<ClientSession>>`. Pass `None` so this compiles
-            // against the bridge; the gated impl will need the session ref.
-            // TODO(b2-bridge): pass `Some(self)` once HTTPContext.rs un-gates.
+            // Pool stores the live *ClientSession so a later fetch can resume
+            // the multiplexed connection. SAFETY: `self` is heap-owned and
+            // outlives the pool entry (release_socket takes the strong ref).
+            let self_ptr = unsafe { NonNull::new_unchecked(self as *mut ClientSession) };
             ctx.release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
@@ -851,7 +850,7 @@ impl ClientSession {
                 b"",
                 0,
                 0,
-                None,
+                Some(self_ptr),
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

@@ -761,12 +761,21 @@ pub fn is_malformed_response_field(name: &[u8]) -> bool {
 }
 
 pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
-    // PORT NOTE: bun_core::Error is currently a Phase-A placeholder (all
-    // err!() return `Error::TODO`). The match below is dead until the
-    // real error interning lands; INTERNAL_ERROR is the safe fallback.
-    let _ = err;
-    // TODO(b2): map err.name() → wire::ErrorCode once err!() interns names.
-    wire::ErrorCode::INTERNAL_ERROR
+    // PORT NOTE: bun_core::Error is a NonZeroU16 interned tag; `err!()` yields
+    // a const Error per name once the link-time table lands. Until then all
+    // arms compare equal to `Error::TODO`, so this degrades to the first arm —
+    // no worse than the prior unconditional INTERNAL_ERROR, and correct once
+    // interning is wired.
+    match err {
+        e if e == err!(HTTP2ProtocolError) => wire::ErrorCode::PROTOCOL_ERROR,
+        e if e == err!(HTTP2FrameSizeError) => wire::ErrorCode::FRAME_SIZE_ERROR,
+        e if e == err!(HTTP2FlowControlError) => wire::ErrorCode::FLOW_CONTROL_ERROR,
+        e if e == err!(HTTP2CompressionError) => wire::ErrorCode::COMPRESSION_ERROR,
+        e if e == err!(HTTP2HeaderListTooLarge) || e == err!(HTTP2EnhanceYourCalm) => {
+            wire::ErrorCode::ENHANCE_YOUR_CALM
+        }
+        _ => wire::ErrorCode::INTERNAL_ERROR,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

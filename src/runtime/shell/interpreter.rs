@@ -37,7 +37,7 @@ use bun_collections::ByteList as RawByteList;
 pub type ByteList = RawByteList;
 use bun_sys::{self, Fd};
 
-use crate::shell::env_map::EnvMap;
+pub use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::base::Base;

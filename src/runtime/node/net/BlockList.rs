@@ -47,15 +47,15 @@ use super::*;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSValue, JsResult};
-use bun_str::{String as BunString, StringJsc as _};
+use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_str::String as BunString;
 use bun_threading::Mutex;
 
-use super::socket_address::{self, sockaddr, SocketAddress};
+use crate::socket::socket_address::{self, sockaddr, SocketAddress};
 use crate::node::util::validators;
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
-use bun_sys::posix::{AF_INET, AF_INET6};
+use crate::socket::socket_address::inet::{AF_INET, AF_INET6};
 
 /// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
 /// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.

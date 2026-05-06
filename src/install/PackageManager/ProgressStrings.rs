@@ -151,6 +151,38 @@ impl PackageManager {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Free-function re-export surface — Zig declares these at file scope with an
+// explicit `*PackageManager` first param. Thin shims over the
+// `impl PackageManager` bodies above so `pub use progress_mod::{...}` in
+// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn set_node_name<const IS_FIRST: bool>(
+    this: &mut PackageManager,
+    node: &mut Progress::Node,
+    name: &[u8],
+    emoji: &[u8],
+) {
+    this.set_node_name::<IS_FIRST>(node, name, emoji)
+}
+
+#[inline]
+pub fn start_progress_bar_if_none(manager: &mut PackageManager) {
+    manager.start_progress_bar_if_none()
+}
+
+#[inline]
+pub fn start_progress_bar(manager: &mut PackageManager) {
+    manager.start_progress_bar()
+}
+
+#[inline]
+pub fn end_progress_bar(manager: &mut PackageManager) {
+    manager.end_progress_bar()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/ProgressStrings.zig (100 lines)
 //   confidence: medium

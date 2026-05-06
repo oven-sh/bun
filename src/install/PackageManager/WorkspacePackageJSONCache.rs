@@ -154,17 +154,8 @@ impl WorkspacePackageJSONCache {
             initialize_store();
         }
 
-        let json_result = json::parse_package_json_utf8_with_opts(
-            &source,
-            log,
-            json::ParseOptions {
-                is_json: true,
-                allow_comments: true,
-                allow_trailing_commas: true,
-                guess_indentation: opts.guess_indentation,
-                ..Default::default()
-            },
-        );
+        let json_bump = bun_alloc::Arena::new();
+        let json_result = parse_package_json(&source, log, &json_bump, opts.guess_indentation);
 
         let parsed = match json_result {
             Ok(p) => p,
@@ -217,17 +208,8 @@ impl WorkspacePackageJSONCache {
             initialize_store();
         }
 
-        let json_result = json::parse_package_json_utf8_with_opts(
-            source,
-            log,
-            json::ParseOptions {
-                is_json: true,
-                allow_comments: true,
-                allow_trailing_commas: true,
-                guess_indentation: opts.guess_indentation,
-                ..Default::default()
-            },
-        );
+        let json_bump = bun_alloc::Arena::new();
+        let json_result = parse_package_json(source, log, &json_bump, opts.guess_indentation);
 
         let parsed = match json_result {
             Ok(p) => p,

@@ -382,6 +382,51 @@ impl PackageManager {
 use crate::resolution::Tag as ResolutionTag;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Free-function re-export surface — Zig declares these at file scope with an
+// explicit `*PackageManager` first param. Thin shims over the
+// `impl PackageManager` bodies above so `pub use process_dependency_list::{...}`
+// in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn process_extracted_tarball_package(
+    manager: &mut PackageManager,
+    package_id: &mut PackageID,
+    dep_id: DependencyID,
+    resolution: &Resolution,
+    data: &ExtractData,
+    log_level: LogLevel,
+) -> Option<Package> {
+    manager.process_extracted_tarball_package(package_id, dep_id, resolution, data, log_level)
+}
+
+#[inline]
+pub fn process_dependency_list_item(
+    this: &mut PackageManager,
+    item: TaskCallbackContext,
+    any_root: Option<&mut bool>,
+    install_peer: bool,
+) -> Result<(), bun_core::Error> {
+    this.process_dependency_list_item(item, any_root, install_peer)
+}
+
+#[inline]
+pub fn process_peer_dependency_list(this: &mut PackageManager) -> Result<(), bun_core::Error> {
+    this.process_peer_dependency_list()
+}
+
+#[inline]
+pub fn process_dependency_list<C>(
+    this: &mut PackageManager,
+    dep_list: TaskCallbackList,
+    ctx: C,
+    on_resolve: Option<impl FnOnce(C)>,
+    install_peer: bool,
+) -> Result<(), bun_core::Error> {
+    this.process_dependency_list(dep_list, ctx, on_resolve, install_peer)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManager/processDependencyList.zig (360 lines)
 //   confidence: medium

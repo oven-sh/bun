@@ -2404,12 +2404,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand | Command::Tag::BunxCommand) {
         // "run.bun" in bunfig.toml
-        if args.flag("--bun") {
+        if args.flag(b"--bun") {
             ctx.debug.run_in_bun = true;
         }
     }
 
-    opts.resolve = api::ResolveMode::Lazy;
+    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -2421,19 +2421,19 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         let default_import_source: &[u8] = b"";
         if opts.jsx.is_none() {
             opts.jsx = Some(api::Jsx {
-                factory: jsx_factory.unwrap_or(default_factory),
-                fragment: jsx_fragment.unwrap_or(default_fragment),
-                import_source: jsx_import_source.unwrap_or(default_import_source),
+                factory: jsx_factory.unwrap_or(default_factory).into(),
+                fragment: jsx_fragment.unwrap_or(default_fragment).into(),
+                import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime { resolve_jsx_runtime(runtime)? } else { api::JsxRuntime::Automatic },
                 development: false,
                 side_effects: jsx_side_effects,
             });
         } else {
-            let prev = opts.jsx.as_ref().unwrap();
+            let prev = opts.jsx.take().unwrap();
             opts.jsx = Some(api::Jsx {
-                factory: jsx_factory.unwrap_or(prev.factory),
-                fragment: jsx_fragment.unwrap_or(prev.fragment),
-                import_source: jsx_import_source.unwrap_or(prev.import_source),
+                factory: jsx_factory.map(Box::<[u8]>::from).unwrap_or(prev.factory),
+                fragment: jsx_fragment.map(Box::<[u8]>::from).unwrap_or(prev.fragment),
+                import_source: jsx_import_source.map(Box::<[u8]>::from).unwrap_or(prev.import_source),
                 runtime: if let Some(runtime) = jsx_runtime { resolve_jsx_runtime(runtime)? } else { prev.runtime },
                 development: false,
                 side_effects: jsx_side_effects,
@@ -2452,7 +2452,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             Global::exit(1);
         }
 
-        if args.flag("--production") {
+        if args.flag(b"--production") {
             let any_html = opts.entry_points.iter().any(|entry_point| strings::has_suffix_comptime(entry_point, b".html"));
             if any_html {
                 ctx.bundler_options.css_chunking = true;

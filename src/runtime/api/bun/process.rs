@@ -3750,7 +3750,7 @@ pub mod sync {
                     // One last reap for anything we adopted as subreaper before
                     // the disarm defer above drops it (LIFO: this runs first).
                     loop {
-                        match posix_spawn::wait4(-1, libc::WNOHANG, None) {
+                        match posix_spawn::wait4(-1, libc::WNOHANG as u32, None) {
                             Maybe::Err(_) => break,
                             Maybe::Result(w) => {
                                 if w.pid <= 0 {
@@ -4266,7 +4266,7 @@ pub mod sync {
             //
             // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
             // Non-TTY callers never see stops, matching plain `bun run`.
-            let wopts = libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 };
+            let wopts = (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
             loop {
                 let r = posix_spawn::wait4(-1, wopts, None);
                 let w = match &r {

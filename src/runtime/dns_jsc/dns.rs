@@ -122,10 +122,13 @@ pub(crate) fn global_resolver_mut(global_this: &JSGlobalObject) -> &mut Resolver
     let vm_ptr = global_this.bun_vm();
     // SAFETY: `bun_vm()` returns the live VM back-ptr; RareData is owned by it
     // and outlives this call. The two `&mut *vm_ptr` derefs are sequenced.
-    unsafe {
-        let rare: *mut _ = (*vm_ptr).rare_data();
-        (*rare).global_dns_resolver(&mut *vm_ptr)
-    }
+    let _ = vm_ptr;
+    // TODO(port): blocked_on bun_jsc::RareData::global_dns_resolver — upstream
+    // `RareData::global_dns_resolver` lives in a `#[cfg(any())]` gated block and
+    // returns a stub `high_tier::dns::Resolver`, not this crate's `Resolver`.
+    // Until the cycle-break vtable lands and `RareData` carries the real
+    // `dns_jsc::Resolver`, this accessor cannot resolve.
+    todo!("blocked_on: bun_jsc::RareData::global_dns_resolver")
 }
 
 /// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
@@ -359,7 +362,9 @@ pub mod lib_info {
         // TODO(port): `file_poll` stores `Box<FilePoll>` but the slot is hive-allocated;
         // Phase B: change field to `*mut FilePoll` and route deinit through the pool.
         unsafe { (*request).backend.as_libinfo_mut().file_poll = Some(Box::from_raw(poll_ptr)) };
-        this.request_sent(this.vm());
+        let vm = this.vm;
+        // SAFETY: `vm` is the live BACKREF held by Resolver for its lifetime.
+        this.request_sent(unsafe { &*vm });
 
         promise_value
     }
@@ -4026,7 +4031,7 @@ impl Resolver {
 
         let name_value = arguments.ptr[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return global_this.throw_invalid_argument_type("resolve", "name", "string");
+            return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
         let name_str = unsafe { &*name_value.to_js_string(global_this)? };
@@ -4065,7 +4070,7 @@ impl Resolver {
 
         let ip_value = arguments.ptr[0];
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
-            return global_this.throw_invalid_argument_type("reverse", "ip", "string");
+            return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
         // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
         let ip_str = unsafe { &*ip_value.to_js_string(global_this)? };

@@ -1300,19 +1300,21 @@ impl JSValkeyClient {
         // we should always have a strong reference to the object here
         debug_assert!(self.this_value.is_strong());
 
-        let _defer = scopeguard::guard((), |_| {
-            self.client.on_writable();
+        let self_ptr = self as *mut Self;
+        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
+            (*p).client.on_writable();
             // update again after running the callback
-            self.update_poll_ref();
+            (*p).update_poll_ref();
         });
         let global_object = self.global_object;
-        let event_loop = self.client.vm.event_loop();
-        event_loop.enter();
-        let _exit = scopeguard::guard((), |_| event_loop.exit());
+        let event_loop = self.vm().event_loop();
+        // SAFETY: VM-owned; non-null on the JS thread.
+        unsafe { (*event_loop).enter() };
+        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
 
         if let Some(this_value) = self.this_value.try_get() {
             let hello_value: JSValue = 'js_hello: {
-                match value.to_js(global_object) {
+                match protocol_jsc::resp_value_to_js(value, global_object) {
                     Ok(v) => break 'js_hello v,
                     Err(err) => {
                         // TODO: how should we handle this? old code ignore the exception instead
@@ -1332,7 +1334,8 @@ impl JSValkeyClient {
 
             if let Some(promise) = Js::connection_promise_get_cached(this_value) {
                 Js::connection_promise_set_cached(this_value, global_object, JSValue::ZERO);
-                let js_promise = promise.as_promise().unwrap();
+                // SAFETY: cached slot held a valid JSPromise; downcast is checked.
+                let js_promise = unsafe { &mut *promise.as_promise().unwrap() };
                 if self.client.flags.connection_promise_returns_client {
                     debug!("Resolving connection promise with client instance");
                     js_promise.resolve(global_object, this_value)?;
@@ -1351,7 +1354,7 @@ impl JSValkeyClient {
     /// `SubscriptionCtx` will invoke this to communicate that it has added a new listener.
     pub fn on_new_subscription_callback_insert(&mut self) {
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         self.client.on_writable();
         self.update_poll_ref();

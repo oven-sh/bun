@@ -62,7 +62,7 @@ pub struct BuildCommand;
 impl BuildCommand {
     pub fn exec(
         ctx: Context,
-        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::__phase_a_draft::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
         // PERF(port): allocator param dropped — global mimalloc
@@ -513,7 +513,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        let _ = log_ref.print(Output::error_writer());
+                        let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
                     } else {
                         let _ = write!(Output::error_writer(), "error: {}", err.name());
                     }
@@ -1035,7 +1035,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        let _ = log_ref.print(Output::error_writer());
+        let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

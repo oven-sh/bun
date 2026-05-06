@@ -5694,6 +5694,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             global: self.global,
         };
 
+        // PORT NOTE: split the route-bundle borrow off via raw pointer so the
+        // failure slice doesn't conflict with the `&mut DevServer` below.
         let failure = self
             .dev
             .route_bundle_ptr(self.route_bundle_index)
@@ -5701,8 +5703,10 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             .framework()
             .evaluate_failure
             .as_ref()
-            .unwrap();
-        let failures = ::core::slice::from_ref(failure);
+            .unwrap() as *const SerializedFailure;
+        // SAFETY: `failure` points into `route_bundles[i].data` which is not
+        // mutated by `send_serialized_failures`.
+        let failures = ::core::slice::from_ref(unsafe { &*failure });
         self.dev.send_serialized_failures(
             DevResponse::Promise(promise_response),
             failures,
@@ -5938,7 +5942,12 @@ fn new_route_params_for_bundle_promise(
     route_bundle_index: route_bundle::Index,
     url: &[u8],
 ) -> JsResult<JSValue> {
-    let route_bundle = dev.route_bundle_ptr(route_bundle_index);
+    // PORT NOTE: erase `dev` so the `route_bundle` / `framework_bundle`
+    // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`
+    // (Zig held these as plain heap pointers).
+    let dev_ptr = dev as *mut DevServer<'_>;
+    // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
+    let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
     let framework_bundle = match &mut route_bundle.data {
             route_bundle::Data::Framework(f) => f,
             _ => unreachable!(),

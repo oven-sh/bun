@@ -2286,10 +2286,9 @@ impl PostgresSQLConnection {
                             *out = a ^ b;
                         }
 
-                        // SAFETY: all-zero is a valid [u8; N].
-                        let mut client_key_xor_base64_buf: [u8; bun_base64::encode_len_from_size(32)] =
-                            unsafe { core::mem::zeroed() };
-                        let xor_base64_len = bun_core::base64::encode(&mut client_key_xor_base64_buf, &client_key_xor_buffer);
+                        // base64 of 32 bytes → ceil(32/3)*4 = 44; +4 slack matches Zig encodeLenFromSize.
+                        let mut client_key_xor_base64_buf = [0u8; 48];
+                        let xor_base64_len = bun_base64::encode(&mut client_key_xor_base64_buf, &client_key_xor_buffer);
 
                         let mut payload: Vec<u8> = Vec::new();
                         {
@@ -2297,30 +2296,31 @@ impl PostgresSQLConnection {
                             let _ = write!(
                                 &mut payload,
                                 "c=biws,r={},p={}",
-                                bstr::BStr::new(cont.r),
+                                // SAFETY: cont.r points into cont.data, alive for this arm.
+                                bstr::BStr::new(unsafe { &*cont.r }),
                                 bstr::BStr::new(&client_key_xor_base64_buf[..xor_base64_len]),
                             );
                         }
 
                         let mut response = protocol::SASLResponse {
-                            data: Data::Temporary(&payload),
+                            data: Data::Temporary(payload.as_slice() as *const [u8]),
                         };
 
                         // PORT NOTE: reshaped for borrowck — set status before
                         // self.writer()/flush_data() so the `sasl` borrow ends
                         // first (Zig order is not load-bearing).
                         sasl.status = SASLStatus::Continue;
-                        response.write_internal(self.writer())?;
+                        response.write_internal(&mut self.writer()).map_err(pg_err)?;
                         self.flush_data();
                     }
-                    protocol::Authentication::SASLFinal(final_) => {
+                    protocol::Authentication::SASLFinal { data: final_data } => {
                         let AuthenticationState::Sasl(sasl) = &mut self.authentication_state else {
-                            debug!("SASLFinal - Unexpected SASLContinue for authentication state: {}", <&'static str>::from(&self.authentication_state));
+                            debug!("SASLFinal - Unexpected SASLContinue for authentication state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };
 
                         if sasl.status != SASLStatus::Continue {
-                            debug!("SASLFinal - Unexpected SASLContinue for SASL state: {}", <&'static str>::from(sasl.status));
+                            debug!("SASLFinal - Unexpected SASLContinue for SASL state");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
 
@@ -2332,7 +2332,7 @@ impl PostgresSQLConnection {
                         let server_signature = sasl.server_signature();
 
                         // This will usually start with "v="
-                        let comparison_signature = final_.data.slice();
+                        let comparison_signature = final_data.slice();
 
                         if comparison_signature.len() < 2
                             || server_signature.len() != comparison_signature.len() - 2
@@ -2369,15 +2369,15 @@ impl PostgresSQLConnection {
                     protocol::Authentication::ClearTextPassword => {
                         debug!("ClearTextPassword");
                         let mut response = protocol::PasswordMessage {
-                            // SAFETY: password is a valid slice into options_buf.
-                            password: Data::Temporary(unsafe { &*self.password }),
+                            // password is a valid slice into options_buf.
+                            password: Data::Temporary(self.password),
                         };
 
-                        response.write_internal(self.writer())?;
+                        response.write_internal(&mut self.writer()).map_err(pg_err)?;
                         self.flush_data();
                     }
 
-                    protocol::Authentication::MD5Password(md5) => {
+                    protocol::Authentication::MD5Password { salt } => {
                         debug!("MD5Password");
                         // Format is: md5 + md5(md5(password + username) + salt)
                         let mut first_hash_buf: [u8; 16] = Default::default();
@@ -2400,7 +2400,7 @@ impl PostgresSQLConnection {
                         // Second hash: md5(first_hash + salt)
                         let mut final_hasher = bun_sha_hmac::MD5::init();
                         final_hasher.update(first_hash_str_output);
-                        final_hasher.update(&md5.salt);
+                        final_hasher.update(salt);
                         final_hasher.r#final(&mut final_hash_buf);
                         let final_hash_str_output = {
                             let n = bun_core::fmt::bytes_to_hex_lower(&final_hash_buf, &mut final_hash_str);
@@ -2422,12 +2422,12 @@ impl PostgresSQLConnection {
                         };
 
                         self.authentication_state = AuthenticationState::Md5;
-                        response.write_internal(self.writer())?;
+                        response.write_internal(&mut self.writer()).map_err(pg_err)?;
                         self.flush_data();
                     }
 
-                    other => {
-                        debug!("TODO auth: {}", <&'static str>::from(other));
+                    _other => {
+                        debug!("TODO auth: unsupported");
                         self.fail(b"TODO: support authentication method: {s}", AnyPostgresError::UNSUPPORTED_AUTHENTICATION_METHOD);
                     }
                 }
@@ -2443,19 +2443,18 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                self.backend_key_data.decode_internal(reader)?;
+                self.backend_key_data = protocol::BackendKeyData::decode_internal(reader).map_err(pg_err)?;
             }
             MessageType::ErrorResponse => {
-                let mut err: protocol::ErrorResponse = Default::default();
-                err.decode_internal(reader)?;
+                let err = protocol::ErrorResponse::decode_internal(reader).map_err(pg_err)?;
 
                 if self.status == Status::Connecting || self.status == Status::SentStartupMessage {
-                    let v = err.to_js(self.global());
+                    let v = crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                     drop(err);
                     self.fail_with_js_value(v);
 
                     // it shouldn't enqueue any requests while connecting
-                    debug_assert!(self.requests.count == 0);
+                    debug_assert!(self.requests.readable_length() == 0);
                     return Ok(());
                 }
 

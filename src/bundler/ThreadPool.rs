@@ -429,7 +429,11 @@ pub struct WorkerData {
     // `&'a Arena` borrows `Worker.heap`, which Rust can't express on a sibling
     // field. Zig used `transpiler: Transpiler` with a copied `std.mem.Allocator`.
     pub transpiler: MaybeUninit<Transpiler<'static>>,
-    pub other_transpiler: Option<Box<Transpiler<'static>>>,
+    // PORT NOTE: `MaybeUninit` wrapper so `Drop` never runs on the bitwise-copied
+    // `Transpiler` (see `Transpiler::clone_for_worker` safety contract — it
+    // aliases the `BundleV2`-owned transpiler's heap allocations). Zig's
+    // `Worker.deinit` only frees the arena, never the per-worker transpiler.
+    pub other_transpiler: Option<Box<MaybeUninit<Transpiler<'static>>>>,
 }
 
 impl Worker {

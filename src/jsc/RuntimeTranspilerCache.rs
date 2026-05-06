@@ -11,11 +11,9 @@ use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_js_parser::ast::{ExportsKind, ParserOptions};
 use bun_logger::Source;
 use bun_resolver::fs::{FileSystem, Path as FsPath};
-// PORT NOTE: Zig used `std.hash.Wyhash`; the Rust crate currently exposes only
-// `Wyhash11` (TODO(b2) in bun_wyhash routes std-Wyhash through it). All call
-// sites below — including `ParserOptions::hash_for_runtime_transpiler` — agree
-// on `Wyhash11`, so on-disk hashes stay self-consistent across encode/decode.
-use bun_wyhash::Wyhash11 as Wyhash;
+// Zig: `std.hash.Wyhash` (final4 variant). Must match exactly so on-disk
+// `.pile` filenames/hashes are interchangeable with Zig-produced caches.
+use bun_wyhash::Wyhash;
 
 bun_core::declare_scope!(cache, visible);
 

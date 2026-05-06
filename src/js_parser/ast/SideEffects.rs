@@ -341,12 +341,88 @@ impl SideEffects {
                 }
             }
 
-            ExprData::EObject(_) => {
-                // blocked_on: G::Property is not Copy (BabyList ts_decorators field) —
-                //   the in-place spread/computed-key trim needs index+raw-ptr reshape.
-                //   Full body lives in _draft below; falling through preserves the
-                //   object expression unchanged (conservative, matches Zig fallthrough
-                //   semantics for the "has side effects" path).
+            ExprData::EObject(mut e_object) => {
+                // Objects with "..." spread expressions can't be unwrapped because the
+                // "..." triggers code evaluation via getters. In that case, just trim
+                // the other items instead and leave the object expression there.
+                let len = e_object.properties.len as usize;
+                let mut has_spread = false;
+                for i in 0..len {
+                    if e_object.properties.at(i).kind == G::PropertyKind::Spread {
+                        has_spread = true;
+                        break;
+                    }
+                }
+                if has_spread {
+                    // Spread properties must always be evaluated
+                    let mut end: usize = 0;
+                    for j in 0..len {
+                        let kind = e_object.properties.at(j).kind;
+                        if kind != G::PropertyKind::Spread {
+                            let prev_value = e_object.properties.at(j).value.unwrap();
+                            let is_computed = e_object
+                                .properties
+                                .at(j)
+                                .flags
+                                .contains(crate::flags::Property::IsComputed);
+                            let value = Self::simplify_unused_expr(p, prev_value);
+                            if let Some(value) = value {
+                                e_object.properties.mut_(j).value = Some(value);
+                            } else if !is_computed {
+                                continue;
+                            } else {
+                                let zero = p.new_expr(E::Number { value: 0.0 }, prev_value.loc);
+                                e_object.properties.mut_(j).value = Some(zero);
+                            }
+                        }
+
+                        // PORT NOTE: G::Property is not Copy (BabyList ts_decorators
+                        // field). The Zig spec does an in-place struct copy; here we
+                        // swap so the kept property lands at `end` without cloning.
+                        if end != j {
+                            // SAFETY: both indices < len; arena-owned slice is never
+                            // dropped, so leaving the skipped tail in any order is sound.
+                            unsafe {
+                                let base = e_object.properties.slice_mut().as_mut_ptr();
+                                core::ptr::swap(base.add(end), base.add(j));
+                            }
+                        }
+                        end += 1;
+                    }
+                    e_object.properties.shrink_retaining_capacity(end);
+                    return Some(expr);
+                }
+
+                let mut result = Expr { data: ExprData::EMissing(E::Missing {}), loc: expr.loc };
+
+                // Otherwise, the object can be completely removed. We only need to keep any
+                // object properties with side effects. Apply this simplification recursively.
+                for i in 0..len {
+                    let flags = e_object.properties.at(i).flags;
+                    let key = e_object.properties.at(i).key;
+                    let value = e_object.properties.at(i).value;
+                    if flags.contains(crate::flags::Property::IsComputed) {
+                        // Make sure "ToString" is still evaluated on the key
+                        let key_expr = key.unwrap();
+                        let right = p.new_expr(E::String::default(), key_expr.loc);
+                        let bin = p.new_expr(
+                            E::Binary { op: Op::Code::BinAdd, left: key_expr, right },
+                            key_expr.loc,
+                        );
+                        result = Expr::join_with_comma(result, bin);
+                    }
+                    let v = value.unwrap();
+                    result = Expr::join_with_comma(
+                        result,
+                        Self::simplify_unused_expr(p, v).unwrap_or_else(|| v.to_empty()),
+                    );
+                }
+
+                if result.is_missing() {
+                    return None;
+                }
+
+                return Some(result);
             }
             ExprData::EArray(mut arr) => {
                 let len = arr.items.len as usize;

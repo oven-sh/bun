@@ -5,12 +5,18 @@
 //! script and, for the file-path arm, boot the JS VM directly via the now-real
 //! `bun_jsc::VirtualMachine::{init, load_entry_point}` hooks.
 //!
-//! The heavy bits — `configure_env_for_run` (Transpiler/DotEnv/PATH stitching),
-//! package.json `scripts` lookup + spawn, `node_modules/.bin` `which()`
-//! fallback, the markdown renderer, and the full `Run::start` run-loop
-//! (`hold_api_lock` + `globalExit`) — stay re-gated inside `exec()` with
-//! `#[cfg(any())]` blocks; their bodies are preserved verbatim in
-//! `phase_a_draft` below.
+//! `configure_env_for_run` + `run_package_script_foreground` are now real:
+//! Transpiler/DotEnv/Resolver are direct deps and the package.json `scripts`
+//! lookup arm in `exec()` calls them. Sub-gated inside those bodies:
+//! `Transpiler::{configure_linker,run_env_loader}`, the bun-shell
+//! `Interpreter::init_and_run_from_source` path, the full `bun.spawnSync`
+//! options struct, and `ParentDeathWatchdog` — all blocked on lower-tier
+//! surfaces, not on this file.
+//!
+//! Still re-gated inside `exec()` with `#[cfg(any())]`: `configure_path_for_run`
+//! (bun-node fake-exe + PATH stitching), `node_modules/.bin` `which()` fallback,
+//! the markdown renderer, and the full `Run::start` run-loop (`hold_api_lock` +
+//! `globalExit`); their bodies are preserved verbatim in `phase_a_draft` below.
 
 use ::core::ffi::c_void;
 use ::core::sync::atomic::{AtomicBool, Ordering};

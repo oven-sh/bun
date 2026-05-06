@@ -83,6 +83,53 @@ pub struct Transpiler<'a> {
     pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
+impl<'a> Transpiler<'a> {
+    pub const IS_CACHE_ENABLED: bool = false;
+
+    /// Port of `transpiler.zig:95 setLog`.
+    ///
+    /// PORT NOTE: takes `*mut Log` (not `&'a mut`) because Zig aliased the same
+    /// `*Log` into `linker.log` / `resolver.log`; the un-gated struct field is
+    /// already a raw pointer for that reason.
+    pub fn set_log(&mut self, log: *mut logger::Log) {
+        self.log = log;
+        // PORT NOTE: `crate::Linker` is still the unit stub `Linker(())`
+        // (lib.rs:158); `self.linker.log` threading resumes once the real
+        // `linker::Linker` is wired into the struct via `configure_linker`.
+        // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
+        // arena-allocated `Log`, which outlives this `Transpiler<'a>`. Zig
+        // aliased the same `*Log` into `resolver.log`; `Resolver.log` is a
+        // `&mut` so we materialize one from the raw pointer.
+        self.resolver.log = unsafe { &mut *log };
+    }
+
+    /// Port of `transpiler.zig:102 setAllocator`.
+    // TODO: remove this method. it does not make sense
+    pub fn set_allocator(&mut self, allocator: &'a Arena) {
+        self.allocator = allocator;
+        // PORT NOTE: `crate::Linker` is the unit stub — no `.allocator` field.
+        // `Resolver` dropped its `allocator` field (global mimalloc; see
+        // resolver/lib.rs `// allocator: dropped`), so nothing left to thread.
+    }
+
+    /// Port of Zig `transpiler.* = from.*` (ThreadPool.zig:308) — bitwise
+    /// struct copy for per-worker `Transpiler` initialization.
+    ///
+    /// # Safety
+    /// The returned value aliases every heap allocation owned by `from`
+    /// (`options`, `resolver`, `resolve_results`, …). Caller must ensure:
+    ///   * `from` outlives every clone (the `BundleV2`-owned transpiler does), and
+    ///   * the clone is stored where `Drop` never runs (`MaybeUninit` slot in
+    ///     `WorkerData`), so no double-free occurs. `Worker::deinit` mirrors
+    ///     Zig and only tears down the arena, never the per-worker `Transpiler`.
+    pub unsafe fn clone_for_worker(from: &Transpiler<'_>) -> Transpiler<'a> {
+        // SAFETY: bitwise copy + lifetime erase per caller contract above.
+        // `Transpiler<'x>` and `Transpiler<'a>` differ only in the lifetime
+        // parameter, so the pointer cast is layout-preserving.
+        unsafe { core::ptr::read((from as *const Transpiler<'_>).cast::<Transpiler<'a>>()) }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // B-2 un-gated: `ParseResult` / `AlreadyBundled` / `ParseOptions` +
 // `Transpiler::parse*` — real types so `ModuleLoader::transpile_source_code`

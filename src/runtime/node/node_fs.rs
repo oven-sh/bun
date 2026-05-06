@@ -2904,7 +2904,7 @@ pub mod ret {
         String(Box<[u8]>),
         TranscodedString(BunString),
         Buffer(Buffer),
-        NullTerminated(Box<ZStr>), // [:0]const u8 owned
+        NullTerminated(bun_core::ZBox), // [:0]const u8 owned
     }
 
     pub type Readlink = StringOrBuffer;

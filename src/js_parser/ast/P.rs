@@ -1249,7 +1249,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     // s() lives in the round-C live block above (deduped).
 
-    #[cfg(any())] // blocked_on: lexer.all_comments; CharFreq.scan slice arg; Scope.members.iter() entry shape
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
             return None;
@@ -1271,24 +1270,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         fn visit(symbols: &[js_ast::Symbol], char_freq: &mut js_ast::CharFreq, scope: &js_ast::Scope) {
-            let mut iter = scope.members.iter();
-            while let Some(entry) = iter.next() {
-                let symbol: &Symbol = &symbols[entry.value().r#ref.inner_index() as usize];
-                if symbol.slot_namespace() != Symbol::SlotNamespace::MustNotBeRenamed {
-                    char_freq.scan(symbol.original_name, -(i32::try_from(symbol.use_count_estimate).unwrap()));
+            for (_, member) in scope.members.iter() {
+                let symbol: &Symbol = &symbols[member.ref_.inner_index() as usize];
+                if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
+                    // SAFETY: Symbol.original_name is an arena-owned slice valid for the parser lifetime.
+                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).unwrap()));
                 }
             }
 
             if let Some(r#ref) = scope.label_ref {
                 let symbol = &symbols[r#ref.inner_index() as usize];
-                if symbol.slot_namespace() != Symbol::SlotNamespace::MustNotBeRenamed {
-                    char_freq.scan(symbol.original_name, -(i32::try_from(symbol.use_count_estimate).unwrap()) - 1);
+                if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
+                    // SAFETY: see above.
+                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).unwrap()) - 1);
                 }
             }
 
             for child in scope.children.slice() {
-                visit(symbols, char_freq, unsafe { &**child });
-                // SAFETY: scope.children stores arena-owned *mut Scope; tree is acyclic
+                // SAFETY: scope.children stores arena-owned NonNull<Scope>; tree is acyclic
+                visit(symbols, char_freq, unsafe { child.as_ref() });
             }
         }
         // SAFETY: module_scope is arena-owned and valid for the parser lifetime
@@ -6721,10 +6721,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break 'hash_arg;
                 }
                 let arg = hook_call.args.slice()[arg_index];
-                // blocked_on: ExprData::write_to_hasher (Expr.rs track-A; needs
-                // SymbolTable trait + bun_core::write_any_to_hasher). Hashing the
-                // initial-state arg only sharpens the refresh signature; safe to
-                // skip until that lands.
+                // TODO(port): blocked_on: ExprData::write_to_hasher (Expr.rs track-A;
+                // needs SymbolTable trait + bun_core::write_any_to_hasher).
+                // BEHAVIOUR GAP: omitting the initial-state arg from the hash
+                // changes the emitted base64 refresh signature vs Zig and means
+                // editing a useState/useReducer initial value will not force a
+                // remount as the spec intends. Un-gate as soon as
+                // `ExprData::write_to_hasher` lands.
                 #[cfg(any())]
                 arg.data.write_to_hasher(&mut ctx.hasher, self.symbols.as_slice());
                 let _ = arg;
@@ -6889,7 +6892,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
 
         let allocator = self.allocator;
-        let _ = hashbang; // TODO(port): Ast.hashbang is `&'static [u8]`; needs lifetime param on Ast.
 
         // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
         //     p.treeShake(&parts, false);
@@ -7267,9 +7269,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let ts_enums = self.compute_ts_enums_map(allocator)?;
 
-        // TODO(b2-blocked): compute_character_frequency body gated (lexer.all_comments,
-        // CharFreq.scan slice arg, Scope.members iter shape). Returns None until un-gated.
-        let char_freq: Option<js_ast::CharFreq> = None;
+        // Spec P.zig:6658: `.char_freq = p.computeCharacterFrequency()`.
+        let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let module_scope_strict = unsafe { &*self.module_scope }.strict_mode;
@@ -7345,9 +7346,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
 
+            // Spec P.zig:6689: `.hashbang = hashbang`.
             // TODO(port): Ast.hashbang is `&'static [u8]` (placeholder lifetime);
-            // once Ast gains an arena lifetime param, pass `hashbang` through.
-            hashbang: b"",
+            // once Ast gains an arena lifetime param, drop the unsafe erasure.
+            // SAFETY: `hashbang` borrows source-text/arena storage that lives for
+            // 'a, which outlives the returned Ast — same justification as the
+            // `from_bump_slice` calls for `symbols`/`parts`/`import_records` above.
+            hashbang: unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(hashbang) },
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,

@@ -110,7 +110,7 @@ impl<'a> CopyFile<'a> {
         promise.reject(global_this, instance)
     }
 
-    pub fn then(&mut self, promise: &mut JSPromise) -> jsc::JSTerminatedResult<()> {
+    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
@@ -189,17 +189,17 @@ impl<'a> CopyFile<'a> {
                 0,
             ) {
                 bun_sys::Result::Ok(result) => {
-                    match result.make_libuv_owned_for_syscall(bun_sys::Tag::Open, bun_sys::CloseOnFail::CloseOnFail) {
+                    match result.make_libuv_owned_for_syscall(bun_sys::Tag::Open, bun_sys::ErrorCase::CloseOnFail) {
                         bun_sys::Result::Ok(result_fd) => result_fd,
                         bun_sys::Result::Err(errno) => {
                             self.system_error = Some(errno.to_system_error());
-                            return Err(bun_sys::errno_to_error(errno.errno));
+                            return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                         }
                     }
                 }
                 bun_sys::Result::Err(errno) => {
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_sys::errno_to_error(errno.errno));
+                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                 }
             };
         }

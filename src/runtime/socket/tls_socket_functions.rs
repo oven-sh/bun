@@ -793,7 +793,7 @@ pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: 
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnis_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn is_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     Ok(JSValue::from(unsafe { ffi::SSL_session_reused(ssl_ptr) } == 1))

@@ -1725,12 +1725,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
-                if let Some(method_) = opts.fast_get(ctx, jsc::CommonProperty::Method)? {
+                if let Some(method_) = opts.fast_get(ctx, jsc::BuiltinName::Method)? {
                     let slice_ = method_.to_slice(ctx)?;
                     method = Method::which(slice_.slice()).unwrap_or(method);
                 }
 
-                if let Some(headers_) = opts.fast_get(ctx, jsc::CommonProperty::Headers)? {
+                if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = headers_.as_::<FetchHeaders>() {
                         headers = Some(headers__);
                     } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {

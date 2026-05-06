@@ -1,6 +1,6 @@
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef,
-    JsResult, ZigString,
+    JsResult,
 };
 use bun_jsc::node::BlobOrStringOrBuffer as JSArgument;
 use bun_str::strings;
@@ -683,10 +683,11 @@ impl JSValkeyClient {
         let seconds = global.validate_integer_range::<i32>(
             frame.argument(1),
             0,
-            jsc::IntegerRangeOptions {
+            jsc::IntegerRange {
                 min: 0,
                 max: 2147483647,
-                field_name: "seconds",
+                field_name: b"seconds",
+                ..Default::default()
             },
         )?;
 

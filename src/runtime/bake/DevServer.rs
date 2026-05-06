@@ -5297,7 +5297,7 @@ impl UnrefSourceMapRequest {
             return Err(bun_core::err!(InvalidRequest));
         }
         let mut generation_bytes = [0u8; 4];
-        bun_core::fmt::hex_to_bytes(&mut generation_bytes, body)
+        strings::decode_hex_to_bytes(&mut generation_bytes, body)
             .map_err(|_| bun_core::err!(InvalidRequest))?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);

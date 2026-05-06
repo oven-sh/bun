@@ -344,7 +344,7 @@ impl ReadableStream {
             return ReadableStream::empty(global_this);
         };
         match &store.data {
-            webcore::blob::StoreData::Bytes(_) => {
+            webcore::blob::store::Data::Bytes(_) => {
                 // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.

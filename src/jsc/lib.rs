@@ -513,6 +513,61 @@ pub mod host_fn {
     pub type JSHostFunctionTypeWithContext<C> =
         unsafe extern "C" fn(*mut C, *mut crate::JSGlobalObject, *mut crate::CallFrame) -> crate::JSValue;
 
+    // ── FFI-function-with-data helpers (host_fn.zig: `NewFunctionWithData` / ──
+    // `getFunctionData` / `setFunctionData`). Thin wrappers over
+    // `Bun__CreateFFIFunctionWithDataValue` / `Bun__FFIFunction_{get,set}DataPtr`.
+    mod ffi_data {
+        use super::{JSGlobalObject, JSHostFn, JSValue};
+        use core::ffi::c_void;
+        unsafe extern "C" {
+            pub fn Bun__CreateFFIFunctionWithDataValue(
+                global: *mut JSGlobalObject,
+                symbol_name: *const crate::ZigString,
+                arg_count: u32,
+                function: JSHostFn,
+                data: *mut c_void,
+            ) -> JSValue;
+            pub fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
+            pub fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
+        }
+    }
+
+    /// `host_fn::NewFunctionWithData` (host_fn.zig) — create a JSFunction whose
+    /// native callback retrieves `data` via `get_function_data(callee)`.
+    pub fn new_function_with_data(
+        global_object: &JSGlobalObject,
+        symbol_name: Option<&crate::ZigString>,
+        arg_count: u32,
+        function: JSHostFn,
+        data: *mut core::ffi::c_void,
+    ) -> JSValue {
+        // SAFETY: thin FFI wrapper; `as_mut_ptr()` yields write-provenance `*mut`.
+        unsafe {
+            ffi_data::Bun__CreateFFIFunctionWithDataValue(
+                global_object.as_mut_ptr(),
+                symbol_name.map_or(core::ptr::null(), |s| s as *const _),
+                arg_count,
+                function,
+                data,
+            )
+        }
+    }
+
+    /// `host_fn::getFunctionData` — retrieve the `data` pointer stored by
+    /// `new_function_with_data` / `set_function_data`. Returns `None` if null.
+    pub fn get_function_data(function: JSValue) -> Option<*mut core::ffi::c_void> {
+        // SAFETY: thin FFI wrapper.
+        let p = unsafe { ffi_data::Bun__FFIFunction_getDataPtr(function) };
+        if p.is_null() { None } else { Some(p) }
+    }
+
+    /// `host_fn::setFunctionData` — replace the stored data pointer (pass null
+    /// to clear).
+    pub fn set_function_data(function: JSValue, value: *mut core::ffi::c_void) {
+        // SAFETY: thin FFI wrapper.
+        unsafe { ffi_data::Bun__FFIFunction_setDataPtr(function, value) }
+    }
+
     /// `host_fn::DOMCall` — Zig type-generator that emits a DOM-call put helper +
     /// fast-path/slow-path callbacks. The Rust port encodes this as the
     /// `#[bun_jsc::dom_call]` proc-macro; this struct is the runtime descriptor

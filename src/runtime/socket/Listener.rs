@@ -141,7 +141,8 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
+    // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         log!("listen");
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {

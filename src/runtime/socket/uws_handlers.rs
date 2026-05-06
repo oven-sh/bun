@@ -445,7 +445,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
     }
     fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         let Some(owner) = *ext else { return };
-        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, err));
+        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)));
     }
 }
 

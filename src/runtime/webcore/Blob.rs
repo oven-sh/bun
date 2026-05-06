@@ -5877,7 +5877,7 @@ pub trait FileOpener: Sized {
                     }
                     self.set_errno(bun_core::errno_to_zig_err(err.errno));
                     self.set_system_error(err.with_path(path_string.slice()).to_system_error());
-                    self.set_opened_fd(bun_sys::INVALID_FD);
+                    self.set_opened_fd(Fd::INVALID);
                     break;
                 }
             }
@@ -5887,7 +5887,7 @@ pub trait FileOpener: Sized {
     }
 
     fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
-        if self.opened_fd() != bun_sys::INVALID_FD {
+        if self.opened_fd() != Fd::INVALID {
             callback(self, self.opened_fd());
             return;
         }
@@ -5914,7 +5914,7 @@ pub trait FileCloser: Sized {
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_aio::FilePoll;
-    fn task(&mut self) -> &mut bun_threading::WorkPoolTask;
+    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;

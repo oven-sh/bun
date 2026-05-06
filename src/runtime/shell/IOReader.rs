@@ -307,20 +307,24 @@ impl IOReader {
 
 impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
     const HAS_ON_READ_CHUNK: bool = true;
-    fn on_read_chunk(&mut self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
-        (*self).on_read_chunk_cb(chunk, has_more)
+    // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+    // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
+    // may be live on the caller's stack. These reborrow `&mut *this` only to
+    // forward to inherent impls; further aliasing audit lives with those impls.
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+        unsafe { (*this).on_read_chunk_cb(chunk, has_more) }
     }
-    fn on_reader_done(&mut self) {
-        (*self).on_reader_done_cb();
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { (*this).on_reader_done_cb() };
     }
-    fn on_reader_error(&mut self, err: sys::Error) {
-        (*self).on_reader_error(err);
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        unsafe { (*this).on_reader_error(err) };
     }
-    fn loop_(&mut self) -> *mut bun_uws_sys::Loop {
-        self.io_evtloop().loop_().cast()
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        unsafe { (*this).io_evtloop() }.loop_().cast()
     }
-    fn event_loop(&mut self) -> bun_io::EventLoopHandle {
-        self.io_evtloop()
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        unsafe { (*this).io_evtloop() }
     }
 }
 

@@ -765,12 +765,13 @@ impl PostgresSQLQuery {
                     connection.prepared_statement_id += 1;
                     // Zig sets ref_count = .initExactRefs(2) (one for this.statement,
                     // one for the connection.statements map).
-                    let stmt = Box::into_raw(Box::new(PostgresSQLStatement {
-                        signature,
-                        ref_count: Cell::new(2),
-                        status: if did_write { StatementStatus::Parsing } else { StatementStatus::Pending },
-                        ..Default::default()
-                    }));
+                    let stmt = {
+                        let mut s = PostgresSQLStatement::default();
+                        s.signature = signature;
+                        s.ref_count = Cell::new(2);
+                        s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
+                        Box::into_raw(Box::new(s))
+                    };
                     this.statement = Some(stmt);
 
                     // SAFETY: `entry_value` points into `connection.statements` and the map has
@@ -779,11 +780,12 @@ impl PostgresSQLQuery {
                     // `get_or_put`, so a plain store is fine.
                     unsafe { *entry_value = stmt };
                 } else {
-                    let stmt = Box::into_raw(Box::new(PostgresSQLStatement {
-                        signature,
-                        status: if did_write { StatementStatus::Parsing } else { StatementStatus::Pending },
-                        ..Default::default()
-                    }));
+                    let stmt = {
+                        let mut s = PostgresSQLStatement::default();
+                        s.signature = signature;
+                        s.status = if did_write { StatementStatus::Parsing } else { StatementStatus::Pending };
+                        Box::into_raw(Box::new(s))
+                    };
                     this.statement = Some(stmt);
                 }
             }

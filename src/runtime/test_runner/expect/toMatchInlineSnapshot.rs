@@ -88,7 +88,8 @@ pub fn to_match_inline_snapshot(
         "toMatchInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
     )?;
-    this.inline_snapshot(
+    Expect::inline_snapshot(
+        this,
         global,
         frame,
         value,

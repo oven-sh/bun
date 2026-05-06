@@ -202,11 +202,11 @@ impl UpgradeCommand {
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
         let accept = headers::Entry {
-            name: headers::api::StringPointer {
+            name: HTTP::ETag::StringPointer {
                 offset: 0,
                 length: u32::try_from(b"Accept".len()).unwrap(),
             },
-            value: headers::api::StringPointer {
+            value: HTTP::ETag::StringPointer {
                 offset: u32::try_from(b"Accept".len()).unwrap(),
                 length: u32::try_from(b"application/vnd.github.v3+json".len()).unwrap(),
             },
@@ -251,11 +251,11 @@ impl UpgradeCommand {
                 .expect("oom");
                 header_entries
                     .append(headers::Entry {
-                        name: headers::api::StringPointer {
+                        name: HTTP::ETag::StringPointer {
                             offset: accept.value.offset + accept.value.length,
                             length: u32::try_from(b"Authorization".len()).unwrap(),
                         },
-                        value: headers::api::StringPointer {
+                        value: HTTP::ETag::StringPointer {
                             offset: u32::try_from(
                                 (accept.value.offset + accept.value.length) as usize
                                     + b"Authorization".len(),

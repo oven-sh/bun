@@ -674,8 +674,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // We cannot access the pointer after fail is called.
     }
 
-    pub fn handle_handshake(
-        &mut self,
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because `fail`
+    /// may free `this` / be re-entered; see `fail`.
+    pub unsafe fn handle_handshake(
+        this: *mut Self,
         socket: Socket<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
@@ -688,7 +691,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         let handshake_success = success == 1;
         let mut reject_unauthorized = false;
-        if let Some(ws) = self.outgoing_websocket {
+        // SAFETY: short-lived read of `outgoing_websocket`.
+        if let Some(ws) = unsafe { (*this).outgoing_websocket } {
             // SAFETY: live C++ back-reference.
             reject_unauthorized = unsafe { (*ws).reject_unauthorized() };
         }
@@ -701,9 +705,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     log!(
                         "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
                         ssl_error.error_no,
-                        self.secure.is_some()
+                        // SAFETY: short-lived read.
+                        unsafe { (*this).secure.is_some() }
                     );
-                    self.fail(ErrorCode::TlsHandshakeFailed);
+                    // SAFETY: no `&mut Self` is live across this call.
+                    unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
                     return;
                 }
                 // SAFETY: native handle on a TLS socket is `*SSL`.
@@ -717,52 +723,60 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     let hostname = unsafe { CStr::from_ptr(servername as *const _ as *const _) }
                         .to_bytes();
                     if !boringssl::check_server_identity(ssl_ptr, hostname) {
-                        self.fail(ErrorCode::TlsHandshakeFailed);
+                        // SAFETY: no `&mut Self` is live across this call.
+                        unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
                     }
                 }
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-            self.fail(ErrorCode::TlsHandshakeFailed);
+            // SAFETY: no `&mut Self` is live across this call.
+            unsafe { Self::fail(this, ErrorCode::TlsHandshakeFailed) };
         }
     }
 
-    pub fn handle_open(&mut self, socket: Socket<SSL>) {
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `terminate` may free `this`; see `fail`.
+    pub unsafe fn handle_open(this: *mut Self, socket: Socket<SSL>) {
         log!("onOpen");
-        self.tcp = socket;
+        // SAFETY: short-lived `&mut` for setup; ends before any reentrant call.
+        let me = unsafe { &mut *this };
+        me.tcp = socket;
 
-        debug_assert!(!self.input_body_buf.is_empty());
-        debug_assert!(self.to_send_len == 0);
+        debug_assert!(!me.input_body_buf.is_empty());
+        debug_assert!(me.to_send_len == 0);
 
         if SSL {
-            if !self.hostname.is_empty() {
+            if !me.hostname.is_empty() {
                 if let Some(handle) = socket.get_native_handle_ref() {
                     // TODO(port): ZStr — hostname includes trailing NUL.
-                    let len = self.hostname.len() - 1;
+                    let len = me.hostname.len() - 1;
                     // SAFETY: hostname[len] == 0 (written by dupe_z); the buffer
                     // outlives this borrow.
                     let zstr = unsafe {
-                        bun_str::ZStr::from_raw(self.hostname.as_ptr(), len)
+                        bun_str::ZStr::from_raw(me.hostname.as_ptr(), len)
                     };
                     handle.configure_http_client(zstr);
                 }
-                self.hostname = Box::default();
+                me.hostname = Box::default();
             }
         }
 
         // If using proxy, set state to proxy_handshake
-        if self.proxy.is_some() {
-            self.state = State::ProxyHandshake;
+        if me.proxy.is_some() {
+            me.state = State::ProxyHandshake;
         }
 
-        let wrote = socket.write(&self.input_body_buf);
+        let wrote = socket.write(&me.input_body_buf);
         if wrote < 0 {
-            self.terminate(ErrorCode::FailedToWrite);
+            // SAFETY: no `&mut Self` is live across this call (`me`'s last use is above).
+            unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
             return;
         }
 
-        self.to_send_len = self.input_body_buf.len() - usize::try_from(wrote).unwrap();
+        me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).unwrap();
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {

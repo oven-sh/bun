@@ -3286,6 +3286,12 @@ pub mod options {
         pub tsconfig_override: Option<Box<[u8]>>,
         pub production: bool,
         pub force_node_env: ForceNodeEnv,
+        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
+        // `linker_context/*` (Zig stores the full `BundleOptions` on the
+        // resolver). These are projected by `bun_bundler` at link time.
+        pub output_dir: Box<[u8]>,
+        pub root_dir: Box<[u8]>,
+        pub public_path: Box<[u8]>,
     }
 
     impl Default for BundleOptions {
@@ -3318,6 +3324,9 @@ pub mod options {
                 preserve_symlinks: false,
                 rewrite_jest_for_tests: false,
                 tsconfig_override: None,
+                output_dir: Box::default(),
+                root_dir: Box::default(),
+                public_path: Box::default(),
                 production: false,
                 force_node_env: ForceNodeEnv::default(),
             }

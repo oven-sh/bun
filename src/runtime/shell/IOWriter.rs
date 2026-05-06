@@ -535,21 +535,22 @@ impl IOWriter {
         let _guard = scopeguard::guard((), |_| self.set_writing(false));
         self.skip_dead();
 
-        let s = self.state();
-        let idx = s.writer_idx;
-        debug_assert!(!s.writers[idx].is_dead());
+        let idx = self.state().writer_idx;
+        debug_assert!(!self.state().writers[idx].is_dead());
 
         let buf = self.get_buffer();
         debug_assert!(!buf.is_empty());
 
         let result = drain_buffered_data(self, buf, u32::MAX as usize);
+        // PORT NOTE: re-derive `state()` after `drain_buffered_data` (which may
+        // have called `on_error`) instead of holding a stale `&mut`.
         let amt = match result {
             bun_io::WriteResult::Done(amt) => amt,
             bun_io::WriteResult::Wrote(amt) => {
                 // .wrote can be returned if an error was encountered but we
                 // wrote some data before it happened. on_error was already
                 // called inside drain_buffered_data.
-                if s.err.is_some() {
+                if self.state().err.is_some() {
                     return Yield::done();
                 }
                 amt
@@ -564,6 +565,7 @@ impl IOWriter {
                 return Yield::done();
             }
         };
+        let s = self.state();
         if let Some(bl) = s.writers[idx].bytelist {
             let lo = s.total_bytes_written;
             // SAFETY: bytelist points into a live ShellExecEnv Bufio.

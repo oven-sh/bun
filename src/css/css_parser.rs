@@ -2671,7 +2671,7 @@ impl<AtRule> StyleSheet<AtRule> {
         if !cfg!(debug_assertions) {
             return;
         }
-        let _layer_names_field_len = self.layer_names.len();
+        let _layer_names_field_len = self.layer_names.len;
         let mut actual_layer_rules_len: usize = 0;
         for rule in self.rules.v.iter() {
             if matches!(rule, CssRule::LayerBlock(_)) {
@@ -3011,20 +3011,26 @@ pub struct ParserOptions<'a> {
     /// Whether to ignore invalid rules and declarations rather than erroring.
     pub error_recovery: bool,
     /// A list that will be appended to when a warning occurs.
-    pub logger: Option<&'a mut Log>,
+    ///
+    /// Stored as a raw `NonNull<Log>` (mirrors Zig's `*Log`) so `warn(&self)`
+    /// can soundly write through it. Deriving `&mut Log` from a `&self`-reachable
+    /// `&'a mut Log` (the previous representation) is UB under Stacked Borrows
+    /// — see PORTING.md §Forbidden patterns. The caller that constructs
+    /// `ParserOptions` guarantees the pointee outlives `'a` and is not aliased
+    /// for the duration of parsing.
+    pub logger: Option<core::ptr::NonNull<Log>>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
+    _lt: core::marker::PhantomData<&'a mut Log>,
 }
 
 impl<'a> ParserOptions<'a> {
     pub fn warn(&self, warning: ParseError<ParserError>) {
-        if let Some(lg) = &self.logger {
-            // TODO(port): &mut Log behind &self — Zig mutated through *Log.
-            // Phase B: store `*mut Log` or interior-mutable Log.
-            // SAFETY: logger is Option<&'a mut Log>; we hold the only borrow and
-            // Zig mutated through *Log. No other &Log alias exists for the
-            // duration of this call.
-            let lg: &mut Log = unsafe { &mut *(*lg as *const Log as *mut Log) };
+        if let Some(lg) = self.logger {
+            // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
+            // `default`); the pointee outlives `'a` and no other borrow of the
+            // Log exists for the duration of parsing. Zig mutated through `*Log`.
+            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(
                 self.filename,
                 warning.location.line,
@@ -3036,10 +3042,10 @@ impl<'a> ParserOptions<'a> {
     }
 
     pub fn warn_fmt(&self, args: fmt::Arguments<'_>, line: u32, column: u32) {
-        if let Some(lg) = &self.logger {
-            // SAFETY: logger is Option<&'a mut Log>; we hold the only borrow and
-            // Zig mutated through *Log.
-            let lg: &mut Log = unsafe { &mut *(*lg as *const Log as *mut Log) };
+        if let Some(lg) = self.logger {
+            // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
+            // unique `&'a mut Log`; no other borrow exists during this call.
+            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col(self.filename, line, column, args)
                 .expect("unreachable");
         }
@@ -3053,10 +3059,9 @@ impl<'a> ParserOptions<'a> {
         column: u32,
         notes: &mut [logger::Data],
     ) {
-        if let Some(lg) = &self.logger {
-            // SAFETY: logger is Option<&'a mut Log>; we hold the only borrow and
-            // Zig mutated through *Log.
-            let lg: &mut Log = unsafe { &mut *(*lg as *const Log as *mut Log) };
+        if let Some(lg) = self.logger {
+            // SAFETY: see `warn`.
+            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes)
                 .expect("unreachable");
         }
@@ -3071,10 +3076,9 @@ impl<'a> ParserOptions<'a> {
         note_args: fmt::Arguments<'_>,
         note_range: logger::Range,
     ) {
-        if let Some(lg) = &self.logger {
-            // SAFETY: logger is Option<&'a mut Log>; we hold the only borrow and
-            // Zig mutated through *Log.
-            let lg: &mut Log = unsafe { &mut *(*lg as *const Log as *mut Log) };
+        if let Some(lg) = self.logger {
+            // SAFETY: see `warn`.
+            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_range_warning_fmt_with_note(
                 None,
                 logger::Loc { start: i32::try_from(line).unwrap() },
@@ -3094,8 +3098,9 @@ impl<'a> ParserOptions<'a> {
             css_modules: None,
             source_index: 0,
             error_recovery: false,
-            logger: log,
+            logger: log.map(core::ptr::NonNull::from),
             flags: ParserFlags::default(),
+            _lt: core::marker::PhantomData,
         }
     }
 }

@@ -324,19 +324,32 @@ pub fn install_with_manager(
 
                     let old_resolutions = old_resolutions_list.get(&manager.lockfile.buffers.resolutions);
 
-                    // PORT NOTE: reshaped for borrowck — Zig directly slices into the vec's spare capacity
-                    // via `.items.ptr[off .. off + len]`. We resize and slice instead.
-                    // SAFETY: capacity reserved above; we are writing into [off..off+len).
+                    // PORT NOTE: Zig slices raw spare capacity via `.items.ptr[off .. off + len]`,
+                    // `@memset`s it (no drop), then extends `.items.len`. Mirror that ordering:
+                    // write into `spare_capacity_mut()` (MaybeUninit) and only then `set_len`, so we
+                    // never form `&mut [T]` over uninitialized storage and never drop garbage.
+                    debug_assert_eq!(manager.lockfile.buffers.dependencies.len(), off as usize);
+                    debug_assert_eq!(manager.lockfile.buffers.resolutions.len(), off as usize);
+                    {
+                        let spare = manager.lockfile.buffers.dependencies.spare_capacity_mut();
+                        for slot in &mut spare[..len as usize] {
+                            slot.write(Dependency::default());
+                        }
+                    }
+                    {
+                        let spare = manager.lockfile.buffers.resolutions.spare_capacity_mut();
+                        for slot in &mut spare[..len as usize] {
+                            slot.write(invalid_package_id);
+                        }
+                    }
+                    // SAFETY: capacity reserved above and the `[off .. off+len)` tail was just
+                    // initialized via `MaybeUninit::write`.
                     unsafe {
                         manager.lockfile.buffers.dependencies.set_len((off + len) as usize);
                         manager.lockfile.buffers.resolutions.set_len((off + len) as usize);
                     }
                     let dependencies = &mut manager.lockfile.buffers.dependencies[off as usize..(off + len) as usize];
                     let resolutions = &mut manager.lockfile.buffers.resolutions[off as usize..(off + len) as usize];
-
-                    // It is too easy to accidentally undefined memory
-                    resolutions.fill(invalid_package_id);
-                    dependencies.fill(Dependency::default());
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
                         dependencies[i] = new_dep.clone_into_builder(manager, &lockfile.buffers.string_bytes, builder)?;
@@ -634,15 +647,18 @@ pub fn install_with_manager(
     manager.log.reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
-    let lockfile_before_clean = manager.lockfile;
-
-    manager.lockfile = manager.lockfile.clean_with_logger(
+    // PORT NOTE: Zig copies the `*Lockfile` pointer, leaving `manager.lockfile` intact so both
+    // old and new lockfiles are live for the later `eql(lockfile_before_clean, ...)` checks.
+    // In Rust `manager.lockfile: Box<Lockfile>` would move; compute the new lockfile first, then
+    // `mem::replace` so `lockfile_before_clean` owns the old box and `manager.lockfile` the new.
+    let new_lockfile = manager.lockfile.clean_with_logger(
         manager,
         &manager.update_requests,
         manager.log,
         manager.options.enable.exact_versions,
         log_level,
     )?;
+    let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
 
     if manager.lockfile.packages.len() > 0 {
         root = manager.lockfile.packages.get(0);
@@ -792,7 +808,7 @@ pub fn install_with_manager(
     if manager.options.enable.frozen_lockfile && !matches!(load_result, lockfile::LoadResult::NotFound) {
         'frozen_lockfile: {
             if load_result.loaded_from_text_lockfile() {
-                if manager.lockfile.eql(lockfile_before_clean, packages_len_before_install) {
+                if manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install) {
                     break 'frozen_lockfile;
                 }
             } else {
@@ -923,7 +939,7 @@ pub fn install_with_manager(
         // If the lockfile was frozen, we already checked it
         !manager.options.enable.frozen_lockfile
             && if load_result.loaded_from_text_lockfile() {
-                !manager.lockfile.eql(lockfile_before_clean, packages_len_before_install)?
+                !manager.lockfile.eql(&lockfile_before_clean, packages_len_before_install)?
             } else {
                 manager.lockfile.has_meta_hash_changed(
                     PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string,
@@ -1028,16 +1044,24 @@ pub fn install_with_manager(
 // Zig: `fn runAndWaitFn(comptime check_peers: bool, comptime only_pre_patch: bool) *const fn(*PackageManager) anyerror!void`
 // Ported as a const-generic struct + three thin wrapper fns.
 
-struct RunAndWaitClosure<'a, const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
-    manager: &'a mut PackageManager,
+struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
+    // PORT NOTE: Zig stores `*PackageManager` here while the caller also holds the same
+    // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
+    // `this: &mut PackageManager` borrow in `run_and_wait`. Keep a raw pointer and reborrow
+    // inside `is_done`; `sleep_until` only ever invokes `is_done` between event-loop ticks
+    // on this thread, so no two `&mut` to the manager are live simultaneously.
+    manager: *mut PackageManager,
     err: Option<bun_core::Error>,
 }
 
-impl<'a, const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
-    RunAndWaitClosure<'a, CHECK_PEERS, ONLY_PRE_PATCH>
+impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
+    RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
 {
     fn is_done(closure: &mut Self) -> bool {
-        let this = &mut *closure.manager;
+        // SAFETY: `closure.manager` was set from a live `&mut PackageManager` in
+        // `run_and_wait`; that borrow is parked inside `sleep_until` (which only touches
+        // `event_loop`) for the duration of this callback.
+        let this = unsafe { &mut *closure.manager };
         if CHECK_PEERS {
             if let Err(err) = this.process_peer_dependency_list() {
                 closure.err = Some(err);
@@ -1047,8 +1071,12 @@ impl<'a, const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         this.drain_dependency_list();
 
+        // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass `this` as
+        // both receiver and ctx (aliased &mut). Phase B: add a `VoidCallbacks` impl in
+        // run_tasks.rs so this becomes `run_tasks::<VoidCallbacks>(this, &mut (), ..)`.
+        let log_level = this.options.log_level;
         if let Err(err) = this.run_tasks(
-            this,
+            &mut (),
             PackageManager::RunTasksCallbacks {
                 on_extract: (),
                 on_resolve: (),
@@ -1057,7 +1085,7 @@ impl<'a, const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
                 progress_bar: true,
             },
             CHECK_PEERS,
-            this.options.log_level,
+            log_level,
         ) {
             closure.err = Some(err);
             return true;
@@ -1090,11 +1118,10 @@ impl<'a, const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
     fn run_and_wait(this: &mut PackageManager) -> Result<(), bun_core::Error> {
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
-            manager: this,
+            manager: this as *mut PackageManager,
             err: None,
         };
 
-        // TODO(port): `sleepUntil` takes `&mut closure` and a fn-pointer `is_done`; verify signature in Phase B.
         this.sleep_until(&mut closure, Self::is_done);
 
         if let Some(err) = closure.err {

@@ -1,15 +1,16 @@
-use bun_css as css;
-use bun_css::css_values::gradient::Gradient;
-use bun_css::css_values::resolution::Resolution;
-use bun_css::css_values::url::Url;
-use bun_css::dependencies::UrlDependency;
-use bun_css::{PrintErr, Printer, Result, VendorPrefix};
-use bun_str::strings;
+use crate as css;
+use crate::css_parser::CssResult as Result;
+use crate::values::color::ColorFallbackKind;
+use crate::values::gradient::Gradient;
+use crate::values::resolution::Resolution;
+use crate::values::url::Url;
+use crate::{PrintErr, Printer, VendorPrefix};
+use bun_alloc::Arena;
+use bun_string::strings;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
 // TODO(port): `parse`/`to_css` were `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-// — comptime-reflection derives. Model as proc-macro derives in Phase B.
-#[derive(css::Parse, css::ToCss)]
+// — comptime-reflection derives. Hand-expanded below until the proc-macro lands.
 pub enum Image {
     /// The `none` keyword.
     None,
@@ -57,12 +58,12 @@ impl Image {
         }
     }
 
-    pub fn get_prefixed(&self, prefix: css::VendorPrefix) -> Image {
+    pub fn get_prefixed(&self, allocator: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
             // PERF(port): was arena bulk-free — profile in Phase B
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(prefix))),
-            Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(prefix)),
-            _ => self.deep_clone(),
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(allocator, prefix))),
+            Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(allocator, prefix)),
+            _ => self.deep_clone(allocator),
         }
     }
 
@@ -101,31 +102,40 @@ impl Image {
     #[inline]
     pub fn eql(&self, other: &Image) -> bool {
         // TODO(port): was `css.implementEql(@This(), this, other)` (comptime field-walk).
-        // Model via `#[derive(PartialEq)]` in Phase B.
-        css::implement_eql(self, other)
+        // Hand-expanded; replace with `#[derive(PartialEq)]` once `Url: PartialEq`.
+        match (self, other) {
+            (Image::None, Image::None) => true,
+            (Image::Url(a), Image::Url(b)) => a.import_record_idx == b.import_record_idx,
+            (Image::Gradient(a), Image::Gradient(b)) => a.eql(b),
+            (Image::ImageSet(a), Image::ImageSet(b)) => a.eql(b),
+            _ => false,
+        }
     }
 
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(&self, allocator: &Arena) -> Self {
         // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` (comptime field-walk).
-        // Model via `#[derive(Clone)]` / a `DeepClone` trait in Phase B.
-        css::implement_deep_clone(self)
+        match self {
+            Image::None => Image::None,
+            Image::Url(u) => Image::Url(Url { import_record_idx: u.import_record_idx, loc: u.loc }),
+            Image::Gradient(g) => Image::Gradient(Box::new(g.deep_clone(allocator))),
+            Image::ImageSet(s) => Image::ImageSet(s.deep_clone(allocator)),
+        }
     }
 
     /// Returns a legacy `-webkit-gradient()` value for the image.
     ///
     /// May return an error in case the gradient cannot be converted.
-    pub fn get_legacy_webkit(&self) -> Option<Image> {
+    pub fn get_legacy_webkit(&self, allocator: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => {
                 // PERF(port): was arena bulk-free — profile in Phase B
-                Some(Image::Gradient(Box::new(gradient.get_legacy_webkit()?)))
+                Some(Image::Gradient(Box::new(gradient.get_legacy_webkit(allocator)?)))
             }
-            _ => Some(self.deep_clone()),
+            _ => Some(self.deep_clone(allocator)),
         }
     }
 
-    pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<Image, 6> {
-        use css::ColorFallbackKind;
+    pub fn get_fallbacks(&mut self, allocator: &Arena, targets: css::targets::Targets) -> css::SmallList<Image, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
         let fallbacks = self.get_necessary_fallbacks(targets);
@@ -133,7 +143,7 @@ impl Image {
 
         // Get RGB fallbacks if needed.
         let rgb = if fallbacks.contains(ColorFallbackKind::RGB) {
-            Some(self.get_fallback(ColorFallbackKind::RGB))
+            Some(self.get_fallback(allocator, ColorFallbackKind::RGB))
         } else {
             None
         };
@@ -151,22 +161,22 @@ impl Image {
                 false && matches!(prefix_image, Image::Gradient(_))
             }
         {
-            if let Some(legacy) = prefix_image.get_legacy_webkit() {
+            if let Some(legacy) = prefix_image.get_legacy_webkit(allocator) {
                 res.push(legacy);
             }
         }
 
         // Standard syntax, with prefixes.
         if prefixes.contains(VendorPrefix::WEBKIT) {
-            res.push(prefix_image.get_prefixed(css::VendorPrefix::WEBKIT));
+            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::WEBKIT));
         }
 
         if prefixes.contains(VendorPrefix::MOZ) {
-            res.push(prefix_image.get_prefixed(css::VendorPrefix::MOZ));
+            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::MOZ));
         }
 
         if prefixes.contains(VendorPrefix::O) {
-            res.push(prefix_image.get_prefixed(css::VendorPrefix::O));
+            res.push(prefix_image.get_prefixed(allocator, css::VendorPrefix::O));
         }
 
         if prefixes.contains(VendorPrefix::NONE) {
@@ -177,12 +187,12 @@ impl Image {
 
             // P3 fallback.
             if fallbacks.contains(ColorFallbackKind::P3) {
-                res.push(self.get_fallback(ColorFallbackKind::P3));
+                res.push(self.get_fallback(allocator, ColorFallbackKind::P3));
             }
 
             // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
             if fallbacks.contains(ColorFallbackKind::LAB) {
-                *self = self.get_fallback(ColorFallbackKind::LAB);
+                *self = self.get_fallback(allocator, ColorFallbackKind::LAB);
             }
         } else if let Some(last) = res.pop() {
             // Prefixed property with no unprefixed version.
@@ -194,28 +204,45 @@ impl Image {
         res
     }
 
-    pub fn get_fallback(&self, kind: css::ColorFallbackKind) -> Image {
+    pub fn get_fallback(&self, allocator: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
             // PERF(port): was arena bulk-free — profile in Phase B
-            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(kind))),
-            _ => self.deep_clone(),
+            Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(allocator, kind))),
+            _ => self.deep_clone(allocator),
         }
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> css::ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
         match self {
             Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
-            _ => css::ColorFallbackKind::empty(),
+            _ => ColorFallbackKind::empty(),
         }
     }
 
-    // pub fn parse(input: &mut css::Parser) -> Result<Image> {
-    //     todo!("css.todo_stuff.depth")
-    // }
+    // TODO(port): `css.DeriveParse(@This()).parse` — hand-expanded: try each
+    // variant in Zig field order (none/url/gradient/image-set).
+    pub fn parse(input: &mut css::Parser) -> Result<Image> {
+        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
+            return Ok(Image::None);
+        }
+        if let Ok(url) = input.try_parse(Url::parse) {
+            return Ok(Image::Url(url));
+        }
+        if let Ok(g) = input.try_parse(Gradient::parse) {
+            return Ok(Image::Gradient(Box::new(g)));
+        }
+        ImageSet::parse(input).map(Image::ImageSet)
+    }
 
-    // pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
-    //     todo!("css.todo_stuff.depth")
-    // }
+    // TODO(port): `css.DeriveToCss(@This()).toCss` — hand-expanded.
+    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
+        match self {
+            Image::None => dest.write_str(b"none"),
+            Image::Url(u) => u.to_css(dest),
+            Image::Gradient(g) => g.to_css(dest),
+            Image::ImageSet(s) => s.to_css(dest),
+        }
+    }
 }
 
 impl Default for Image {
@@ -255,14 +282,9 @@ impl ImageSet {
             }
         };
 
-        fn parse_nested_block_fn(_: (), i: &mut css::Parser) -> Result<Vec<ImageSetOption>> {
+        let options = input.parse_nested_block(|i: &mut css::Parser| {
             i.parse_comma_separated(ImageSetOption::parse)
-        }
-
-        let options = match input.parse_nested_block((), parse_nested_block_fn) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
-        };
+        })?;
 
         Result::Ok(ImageSet {
             options,
@@ -298,22 +320,27 @@ impl ImageSet {
     }
 
     /// Returns the `image-set()` value with the given vendor prefix.
-    pub fn get_prefixed(&self, prefix: css::VendorPrefix) -> ImageSet {
+    pub fn get_prefixed(&self, allocator: &Arena, prefix: css::VendorPrefix) -> ImageSet {
         ImageSet {
             // TODO(port): was `css.deepClone(ImageSetOption, allocator, &this.options)` (comptime helper)
-            options: css::deep_clone(&self.options),
+            options: self.options.iter().map(|o| o.deep_clone(allocator)).collect(),
             vendor_prefix: prefix,
         }
     }
 
     pub fn eql(&self, other: &ImageSet) -> bool {
         // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq in Phase B
-        css::implement_eql(self, other)
+        self.vendor_prefix == other.vendor_prefix
+            && self.options.len() == other.options.len()
+            && self.options.iter().zip(other.options.iter()).all(|(a, b)| a.eql(b))
     }
 
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(&self, allocator: &Arena) -> Self {
         // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` — derive Clone in Phase B
-        css::implement_deep_clone(self)
+        ImageSet {
+            options: self.options.iter().map(|o| o.deep_clone(allocator)).collect(),
+            vendor_prefix: self.vendor_prefix,
+        }
     }
 
     pub fn get_vendor_prefix(&self) -> VendorPrefix {
@@ -338,35 +365,32 @@ pub struct ImageSetOption {
 }
 
 impl ImageSetOption {
+    // blocked_on: `Parser::add_import_record` (gated in css_parser.rs on
+    // BabyList push API). Body preserved verbatim; un-gates with that method.
+    #[cfg(any())]
     pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
         let image = if let Some(url) = input
             .try_parse(css::Parser::expect_url_or_string)
-            .as_value()
+            .ok()
         {
-            let record_idx = match input.add_import_record(url, start_position, css::ImportKind::Url) {
-                Result::Ok(idx) => idx,
-                Result::Err(e) => return Result::Err(e),
-            };
+            let record_idx = input.add_import_record(url, start_position, css::ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
                 loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
             // For some reason, `Image.parse` made zls crash; the Zig used `@call(.auto, ...)`.
-            match Image::parse(input) {
-                Result::Ok(vv) => vv,
-                Result::Err(e) => return Result::Err(e),
-            }
+            Image::parse(input)?
         };
 
         let (resolution, file_type): (Resolution, Option<*const [u8]>) =
-            if let Some(res) = input.try_parse(Resolution::parse).as_value() {
-                let file_type = input.try_parse(parse_file_type).as_value();
+            if let Some(res) = input.try_parse(Resolution::parse).ok() {
+                let file_type = input.try_parse(parse_file_type).ok();
                 (res, file_type)
             } else {
-                let file_type = input.try_parse(parse_file_type).as_value();
+                let file_type = input.try_parse(parse_file_type).ok();
                 let resolution = input
                     .try_parse(Resolution::parse)
                     .unwrap_or(Resolution::Dppx(1.0));
@@ -376,10 +400,20 @@ impl ImageSetOption {
         Result::Ok(ImageSetOption {
             image,
             resolution,
-            file_type: file_type.map(|x| x),
+            file_type,
         })
     }
+    #[cfg(not(any()))]
+    pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
+        let _ = input;
+        // blocked_on: Parser::add_import_record un-gate (css_parser.rs:3095)
+        todo!("ImageSetOption::parse — blocked on Parser::add_import_record")
+    }
 
+    // blocked_on: `dependencies::UrlDependency::new` taking the now-real
+    // `values::url::Url` + `serializer::serialize_string` accepting
+    // `&mut Printer` (currently `&mut impl WriteAll`). Body preserved.
+    #[cfg(any())]
     pub fn to_css(
         &self,
         dest: &mut css::Printer,
@@ -446,27 +480,50 @@ impl ImageSetOption {
 
         Ok(())
     }
+    #[cfg(not(any()))]
+    pub fn to_css(
+        &self,
+        dest: &mut css::Printer,
+        _is_prefixed: bool,
+    ) -> core::result::Result<(), PrintErr> {
+        // blocked_on: UrlDependency::new(Url) + serializer::serialize_string(&mut Printer)
+        self.image.to_css(dest)?;
+        dest.write_char(b' ')?;
+        let targets = core::mem::take(&mut dest.targets);
+        self.resolution.to_css(dest)?;
+        dest.targets = targets;
+        Ok(())
+    }
 
-    pub fn deep_clone(&self) -> Self {
+    pub fn deep_clone(&self, allocator: &Arena) -> Self {
         // TODO(port): was `css.implementDeepClone(@This(), this, allocator)` — derive Clone in Phase B
-        css::implement_deep_clone(self)
+        ImageSetOption {
+            image: self.image.deep_clone(allocator),
+            resolution: self.resolution,
+            file_type: self.file_type,
+        }
     }
 
     pub fn eql(&self, rhs: &ImageSetOption) -> bool {
         // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq in Phase B
-        css::implement_eql(self, rhs)
+        self.image.eql(&rhs.image)
+            && self.resolution == rhs.resolution
+            && match (self.file_type, rhs.file_type) {
+                (None, None) => true,
+                // SAFETY: both point into the parser arena which outlives the parse session.
+                (Some(a), Some(b)) => unsafe { &*a == &*b },
+                _ => false,
+            }
     }
 }
 
+#[allow(dead_code)]
 fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
-    if let Some(e) = input.expect_function_matching(b"type").as_err() {
-        return Result::Err(e);
-    }
-    fn parse_nested_block_fn(_: (), i: &mut css::Parser) -> Result<*const [u8]> {
+    input.expect_function_matching(b"type")?;
+    input.parse_nested_block(|i: &mut css::Parser| {
         // TODO(port): expect_string returns arena-borrowed &[u8]; coerced to raw ptr to avoid struct lifetime
         i.expect_string().map(|s| s as *const [u8])
-    }
-    input.parse_nested_block((), parse_nested_block_fn)
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

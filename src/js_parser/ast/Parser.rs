@@ -101,9 +101,6 @@ impl<'a> Default for Options<'a> {
     }
 }
 
-// Round-D: method bodies reference options::JSX::* fields beyond the round-C
-// stub (parse, hash_for_runtime_transpiler) and call into gated P methods.
-#[cfg(any())]
 impl<'a> Options<'a> {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash, did_use_jsx: bool) {
         debug_assert!(!self.bundle);

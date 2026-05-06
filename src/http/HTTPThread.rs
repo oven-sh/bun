@@ -232,7 +232,7 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
             Output::err("HTTPThread", format_args!("the provided CA is invalid"));
         }
         InitError::FailedToOpenSocket => {
-            Output::err_generic(format_args!("failed to start HTTP client thread"));
+            bun_core::err_generic!("failed to start HTTP client thread");
         }
     }
     bun_core::Global::crash();
@@ -317,10 +317,15 @@ impl HttpThread {
     ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
     // TODO(port): narrow error set
     {
-        if client.unix_socket_path.len() > 0 {
-            return self
-                .context::<IS_SSL>()
-                .connect_socket(client, client.unix_socket_path.slice());
+        if client.unix_socket_path.length() > 0 {
+            // PORT NOTE: borrowck — slice() borrows `client`; copy out before passing &mut client.
+            let path: &[u8] = unsafe {
+                core::slice::from_raw_parts(
+                    client.unix_socket_path.slice().as_ptr(),
+                    client.unix_socket_path.length(),
+                )
+            };
+            return self.context::<IS_SSL>().connect_socket(client, path);
         }
 
         if IS_SSL {
@@ -382,7 +387,7 @@ impl HttpThread {
                 let now = self.timer_read();
                 // SAFETY: custom_context is a live Box::leak'd allocation.
                 let ctx_nn = unsafe { NonNull::new_unchecked(custom_context as *mut _) };
-                custom_ssl_context_map().put(
+                let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
                         ctx: ctx_nn,
@@ -439,7 +444,7 @@ impl HttpThread {
         while i < map.count() {
             let entry_last_used = map.values()[i].last_used_ns;
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
-                let entry = map.swap_remove_at(i);
+                let (_k, entry) = map.swap_remove_at(i);
                 // SAFETY: cache holds one strong ref taken at insert.
                 unsafe { (*entry.ctx.as_ptr()).deref() };
                 drop(entry.config_ref); // entry.config_ref.deinit()
@@ -474,7 +479,13 @@ impl HttpThread {
             };
 
             for http in &queued_shutdowns {
-                if let Some(socket_ptr) = abort_tracker().fetch_swap_remove(http.async_http_id) {
+                let tracker = abort_tracker();
+                let found_idx = tracker
+                    .keys()
+                    .iter()
+                    .position(|&k| k == http.async_http_id);
+                if let Some(idx) = found_idx {
+                    let (_k, socket_ptr) = tracker.swap_remove_at(idx);
                     match socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
@@ -560,8 +571,8 @@ impl HttpThread {
                             if let Some(client) = tagged.get::<HttpClient>() {
                                 // SAFETY: tagged-pointer recovered from socket ext.
                                 let client = unsafe { &mut *client };
-                                if let Some(stream) =
-                                    client.state.original_request_body.as_stream_mut()
+                                if let crate::HTTPRequestBody::Stream(stream) =
+                                    &mut client.state.original_request_body
                                 {
                                     stream.ended = ended;
                                     client.flush_stream::<true>(socket);
@@ -582,8 +593,8 @@ impl HttpThread {
                             if let Some(client) = tagged.get::<HttpClient>() {
                                 // SAFETY: tagged-pointer recovered from socket ext.
                                 let client = unsafe { &mut *client };
-                                if let Some(stream) =
-                                    client.state.original_request_body.as_stream_mut()
+                                if let crate::HTTPRequestBody::Stream(stream) =
+                                    &mut client.state.original_request_body
                                 {
                                     stream.ended = ended;
                                     client.flush_stream::<false>(socket);
@@ -715,7 +726,7 @@ impl HttpThread {
             for http in pending {
                 // SAFETY: AsyncHttp pointer is owned by caller, alive until completion callback.
                 let aborted =
-                    unsafe { (*http).client.signals.get(crate::signals::Signal::Aborted) };
+                    unsafe { (*http).client.signals.get(crate::signals::Field::Aborted) };
                 if aborted || active < max {
                     start_queued_task(http);
                     if cfg!(debug_assertions) {
@@ -728,9 +739,13 @@ impl HttpThread {
             }
         }
 
-        while let Some(http) = self.queued_tasks.pop() {
+        loop {
+            let http = self.queued_tasks.pop();
+            if http.is_null() {
+                break;
+            }
             // SAFETY: AsyncHttp pointer is owned by caller, alive until completion callback.
-            let aborted = unsafe { (*http).client.signals.get(crate::signals::Signal::Aborted) };
+            let aborted = unsafe { (*http).client.signals.get(crate::signals::Field::Aborted) };
             if !aborted && active >= max {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
@@ -810,7 +825,8 @@ impl HttpThread {
             while let Some(task) = batch_.pop() {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp = unsafe {
-                    (task as *mut u8)
+                    task.as_ptr()
+                        .cast::<u8>()
                         .sub(core::mem::offset_of!(AsyncHttp, task))
                         .cast::<AsyncHttp>()
                 };
@@ -836,7 +852,7 @@ fn evict_oldest_ssl_context() {
             oldest_idx = i;
         }
     }
-    let entry = map.swap_remove_at(oldest_idx);
+    let (_k, entry) = map.swap_remove_at(oldest_idx);
     // SAFETY: cache holds one strong ref taken at insert.
     unsafe { (*entry.ctx.as_ptr()).deref() };
     drop(entry.config_ref); // entry.config_ref.deinit()

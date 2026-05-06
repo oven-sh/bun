@@ -31,12 +31,8 @@ use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
 // ─── Submodules ──────────────────────────────────────────────────────────
-// `cpp_websocket` + `websocket_proxy` are un-gated. The remaining three real
-// Phase-A drafts stay gated:
-//   - websocket_deflate:       blocked on bun_jsc::RareData::websocket_deflate
-//                              accessor + bun_zlib/bun_libdeflate_sys/thiserror
-//                              workspace deps; also `PerMessageDeflate<'a>` ↔
-//                              `WebSocketDeflate` lifetime reconcile.
+// `cpp_websocket` + `websocket_proxy` + `websocket_deflate` are un-gated. The
+// remaining two Phase-A drafts stay gated:
 //   - websocket_proxy_tunnel:  blocked on bun_runtime::socket::ssl_wrapper::
 //                              SslWrapper + bun_runtime::api::server_config::
 //                              SslConfig (higher-tier; dep cycle).
@@ -45,58 +41,11 @@ use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 //                              bun_boringssl::c::SSL_get_servername.
 // Stubs below provide the type+method surface `WebSocket<SSL>` references.
 #[path = "websocket_client/CppWebSocket.rs"]                        pub mod cpp_websocket;
-#[cfg(any())] #[path = "websocket_client/WebSocketDeflate.rs"]      pub mod websocket_deflate;
+#[path = "websocket_client/WebSocketDeflate.rs"]                    pub mod websocket_deflate;
 #[path = "websocket_client/WebSocketProxy.rs"]                      pub mod websocket_proxy;
 #[cfg(any())] #[path = "websocket_client/WebSocketProxyTunnel.rs"]  pub mod websocket_proxy_tunnel;
 #[cfg(any())] #[path = "websocket_client/WebSocketUpgradeClient.rs"] pub mod websocket_upgrade_client;
 
-#[cfg(not(any()))]
-pub mod websocket_deflate {
-    /// Stub for `WebSocketDeflate` (real impl gated above).
-    /// PORT NOTE: real module names this `PerMessageDeflate<'a>`; the parent
-    /// draft references `WebSocketDeflate` — reconcile on un-gate.
-    pub struct WebSocketDeflate {
-        // TODO(b2-blocked): real field is `&'a mut RareData` (zlib pool).
-        pub rare_data: RareData,
-    }
-    impl WebSocketDeflate {
-        pub fn init(
-            _params: Params,
-            _rare: &mut bun_jsc::rare_data::RareData,
-        ) -> Result<alloc::boxed::Box<Self>, Error> {
-            // TODO(b2-blocked): self::websocket_deflate (real module gated above)
-            todo!("WebSocketDeflate::init — gated")
-        }
-        pub fn compress(&mut self, _input: &[u8], _out: &mut alloc::vec::Vec<u8>) -> Result<(), Error> {
-            // TODO(b2-blocked): self::websocket_deflate
-            todo!("WebSocketDeflate::compress — gated")
-        }
-        pub fn decompress(&mut self, _input: &[u8], _out: &mut alloc::vec::Vec<u8>) -> Result<(), Error> {
-            // TODO(b2-blocked): self::websocket_deflate
-            todo!("WebSocketDeflate::decompress — gated")
-        }
-    }
-    /// Layout-compatible with the real `Params` (repr(C), 4×u8) so the
-    /// `extern "C"` decls in `CppWebSocket.rs` are FFI-safe while gated.
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    pub struct Params {
-        pub server_max_window_bits: u8,
-        pub client_max_window_bits: u8,
-        pub server_no_context_takeover: u8,
-        pub client_no_context_takeover: u8,
-    }
-    pub struct RareData { _priv: () }
-    impl RareData {
-        pub fn array_list(&mut self) -> alloc::vec::Vec<u8> {
-            // TODO(b2-blocked): self::websocket_deflate — pooled output buffer
-            alloc::vec::Vec::new()
-        }
-    }
-    #[derive(Copy, Clone, Debug)]
-    pub enum Error { InflateFailed, TooLarge, OutOfMemory }
-    extern crate alloc;
-}
 #[cfg(not(any()))]
 pub mod websocket_proxy_tunnel {
     /// Stub for `WebSocketProxyTunnel` (real impl gated above).

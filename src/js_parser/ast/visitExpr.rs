@@ -334,39 +334,876 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         #[allow(unreachable_code)] expr
     }
     fn e_binary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_binary body — see _draft");
-        #[allow(unreachable_code)] expr
+        use crate::ast::visit_binary_expression::BinaryExpressionVisitor;
+        let mut e_ = expr.data.e_binary().unwrap();
+
+        // The handling of binary expressions is convoluted because we're using
+        // iteration on the heap instead of recursion on the call stack to avoid
+        // stack overflow for deeply-nested ASTs.
+        let mut v = BinaryExpressionVisitor {
+            // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `StoreRef<E::Binary>` is a
+            // Copy `NonNull` wrapper with `DerefMut`, so taking `&mut *e_` re-borrows the
+            // arena slot for the visitor's lifetime; the underlying storage is the same.
+            e: &mut *e_,
+            loc: expr.loc,
+            in_,
+            left_in: ExprIn::default(),
+            is_stmt_expr: false,
+        };
+
+        // Everything uses a single stack to reduce allocation overhead. This stack
+        // should almost always be very small, and almost all visits should reuse
+        // existing memory without allocating anything.
+        let stack_bottom = p.binary_expression_stack.len();
+
+        let mut current = Expr { data: Data::EBinary(e_), loc: v.loc };
+
+        // Iterate down into the AST along the left node of the binary operation.
+        // Continue iterating until we encounter something that's not a binary node.
+        loop {
+            if let Some(out) = BinaryExpressionVisitor::check_and_prepare(&mut v, p) {
+                current = out;
+                break;
+            }
+
+            // Grab the arguments to our nested "visitExprInOut" call for the left
+            // node. We only care about deeply-nested left nodes because most binary
+            // operators in JavaScript are left-associative and the problematic edge
+            // cases we're trying to avoid crashing on have lots of left-associative
+            // binary operators chained together without parentheses (e.g. "1+2+...").
+            let left = v.e.left;
+            let left_in = v.left_in;
+
+            let left_binary: Option<js_ast::StoreRef<E::Binary>> = left.data.e_binary();
+
+            // Stop iterating if iteration doesn't apply to the left node. This checks
+            // the assignment target because "visitExprInOut" has additional behavior
+            // in that case that we don't want to miss (before the top-level "switch"
+            // statement).
+            if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
+                v.e.left = p.visit_expr_in_out(left, left_in);
+                current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
+                break;
+            }
+
+            // Note that we only append to the stack (and therefore allocate memory
+            // on the heap) when there are nested binary expressions. A single binary
+            // expression doesn't add anything to the stack.
+            p.binary_expression_stack.push(v);
+            let mut lb = left_binary.unwrap();
+            v = BinaryExpressionVisitor {
+                e: &mut *lb,
+                loc: left.loc,
+                in_: left_in,
+                left_in: ExprIn::default(),
+                is_stmt_expr: false,
+            };
+        }
+
+        // Process all binary operations from the deepest-visited node back toward
+        // our original top-level binary operation.
+        while p.binary_expression_stack.len() > stack_bottom {
+            v = p.binary_expression_stack.pop().unwrap();
+            v.e.left = current;
+            current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
+        }
+
+        current
     }
+
     fn e_index(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_index body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_index().unwrap();
+        let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
+        let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
+
+        // "a['b']" => "a.b"
+        if p.options.features.minify_syntax {
+            if let Some(mut s) = e_.index.data.e_string() {
+                if s.is_utf8() && s.is_identifier(p.allocator) {
+                    let dot = p.new_expr(
+                        E::Dot {
+                            name: s.slice(p.allocator),
+                            name_loc: e_.index.loc,
+                            target: e_.target,
+                            optional_chain: e_.optional_chain,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    );
+
+                    if is_call_target {
+                        p.call_target = dot.data;
+                    }
+                    if is_delete_target {
+                        p.delete_target = dot.data;
+                    }
+
+                    return p.visit_expr_in_out(dot, in_);
+                }
+            }
+        }
+
+        let target_visited = p.visit_expr_in_out(
+            e_.target,
+            ExprIn {
+                has_chain_parent: e_.optional_chain == Some(js_ast::OptionalChain::Continuation),
+                ..Default::default()
+            },
+        );
+        e_.target = target_visited;
+
+        match e_.index.data {
+            Data::EPrivateIdentifier(mut private) => {
+                let name = p.load_name_from_ref(private.ref_);
+                let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
+                private.ref_ = result.r#ref;
+
+                // Unlike regular identifiers, there are no unbound private identifiers
+                let kind: js_ast::symbol::Kind =
+                    p.symbols[result.r#ref.inner_index() as usize].kind;
+                if !Symbol::is_kind_private(kind) {
+                    let r = logger::Range {
+                        loc: e_.index.loc,
+                        len: i32::try_from(name.len()).unwrap(),
+                    };
+                    p.log
+                        .add_range_error_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!(
+                                "Private name \"{}\" must be declared in an enclosing class",
+                                BStr::new(name)
+                            ),
+                        )
+                        .expect("unreachable");
+                } else {
+                    if in_.assign_target != js_ast::AssignTarget::None
+                        && (kind == js_ast::symbol::Kind::PrivateMethod
+                            || kind == js_ast::symbol::Kind::PrivateStaticMethod)
+                    {
+                        let r = logger::Range {
+                            loc: e_.index.loc,
+                            len: i32::try_from(name.len()).unwrap(),
+                        };
+                        p.log
+                            .add_range_warning_fmt(
+                                Some(p.source),
+                                r,
+                                format_args!(
+                                    "Writing to read-only method \"{}\" will throw",
+                                    BStr::new(name)
+                                ),
+                            )
+                            .expect("unreachable");
+                    } else if in_.assign_target != js_ast::AssignTarget::None
+                        && (kind == js_ast::symbol::Kind::PrivateGet
+                            || kind == js_ast::symbol::Kind::PrivateStaticGet)
+                    {
+                        let r = logger::Range {
+                            loc: e_.index.loc,
+                            len: i32::try_from(name.len()).unwrap(),
+                        };
+                        p.log
+                            .add_range_warning_fmt(
+                                Some(p.source),
+                                r,
+                                format_args!(
+                                    "Writing to getter-only property \"{}\" will throw",
+                                    BStr::new(name)
+                                ),
+                            )
+                            .expect("unreachable");
+                    } else if in_.assign_target != js_ast::AssignTarget::Replace
+                        && (kind == js_ast::symbol::Kind::PrivateSet
+                            || kind == js_ast::symbol::Kind::PrivateStaticSet)
+                    {
+                        let r = logger::Range {
+                            loc: e_.index.loc,
+                            len: i32::try_from(name.len()).unwrap(),
+                        };
+                        p.log
+                            .add_range_warning_fmt(
+                                Some(p.source),
+                                r,
+                                format_args!(
+                                    "Reading from setter-only property \"{}\" will throw",
+                                    BStr::new(name)
+                                ),
+                            )
+                            .expect("unreachable");
+                    }
+                }
+
+                e_.index = Expr { data: Data::EPrivateIdentifier(private), loc: e_.index.loc };
+            }
+            _ => {
+                let index = p.visit_expr(e_.index);
+                e_.index = index;
+
+                let unwrapped = e_.index.unwrap_inlined();
+                if let Some(mut s) = unwrapped.data.e_string() {
+                    if s.is_utf8() {
+                        // "a['b' + '']" => "a.b"
+                        // "enum A { B = 'b' }; a[A.B]" => "a.b"
+                        if p.options.features.minify_syntax && s.is_identifier(p.allocator) {
+                            let dot = p.new_expr(
+                                E::Dot {
+                                    name: s.slice(p.allocator),
+                                    name_loc: unwrapped.loc,
+                                    target: e_.target,
+                                    optional_chain: e_.optional_chain,
+                                    ..Default::default()
+                                },
+                                expr.loc,
+                            );
+
+                            if is_call_target {
+                                p.call_target = dot.data;
+                            }
+                            if is_delete_target {
+                                p.delete_target = dot.data;
+                            }
+
+                            // don't call visitExprInOut on `dot` because we've already visited `target` above!
+                            return dot;
+                        }
+
+                        // Handle property rewrites to ensure things
+                        // like .e_import_identifier tracking works
+                        // Reminder that this can only be done after
+                        // `target` is visited.
+                        if let Some(rewrite) = p.maybe_rewrite_property_access(
+                            expr.loc,
+                            e_.target,
+                            s.data,
+                            unwrapped.loc,
+                            IdentifierOpts::default()
+                                .with_is_call_target(is_call_target)
+                                // .is_template_tag = is_template_tag,
+                                .with_is_delete_target(is_delete_target)
+                                .with_assign_target(in_.assign_target),
+                        ) {
+                            return rewrite;
+                        }
+                    }
+                }
+            }
+        }
+
+        let target = e_.target.unwrap_inlined();
+        let index = e_.index.unwrap_inlined();
+
+        if p.options.features.minify_syntax {
+            if let Some(number) = index.data.as_e_number() {
+                if number.value >= 0.0
+                    && number.value < (usize::MAX as f64)
+                    && number.value % 1.0 == 0.0
+                {
+                    // "foo"[2] -> "o"
+                    if let Some(mut str_) = target.data.as_e_string() {
+                        if str_.is_utf8() {
+                            let literal = str_.slice(p.allocator);
+                            let num: usize = index.data.e_number().unwrap().to_usize();
+                            if cfg!(debug_assertions) {
+                                debug_assert!(strings::is_all_ascii(literal));
+                            }
+                            if num < literal.len() {
+                                return p.new_expr(
+                                    E::String {
+                                        data: &literal[num..num + 1],
+                                        ..Default::default()
+                                    },
+                                    expr.loc,
+                                );
+                            }
+                        }
+                    } else if let Some(array) = target.data.as_e_array() {
+                        // [x][0] -> x
+                        if array.items.len == 1 && number.value == 0.0 {
+                            let inlined = *array.items.at(0);
+                            if inlined.can_be_inlined_from_property_access() {
+                                return inlined;
+                            }
+                        }
+
+                        // ['a', 'b', 'c'][1] -> 'b'
+                        let int: usize = number.value as usize;
+                        if int < array.items.len as usize && p.expr_can_be_removed_if_unused(&target)
+                        {
+                            let inlined = *array.items.at(int);
+                            // ['a', , 'c'][1] -> undefined
+                            if matches!(inlined.data, Data::EMissing(..)) {
+                                return p.new_expr(E::Undefined {}, inlined.loc);
+                            }
+                            if cfg!(debug_assertions) {
+                                debug_assert!(inlined.can_be_inlined_from_property_access());
+                            }
+                            return inlined;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Create an error for assigning to an import namespace when bundling. Even
+        // though this is a run-time error, we make it a compile-time error when
+        // bundling because scope hoisting means these will no longer be run-time
+        // errors.
+        if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
+            && matches!(e_.target.data.tag(), Tag::EIdentifier)
+            && p.symbols[e_.target.data.e_identifier().unwrap().ref_.inner_index() as usize].kind
+                == js_ast::symbol::Kind::Import
+        {
+            let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+            p.log
+                .add_range_error_fmt(
+                    Some(p.source),
+                    r,
+                    format_args!(
+                        "Cannot assign to property on import \"{}\"",
+                        BStr::new(unsafe {
+                            &*p.symbols
+                                [e_.target.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                                .original_name
+                        })
+                    ),
+                )
+                .expect("unreachable");
+        }
+
+        p.new_expr(*e_, expr.loc)
     }
-    fn e_unary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_unary body — see _draft");
-        #[allow(unreachable_code)] expr
+
+    fn e_unary(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        let mut e_ = expr.data.e_unary().unwrap();
+        match e_.op {
+            Op::UnTypeof => {
+                let id_before = matches!(e_.value.data, Data::EIdentifier(..));
+                e_.value = p.visit_expr_in_out(
+                    e_.value,
+                    ExprIn { assign_target: e_.op.unary_assign_target(), ..Default::default() },
+                );
+                let id_after = matches!(e_.value.data, Data::EIdentifier(..));
+
+                // The expression "typeof (0, x)" must not become "typeof x" if "x"
+                // is unbound because that could suppress a ReferenceError from "x"
+                if !id_before
+                    && id_after
+                    && p.symbols[e_.value.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                        .kind
+                        == js_ast::symbol::Kind::Unbound
+                {
+                    e_.value = Expr::join_with_comma(
+                        Expr { loc: e_.value.loc, data: prefill::data::ZERO },
+                        e_.value,
+                    );
+                }
+
+                if matches!(e_.value.data, Data::ERequireCallTarget) {
+                    p.ignore_usage_of_runtime_require();
+                    return p.new_expr(
+                        E::String { data: b"function", ..Default::default() },
+                        expr.loc,
+                    );
+                }
+
+                if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
+                    return p.new_expr(E::String { data: typeof_, ..Default::default() }, expr.loc);
+                }
+            }
+            Op::UnDelete => {
+                e_.value = p.visit_expr_in_out(
+                    e_.value,
+                    ExprIn { has_chain_parent: true, ..Default::default() },
+                );
+            }
+            _ => {
+                e_.value = p.visit_expr_in_out(
+                    e_.value,
+                    ExprIn { assign_target: e_.op.unary_assign_target(), ..Default::default() },
+                );
+
+                // Post-process the unary expression
+                match e_.op {
+                    Op::UnNot => {
+                        if p.options.features.minify_syntax {
+                            e_.value = SideEffects::simplify_boolean(p, e_.value);
+                        }
+
+                        let side_effects = SideEffects::to_boolean(p, &e_.value.data);
+                        if side_effects.ok {
+                            return p.new_expr(E::Boolean { value: !side_effects.value }, expr.loc);
+                        }
+
+                        if p.options.features.minify_syntax {
+                            if let Some(exp) = e_.value.maybe_simplify_not(p.allocator) {
+                                return exp;
+                            }
+                            if let Data::EImportMetaMain(m) = &mut e_.value.data {
+                                m.inverted = !m.inverted;
+                                return e_.value;
+                            }
+                        }
+                    }
+                    Op::UnCpl => {
+                        if p.should_fold_typescript_constant_expressions {
+                            if let Some(value) = SideEffects::to_number(&e_.value.data) {
+                                return p.new_expr(
+                                    E::Number { value: f64::from(!float_to_int32(value)) },
+                                    expr.loc,
+                                );
+                            }
+                        }
+                    }
+                    Op::UnVoid => {
+                        if p.expr_can_be_removed_if_unused(&e_.value) {
+                            return p.new_expr(E::Undefined {}, e_.value.loc);
+                        }
+                    }
+                    Op::UnPos => {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                            return p.new_expr(E::Number { value: num }, expr.loc);
+                        }
+                    }
+                    Op::UnNeg => {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                            return p.new_expr(E::Number { value: -num }, expr.loc);
+                        }
+                    }
+
+                    ////////////////////////////////////////////////////////////////////////////////
+                    Op::UnPreDec => {
+                        // TODO: private fields
+                    }
+                    Op::UnPreInc => {
+                        // TODO: private fields
+                    }
+                    Op::UnPostDec => {
+                        // TODO: private fields
+                    }
+                    Op::UnPostInc => {
+                        // TODO: private fields
+                    }
+                    _ => {}
+                }
+
+                if p.options.features.minify_syntax {
+                    // "-(a, b)" => "a, -b"
+                    if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
+                        if let Data::EBinary(comma) = &e_.value.data {
+                            if comma.op == Op::BinComma {
+                                return Expr::join_with_comma(
+                                    comma.left,
+                                    p.new_expr(
+                                        E::Unary {
+                                            op: e_.op,
+                                            value: comma.right,
+                                            flags: e_.flags,
+                                        },
+                                        comma.right.loc,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        expr
     }
     fn e_dot(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_dot body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_dot().unwrap();
+        let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
+        let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
+
+        if let Some(parts) = p.define.dots.get(e_.name) {
+            for define in parts {
+                if p.is_dot_define_match(expr, define.parts) {
+                    if in_.assign_target == js_ast::AssignTarget::None {
+                        // Substitute user-specified defines
+                        if !define.data.valueless() {
+                            return p.value_for_define(
+                                expr.loc,
+                                in_.assign_target,
+                                is_delete_target,
+                                &define.data,
+                            );
+                        }
+
+                        if define.data.method_call_must_be_replaced_with_undefined()
+                            && in_
+                                .property_access_for_method_call_maybe_should_replace_with_undefined
+                        {
+                            p.method_call_must_be_replaced_with_undefined = true;
+                        }
+                    }
+
+                    // Copy the side effect flags over in case this expression is unused
+                    if define.data.can_be_removed_if_unused() {
+                        e_.can_be_removed_if_unused = true;
+                    }
+
+                    if define.data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                        && !p.options.ignore_dce_annotations
+                    {
+                        e_.call_can_be_unwrapped_if_unused =
+                            define.data.call_can_be_unwrapped_if_unused();
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        // Track ".then().catch()" chains
+        if is_call_target
+            && matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _))
+        {
+            if e_.name == b"catch" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: true,
+                    has_multiple_args: false,
+                };
+            } else if e_.name == b"then" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: p.then_catch_chain.has_catch
+                        || p.then_catch_chain.has_multiple_args,
+                    has_multiple_args: false,
+                };
+            }
+        }
+
+        e_.target = p.visit_expr_in_out(
+            e_.target,
+            ExprIn {
+                property_access_for_method_call_maybe_should_replace_with_undefined: in_
+                    .property_access_for_method_call_maybe_should_replace_with_undefined,
+                ..Default::default()
+            },
+        );
+
+        // 'require.resolve' -> .e_require_resolve_call_target
+        if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {
+            // we do not need to call p.recordUsageOfRuntimeRequire(); because `require`
+            // was not a call target. even if the call target is `require.resolve`, it should be set.
+            return Expr { data: Data::ERequireResolveCallTarget, loc: expr.loc };
+        }
+
+        if e_.optional_chain.is_none() {
+            if let Some(_expr) = p.maybe_rewrite_property_access(
+                expr.loc,
+                e_.target,
+                e_.name,
+                e_.name_loc,
+                IdentifierOpts::default()
+                    .with_is_call_target(is_call_target)
+                    .with_assign_target(in_.assign_target)
+                    .with_is_delete_target(is_delete_target),
+                // .is_template_tag = p.template_tag != null,
+            ) {
+                return _expr;
+            }
+
+            if Self::ALLOW_MACROS {
+                if !p.options.features.is_macro_runtime {
+                    if p.macro_call_count > 0
+                        && matches!(e_.target.data, Data::EObject(..))
+                        && e_.target.data.e_object().unwrap().was_originally_macro
+                    {
+                        if let Some(obj) = e_.target.get(e_.name) {
+                            return obj;
+                        }
+                    }
+                }
+            }
+        }
+        expr
     }
-    fn e_if(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_if body — see _draft");
-        #[allow(unreachable_code)] expr
+
+    fn e_if(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        let mut e_ = expr.data.e_if().unwrap();
+        let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
+
+        let prev_in_branch = p.in_branch_condition;
+        p.in_branch_condition = true;
+        e_.test_ = p.visit_expr(e_.test_);
+        p.in_branch_condition = prev_in_branch;
+
+        e_.test_ = SideEffects::simplify_boolean(p, e_.test_);
+
+        let side_effects = SideEffects::to_boolean(p, &e_.test_.data);
+
+        if !side_effects.ok {
+            e_.yes = p.visit_expr(e_.yes);
+            e_.no = p.visit_expr(e_.no);
+        } else {
+            // Mark the control flow as dead if the branch is never taken
+            if side_effects.value {
+                // "true ? live : dead"
+                e_.yes = p.visit_expr(e_.yes);
+                let old = p.is_control_flow_dead;
+                p.is_control_flow_dead = true;
+                e_.no = p.visit_expr(e_.no);
+                p.is_control_flow_dead = old;
+
+                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    return Expr::join_with_comma(
+                        SideEffects::simplify_unused_expr(p, e_.test_)
+                            .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
+                        e_.yes,
+                    );
+                }
+
+                // "(1 ? fn : 2)()" => "fn()"
+                // "(1 ? this.fn : 2)" => "this.fn"
+                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                if is_call_target && e_.yes.has_value_for_this_in_call() {
+                    return Expr::join_with_comma(
+                        p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
+                        e_.yes,
+                    );
+                }
+
+                return e_.yes;
+            } else {
+                // "false ? dead : live"
+                let old = p.is_control_flow_dead;
+                p.is_control_flow_dead = true;
+                e_.yes = p.visit_expr(e_.yes);
+                p.is_control_flow_dead = old;
+                e_.no = p.visit_expr(e_.no);
+
+                // "(a, false) ? b : c" => "a, c"
+                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                    return Expr::join_with_comma(
+                        SideEffects::simplify_unused_expr(p, e_.test_)
+                            .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
+                        e_.no,
+                    );
+                }
+
+                // "(1 ? fn : 2)()" => "fn()"
+                // "(1 ? this.fn : 2)" => "this.fn"
+                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+                if is_call_target && e_.no.has_value_for_this_in_call() {
+                    return Expr::join_with_comma(
+                        p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
+                        e_.no,
+                    );
+                }
+                return e_.no;
+            }
+        }
+        expr
     }
+
     fn e_array(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_array body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_array().unwrap();
+        if in_.assign_target != js_ast::AssignTarget::None {
+            p.maybe_comma_spread_error(e_.comma_after_spread);
+        }
+        let items = e_.items.slice_mut();
+        let mut spread_item_count: usize = 0;
+        for item in items {
+            match &mut item.data {
+                Data::EMissing(..) => {}
+                Data::ESpread(spread) => {
+                    spread.value = p.visit_expr_in_out(
+                        spread.value,
+                        ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                    );
+
+                    spread_item_count += if let Data::EArray(arr) = &spread.value.data {
+                        arr.items.len as usize
+                    } else {
+                        0
+                    };
+                }
+                Data::EBinary(e2) => {
+                    if in_.assign_target != js_ast::AssignTarget::None
+                        && e2.op == Op::BinAssign
+                    {
+                        let was_anonymous_named_expr = e2.right.is_anonymous_named();
+                        // Propagate name for anonymous decorated class expressions
+                        if was_anonymous_named_expr
+                            && matches!(e2.right.data, Data::EClass(..))
+                            && e2.right.data.e_class().unwrap().should_lower_standard_decorators
+                            && matches!(e2.left.data.tag(), Tag::EIdentifier)
+                        {
+                            p.decorator_class_name =
+                                Some(p.load_name_from_ref(e2.left.data.e_identifier().unwrap().ref_));
+                        }
+                        e2.left = p.visit_expr_in_out(
+                            e2.left,
+                            ExprIn {
+                                assign_target: js_ast::AssignTarget::Replace,
+                                ..Default::default()
+                            },
+                        );
+                        e2.right = p.visit_expr(e2.right);
+                        p.decorator_class_name = None;
+
+                        if matches!(e2.left.data.tag(), Tag::EIdentifier) {
+                            e2.right = p.maybe_keep_expr_symbol_name(
+                                e2.right,
+                                unsafe {
+                                    &*p.symbols
+                                        [e2.left.data.e_identifier().unwrap().ref_.inner_index()
+                                            as usize]
+                                        .original_name
+                                },
+                                was_anonymous_named_expr,
+                            );
+                        }
+                    } else {
+                        *item = p.visit_expr_in_out(
+                            *item,
+                            ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                        );
+                    }
+                }
+                _ => {
+                    *item = p.visit_expr_in_out(
+                        *item,
+                        ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                    );
+                }
+            }
+        }
+
+        // "[1, ...[2, 3], 4]" => "[1, 2, 3, 4]"
+        if p.options.features.minify_syntax
+            && spread_item_count > 0
+            && in_.assign_target == js_ast::AssignTarget::None
+        {
+            e_.items = e_
+                .inline_spread_of_array_literals(p.allocator, spread_item_count)
+                .unwrap_or(e_.items);
+        }
+        expr
     }
+
     fn e_object(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_object body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_object().unwrap();
+        if in_.assign_target != js_ast::AssignTarget::None {
+            p.maybe_comma_spread_error(e_.comma_after_spread);
+        }
+
+        let mut has_spread = false;
+        let mut has_proto = false;
+        for property in e_.properties.slice_mut() {
+            if property.kind != G::PropertyKind::Spread {
+                property.key = Some(p.visit_expr(
+                    property
+                        .key
+                        .unwrap_or_else(|| panic!("Expected property key")),
+                ));
+                let key = property.key.unwrap();
+                // Forbid duplicate "__proto__" properties according to the specification
+                if !property.flags.contains(Flags::Property::IsComputed)
+                    && !property.flags.contains(Flags::Property::WasShorthand)
+                    && !property.flags.contains(Flags::Property::IsMethod)
+                    && in_.assign_target == js_ast::AssignTarget::None
+                    && key.data.is_string_value()
+                    && key.data.e_string().unwrap().slice(p.allocator) == b"__proto__"
+                // __proto__ is utf8, assume it lives in refs
+                {
+                    if has_proto {
+                        let r = js_lexer::range_of_identifier(p.source, key.loc);
+                        p.log
+                            .add_range_error(
+                                Some(p.source),
+                                r,
+                                b"Cannot specify the \"__proto__\" property more than once per object",
+                            )
+                            .expect("unreachable");
+                    }
+                    has_proto = true;
+                }
+            } else {
+                has_spread = true;
+            }
+
+            // Extract the initializer for expressions like "({ a: b = c } = d)"
+            if in_.assign_target != js_ast::AssignTarget::None
+                && property.initializer.is_none()
+                && property.value.is_some()
+            {
+                if let Data::EBinary(bin) = &property.value.unwrap().data {
+                    if bin.op == Op::BinAssign {
+                        property.initializer = Some(bin.right);
+                        property.value = Some(bin.left);
+                    }
+                }
+            }
+
+            if property.value.is_some() {
+                // Propagate name from property key for decorated anonymous class expressions
+                // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
+                if in_.assign_target == js_ast::AssignTarget::None
+                    && matches!(property.value.unwrap().data, Data::EClass(..))
+                    && property
+                        .value
+                        .unwrap()
+                        .data
+                        .e_class()
+                        .unwrap()
+                        .should_lower_standard_decorators
+                    && property.value.unwrap().data.e_class().unwrap().class_name.is_none()
+                    && property.key.is_some()
+                    && matches!(property.key.unwrap().data, Data::EString(..))
+                {
+                    p.decorator_class_name =
+                        property.key.unwrap().data.e_string().unwrap().string(p.allocator).ok();
+                }
+                property.value = Some(p.visit_expr_in_out(
+                    property.value.unwrap(),
+                    ExprIn { assign_target: in_.assign_target, ..Default::default() },
+                ));
+                p.decorator_class_name = None;
+            }
+
+            if property.initializer.is_some() {
+                let was_anonymous_named_expr = property.initializer.unwrap().is_anonymous_named();
+                if was_anonymous_named_expr
+                    && matches!(property.initializer.unwrap().data, Data::EClass(..))
+                    && property
+                        .initializer
+                        .unwrap()
+                        .data
+                        .e_class()
+                        .unwrap()
+                        .should_lower_standard_decorators
+                {
+                    if let Some(val) = property.value {
+                        if matches!(val.data.tag(), Tag::EIdentifier) {
+                            p.decorator_class_name =
+                                Some(p.load_name_from_ref(val.data.e_identifier().unwrap().ref_));
+                        }
+                    }
+                }
+                property.initializer = Some(p.visit_expr(property.initializer.unwrap()));
+                p.decorator_class_name = None;
+
+                if let Some(val) = property.value {
+                    if matches!(val.data.tag(), Tag::EIdentifier) {
+                        property.initializer = Some(p.maybe_keep_expr_symbol_name(
+                            property.initializer.expect("unreachable"),
+                            unsafe {
+                                &*p.symbols
+                                    [val.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                                    .original_name
+                            },
+                            was_anonymous_named_expr,
+                        ));
+                    }
+                }
+            }
+        }
+        let _ = has_spread;
+        expr
     }
     fn e_import(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = (p, in_);

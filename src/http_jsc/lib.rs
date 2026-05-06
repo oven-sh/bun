@@ -22,9 +22,14 @@
 //                        un-gated (declare-site macro replaces `paste`).
 //                        Residual body-level gate: `write_blob`
 //                        (bun_runtime::webcore::Blob — dep cycle).
-//                        Submodules: cpp_websocket + websocket_proxy un-gated;
-//                        deflate/proxy_tunnel/upgrade_client re-gated behind
-//                        stubs (see websocket_client.rs header for blockers).
+//                        Submodules: cpp_websocket + websocket_proxy +
+//                        websocket_deflate un-gated (deflate's RareData pool
+//                        falls back to per-connection until bun_jsc::rare_data
+//                        WebSocketDeflateRareData shim lands). proxy_tunnel /
+//                        upgrade_client remain gated behind stubs (blocked on
+//                        bun_runtime::socket::ssl_wrapper::SslWrapper +
+//                        bun_runtime::api::server_config::SslConfig — dep
+//                        cycle; see websocket_client.rs header).
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod method_jsc;

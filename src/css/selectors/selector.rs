@@ -130,18 +130,18 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
     match component {
         Component::NonTsPseudoClass(pc) => {
             return match pc {
-                PseudoClass::Dir(d) => {
+                PseudoClass::Dir { direction } => {
                     if targets.should_compile_same(Feature::DirSelector) {
-                        *component = downlevel_dir(bump, d.direction, targets);
+                        *component = downlevel_dir(bump, *direction, targets);
                         return downlevel_component(bump, component, targets);
                     }
                     VendorPrefix::empty()
                 }
-                PseudoClass::Lang(l) => {
+                PseudoClass::Lang { languages } => {
                     // :lang() with multiple languages is not supported everywhere.
                     // compile this to :is(:lang(a), :lang(b)) etc.
-                    if l.languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList) {
-                        *component = Component::Is(lang_list_to_selectors(bump, &l.languages));
+                    if languages.len() > 1 && targets.should_compile_same(Feature::LangSelectorList) {
+                        *component = Component::Is(lang_list_to_selectors(bump, languages));
                         return downlevel_component(bump, component, targets);
                     }
                     VendorPrefix::empty()
@@ -180,24 +180,18 @@ pub fn downlevel_component<'bump>(bump: &'bump Bump, component: &mut Component, 
             // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
-                let is: Selector = Selector::from_component(
-                    bump,
-                    Component::Is({
-                        // PERF(port): was arena bulk-alloc — profile in Phase B
-                        let mut new_selectors =
-                            bumpalo::collections::Vec::with_capacity_in(selectors.len(), bump);
-                        for sel in selectors.iter() {
-                            new_selectors.push(sel.deep_clone(bump));
-                        }
-                        new_selectors.into_bump_slice_mut()
-                        // TODO(port): Zig used `allocator.alloc(Selector, n)` returning `[]Selector`;
-                        // exact owned-slice type for Component::Is payload TBD in Phase B.
-                    }),
-                );
-                let mut list = bumpalo::collections::Vec::with_capacity_in(1, bump);
-                list.push(is);
+                let is: Selector = Selector::from_component(Component::Is({
+                    // PERF(port): was arena bulk-alloc — profile in Phase B.
+                    // `Component::Is` carries `Box<[Selector]>` (heap, not arena)
+                    // in Phase A; Phase B re-threads `&'bump [Selector]`.
+                    let mut new_selectors: Vec<Selector> = Vec::with_capacity(selectors.len());
+                    for sel in selectors.iter() {
+                        new_selectors.push(sel.deep_clone());
+                    }
+                    new_selectors.into_boxed_slice()
+                }));
                 // PERF(port): was appendAssumeCapacity
-                *component = Component::Negation(list.into_bump_slice_mut());
+                *component = Component::Negation(vec![is].into_boxed_slice());
 
                 if targets.should_compile_same(Feature::IsSelector) {
                     necessary_prefixes

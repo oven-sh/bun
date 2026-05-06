@@ -861,6 +861,8 @@ impl PackageJSON {
             exports: None,
             imports: None,
         };
+        // PORT NOTE: shadow as `&Source` so the body matches the Zig shape; the
+        // owned value is reconstructed at the bottom (Source isn't `Clone`).
         let json_source = &json_source;
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -1295,7 +1297,14 @@ impl PackageJSON {
         let _ = (include_scripts, package_id);
 
         // PORT NOTE: reshaped for borrowck — assign source last (see struct init above).
-        package_json.source = (*json_source).clone();
+        // `logger::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
+        package_json.source = logger::Source {
+            path: json_source.path.clone(),
+            contents: json_source.contents,
+            contents_is_recycled: json_source.contents_is_recycled,
+            identifier_name: json_source.identifier_name,
+            index: json_source.index,
+        };
         Some(package_json)
     }
 }

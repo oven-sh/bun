@@ -74,10 +74,12 @@ pub struct ManifestBindings;
 
 impl ManifestBindings {
     pub fn generate(_global: &JSGlobalObject) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::host_fn (proc-macro) — `JSFunction::create`
-        // takes a raw-ABI `JSHostFn`, which the proc-macro produces from a
-        // `JSHostFnZig`-shaped fn. Until that lands, `Self::js_parse_manifest`
-        // has the wrong fn-pointer type to pass here.
+        // TODO(b2-blocked): bun_jsc::host_fn — proc-macro exists but its
+        // `Free`-kind shim body emits `#fn_name(__g, __f)` (no `Self::`), so it
+        // does not yet support associated fns without a receiver. Either the
+        // macro grows a `Self::`-qualified arm or `js_parse_manifest` moves to
+        // module scope; until then `JSFunction::create` has no `JSHostFn`-ABI
+        // pointer to receive.
         #[cfg(any())]
         {
             use bun_jsc::JSFunction;
@@ -227,5 +229,5 @@ impl ManifestBindings {
 //   source:     src/install_jsc/npm_jsc.zig (125 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      Scope/URL struct literal borrows from local slice; bun_sys file-open API and PackageManifest::Serializer path need Phase-B verification; libcIsMatch Zig source missing `try`.
+//   notes:      Scope/URL struct literal borrows from local slice; bun_sys file-open API and PackageManifest::Serializer path need Phase-B verification; libcIsMatch Zig source missing `try`. js_parse_manifest body fully un-gated against live PackageManifest fields.
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,33 +3,22 @@ pub use css::Error;
 use bumpalo::Bump;
 use css::{CssResult as Result, PrintErr, Printer};
 
-// blocked_on: properties/{align,background,border,box_shadow,flex,font,
-// margin_padding,prefix_handler,size,transform,transition,ui} — every leaf
-// property module is still `gated_prop!`-stubbed in properties/mod.rs. Only
-// the gated `DeclarationHandler` body below references these.
-#[cfg(any())]
+// PORT NOTE: every leaf property module is currently a `handler_stub!` ZST in
+// properties/mod.rs (no-op `handle_property`/`finalize`). The real handler
+// bodies un-gate per-module as the values/ calc lattice lands; this file
+// composes over whichever surface is live.
 use crate::css_properties::align::AlignHandler;
-#[cfg(any())]
 use crate::css_properties::background::BackgroundHandler;
-#[cfg(any())]
 use crate::css_properties::border::BorderHandler;
-#[cfg(any())]
 use crate::css_properties::box_shadow::BoxShadowHandler;
-#[cfg(any())]
 use crate::css_properties::flex::FlexHandler;
-#[cfg(any())]
 use crate::css_properties::font::FontHandler;
-#[cfg(any())]
 use crate::css_properties::margin_padding::{InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler};
-#[cfg(any())]
 use crate::css_properties::prefix_handler::FallbackHandler;
-#[cfg(any())]
 use crate::css_properties::size::SizeHandler;
-#[cfg(any())]
+use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
-#[cfg(any())]
 use crate::css_properties::transition::TransitionHandler;
-#[cfg(any())]
 use crate::css_properties::ui::ColorSchemeHandler;
 // const GridHandler = css.css_properties.g
 
@@ -100,9 +89,78 @@ impl<'bump> DeclarationBlock<'bump> {
             declarations: DeclarationList::new_in(bump),
         }
     }
+
+    pub fn minify(
+        &mut self,
+        handler: &mut DeclarationHandler<'bump>,
+        important_handler: &mut DeclarationHandler<'bump>,
+        context: &mut css::PropertyHandlerContext,
+    ) {
+        // PORT NOTE: Zig threaded `context.allocator` through every append; the
+        // Rust `PropertyHandlerContext` dropped that field, so we recover the
+        // arena from the handler's own bump-backed accumulator instead.
+        let bump: &'bump Bump = handler.decls.bump();
+
+        // PORT NOTE: Zig used a local generic `handle` fn with comptime field
+        // name + bool. Unrolled to two calls over a shared inner fn; reshaped
+        // for borrowck (iterate via &mut, move prop out and overwrite slot).
+        #[inline]
+        fn handle<'bump>(
+            decls: &mut DeclarationList<'bump>,
+            ctx: &mut css::PropertyHandlerContext,
+            hndlr: &mut DeclarationHandler<'bump>,
+            important: bool,
+        ) {
+            for prop in decls.iter_mut() {
+                ctx.is_important = important;
+
+                let handled = hndlr.handle_property(prop, ctx);
+
+                if !handled {
+                    // Zig: `hndlr.decls.append(prop.*); prop.* = .{ .all = .@"revert-layer" }`
+                    // — move the value out and overwrite the slot with a
+                    // non-allocating placeholder so the source list's drop is a
+                    // no-op. `placeholder_property()` resolves to
+                    // `Property::All(CSSWideKeyword::RevertLayer)` once
+                    // properties_generated un-gates.
+                    hndlr.decls.push(core::mem::replace(prop, placeholder_property()));
+                }
+            }
+        }
+
+        handle(&mut self.important_declarations, context, important_handler, true);
+        handle(&mut self.declarations, context, handler, false);
+
+        handler.finalize(context);
+        important_handler.finalize(context);
+        // PORT NOTE: Zig swapped old lists out, deferred their deinit, then
+        // assigned the handler accumulators. In Rust the old bumpalo Vecs drop
+        // implicitly on overwrite (arena reclaims on reset).
+        self.important_declarations =
+            core::mem::replace(&mut important_handler.decls, DeclarationList::new_in(bump));
+        self.declarations =
+            core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
+    }
 }
 
-// ─── parse / to_css / minify / hash (gated) ───────────────────────────────
+/// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
+/// Zig: `css.Property{ .all = .@"revert-layer" }`.
+// blocked_on: properties_generated — flips to the real variant when the
+// `Property` enum un-gates in `properties/mod.rs`.
+#[cfg(any())]
+#[inline(always)]
+fn placeholder_property() -> css::Property {
+    css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
+}
+#[cfg(not(any()))]
+#[inline(always)]
+fn placeholder_property() -> css::Property {
+    // `Property` is the unit stub `()` until `generate_properties.ts` emits Rust.
+    #[allow(clippy::unit_arg)]
+    Default::default()
+}
+
+// ─── parse / to_css / hash (gated) ────────────────────────────────────────
 // blocked_on: css_parser::rule_parsers (RuleBodyParser / RuleBodyItemParser /
 // DeclarationParser traits live in the `#[cfg(any())] mod rule_parsers`
 // block), properties_generated (Property::to_css / property_id / variants),
@@ -196,50 +254,6 @@ impl<'bump> DeclarationBlock<'bump> {
         dest.dedent();
         dest.newline()?;
         dest.write_char('}')
-    }
-
-    pub fn minify(
-        &mut self,
-        handler: &mut DeclarationHandler<'bump>,
-        important_handler: &mut DeclarationHandler<'bump>,
-        context: &mut css::PropertyHandlerContext<'bump>,
-    ) {
-        let bump: &'bump Bump = context.allocator;
-        // PORT NOTE: Zig used a local generic `handle` fn with comptime field name + bool.
-        // Unrolled to two loops; reshaped for borrowck (iterate via index, prop owned by Vec).
-        #[inline]
-        fn handle<'bump>(
-            decls: &mut DeclarationList<'bump>,
-            ctx: &mut css::PropertyHandlerContext<'bump>,
-            hndlr: &mut DeclarationHandler<'bump>,
-            important: bool,
-        ) {
-            for prop in decls.iter_mut() {
-                ctx.is_important = important;
-
-                let handled = hndlr.handle_property(prop, ctx);
-
-                if !handled {
-                    hndlr.decls.push(core::mem::replace(
-                        prop,
-                        // replacing with a property which does not require allocation
-                        // to "delete"
-                        css::Property::All(css::CssWideKeyword::RevertLayer),
-                    ));
-                }
-            }
-        }
-
-        handle(&mut self.important_declarations, context, important_handler, true);
-        handle(&mut self.declarations, context, handler, false);
-
-        handler.finalize(context);
-        important_handler.finalize(context);
-        // PORT NOTE: Zig swapped old lists out, deferred their deinit, then assigned new ones.
-        // In Rust, dropping the old Vecs is implicit when overwritten.
-        self.important_declarations =
-            core::mem::replace(&mut important_handler.decls, DeclarationList::new_in(bump));
-        self.declarations = core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
     }
 
     pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
@@ -472,25 +486,9 @@ pub use parse_decl::{parse_declaration, parse_declaration_impl, PropertyDeclarat
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 ///
-/// B-2 round 4: the per-property handler fields (`background`, `border`, ...)
-/// are gated behind the still-stubbed `properties/*` leaf modules. Only the
-/// arena-backed `decls` accumulator is real so `MinifyContext` and
-/// `rules/style.rs` can name `&mut DeclarationHandler<'bump>` without pulling
-/// in the property lattice. The full struct re-widens when the property
-/// handlers un-gate.
-#[cfg(not(any()))]
-pub struct DeclarationHandler<'bump> {
-    pub decls: DeclarationList<'bump>,
-}
-
-#[cfg(not(any()))]
-impl<'bump> DeclarationHandler<'bump> {
-    pub fn new(bump: &'bump Bump) -> Self {
-        Self { decls: DeclarationList::new_in(bump) }
-    }
-}
-
-#[cfg(any())]
+/// PORT NOTE: each `*Handler` is a `handler_stub!` ZST until its leaf module
+/// un-gates; `Direction` is the data-only `properties::text` enum. The struct
+/// shape is the real Zig layout — only the handler *bodies* are deferred.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,
@@ -507,16 +505,21 @@ pub struct DeclarationHandler<'bump> {
     pub box_shadow: BoxShadowHandler,
     pub color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
-    pub direction: Option<crate::css_properties::text::Direction>,
+    pub direction: Option<Direction>,
     pub decls: DeclarationList<'bump>,
 }
 
-#[cfg(any())]
 impl<'bump> DeclarationHandler<'bump> {
-    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext<'bump>) {
+    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+        // blocked_on: properties_generated — `Property::Direction` variant is
+        // codegen output (`generate_properties.ts`); the unit-stub `Property`
+        // has no variants. Un-gates with `properties/mod.rs` → properties_generated.
+        #[cfg(any())]
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
+        #[cfg(not(any()))]
+        { let _ = self.direction.take(); }
         // if (this.unicode_bidi) |unicode_bidi| {
         //     this.unicode_bidi = null;
         //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
@@ -561,10 +564,7 @@ impl<'bump> DeclarationHandler<'bump> {
             || self.color_scheme.handle_property(property, &mut self.decls, context)
             || self.fallback.handle_property(property, &mut self.decls, context)
     }
-}
 
-#[cfg(any())]
-impl<'bump> DeclarationHandler<'bump> {
     pub fn new(bump: &'bump Bump) -> Self {
         Self {
             background: Default::default(),

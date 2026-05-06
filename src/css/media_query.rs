@@ -832,13 +832,11 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
             MediaFeatureName::Standard(v) => v.to_css(dest),
             // PORT NOTE: Zig routed through DashedIdentFns.toCss → dest.writeDashedIdent
             // (handles css-module name rewriting). Printer::write_dashed_ident is
-            // currently `#[cfg(any())]`-gated; emit the ident via the raw
-            // serializer until that lands. Custom-media names are not subject
-            // to css-module rewriting in any test fixture today.
-            MediaFeatureName::Custom(d) => {
-                // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                css::serializer::serialize_identifier(unsafe { &*d.v }, dest)
-                    .map_err(|_| dest.add_fmt_error())
+            // currently `#[cfg(any())]`-gated; fail loud rather than silently
+            // emitting an unscoped ident that diverges from Zig output under
+            // css-modules (PORTING.md §Forbidden: silent-no-op).
+            MediaFeatureName::Custom(_d) => {
+                todo!("MediaFeatureName::Custom to_css gated on Printer::write_dashed_ident")
             }
             MediaFeatureName::Unknown(v) => v.to_css(dest),
         }
@@ -851,11 +849,8 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     ) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureName::Standard(v) => v.to_css_with_prefix(prefix, dest),
-            MediaFeatureName::Custom(d) => {
-                dest.write_str(prefix)?;
-                // SAFETY: arena-owned slice valid for the MediaList lifetime.
-                css::serializer::serialize_identifier(unsafe { &*d.v }, dest)
-                    .map_err(|_| dest.add_fmt_error())
+            MediaFeatureName::Custom(_d) => {
+                todo!("MediaFeatureName::Custom to_css_with_prefix gated on Printer::write_dashed_ident")
             }
             MediaFeatureName::Unknown(v) => {
                 dest.write_str(prefix)?;

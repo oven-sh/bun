@@ -115,15 +115,6 @@ struct ExistingSocket<const SSL: bool> {
 // associated type — unstable). Hoisted to a free alias.
 pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
 
-/// uWS handler dispatch struct — type-only stub here; real method bodies live
-/// in the gated `_phase_a_draft` module below.
-pub struct Handler<const SSL: bool>;
-
-/// Tagged-ptr discriminant for the "no client" socket-ext state.
-pub struct DeadSocket {
-    pub garbage: u32,
-}
-
 impl<const SSL: bool> HTTPContext<SSL> {
     pub const KIND: uws::SocketKind = if SSL {
         uws::SocketKind::HttpClientTls
@@ -146,16 +137,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
         }
     }
-}
 
-// reconciler-3: the full HTTPContext state machine below dispatches into
-// gated `HTTPThread`/`h2::ClientSession`/`crate::state` surface that hasn't
-// landed yet (see lib.rs `_phase_a_draft`). Re-gate as a draft module so
-// the type-only surface above stays green; un-gate together with H2Client.rs.
-#[cfg(any())]
-mod _phase_a_draft {
-use super::*;
-impl<const SSL: bool> HTTPContext<SSL> {
     pub fn mark_tagged_socket_as_dead(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
@@ -1309,7 +1291,6 @@ mod dispatch_deps {
         }
     }
 }
-} // mod _phase_a_draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

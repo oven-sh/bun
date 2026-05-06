@@ -236,17 +236,17 @@ impl ColorFallbackKind {
 // The original 3.5k-line port lives below, gated until its hub deps un-gate.
 // Nothing is lost — the wrapper module preserves the source verbatim so the
 // next round can lift method bodies out of here into the real impls above.
-#[cfg(any())]
-#[allow(dead_code, unused_imports, unused_variables)]
+#[allow(dead_code, unused_imports, unused_variables, unused_mut, unreachable_code)]
 mod gated_full_impl {
-use bun_css as css;
-use bun_css::css_values::angle::Angle;
-use bun_css::css_values::calc::Calc;
-use bun_css::css_values::number::CSSNumberFns;
-use bun_css::css_values::percentage::Percentage;
-use bun_css::{PrintErr, Printer, Result as CssResult};
+use crate as css;
+use crate::values::angle::Angle;
+use crate::values::calc::Calc;
+use crate::values::number::CSSNumberFns;
+use crate::values::percentage::Percentage;
+use crate::{PrintErr, Printer, Result as CssResult};
 
-use super::color_generated::generated_color_conversions;
+use super::super::color_generated::generated_color_conversions;
+use super::*;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Colorspace traits (replaces Zig comptime mixins: DefineColorspace,

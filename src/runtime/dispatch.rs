@@ -358,7 +358,7 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 unsafe fn run_immediate_task_hook(
     task: *mut bun_jsc::event_loop::ImmediateObject,
-    vm: *mut bun_jsc::VirtualMachine,
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
     // SAFETY: per fn contract — the low-tier `ImmediateObject` is an opaque
     // forward-decl; the only producer (`TimerObjectInternals::init`) stores a
@@ -369,6 +369,34 @@ unsafe fn run_immediate_task_hook(
             vm,
         )
     }
+}
+
+/// `RUN_WTF_TIMER_HOOK` body — cast the opaque low-tier
+/// `bun_jsc::event_loop::WTFTimer` to the real `crate::timer::WTFTimer` and
+/// fire it (spec event_loop.zig:302-306 `imminent_gc_timer.swap(null).?.run(vm)`).
+///
+/// # Safety
+/// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
+/// remains live until consumed; `vm` is the live per-thread VM.
+unsafe fn run_wtf_timer_hook(
+    timer: *mut bun_jsc::event_loop::WTFTimer,
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+) {
+    // SAFETY: per fn contract — the low-tier `WTFTimer` is an opaque
+    // forward-decl; the only producer (`WTFTimer::update`) stores a
+    // `*mut crate::timer::WTFTimer`, so the cast is the identity.
+    let real = timer.cast::<crate::timer::WTFTimer>();
+    // TODO(b2-blocked): `crate::timer::WTFTimer::run` — body lives in the
+    // gated `timer/WTFTimer.rs` Phase-A draft (the struct-only stub in
+    // `timer/mod.rs` is a unit `WTFTimer(())` with no methods). Un-gate the
+    // call below once the draft is wired into `timer/mod.rs`.
+    #[cfg(any())]
+    {
+        // SAFETY: per fn contract.
+        return unsafe { crate::timer::WTFTimer::run(real, vm) };
+    }
+    let _ = (real, vm);
+    todo!("dispatch: WTFTimer::run")
 }
 
 /// Wire the high-tier dispatchers into the low-tier hooks. Called once from
@@ -383,9 +411,12 @@ pub fn install_dispatch_hooks() {
     // EventLoop::tick_immediate_tasks → ImmediateObject::run_immediate_task.
     bun_jsc::event_loop::set_run_immediate_hook(run_immediate_task_hook);
 
+    // EventLoop::run_imminent_gc_timer → WTFTimer::run.
+    bun_jsc::event_loop::set_run_wtf_timer_hook(run_wtf_timer_hook);
+
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
-    // Gated: `bun_jsc` is not yet a dep of `bun_runtime` (Cargo.toml comments
-    // it out under TODO(b2-blocked)); once green, this becomes two calls.
+    // Gated: `tick_queue_with_count` itself is `#[cfg(any())]` above (its
+    // `HotReloadTask` early-return needs the high-tier type un-gated).
     // TODO(b2-blocked): bun_jsc::set_run_task_hook / set_tick_queue_hook.
     #[cfg(any())]
     {

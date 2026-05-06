@@ -109,18 +109,21 @@ impl DirInfo {
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
             if let Some(entries) = self.get_entries(0) {
-                return entries.fd;
+                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton.
+                return unsafe { (*entries).fd };
             }
         }
         Fd::INVALID
     }
 
-    pub fn get_entries(&self, generation: Generation) -> Option<&'static mut fs::DirEntry> {
+    /// Port of `getEntries` in `dir_info.zig` (returns `?*DirEntry`). Returns a
+    /// raw pointer (not `&'static mut`) because the BSSMap singleton is
+    /// shared-mutable and Rust forbids manufacturing aliased `&mut`. Callers
+    /// dereference at the use site where exclusivity is locally provable.
+    pub fn get_entries(&self, generation: Generation) -> Option<*mut fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
         match entries_ptr {
-            // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap
-            // singleton; widening the reborrow to 'static (matches Zig).
-            fs::EntriesOption::Entries(entries) => Some(unsafe { &mut *(*entries as *mut _) }),
+            fs::EntriesOption::Entries(entries) => Some(*entries as *mut _),
             fs::EntriesOption::Err(_) => None,
         }
     }

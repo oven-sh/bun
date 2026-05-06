@@ -712,6 +712,7 @@ impl SendHandle {
 
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
 
+#[cfg(windows)]
 pub struct WindowsWrite {
     pub write_req: uv::uv_write_t,
     pub write_buffer: uv::uv_buf_t,
@@ -719,6 +720,7 @@ pub struct WindowsWrite {
     pub owner: Option<*mut SendQueue>,
 }
 
+#[cfg(windows)]
 impl WindowsWrite {
     pub fn destroy(this: *mut WindowsWrite) {
         // SAFETY: `this` was produced by Box::into_raw in SendQueue::_write;
@@ -776,7 +778,7 @@ pub struct SendQueue {
     #[cfg(debug_assertions)]
     pub has_written_version: u8,
     pub mode: Mode,
-    pub internal_msg_queue: node_cluster_binding::InternalMsgHolder,
+    pub internal_msg_queue: InternalMsgHolder,
     incoming: IncomingBuffer,
     pub incoming_fd: Option<Fd>,
 
@@ -795,9 +797,52 @@ pub struct SendQueue {
     pub windows: WindowsState,
 }
 
-pub enum SendQueueOwner {
-    Subprocess(*mut Subprocess),
-    VirtualMachine(*mut jsc::virtual_machine::IPCInstance),
+/// Dispatch table for the SendQueue's owning object — either a `Subprocess`
+/// (parent side) or a `VirtualMachine::IPCInstance` (child side). Both live in
+/// `bun_runtime` (tier-6), so the concrete types are erased here and routed
+/// through fn pointers that `bun_runtime` supplies at construction time.
+pub struct SendQueueOwnerVTable {
+    pub global_this: unsafe fn(*mut c_void) -> *const JSGlobalObject,
+    pub handle_ipc_close: unsafe fn(*mut c_void),
+    pub handle_ipc_message: unsafe fn(*mut c_void, DecodedIPCMessage, JSValue),
+    /// `Subprocess.this_value.tryGet()` — returns ZERO for the VM-side owner.
+    pub this_jsvalue: unsafe fn(*mut c_void) -> JSValue,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum SendQueueOwnerKind {
+    Subprocess,
+    VirtualMachine,
+}
+
+pub struct SendQueueOwner {
+    pub ptr: *mut c_void,
+    pub kind: SendQueueOwnerKind,
+    pub vtable: &'static SendQueueOwnerVTable,
+}
+
+impl SendQueueOwner {
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it;
+        // the vtable fn was supplied by the same crate that owns `ptr`.
+        unsafe { &*(self.vtable.global_this)(self.ptr) }
+    }
+    #[inline]
+    fn handle_ipc_close(&self) {
+        // SAFETY: see global_this.
+        unsafe { (self.vtable.handle_ipc_close)(self.ptr) }
+    }
+    #[inline]
+    fn handle_ipc_message(&self, msg: DecodedIPCMessage, handle: JSValue) {
+        // SAFETY: see global_this.
+        unsafe { (self.vtable.handle_ipc_message)(self.ptr, msg, handle) }
+    }
+    #[inline]
+    fn this_jsvalue(&self) -> JSValue {
+        // SAFETY: see global_this.
+        unsafe { (self.vtable.this_jsvalue)(self.ptr) }
+    }
 }
 
 #[cfg(windows)]
@@ -822,7 +867,7 @@ impl SendQueue {
             #[cfg(debug_assertions)]
             has_written_version: 0,
             mode,
-            internal_msg_queue: node_cluster_binding::InternalMsgHolder::default(),
+            internal_msg_queue: InternalMsgHolder::default(),
             incoming: IncomingBuffer::init(mode),
             incoming_fd: None,
             socket,
@@ -905,10 +950,11 @@ impl SendQueue {
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
-            let task = ManagedTask::new::<SendQueue>(Self::_on_after_ipc_closed, self);
+            let task = ManagedTask::new(self as *mut SendQueue, Self::_on_after_ipc_closed);
             self.after_close_task = Some(task);
-            self.get_global_this()
-                .bun_vm()
+            // SAFETY: bun_vm() returns a &VirtualMachine borrowed from the
+            // global; enqueue_task only mutates the task queue.
+            unsafe { &mut *(self.get_global_this().bun_vm() as *const _ as *mut VirtualMachine) }
                 .enqueue_task(self.after_close_task.unwrap());
         }
     }
@@ -949,35 +995,35 @@ impl SendQueue {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        let task = ManagedTask::new::<SendQueue>(Self::_close_socket_task, self);
+        let task = ManagedTask::new(self as *mut SendQueue, Self::_close_socket_task);
         self.close_next_tick = Some(task);
-        VirtualMachine::get().enqueue_task(self.close_next_tick.unwrap());
+        // SAFETY: VirtualMachine::get() returns the singleton; enqueue_task
+        // only mutates the task queue.
+        unsafe { (*VirtualMachine::get()).enqueue_task(self.close_next_tick.unwrap()) };
     }
 
-    fn _close_socket_task(this: &mut SendQueue) {
+    fn _close_socket_task(this: *mut SendQueue) -> JsResult<()> {
+        // SAFETY: `this` was the live `*mut SendQueue` passed to ManagedTask::new;
+        // the task is cancelled in Drop before the storage is freed.
+        let this = unsafe { &mut *this };
         log!("SendQueue#closeSocketTask");
         debug_assert!(this.close_next_tick.is_some());
         this.close_next_tick = None;
         this.close_socket(CloseReason::Normal, CloseFrom::User);
+        Ok(())
     }
 
-    fn _on_after_ipc_closed(this: &mut SendQueue) {
+    fn _on_after_ipc_closed(this: *mut SendQueue) -> JsResult<()> {
+        // SAFETY: see _close_socket_task.
+        let this = unsafe { &mut *this };
         log!("SendQueue#_onAfterIPCClosed");
         this.after_close_task = None;
         if this.close_event_sent {
-            return;
+            return Ok(());
         }
         this.close_event_sent = true;
-        match this.owner {
-            SendQueueOwner::Subprocess(owner) => {
-                // SAFETY: BACKREF — Subprocess embeds this SendQueue inline and outlives it.
-                unsafe { (*owner).handle_ipc_close() };
-            }
-            SendQueueOwner::VirtualMachine(owner) => {
-                // SAFETY: BACKREF — IPCInstance owns this SendQueue inline.
-                unsafe { (*owner).handle_ipc_close() };
-            }
-        }
+        this.owner.handle_ipc_close();
+        Ok(())
     }
 
     /// returned pointer is invalidated if the queue is modified
@@ -1059,10 +1105,12 @@ impl SendQueue {
             }
             // too many retries; give up - emit warning if possible
             let mut warning =
-                BunString::static_("Handle did not reach the receiving process correctly");
-            let mut warning_name = BunString::static_("SentHandleNotReceivedWarning");
-            if let Ok(warning_js) = warning.transfer_to_js(global) {
-                if let Ok(warning_name_js) = warning_name.transfer_to_js(global) {
+                BunString::static_(b"Handle did not reach the receiving process correctly");
+            let mut warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
+            if let Ok(warning_js) = crate::bun_string_jsc::transfer_to_js(&mut warning, global) {
+                if let Ok(warning_name_js) =
+                    crate::bun_string_jsc::transfer_to_js(&mut warning_name, global)
+                {
                     let _ = global.emit_warning(
                         warning_js,
                         warning_name_js,
@@ -1138,7 +1186,7 @@ impl SendQueue {
             self.update_ref(global);
             return;
         }
-        let to_send_len = first.data.list.len() - first.data.cursor as usize;
+        let to_send_len = first.data.list.len() - first.data.cursor;
         if to_send_len == 0 {
             // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
             let itm = self.queue.remove(0);
@@ -1151,7 +1199,7 @@ impl SendQueue {
         self.write_in_progress = true;
         // PORT NOTE: reshaped for borrowck — recompute slice/fd via raw to avoid &mut self overlap.
         let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
-        let to_send: *const [u8] = &self.queue[0].data.list[self.queue[0].data.cursor as usize..];
+        let to_send: *const [u8] = &self.queue[0].data.list[self.queue[0].data.cursor..];
         // SAFETY: `to_send` borrows queue[0].data which is not reallocated by _write
         // (only _on_write_complete may pop the queue, and that runs after the write).
         self._write(unsafe { &*to_send }, fd);
@@ -1170,7 +1218,7 @@ impl SendQueue {
         let global_this = self.get_global_this();
         // defer this.updateRef(globalThis) — applied at each return.
         let first = &mut self.queue[0];
-        let to_send_len = first.data.list.len() - first.data.cursor as usize;
+        let to_send_len = first.data.list.len() - first.data.cursor;
         if n as usize == to_send_len {
             if first.handle.is_some() {
                 // the message was fully written, but it had a handle.
@@ -1193,7 +1241,7 @@ impl SendQueue {
         } else if n > 0 && n < i32::try_from(first.data.list.len()).unwrap() {
             // the item was partially sent; update the cursor and wait for writable to send the rest
             // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-            first.data.cursor += u32::try_from(n).unwrap();
+            first.data.cursor += usize::try_from(n).unwrap();
             self.update_ref(global_this);
             return;
         } else if n == 0 {
@@ -1222,7 +1270,7 @@ impl SendQueue {
                 callbacks: CallbackList::None,
             });
             let last = self.queue.len() - 1;
-            self.queue[last].data.write(bytes);
+            let _ = self.queue[last].data.write(bytes);
             log!("IPC call continueSend() from version packet");
             self.continue_send(global, ContinueSendReason::NewMessageAppended);
         }
@@ -1276,21 +1324,21 @@ impl SendQueue {
                 log!(
                     " {}|{}",
                     item.data.cursor,
-                    item.data.list.len() - item.data.cursor as usize
+                    item.data.list.len() - item.data.cursor
                 );
             } else {
                 log!(
                     "  \"{}\"|\"{}\"",
-                    bstr::BStr::new(&item.data.list[0..item.data.cursor as usize]),
-                    bstr::BStr::new(&item.data.list[item.data.cursor as usize..])
+                    bstr::BStr::new(&item.data.list[0..item.data.cursor]),
+                    bstr::BStr::new(&item.data.list[item.data.cursor..])
                 );
             }
         }
     }
 
-    fn get_socket(&self) -> Option<SocketType> {
+    fn get_socket(&self) -> Option<&SocketType> {
         match &self.socket {
-            SocketUnion::Open(s) => Some(*s),
+            SocketUnion::Open(s) => Some(s),
             _ => None,
         }
     }
@@ -1299,12 +1347,13 @@ impl SendQueue {
     /// call _onWriteComplete later.
     fn _write(&mut self, data: &[u8], fd: Option<Fd>) {
         log!("SendQueue#_write len {}", data.len());
-        let Some(socket) = self.get_socket() else {
+        if self.get_socket().is_none() {
             self._on_write_complete(-1);
             return;
-        };
+        }
         #[cfg(windows)]
         {
+            let socket = *self.get_socket().unwrap();
             if let Some(_) = fd {
                 // TODO: send fd on windows
             }
@@ -1351,8 +1400,35 @@ impl SendQueue {
         }
         #[cfg(not(windows))]
         {
+            let socket = *self.get_socket().unwrap();
             if let Some(fd_unwrapped) = fd {
-                self._on_write_complete(socket.write_fd(data, fd_unwrapped));
+                // `NewSocketHandler` doesn't expose `write_fd`; reach the
+                // underlying `us_socket_t` directly via the C symbol the
+                // SCM_RIGHTS path uses (`us_socket_ipc_write_fd`).
+                unsafe extern "C" {
+                    fn us_socket_ipc_write_fd(
+                        s: *mut bun_uws::us_socket_t,
+                        data: *const u8,
+                        length: i32,
+                        fd: i32,
+                    ) -> i32;
+                }
+                let n = match socket.socket {
+                    bun_uws::InternalSocket::Connected(s) => {
+                        // SAFETY: `s` is a live us_socket_t (socket == .open
+                        // checked above); data is a valid slice for the call.
+                        unsafe {
+                            us_socket_ipc_write_fd(
+                                s,
+                                data.as_ptr(),
+                                i32::try_from(data.len()).unwrap_or(i32::MAX),
+                                fd_unwrapped.native(),
+                            )
+                        }
+                    }
+                    _ => -1,
+                };
+                self._on_write_complete(n);
             } else {
                 self._on_write_complete(socket.write(data));
             }
@@ -1396,15 +1472,8 @@ impl SendQueue {
 
         vm.event_loop().exit();
     }
-    #[cfg(not(windows))]
-    fn _windows_on_write_complete(_write_req: *mut WindowsWrite, _status: uv::ReturnCode) {}
-
     fn get_global_this(&self) -> &JSGlobalObject {
-        match self.owner {
-            // SAFETY: BACKREF — owner outlives this SendQueue (embedded inline).
-            SendQueueOwner::Subprocess(owner) => unsafe { (*owner).global_this },
-            SendQueueOwner::VirtualMachine(owner) => unsafe { (*owner).global_this },
-        }
+        self.owner.global_this()
     }
 
     #[cfg(windows)]
@@ -1509,12 +1578,15 @@ impl Drop for SendQueue {
         // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
         // the `NODE_HANDLE` decoder when the socket closes.
         if let Some(fd) = self.incoming_fd.take() {
-            fd.close();
+            FdExt::close(fd);
         }
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
         if let Some(close_next_tick_task) = self.close_next_tick {
-            let managed: &mut ManagedTask = close_next_tick_task.as_::<ManagedTask>();
+            // SAFETY: the task was created via `ManagedTask::new` (tag ==
+            // ManagedTask) and `Task.ptr` is the Box::into_raw'd ManagedTask.
+            let managed: &mut ManagedTask =
+                unsafe { &mut *(close_next_tick_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
         }
         // Same for the close-notification task. `closeSocket` above may have
@@ -1522,7 +1594,9 @@ impl Drop for SendQueue {
         // or it may be left over from an earlier `_socketClosed` that hasn't
         // drained yet; either way the owner is about to free our storage.
         if let Some(after_close_task) = self.after_close_task {
-            let managed: &mut ManagedTask = after_close_task.as_::<ManagedTask>();
+            // SAFETY: see above.
+            let managed: &mut ManagedTask =
+                unsafe { &mut *(after_close_task.ptr.cast::<ManagedTask>()) };
             managed.cancel();
             self.after_close_task = None;
         }
@@ -1537,7 +1611,7 @@ fn emit_process_error_event(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let [ex] = callframe.arguments_as_array::<1>();
-    VirtualMachine::process_emit_error_event(global_this, ex);
+    (ipc_hooks().process_emit_error_event)(global_this, ex);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1555,7 +1629,7 @@ fn do_send_err(
     from: FromEnum,
 ) -> JsResult<JSValue> {
     if callback.is_callable() {
-        callback.call_next_tick(global_object, &[ex])?;
+        JSValue::call_next_tick_1(callback, global_object, ex)?;
         return Ok(JSValue::FALSE);
     }
     if from == FromEnum::Process {
@@ -1568,11 +1642,11 @@ fn do_send_err(
             1,
             Default::default(),
         );
-        target.call_next_tick(global_object, &[ex])?;
+        JSValue::call_next_tick_1(target, global_object, ex)?;
         return Ok(JSValue::FALSE);
     }
     // Bun.spawn().send() should throw an error (unless callback is passed)
-    global_object.throw_value(ex)
+    Err(global_object.throw_value(ex))
 }
 
 pub fn do_send(
@@ -1597,31 +1671,25 @@ pub fn do_send(
 
     let connected = ipc.as_ref().map_or(false, |i| i.is_connected());
     if !connected {
+        let msg = match from {
+            FromEnum::Process => "process.send() can only be used if the IPC channel is open.",
+            FromEnum::Subprocess => {
+                "Subprocess.send() can only be used if an IPC channel is open."
+            }
+            FromEnum::SubprocessExited => {
+                "Subprocess.send() cannot be used after the process has exited."
+            }
+        };
         let ex = global_object
-            .err(
-                jsc::ErrorCode::IPC_CHANNEL_CLOSED,
-                "{}",
-                &[match from {
-                    FromEnum::Process => {
-                        "process.send() can only be used if the IPC channel is open."
-                    }
-                    FromEnum::Subprocess => {
-                        "Subprocess.send() can only be used if an IPC channel is open."
-                    }
-                    FromEnum::SubprocessExited => {
-                        "Subprocess.send() cannot be used after the process has exited."
-                    }
-                }],
-            )
+            .err(jsc::ErrorCode::IPC_CHANNEL_CLOSED, format_args!("{}", msg))
             .to_js();
-        // TODO(port): globalObject.ERR(...) — verify Rust API shape for templated error builder
         return do_send_err(global_object, callback, ex, from);
     }
 
     let ipc_data = ipc.unwrap();
 
     if message.is_undefined() {
-        return global_object.throw_missing_arguments_value(&["message"]);
+        return Err(global_object.throw_missing_arguments_value(&["message"]));
     }
     if !message.is_string()
         && !message.is_object()
@@ -1629,11 +1697,11 @@ pub fn do_send(
         && !message.is_boolean()
         && !message.is_null()
     {
-        return global_object.throw_invalid_argument_type_value_one_of(
-            "message",
-            "string, object, number, or boolean",
+        return Err(global_object.throw_invalid_argument_type_value_one_of(
+            b"message",
+            b"string, object, number, or boolean",
             message,
-        );
+        ));
     }
 
     if !handle.is_undefined_or_null() {
@@ -1650,22 +1718,10 @@ pub fn do_send(
 
     let mut zig_handle: Option<Handle> = None;
     if !handle.is_undefined_or_null() {
-        if let Some(listener) = bun_runtime::api::Listener::from_js(handle) {
+        // `bun.jsc.API.Listener` lives in `bun_runtime`; cycle-broken via hook.
+        if let Some(fd) = (ipc_hooks().listener_fd_from_js)(handle) {
             log!("got listener");
-            match &listener.listener {
-                bun_runtime::api::ListenerKind::Uws(socket_uws) => {
-                    // may need to handle ssl case
-                    let fd = socket_uws.get_socket().get_fd();
-                    zig_handle = Some(Handle::init(fd, handle));
-                }
-                bun_runtime::api::ListenerKind::NamedPipe(named_pipe) => {
-                    let _ = named_pipe;
-                }
-                bun_runtime::api::ListenerKind::None => {}
-            }
-            // TODO(port): bun.jsc.API.Listener — verify Rust enum shape & module path
-        } else {
-            //
+            zig_handle = Some(Handle::init(fd, handle));
         }
     }
 
@@ -1673,11 +1729,12 @@ pub fn do_send(
         ipc_data.serialize_and_send(global_object, message, IsInternal::External, callback, zig_handle);
 
     if status == SerializeAndSendResult::Failure {
-        let ex = global_object.create_type_error_instance("process.send() failed", &[]);
+        let ex =
+            global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,
-            ZigString::static_("syscall"),
-            BunString::static_("write").to_js(global_object)?,
+            ZigString::static_(b"syscall"),
+            crate::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }

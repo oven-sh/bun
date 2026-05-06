@@ -650,6 +650,7 @@ pub fn cached_package_folder_name_buf() -> *mut PathBuffer {
 
 mod holder {
     use super::PackageManager;
+    use bun_dotenv as dot_env;
     // OWNED — global singleton, leaked.
     // PORT NOTE: LIFETIMES.tsv prescribes `OnceLock<Box<PackageManager>>` for Holder.ptr, but
     // Zig uses `var ptr: *PackageManager = undefined` then assigns via allocatePackageManager()
@@ -657,6 +658,15 @@ mod holder {
     // allocate-then-fill (no `&mut` after set). Keep a raw ptr for now.
     // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>> in Phase B.
     pub static mut RAW_PTR: *mut PackageManager = core::ptr::null_mut();
+
+    // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
+    // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
+    // Mirrors Zig's `ctx.allocator.create(dot_env::Map)` / `create(dot_env::Loader)` — owned by
+    // the singleton, never freed. Avoids `Box::leak` per PORTING.md §Forbidden.
+    // TODO(port): retype `dot_env::Loader.map` to `Box<Map>` so this becomes an owned field
+    // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
+    pub static mut ENV_MAP: *mut dot_env::Map = core::ptr::null_mut();
+    pub static mut ENV_LOADER: *mut dot_env::Loader<'static> = core::ptr::null_mut();
 }
 
 static mut CWD_BUF: PathBuffer = PathBuffer::ZEROED;
@@ -741,12 +751,29 @@ impl PackageManager {
         self.event_loop.wakeup();
     }
 
-    pub fn sleep_until<C, F>(&mut self, closure: C, is_done_fn: F)
-    where
-        F: Fn(&C) -> bool,
-    {
+    pub fn sleep_until<C>(&mut self, closure: &mut C, is_done_fn: fn(&mut C) -> bool) {
         Output::flush();
-        self.event_loop.tick(closure, is_done_fn);
+        // PORT NOTE: Zig `sleepUntil(closure: anytype, isDoneFn)` passes a `*Closure` and
+        // a fn-pointer that mutates it. `AnyEventLoop::tick` takes the type-erased
+        // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
+        // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
+        struct Erased<C> {
+            ctx: *mut C,
+            is_done: fn(&mut C) -> bool,
+        }
+        fn trampoline<C>(p: *mut c_void) -> bool {
+            // SAFETY: `p` is the `&mut Erased<C>` we pass to `tick` below; `ctx` outlives
+            // the `tick` call and is only accessed from this thread.
+            let erased = unsafe { &mut *(p as *mut Erased<C>) };
+            let ctx = unsafe { &mut *erased.ctx };
+            (erased.is_done)(ctx)
+        }
+        let mut erased = Erased::<C> {
+            ctx: closure as *mut C,
+            is_done: is_done_fn,
+        };
+        self.event_loop
+            .tick(&mut erased as *mut _ as *mut c_void, trampoline::<C>);
     }
 
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -926,9 +953,8 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_os = "android")))]
     const CONTENT: &str = concat!(
-        // TODO(port): Environment.isAndroid → cfg(target_os = "android") changes shebang
         "#!/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
         "  bun x --silent node-gyp $@\n",
@@ -1395,15 +1421,21 @@ pub fn init(
         return Err(e.canonical_error);
     }
 
-    let env: &mut dot_env::Loader = {
-        // TODO(port): `dot_env::Loader<'a>` borrows `&'a mut Map`, so owning both on
-        // `PackageManager` is self-referential. Zig allocates once and never frees;
-        // `PackageManager` is a process-lifetime singleton (`holder::RAW_PTR`). Phase B
-        // should retype `Loader.map` to `Box<Map>` so this can become an owned field
-        // (`Box<dot_env::Loader>`) instead of `Box::leak`.
-        let map = Box::leak(Box::new(dot_env::Map::init()));
-        let loader = Box::leak(Box::new(dot_env::Loader::init(map)));
-        loader
+    // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
+    // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate
+    // both into process-lifetime statics (same allocate-then-fill pattern as `holder::RAW_PTR`)
+    // instead of `Box::leak`. Zig: `ctx.allocator.create(dot_env::Map)` + `create(dot_env::Loader)`.
+    let env: &mut dot_env::Loader = unsafe {
+        let map_ptr =
+            std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()) as *mut dot_env::Map;
+        core::ptr::write(map_ptr, dot_env::Map::init());
+        holder::ENV_MAP = map_ptr;
+
+        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
+            as *mut dot_env::Loader<'static>;
+        core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
+        holder::ENV_LOADER = loader_ptr;
+        &mut *loader_ptr
     };
 
     env.load_process()?;

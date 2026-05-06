@@ -173,17 +173,12 @@ impl PerMessageDeflate {
             compress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
             // SAFETY: z_stream is #[repr(C)] POD; all-zero is the documented init state.
             decompress_stream: unsafe { core::mem::zeroed::<zlib::z_stream>() },
-            rare_data: {
-                #[cfg(any())]
-                // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData
-                // is an opaque `{ _opaque: () }` placeholder; the real type is
-                // `self::RareData` (this module), which bun_jsc cannot import
-                // without a dep cycle. Until a re-export shim lands, fall back
-                // to a fresh per-connection instance.
-                { rare_data.websocket_deflate() }
-                #[cfg(not(any()))]
-                { let _ = rare_data; RareData::default() }
-            },
+            // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData —
+            // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
+            // placeholder in bun_jsc; the real type is `self::RareData` (this
+            // module), which bun_jsc cannot import without a dep cycle. Until a
+            // re-export shim lands, fall back to a fresh per-connection instance.
+            rare_data: { let _ = rare_data; RareData::default() },
         });
 
         // Initialize compressor (deflate)

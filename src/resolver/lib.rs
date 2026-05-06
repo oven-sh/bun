@@ -2953,6 +2953,8 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(entries) = dir.get_entries(self.generation) {
+                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
+                let entries = unsafe { &mut *entries };
                 if let Some(query) = entries.get(path.name.filename()) {
                     let symlink_path = query.entry.symlink(&mut self.fs.fs, self.store_fd);
                     if !symlink_path.is_empty() {
@@ -4591,7 +4593,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                 let resolved_dir_info = unsafe { &*resolved_dir_info_ptr };
                 let entries = match resolved_dir_info.get_entries(self.generation) {
-                    Some(e) => e,
+                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
+                    Some(e) => unsafe { &mut *e },
                     None => {
                         esm_resolution.status = Status::ModuleNotFound;
                         return None;
@@ -4645,6 +4648,8 @@ impl<'a> Resolver<'a> {
                         if let Ok(Some(dir_info_ptr)) = self.dir_info_cached(abs_esm_path) {
                             // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
                             if let Some(dir_entries) = unsafe { &*dir_info_ptr }.get_entries(self.generation) {
+                                // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
+                                let dir_entries = unsafe { &mut *dir_entries };
                                 let index = b"index";
                                 let buf = bufs!(load_as_file);
                                 buf[..index.len()].copy_from_slice(index);
@@ -5723,6 +5728,8 @@ impl<'a> Resolver<'a> {
         base[b"index".len()..].copy_from_slice(ext);
 
         if let Some(entries) = dir_info.get_entries(self.generation) {
+            // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
+            let entries = unsafe { &mut *entries };
             if let Some(lookup) = entries.get(&base[..]) {
                 if lookup.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                     let out_buf: &[u8] = {
@@ -6436,6 +6443,8 @@ impl<'a> Resolver<'a> {
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries(self.generation) {
+                    // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
+                    let parent_entries = unsafe { &mut *parent_entries };
                     if let Some(lookup) = parent_entries.get(base) {
                         if entries.fd.is_valid() && !lookup.entry.cache.fd.is_valid() && self.store_fd {
                             lookup.entry.cache.fd = entries.fd;

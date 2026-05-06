@@ -144,9 +144,11 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
     #[cfg(not(windows))] {
         let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+        // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
+        let dirfd = if fd.is_valid() { fd.native() } else { libc::AT_FDCWD };
         // SAFETY: path is NUL-terminated; st is written on success.
         let rc = unsafe {
-            libc::fstatat(fd.native(), path.as_ptr().cast(), st.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW)
+            libc::fstatat(dirfd, path.as_ptr().cast(), st.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW)
         };
         if rc == 0 {
             Ok(unsafe { st.assume_init() })
@@ -383,7 +385,7 @@ mod posix_impl {
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
         // SAFETY: fd is a valid open descriptor owned by caller.
         let rc = unsafe { libc::close(fd.native()) };
-        if rc < 0 && get_errno(last_errno()) == E::EBADF {
+        if rc < 0 && last_errno() == libc::EBADF {
             return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
         }
         Ok(())
@@ -581,9 +583,9 @@ mod posix_impl {
             };
             if rc < 0 {
                 let e = last_errno();
-                match get_errno(e) {
-                    E::EINTR => continue,
-                    E::EISDIR | E::ENOENT | E::ENOTSUP | E::EPERM | E::EINVAL if status == 0 => {
+                match e {
+                    libc::EINTR => continue,
+                    libc::EISDIR | libc::ENOENT | libc::EOPNOTSUPP | libc::EPERM | libc::EINVAL if status == 0 => {
                         // sys.zig:4013 — first failure on AT_EMPTY_PATH ⇒ no cap; retry via /proc.
                         CAP_STATUS.store(-1, core::sync::atomic::Ordering::Relaxed);
                         continue;
@@ -641,7 +643,9 @@ mod posix_impl {
     }
     pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
         let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-        check_p!(unsafe { libc::fstatat(fd.native(), path.as_ptr(), st.as_mut_ptr(), 0) }, Tag::fstatat, path);
+        // sys.zig:848 — `bun.invalid_fd` means cwd-relative.
+        let dirfd = if fd.is_valid() { fd.native() } else { libc::AT_FDCWD };
+        check_p!(unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) }, Tag::fstatat, path);
         Ok(unsafe { st.assume_init() })
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
@@ -1875,8 +1879,8 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
         if rc < 0 {
             let e = last_errno();
-            match get_errno(e) {
-                E::ENOTSUP | E::ENOSYS | E::EPERM | E::EACCES => {
+            match e {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4070 — only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
@@ -1885,7 +1889,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
                         _ => Err(Error::retry().with_fd(fd)),
                     };
                 }
-                E::EINTR => continue,
+                libc::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
             }
         }
@@ -1902,8 +1906,8 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
         if rc < 0 {
             let e = last_errno();
-            match get_errno(e) {
-                E::ENOTSUP | E::ENOSYS | E::EPERM | E::EACCES => {
+            match e {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4123 — poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {
@@ -1915,7 +1919,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
                         }
                     };
                 }
-                E::EINTR => continue,
+                libc::EINTR => continue,
                 _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
             }
         }

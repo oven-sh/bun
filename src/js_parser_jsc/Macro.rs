@@ -514,16 +514,15 @@ impl<'a> Run<'a> {
         tag: ConsoleObject::formatter::Tag,
         value: JSValue,
     ) -> Result<Expr, MacroError> {
-        // TODO(b2-blocked): bun_jsc::ConsoleObject::formatter::Tag (Private / ToJSON variants)
-        // TODO(b2-blocked): bun_jsc::WebCore::Blob (JsClass + get_blob_without_call_frame)
-        // TODO(b2-blocked): bun_jsc::WebCore::Response (JsClass + get_blob_without_call_frame)
-        // TODO(b2-blocked): bun_jsc::WebCore::Request (JsClass + get_blob_without_call_frame)
-        // TODO(b2-blocked): bun_jsc::ResolveMessage (JsClass impl)
-        // TODO(b2-blocked): bun_jsc::BuildMessage (JsClass impl)
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (uncaught_exception / wait_for_promise / unhandled_rejection / jsc_vm)
-        // TODO(b2-blocked): bun_jsc::AnyPromise (status / result)
-        // TODO(b2-blocked): bun_js_parser::Expr::from_blob
-        // TODO(b2-blocked): bun_string::String::encode_into
+        // TODO(b2-blocked): bun_jsc::WebCore::Blob (JsClass + get_blob_without_call_frame — stub_ty placeholder)
+        // TODO(b2-blocked): bun_jsc::WebCore::Response (JsClass + get_blob_without_call_frame — stub_ty placeholder)
+        // TODO(b2-blocked): bun_jsc::WebCore::Request (JsClass + get_blob_without_call_frame — stub_ty placeholder)
+        // TODO(b2-blocked): bun_jsc::ResolveMessage (JsClass impl — `value.as_::<ResolveMessage>()`)
+        // TODO(b2-blocked): bun_jsc::BuildMessage (JsClass impl — `value.as_::<BuildMessage>()`)
+        // TODO(b2-blocked): bun_jsc::AnyPromise::status / bun_jsc::AnyPromise::result (only `as_value` on stub enum)
+        // TODO(b2-blocked): bun_jsc::PromiseStatus (no crate-root re-export of `js_promise::Status`)
+        // TODO(b2-blocked): bun_js_parser::Expr::from_blob (live shadow stub takes `&[u8]` mime, not `MimeType`)
+        // TODO(b2-blocked): bun_jsc::JSPropertyIterator (const-generic shape changed: 3×bool, init takes JSValue not *mut JSObject)
         #[cfg(any())]
         {
         use ConsoleObject::formatter::Tag as T;
@@ -762,9 +761,10 @@ impl<'a> Run<'a> {
             .add_error_fmt(
                 Some(self.source),
                 self.caller.loc,
+                // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`).
                 format_args!(
-                    "cannot coerce {} to Bun's AST. Please return a simpler type",
-                    <&'static str>::from(value.js_type()),
+                    "cannot coerce {:?} to Bun's AST. Please return a simpler type",
+                    value.js_type(),
                 ),
             )
             .expect("unreachable");

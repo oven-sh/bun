@@ -2460,13 +2460,13 @@ impl Path {
             new_path.namespace = self.namespace;
             new_path.is_symlink = self.is_symlink;
             Ok(new_path)
-        } else if let Some((start, len)) = allocators::slice_range(self.pretty, self.text) {
+        } else if let Some([start, len]) = allocators::slice_range(self.pretty, self.text) {
             if FilenameStore::instance().exists(self.text) || DirnameStore::instance().exists(self.text) {
                 return Ok(self.clone());
             }
             let text = FilenameStore::instance().append(self.text)?;
             let mut new_path = Path::init(text);
-            new_path.pretty = &text[start..][..len];
+            new_path.pretty = &text[start as usize..][..len as usize];
             new_path.namespace = self.namespace;
             new_path.is_symlink = self.is_symlink;
             Ok(new_path)
@@ -2510,12 +2510,13 @@ impl Path {
         if self.is_pretty_path_posix() {
             return self.dupe_alloc();
         }
-        const _: () = assert!(cfg!(windows));
+        debug_assert!(cfg!(windows));
         let mut new = self.clone();
         new.pretty = b"";
         new = new.dupe_alloc()?;
+        // TODO(port): ownership — leaking to return `'static` slice (matches Zig allocator-owned).
         let pretty = Box::leak(Box::<[u8]>::from(self.pretty));
-        bun_paths::platform_to_posix_in_place(pretty);
+        path_handler::platform_to_posix_in_place::<u8>(pretty);
         new.pretty = pretty;
         new.assert_pretty_is_valid();
         Ok(new)
@@ -2581,39 +2582,42 @@ impl Path {
         }
     }
 
+    /// Port of `Path.initWithNamespaceVirtual` in `fs.zig`:
+    /// `pub inline fn initWithNamespaceVirtual(comptime text, namespace, package) Path`
+    // PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
+    // `const_format::concatcp!` cannot accept fn-param `&str`, so callers pass the
+    // precomputed `concatcp!` result as `pretty`.
     #[inline]
-    pub const fn init_with_namespace_virtual(
+    pub fn init_with_namespace_virtual(
         text: &'static [u8],
-        namespace: &'static str,
-        package: &'static str,
+        namespace: &'static [u8],
+        pretty: &'static [u8],
     ) -> Path {
-        // TODO(port): comptime concat — needs const_format::concatcp! at call sites
         Path {
-            pretty: const_format::concatcp!(namespace, ":", package).as_bytes(),
-            // TODO(port): const_format requires &str literals; callers must pass literals
+            pretty,
             is_symlink: true,
             text,
-            namespace: namespace.as_bytes(),
-            name: PathName { base: text, dir: b"", ext: b"", filename: text },
-            // TODO(port): comptime PathName::init(text)
+            namespace,
+            name: PathName::init(text),
             is_disabled: false,
         }
     }
 
+    /// Port of `Path.initForKitBuiltIn` in `fs.zig`.
+    // PORT NOTE: same comptime-concat caveat as `init_with_namespace_virtual`.
     #[inline]
-    pub const fn init_for_kit_built_in(namespace: &'static str, package: &'static str) -> Path {
+    pub fn init_for_kit_built_in(
+        namespace: &'static [u8],
+        package: &'static [u8],
+        pretty: &'static [u8],
+        text: &'static [u8],
+    ) -> Path {
         Path {
-            pretty: const_format::concatcp!(namespace, ":", package).as_bytes(),
+            pretty,
             is_symlink: true,
-            text: const_format::concatcp!("_bun/", package).as_bytes(),
-            namespace: namespace.as_bytes(),
-            name: PathName {
-                base: package.as_bytes(),
-                dir: b"",
-                ext: b"",
-                filename: package.as_bytes(),
-            },
-            // TODO(port): comptime PathName::init(package)
+            text,
+            namespace,
+            name: PathName::init(package),
             is_disabled: false,
         }
     }
@@ -2653,14 +2657,7 @@ impl core::fmt::Display for PrintHandle<i32> {
         write!(f, "{}", self.0)
     }
 }
-impl core::fmt::Display for PrintHandle<c_int>
-where
-    c_int: core::fmt::Display,
-{
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+// PORT NOTE: PrintHandle<c_int> overlaps PrintHandle<i32> on every supported target — dropped.
 impl core::fmt::Display for PrintHandle<*mut c_void> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:p}", self.0)
@@ -2673,8 +2670,11 @@ impl core::fmt::Display for PrintHandle<Fd> {
 }
 // TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
 
-pub use crate::fs::stat_hash as StatHash;
-// TODO(port): module path — src/resolver/fs/stat_hash.zig → bun_resolver::fs::stat_hash
+#[cfg(any())]
+#[path = "fs/stat_hash.rs"]
+pub mod stat_hash;
+// TODO(b2-blocked): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
+// bun_http_types::wtf::write_http_date — gated until those land.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

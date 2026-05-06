@@ -118,6 +118,16 @@ unsafe extern "C" {
         global: *const JSGlobalObject,
         native_ptr: JSValue,
     ) -> JSValue;
+    // PORT NOTE: `globalThis.queueMicrotask(cb, ...)` — used by `NewSource::on_js_close`.
+    // Declared locally because the inline `JSGlobalObject` shim in `bun_jsc` doesn't yet
+    // re-export `queue_microtask`. The C++ symbol lives in ZigGlobalObject.cpp.
+    fn JSGlobalObject__queueMicrotaskJob(
+        global: *const JSGlobalObject,
+        function: JSValue,
+        first: JSValue,
+        second: JSValue,
+        third: JSValue,
+    );
 }
 
 // ─── ReadableStream methods ──────────────────────────────────────────────────
@@ -672,12 +682,34 @@ impl<C: SourceContext> NewSource<C> {
             return;
         }
         if let Some(close) = self.close_handler.take() {
-            if close as usize == js_readable_stream_source::on_close::<C> as usize {
-                js_readable_stream_source::on_close::<C>(Some(self as *mut _ as *mut c_void));
+            if close as usize == Self::on_js_close as usize {
+                Self::on_js_close(Some(self as *mut _ as *mut c_void));
             } else {
                 close(self.close_ctx.map(|p| p.as_ptr()));
             }
         }
+    }
+
+    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
+    /// JS side registered an `onclose` callback. Factored out of
+    /// `js_readable_stream_source` so the fn-pointer identity check above
+    /// resolves without that mod being compiled.
+    fn on_js_close(ptr: Option<*mut c_void>) {
+        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
+        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
+        if let Some(cb) = this.close_jsvalue.try_swap() {
+            // SAFETY: global_this stored from a live `&JSGlobalObject`; outlives the close.
+            unsafe {
+                JSGlobalObject__queueMicrotaskJob(
+                    this.global_this,
+                    cb,
+                    JSValue::ZERO,
+                    JSValue::ZERO,
+                    JSValue::ZERO,
+                );
+            }
+        }
+        this.close_jsvalue.deinit();
     }
 
     pub fn increment_count(&mut self) {
@@ -730,14 +762,14 @@ impl<C: SourceContext> NewSource<C> {
         let flag = call_frame.argument(0);
         debug_assert!(flag.is_boolean());
         match this.context.set_raw_mode(flag == JSValue::TRUE) {
-            Some(bun_sys::Result::Ok(())) => Ok(JSValue::UNDEFINED),
-            Some(bun_sys::Result::Err(e)) => Ok(e.to_js(global)),
+            Some(Ok(())) => Ok(JSValue::UNDEFINED),
+            Some(Err(e)) => Ok(e.to_js(global)),
             // Zig: @compileError("setRawMode is not implemented on " ++ @typeName(Context))
             None => unreachable!("setRawMode is not implemented on {}", C::NAME),
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn set_flowing_from_js(
         this: &mut Self,
         _global: &JSGlobalObject,
@@ -796,7 +828,7 @@ pub mod js_readable_stream_source {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    // TODO(port): #[bun_jsc::host_fn(getter)]
     pub fn is_closed<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -808,23 +840,29 @@ pub mod js_readable_stream_source {
         this_jsvalue: JSValue,
         global_this: &JSGlobalObject,
         flags: JSValue,
-        result: streams::Result,
+        mut result: streams::Result,
     ) -> JsResult<JSValue> {
+        // PORT NOTE: Zig matches on the union and falls through to `result.toJS`
+        // for non-handled tags; here `result` is consumed by `to_js(&mut self)`.
         match &result {
             streams::Result::Err(err) => match err {
-                streams::ResultErr::Error(e) => {
-                    global_this.throw_value(e.to_js(global_this)?)
+                streams::StreamError::Error(e) => {
+                    Err(global_this.throw_value(e.to_js(global_this)))
                 }
-                streams::ResultErr::JSValue(js_err) => {
+                streams::StreamError::JSValue(js_err) => {
                     js_err.ensure_still_alive();
                     js_err.unprotect();
-                    global_this.throw_value(*js_err)
+                    Err(global_this.throw_value(*js_err))
                 }
+                // Zig source has no other variants here; `WeakJSValue`/`AbortReason` are
+                // post-Zig additions to the Rust enum — fall through like the default arm.
+                _ => result.to_js(global_this),
             },
-            streams::Result::Pending => {
+            streams::Result::Pending(_) => {
                 let out = result.to_js(global_this)?;
-                // TODO(port): codegen cached-property setter
-                NewSource::<C>::js::pending_promise_set_cached(this_jsvalue, global_this, out);
+                <NewSource<C> as NewSourceCodegen>::pending_promise_set_cached(
+                    this_jsvalue, global_this, out,
+                );
                 Ok(out)
             }
             streams::Result::TemporaryAndDone(_)
@@ -833,7 +871,7 @@ pub mod js_readable_stream_source {
                 let value = JSValue::TRUE;
                 // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
                 unsafe {
-                    jsc::C::JSObjectSetPropertyAtIndex(
+                    JSObjectSetPropertyAtIndex(
                         global_this,
                         flags.as_object_ref(),
                         0,
@@ -847,7 +885,7 @@ pub mod js_readable_stream_source {
         }
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn cancel<C: SourceContext>(
         this: &mut NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -858,7 +896,7 @@ pub mod js_readable_stream_source {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)]
+    // TODO(port): #[bun_jsc::host_fn(setter)]
     pub fn set_on_close_from_js<C: SourceContext>(
         this: &mut NewSource<C>,
         global_object: &JSGlobalObject,
@@ -868,23 +906,23 @@ pub mod js_readable_stream_source {
         this.global_this = global_object;
 
         if value.is_undefined() {
-            this.close_jsvalue = bun_jsc::Strong::empty();
+            this.close_jsvalue.deinit();
             return Ok(true);
         }
 
         if !value.is_callable() {
-            return global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onclose",
-                "function",
-            );
+            return Err(global_object.throw_invalid_argument_type(
+                b"ReadableStreamSource",
+                b"onclose",
+                b"function",
+            ));
         }
         let cb = value.with_async_context_if_needed(global_object);
         this.close_jsvalue.set(global_object, cb);
         Ok(true)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(setter)]
+    // TODO(port): #[bun_jsc::host_fn(setter)]
     pub fn set_on_drain_from_js<C: SourceContext>(
         this: &mut NewSource<C>,
         global_object: &JSGlobalObject,
@@ -893,8 +931,7 @@ pub mod js_readable_stream_source {
         this.global_this = global_object;
 
         if value.is_undefined() {
-            // TODO(port): codegen cached-property setter
-            NewSource::<C>::js::on_drain_callback_set_cached(
+            <NewSource<C> as NewSourceCodegen>::on_drain_callback_set_cached(
                 this.this_jsvalue,
                 global_object,
                 JSValue::UNDEFINED,
@@ -903,19 +940,20 @@ pub mod js_readable_stream_source {
         }
 
         if !value.is_callable() {
-            return global_object.throw_invalid_argument_type(
-                "ReadableStreamSource",
-                "onDrain",
-                "function",
-            );
+            return Err(global_object.throw_invalid_argument_type(
+                b"ReadableStreamSource",
+                b"onDrain",
+                b"function",
+            ));
         }
         let cb = value.with_async_context_if_needed(global_object);
-        // TODO(port): codegen cached-property setter
-        NewSource::<C>::js::on_drain_callback_set_cached(this.this_jsvalue, global_object, cb);
+        <NewSource<C> as NewSourceCodegen>::on_drain_callback_set_cached(
+            this.this_jsvalue, global_object, cb,
+        );
         Ok(true)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    // TODO(port): #[bun_jsc::host_fn(getter)]
     pub fn get_on_close_from_js<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -923,19 +961,20 @@ pub mod js_readable_stream_source {
         Ok(this.close_jsvalue.get().unwrap_or(JSValue::UNDEFINED))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
+    // TODO(port): #[bun_jsc::host_fn(getter)]
     pub fn get_on_drain_from_js<C: SourceContext>(
         this: &NewSource<C>,
         _global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // TODO(port): codegen cached-property getter
-        if let Some(val) = NewSource::<C>::js::on_drain_callback_get_cached(this.this_jsvalue) {
+        if let Some(val) =
+            <NewSource<C> as NewSourceCodegen>::on_drain_callback_get_cached(this.this_jsvalue)
+        {
             return Ok(val);
         }
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn update_ref<C: SourceContext>(
         this: &mut NewSource<C>,
         _global_object: &JSGlobalObject,
@@ -951,9 +990,10 @@ pub mod js_readable_stream_source {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
         if let Some(cb) = this.close_jsvalue.try_swap() {
-            this.global_this.queue_microtask(cb, &[]);
+            // SAFETY: global_this stored from a live `&JSGlobalObject`; outlives the close.
+            unsafe { (*this.global_this).queue_microtask(cb, &[]) };
         }
-        this.close_jsvalue = bun_jsc::Strong::empty();
+        this.close_jsvalue.deinit();
     }
 
     pub fn finalize<C: SourceContext>(this: *mut NewSource<C>) {
@@ -963,93 +1003,60 @@ pub mod js_readable_stream_source {
         let _ = this.decrement_count();
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn drain<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         this.this_jsvalue = call_frame.this();
-        let list = this.drain();
+        let mut list = this.drain();
         if list.len > 0 {
-            return jsc::ArrayBuffer::from_bytes(list.into_slice(), jsc::TypedArrayType::Uint8Array)
+            return jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array)
                 .to_js(global_this);
         }
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn text<C: SourceContext>(
-        this: &mut NewSource<C>,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.this_jsvalue = call_frame.this();
-        if let Some(r) = this.context.to_buffered_value(global_this, streams::BufferActionTag::Text) {
-            return r;
-        }
-        global_this.throw_todo("This is not implemented yet");
-        Ok(JSValue::ZERO)
+    // PORT NOTE: text/arrayBuffer/blob/bytes/json all share the same body modulo
+    // `BufferActionTag`. Collapsed into a macro to avoid 5× drift.
+    macro_rules! buffered_value_method {
+        ($name:ident, $tag:ident) => {
+            // TODO(port): #[bun_jsc::host_fn(method)]
+            pub fn $name<C: SourceContext>(
+                this: &mut NewSource<C>,
+                global_this: &JSGlobalObject,
+                call_frame: &CallFrame,
+            ) -> JsResult<JSValue> {
+                this.this_jsvalue = call_frame.this();
+                if let Some(r) = this
+                    .context
+                    .to_buffered_value(global_this, streams::BufferActionTag::$tag)
+                {
+                    return r;
+                }
+                Err(global_this.throw_todo(b"This is not implemented yet"))
+            }
+        };
     }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn array_buffer<C: SourceContext>(
-        this: &mut NewSource<C>,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.this_jsvalue = call_frame.this();
-        if let Some(r) = this.context.to_buffered_value(global_this, streams::BufferActionTag::ArrayBuffer) {
-            return r;
-        }
-        global_this.throw_todo("This is not implemented yet");
-        Ok(JSValue::ZERO)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn blob<C: SourceContext>(
-        this: &mut NewSource<C>,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.this_jsvalue = call_frame.this();
-        if let Some(r) = this.context.to_buffered_value(global_this, streams::BufferActionTag::Blob) {
-            return r;
-        }
-        global_this.throw_todo("This is not implemented yet");
-        Ok(JSValue::ZERO)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn bytes<C: SourceContext>(
-        this: &mut NewSource<C>,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.this_jsvalue = call_frame.this();
-        if let Some(r) = this.context.to_buffered_value(global_this, streams::BufferActionTag::Bytes) {
-            return r;
-        }
-        global_this.throw_todo("This is not implemented yet");
-        Ok(JSValue::ZERO)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
-    pub fn json<C: SourceContext>(
-        this: &mut NewSource<C>,
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.this_jsvalue = call_frame.this();
-        if let Some(r) = this.context.to_buffered_value(global_this, streams::BufferActionTag::Json) {
-            return r;
-        }
-        global_this.throw_todo("This is not implemented yet");
-        Ok(JSValue::ZERO)
-    }
+    buffered_value_method!(text, Text);
+    buffered_value_method!(array_buffer, ArrayBuffer);
+    buffered_value_method!(blob, Blob);
+    buffered_value_method!(bytes, Bytes);
+    buffered_value_method!(json, Json);
 }
 
-} // mod _new_source_gated
+// JSC C-API extern (process_result writes the `done` flag at index 0).
+// TODO(port): move to jsc_sys / re-export from `bun_jsc::c_api`.
+unsafe extern "C" {
+    fn JSObjectSetPropertyAtIndex(
+        ctx: *const JSGlobalObject,
+        object: jsc::c_api::JSObjectRef,
+        property_index: core::ffi::c_uint,
+        value: jsc::c_api::JSObjectRef,
+        exception: *mut jsc::c_api::JSValueRef,
+    );
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -1,16 +1,28 @@
-use core::ffi::c_int;
+#![allow(dead_code)]
 
 use bun_collections::ByteList;
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_sys::{self as sys, Fd};
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
-// TODO(port): `bun.jsc.Subprocess` lives in the runtime crate (sibling module),
-// not in `bun_jsc`. Adjust path in Phase B.
-use crate::api::bun::subprocess::StdioKind;
-// TODO(port): verify crate path for `bun.spawn.SpawnOptions.Stdio`.
-use crate::api::bun::spawn::SpawnOptions;
+// `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
+// keep `process` leaf; `subprocess` re-exports it).
+use crate::api::bun_process::{self as process, StdioKind, Dup2 as ProcessDup2};
+
+// `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
+// can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
+// alias the active one as `SpawnOptionsStdio` so the body stays platform-neutral.
+#[cfg(not(windows))]
+pub type SpawnOptionsStdio = process::PosixStdio;
+#[cfg(windows)]
+pub type SpawnOptionsStdio = process::WindowsStdio;
+
+// `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
+// re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as the
+// Zig `bun.FD.Stdio.std_in`.
+use sys::Stdio as FdStdio;
 
 bun_output::declare_scope!(SYS, visible);
 // `const log = bun.sys.syslog;`
@@ -57,7 +69,7 @@ pub enum ResultT<T> {
     Err(ToSpawnOptsError),
 }
 
-pub type Result = ResultT<SpawnOptions::Stdio>;
+pub type Result = ResultT<SpawnOptionsStdio>;
 
 pub enum ToSpawnOptsError {
     StdinUsedAsOut,
@@ -119,7 +131,8 @@ impl Stdio {
 
         #[cfg(target_os = "linux")]
         {
-            if !sys::can_use_memfd() {
+            use crate::api::bun_process::spawn_sys;
+            if !spawn_sys::can_use_memfd() {
                 return false;
             }
             let label: &'static [u8] = match index {
@@ -129,7 +142,7 @@ impl Stdio {
                 _ => b"spawn_stdio_memory_file",
             };
 
-            let fd = match sys::memfd_create(label, sys::MemfdFlags::CrossProcess).unwrap() {
+            let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
                 Ok(fd) => fd,
                 Err(_) => return false,
             };
@@ -142,11 +155,11 @@ impl Stdio {
             }
 
             // Dump all the bytes in there
-            let mut written: isize = 0;
+            let mut written: i64 = 0;
             while !remain.is_empty() {
                 match sys::pwrite(fd, remain, written) {
-                    sys::Result::Err(err) => {
-                        if err.get_errno() == sys::E::AGAIN {
+                    Err(err) => {
+                        if err.get_errno() == sys::E::EAGAIN {
                             continue;
                         }
 
@@ -157,13 +170,13 @@ impl Stdio {
                         fd.close();
                         return false;
                     }
-                    sys::Result::Ok(result) => {
+                    Ok(result) => {
                         if result == 0 {
                             Output::debug_warn(format_args!("Failed to write to memfd: EOF"));
                             fd.close();
                             return false;
                         }
-                        written += isize::try_from(result).unwrap();
+                        written += i64::try_from(result).unwrap();
                         remain = &remain[result..];
                     }
                 }
@@ -183,25 +196,26 @@ impl Stdio {
         }
     }
 
+    #[cfg(not(windows))]
     fn to_posix(&mut self, i: i32) -> Result {
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = Fd::Stdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).unwrap().fd();
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let jsc::node::PathOrFd::Fd(store_fd) = store.data.file.pathlike {
                             if store_fd == fd {
-                                break 'brk SpawnOptions::Stdio::Inherit;
+                                break 'brk SpawnOptionsStdio::Inherit;
                             }
 
                             if let Some(tag) = store_fd.stdio_tag() {
                                 match tag {
-                                    Fd::Stdio::StdIn => {
+                                    FdStdio::StdIn => {
                                         if i == 1 || i == 2 {
                                             return ResultT::Err(ToSpawnOptsError::StdinUsedAsOut);
                                         }
                                     }
-                                    Fd::Stdio::StdOut | Fd::Stdio::StdErr => {
+                                    FdStdio::StdOut | FdStdio::StdErr => {
                                         if i == 0 {
                                             return ResultT::Err(ToSpawnOptsError::OutUsedAsStdin);
                                         }
@@ -209,10 +223,12 @@ impl Stdio {
                                 }
                             }
 
-                            break 'brk SpawnOptions::Stdio::Pipe(store_fd);
+                            break 'brk SpawnOptionsStdio::Pipe(store_fd);
                         }
 
-                        break 'brk SpawnOptions::Stdio::Path(store.data.file.pathlike.path().slice());
+                        break 'brk SpawnOptionsStdio::Path(
+                            store.data.file.pathlike.path().slice().to_vec().into_boxed_slice(),
+                        );
                     }
                 }
 
@@ -220,41 +236,44 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                SpawnOptions::Stdio::Buffer
+                SpawnOptionsStdio::Buffer
             }
-            Self::Dup2(d) => SpawnOptions::Stdio::Dup2 { out: d.out, to: d.to },
+            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 { out: d.out, to: d.to }),
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                SpawnOptions::Stdio::Buffer
+                SpawnOptionsStdio::Buffer
             }
-            Self::Ipc => SpawnOptions::Stdio::Ipc,
-            Self::Fd(fd) => SpawnOptions::Stdio::Pipe(*fd),
-            Self::Memfd(fd) => SpawnOptions::Stdio::Pipe(*fd),
-            Self::Path(pathlike) => SpawnOptions::Stdio::Path(pathlike.slice()),
-            Self::Inherit => SpawnOptions::Stdio::Inherit,
-            Self::Ignore => SpawnOptions::Stdio::Ignore,
+            Self::Ipc => SpawnOptionsStdio::Ipc,
+            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            Self::Path(pathlike) => {
+                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
+            }
+            Self::Inherit => SpawnOptionsStdio::Inherit,
+            Self::Ignore => SpawnOptionsStdio::Ignore,
         };
         ResultT::Result(result)
     }
 
+    #[cfg(windows)]
     fn to_windows(&mut self, i: i32) -> Result {
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = Fd::Stdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).unwrap().fd();
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let jsc::node::PathOrFd::Fd(store_fd) = store.data.file.pathlike {
                             if store_fd == fd {
-                                break 'brk SpawnOptions::Stdio::Inherit;
+                                break 'brk SpawnOptionsStdio::Inherit;
                             }
 
                             if let Some(tag) = store_fd.stdio_tag() {
                                 match tag {
-                                    Fd::Stdio::StdIn => {
+                                    FdStdio::StdIn => {
                                         if i == 1 || i == 2 {
                                             return ResultT::Err(ToSpawnOptsError::StdinUsedAsOut);
                                         }
                                     }
-                                    Fd::Stdio::StdOut | Fd::Stdio::StdErr => {
+                                    FdStdio::StdOut | FdStdio::StdErr => {
                                         if i == 0 {
                                             return ResultT::Err(ToSpawnOptsError::OutUsedAsStdin);
                                         }
@@ -262,10 +281,12 @@ impl Stdio {
                                 }
                             }
 
-                            break 'brk SpawnOptions::Stdio::Pipe(store_fd);
+                            break 'brk SpawnOptionsStdio::Pipe(store_fd);
                         }
 
-                        break 'brk SpawnOptions::Stdio::Path(store.data.file.pathlike.path().slice());
+                        break 'brk SpawnOptionsStdio::Path(
+                            store.data.file.pathlike.path().slice().to_vec().into_boxed_slice(),
+                        );
                     }
                 }
 
@@ -273,17 +294,19 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                SpawnOptions::Stdio::Buffer(create_zeroed_pipe())
+                SpawnOptionsStdio::Buffer(create_zeroed_pipe())
             }
-            Self::Ipc => SpawnOptions::Stdio::Ipc(create_zeroed_pipe()),
+            Self::Ipc => SpawnOptionsStdio::Ipc(create_zeroed_pipe()),
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                SpawnOptions::Stdio::Buffer(create_zeroed_pipe())
+                SpawnOptionsStdio::Buffer(create_zeroed_pipe())
             }
-            Self::Fd(fd) => SpawnOptions::Stdio::Pipe(*fd),
-            Self::Dup2(d) => SpawnOptions::Stdio::Dup2 { out: d.out, to: d.to },
-            Self::Path(pathlike) => SpawnOptions::Stdio::Path(pathlike.slice()),
-            Self::Inherit => SpawnOptions::Stdio::Inherit,
-            Self::Ignore => SpawnOptions::Stdio::Ignore,
+            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
+            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 { out: d.out, to: d.to }),
+            Self::Path(pathlike) => {
+                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
+            }
+            Self::Inherit => SpawnOptionsStdio::Inherit,
+            Self::Ignore => SpawnOptionsStdio::Ignore,
 
             Self::Memfd(_) => panic!("This should never happen"),
         };
@@ -454,7 +477,7 @@ impl Stdio {
 
             if let Some(tag) = fd.stdio_tag() {
                 match tag {
-                    Fd::Stdio::StdIn => {
+                    FdStdio::StdIn => {
                         if i == 1 || i == 2 {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "stdin cannot be used for stdout or stderr"
@@ -464,16 +487,16 @@ impl Stdio {
                         *out_stdio = Stdio::Inherit;
                         return Ok(());
                     }
-                    Fd::Stdio::StdOut | Fd::Stdio::StdErr => {
+                    FdStdio::StdOut | FdStdio::StdErr => {
                         if i == 0 {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "stdout and stderr cannot be used for stdin"
                             )));
                         }
-                        if i == 1 && tag == Fd::Stdio::StdOut {
+                        if i == 1 && tag == FdStdio::StdOut {
                             *out_stdio = Stdio::Inherit;
                             return Ok(());
-                        } else if i == 2 && tag == Fd::Stdio::StdErr {
+                        } else if i == 2 && tag == FdStdio::StdErr {
                             *out_stdio = Stdio::Inherit;
                             return Ok(());
                         }
@@ -551,7 +574,7 @@ impl Stdio {
         blob: jsc::webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
-        let fd = Fd::Stdio::from_int(i).unwrap().fd();
+        let fd = FdStdio::from_int(i).unwrap().fd();
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
@@ -560,16 +583,16 @@ impl Stdio {
                         *self = Stdio::Inherit;
                     } else {
                         // TODO: is this supposed to be `store.data.file.pathlike.fd`?
-                        if let Some(tag) = Fd::Stdio::from_int(i) {
+                        if let Some(tag) = FdStdio::from_int(i) {
                             match tag {
-                                Fd::Stdio::StdIn => {
+                                FdStdio::StdIn => {
                                     if i == 1 || i == 2 {
                                         return Err(global.throw_invalid_arguments(format_args!(
                                             "stdin cannot be used for stdout or stderr"
                                         )));
                                     }
                                 }
-                                Fd::Stdio::StdOut | Fd::Stdio::StdErr => {
+                                FdStdio::StdOut | FdStdio::StdErr => {
                                     if i == 0 {
                                         return Err(global.throw_invalid_arguments(format_args!(
                                             "stdout and stderr cannot be used for stdin"
@@ -630,6 +653,7 @@ impl Drop for Stdio {
 /// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
 /// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
 /// whether `uv_close` is needed.
+#[cfg(windows)]
 fn create_zeroed_pipe() -> Box<uv::Pipe> {
     // `bun.new` → Box::new. LIFETIMES.tsv rows 1335-1336: WindowsSpawnOptions
     // .Stdio.{buffer,ipc} are OWNED → Box<uv::Pipe>; the pointer is stored in a

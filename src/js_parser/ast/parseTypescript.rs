@@ -194,9 +194,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
 
         // Generate the namespace object
-        let ts_namespace =
+        // PORT NOTE: returns &'a mut TSNamespaceScope (arena-owned). Take a raw pointer so we can
+        // re-borrow across the parser self-borrows below (Zig held a pointer into the arena).
+        let ts_namespace: *mut js_ast::TSNamespaceScope =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
-        let exported_members = ts_namespace.exported_members;
+        // SAFETY: arena-owned for 'a; aliased only via this pointer + Scope.ts_namespace below.
+        let exported_members: *mut TSNamespaceMemberMap = unsafe { (*ts_namespace).exported_members };
         let ns_member_data = TSNamespaceMemberData::Namespace(exported_members);
 
         // Declare the namespace and create the scope
@@ -205,7 +208,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             ref_: None,
         };
         let scope_index = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
-        p.current_scope.ts_namespace = ts_namespace;
+        // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a; no aliasing &mut outstanding.
+        unsafe {
+            (*p.current_scope).ts_namespace = Some(NonNull::new_unchecked(ts_namespace));
+        }
 
         let old_has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
@@ -233,11 +239,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            // TODO(port): Zig `ListManaged.fromOwnedSlice` adopts the slice in-place; bumpalo has
-            // no equivalent so this re-wraps. Phase B should make `parse_stmts_up_to` return a
-            // BumpVec directly to avoid the round-trip.
-            let parsed = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
-            stmts = BumpVec::from_iter_in(parsed.iter().cloned(), p.allocator);
+            // TODO(port): Zig `ListManaged.fromOwnedSlice` adopts the slice in-place;
+            // `parse_stmts_up_to` already returns a BumpVec<'a, Stmt> so just take it.
+            stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
             p.lexer.next()?;
         }
         let has_non_local_export_declare_inside_namespace =
@@ -249,13 +253,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // associated namespace object.
         for stmt in stmts.iter() {
             match &stmt.data {
-                Stmt::Data::SFunction(func) => {
-                    if func.func.flags.contains(js_ast::FnFlags::IS_EXPORT) {
+                StmtData::SFunction(func) => {
+                    if func.func.flags.contains(flags::Function::IsExport) {
                         let locref = func.func.name.unwrap();
-                        let fn_name = p.symbols
-                            [usize::try_from(locref.ref_.unwrap().inner_index).unwrap()]
-                        .original_name;
-                        exported_members.insert(
+                        let ref_ = locref.ref_.unwrap();
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let fn_name: &[u8] =
+                            unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                        // SAFETY: exported_members points into arena-owned TSNamespaceScope; only
+                        // borrowed via this pointer in this function.
+                        unsafe { &mut *exported_members }.put(
                             fn_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
@@ -263,16 +270,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             },
                         )?;
                         p.ref_to_ts_namespace_member
-                            .insert(locref.ref_.unwrap(), TSNamespaceMemberData::Property)?;
+                            .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
-                Stmt::Data::SClass(class) => {
+                StmtData::SClass(class) => {
                     if class.is_export {
                         let locref = class.class.class_name.unwrap();
-                        let class_name = p.symbols
-                            [usize::try_from(locref.ref_.unwrap().inner_index).unwrap()]
-                        .original_name;
-                        exported_members.insert(
+                        let ref_ = locref.ref_.unwrap();
+                        // SAFETY: original_name is an arena-owned slice valid for 'a.
+                        let class_name: &[u8] =
+                            unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                        // SAFETY: see above.
+                        unsafe { &mut *exported_members }.put(
                             class_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
@@ -280,54 +289,52 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             },
                         )?;
                         p.ref_to_ts_namespace_member
-                            .insert(locref.ref_.unwrap(), TSNamespaceMemberData::Property)?;
+                            .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
                 // Zig: `inline .s_namespace, .s_enum => |ns|` — written out per-variant.
-                Stmt::Data::SNamespace(ns) => {
+                StmtData::SNamespace(ns) => {
                     if ns.is_export {
-                        if let Some(member_data) =
-                            p.ref_to_ts_namespace_member.get(&ns.name.ref_.unwrap())
-                        {
-                            let member_data = *member_data;
-                            exported_members.insert(
-                                p.symbols
-                                    [usize::try_from(ns.name.ref_.unwrap().inner_index).unwrap()]
-                                .original_name,
-                                TSNamespaceMember {
-                                    data: member_data,
-                                    loc: ns.name.loc,
-                                },
+                        let ref_ = ns.name.ref_.unwrap();
+                        if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
+                            let member_data = clone_ts_member_data(member_data);
+                            // SAFETY: original_name is arena-owned, valid for 'a.
+                            let ns_name: &[u8] =
+                                unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                            // SAFETY: see above.
+                            unsafe { &mut *exported_members }.put(
+                                ns_name,
+                                TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
                             )?;
-                            p.ref_to_ts_namespace_member
-                                .insert(ns.name.ref_.unwrap(), member_data)?;
+                            p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
                 }
-                Stmt::Data::SEnum(ns) => {
+                StmtData::SEnum(ns) => {
                     if ns.is_export {
-                        if let Some(member_data) =
-                            p.ref_to_ts_namespace_member.get(&ns.name.ref_.unwrap())
-                        {
-                            let member_data = *member_data;
-                            exported_members.insert(
-                                p.symbols
-                                    [usize::try_from(ns.name.ref_.unwrap().inner_index).unwrap()]
-                                .original_name,
-                                TSNamespaceMember {
-                                    data: member_data,
-                                    loc: ns.name.loc,
-                                },
+                        let ref_ = ns.name.ref_.unwrap();
+                        if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
+                            let member_data = clone_ts_member_data(member_data);
+                            // SAFETY: original_name is arena-owned, valid for 'a.
+                            let enum_name: &[u8] =
+                                unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
+                            // SAFETY: see above.
+                            unsafe { &mut *exported_members }.put(
+                                enum_name,
+                                TSNamespaceMember { data: clone_ts_member_data(&member_data), loc: ns.name.loc },
                             )?;
-                            p.ref_to_ts_namespace_member
-                                .insert(ns.name.ref_.unwrap(), member_data)?;
+                            p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
                 }
-                Stmt::Data::SLocal(local) => {
+                StmtData::SLocal(local) => {
                     if local.is_export {
                         for decl in local.decls.slice() {
-                            p.define_exported_namespace_binding(exported_members, decl.binding)?;
+                            // SAFETY: see above.
+                            p.define_exported_namespace_binding(
+                                unsafe { &mut *exported_members },
+                                decl.binding,
+                            )?;
                         }
                     }
                 }
@@ -342,7 +349,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut import_equal_count: usize = 0;
         for stmt in stmts.iter() {
             match &stmt.data {
-                Stmt::Data::SLocal(local) => {
+                StmtData::SLocal(local) => {
                     if local.was_ts_import_equals && !local.is_export {
                         import_equal_count += 1;
                     }
@@ -367,7 +374,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         {
             p.pop_and_discard_scope(scope_index);
             if opts.is_module_scope {
-                p.local_type_names.insert(name_text, true);
+                p.local_type_names.put(name_text, true)?;
             }
             return Ok(p.s(S::TypeScript {}, loc));
         }
@@ -390,43 +397,47 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //     console.log(foo_1.foo);
             //   })(foo || (foo = {}));
             //
-            if p.current_scope.members.contains_key(name_text) {
+            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
+            if unsafe { &*p.current_scope }.members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
+                // PERF(port): strings::cat heap-allocates; Zig allocated into p.allocator.
+                // Phase B: route through bump arena.
+                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
+                let prefixed: &'a [u8] = p.allocator.alloc_slice_copy(&prefixed);
                 arg_ref = p
-                    .new_symbol(
-                        SymbolKind::Hoisted,
-                        strings::cat(p.allocator, b"_", name_text).expect("unreachable"),
-                    )
+                    .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
-                p.current_scope.generated.push(arg_ref);
+                // SAFETY: see above.
+                unsafe { &mut *p.current_scope }.generated.append(arg_ref)?;
             } else {
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, name_text)
                     .expect("unreachable");
             }
-            ts_namespace.arg_ref = arg_ref;
+            // SAFETY: ts_namespace is arena-owned; only borrowed via this raw pointer here.
+            unsafe { (*ts_namespace).arg_ref = arg_ref };
         }
         p.pop_scope();
 
         if !opts.is_typescript_declare {
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsNamespace, name_loc, name_text)?);
             p.ref_to_ts_namespace_member
-                .insert(name.ref_.unwrap(), ns_member_data)?;
+                .insert(name.ref_.unwrap(), ns_member_data);
         }
 
+        // PORT NOTE: S::Namespace.stmts is `*mut [Stmt]` (arena slice). BumpVec → bump slice.
+        let stmts_slice: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         Ok(p.s(
             S::Namespace {
                 name,
                 arg: arg_ref,
-                stmts: stmts.into_bump_slice(),
+                stmts: stmts_slice as *mut [Stmt],
                 is_export: opts.is_export,
             },
             loc,
         ))
-        }
-        todo!("b2-ast-E: parse_type_script_namespace_stmt body")
     }
 
     pub fn parse_type_script_import_equals_stmt(
@@ -725,5 +736,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //   source:     src/js_parser/ast/parseTypescript.zig (549 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      mixin→impl-P converted; bodies gated (Stmt::Data paths, TSNamespaceMemberData, E struct shapes vs round-A types)
+//   notes:      mixin→impl-P converted; parse_type_script_namespace_stmt body un-gated
+//               (raw *mut TSNamespaceScope/MemberMap derefs match Zig pointer semantics);
+//               decorators/import_equals/enum bodies still gated on E struct shapes.
+//   blocked_on: P::get_or_create_exported_namespace_members + P::define_exported_namespace_binding
+//               are #[cfg(any())]-gated in P.rs — un-gate there to clear the last error here.
 // ──────────────────────────────────────────────────────────────────────────

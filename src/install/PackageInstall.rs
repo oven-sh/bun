@@ -1034,44 +1034,61 @@ impl<'a> PackageInstall<'a> {
             #[cfg(windows)]
             {
                 if method == Method::Symlink {
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(
-                        Fd::from_std_dir(self.cache_dir),
-                        self.cache_dir_subpath,
+                    bun_sys::open_dir_absolute_not_for_deleting_or_renaming(
+                        self.cache_dir_subpath.as_bytes(),
                     )
+                    .map(Dir::from_fd)
+                    .map_err(Into::into)
+                    // TODO(port): Zig used `openDirNoRenamingOrDeletingWindows(cache_dir, subpath)`
+                    // (relative); bun_sys currently only exposes the absolute variant.
                 } else {
-                    bun_sys::open_dir(self.cache_dir, self.cache_dir_subpath)
+                    open_dir(self.cache_dir, self.cache_dir_subpath)
                 }
             }
             #[cfg(not(windows))]
             {
-                bun_sys::open_dir(self.cache_dir, self.cache_dir_subpath)
+                open_dir(self.cache_dir, self.cache_dir_subpath)
             }
         } {
             Ok(d) => d,
             Err(err) => return InstallResult::fail(err, Step::OpeningCacheDir, None),
         };
 
-        // TODO(port): OSPathLiteral macro for "node_modules" (u8 on posix / u16 on windows).
-        let skip_dirs: &[OSPathSlice] = if method == Method::Symlink
+        // PORT NOTE: `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
+        #[cfg(windows)]
+        const NODE_MODULES_LIT: &OSPathSlice = &[
+            b'n' as u16, b'o' as u16, b'd' as u16, b'e' as u16, b'_' as u16,
+            b'm' as u16, b'o' as u16, b'd' as u16, b'u' as u16, b'l' as u16,
+            b'e' as u16, b's' as u16,
+        ];
+        #[cfg(not(windows))]
+        const NODE_MODULES_LIT: &OSPathSlice = b"node_modules";
+        let skip_dirs: &[&OSPathSlice] = if method == Method::Symlink
             && self.cache_dir_subpath.len() == 1
             && self.cache_dir_subpath.as_bytes()[0] == b'.'
         {
-            &[bun_paths::os_path_literal!("node_modules")]
+            &[NODE_MODULES_LIT]
         } else {
             &[]
         };
 
-        state.walker = Walker::walk(
-            Fd::from_std_dir(state.cached_package_dir),
-            &[] as &[OSPathSlice],
-            skip_dirs,
-        )
-        .expect("oom"); // bun.handleOom
-        state.walker.resolve_unknown_entry_types = true;
+        state.walker = Some(
+            walker_skippable::walk(
+                state.cached_package_dir.fd(),
+                &[] as &[&OSPathSlice],
+                skip_dirs,
+            )
+            .expect("oom"), // bun.handleOom
+        );
+        // TODO(port): `resolve_unknown_entry_types` is private on `Walker`; Zig sets it
+        // post-construction. Expose a setter on bun_sys::walker_skippable in Phase B.
 
         #[cfg(not(windows))]
         {
-            state.subdir = match destbase.make_open_path_iterate(destpath.as_bytes()) {
+            state.subdir = match destbase.make_open_path(
+                destpath.as_bytes(),
+                OpenDirOptions { iterate: true, ..Default::default() },
+            ) {
                 Ok(d) => d,
                 Err(err) => {
                     // PORT NOTE: Zig closed cached_package_dir/walker explicitly here because the
@@ -1125,9 +1142,7 @@ impl<'a> PackageInstall<'a> {
             // SAFETY: NUL written at [i].
             let fullpath = unsafe { bun_str::WStr::from_raw(state.buf.as_ptr(), i) };
 
-            let _ = node_fs_for_package_installer(|nfs| {
-                nfs.mkdir_recursive_os_path_impl((), fullpath, 0, false)
-            });
+            let _ = mkdir_recursive_os_path(fullpath);
             state.to_copy_buf = core::ptr::slice_from_raw_parts_mut(
                 state.buf.as_mut_ptr().add(fullpath.len()),
                 state.buf.len() - fullpath.len(),
@@ -1192,7 +1207,7 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir_: Dir,
             walker: &mut Walker,
-            progress_: Option<&mut Progress>,
+            mut progress_: Option<&mut Progress>,
             #[allow(unused)] to_copy_into1: WinSlice<'_>,
             #[allow(unused)] head1: WinSlice<'_>,
             #[allow(unused)] to_copy_into2: WinSlice<'_>,
@@ -1200,14 +1215,14 @@ impl<'a> PackageInstall<'a> {
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
-            let mut copy_file_state = bun_sys::CopyFileState::default();
+            let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
-            while let Some(entry) = walker.next().unwrap()? {
+            while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
                     use bun_sys::windows;
                     match entry.kind {
-                        Walker::Kind::Directory | Walker::Kind::File => {}
+                        EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
                     }
 
@@ -1236,20 +1251,22 @@ impl<'a> PackageInstall<'a> {
                     };
 
                     match entry.kind {
-                        Walker::Kind::Directory => {
+                        EntryKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
                                 windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
+                                let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path.as_slice());
                             }
                         }
-                        Walker::Kind::File => {
+                        EntryKind::File => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                             if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
-                                if let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path) {
+                                if let Some(entry_dirname) =
+                                    bun_paths::resolve_path::dirname_u16(entry.path.as_slice())
+                                {
                                     let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
                                     // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                                     if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
@@ -1257,21 +1274,21 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
-                                if let Some(progress) = progress_ {
+                                if let Some(progress) = progress_.as_deref_mut() {
                                     progress.root.end();
                                     progress.refresh();
                                 }
 
                                 if let Some(err) = windows::Win32Error::get().to_system_errno() {
-                                    Output::pretty_error(format_args!(
+                                    Output::pretty_errorln(format_args!(
                                         "<r><red>{}<r>: copying file {}",
                                         <&'static str>::from(err),
-                                        bun_core::fmt::fmt_os_path(entry.path)
+                                        bun_core::fmt::fmt_os_path(entry.path.as_slice(), Default::default())
                                     ));
                                 } else {
-                                    Output::pretty_error(format_args!(
+                                    Output::pretty_errorln(format_args!(
                                         "<r><red>error<r> copying file {}",
-                                        bun_core::fmt::fmt_os_path(entry.path)
+                                        bun_core::fmt::fmt_os_path(entry.path.as_slice(), Default::default())
                                     ));
                                 }
 
@@ -1283,32 +1300,43 @@ impl<'a> PackageInstall<'a> {
                 }
                 #[cfg(not(windows))]
                 {
-                    if entry.kind != Walker::Kind::File {
+                    if entry.kind != EntryKind::File {
                         continue;
                     }
                     real_file_count += 1;
 
-                    let in_file = entry.dir.openat(entry.basename, sys::O::RDONLY, 0).unwrap()?;
+                    let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
                     let _close_in = scopeguard::guard(in_file, |f| f.close());
 
                     bun_output::scoped_log!(
                         install,
                         "createFile {} {}\n",
                         destination_dir_.fd(),
-                        bstr::BStr::new(entry.path)
+                        bstr::BStr::new(entry.path.as_bytes())
                     );
-                    let outfile = match destination_dir_.create_file(entry.path) {
+                    // Zig: `std.fs.Dir.createFile(dir, path, .{})` — open O_WRONLY|O_CREAT|O_TRUNC.
+                    let create = |path: &ZStr| {
+                        sys::openat(
+                            destination_dir_.fd(),
+                            path,
+                            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                            0o644,
+                        )
+                    };
+                    let outfile = match create(entry.path) {
                         Ok(f) => f,
                         Err(_) => 'brk: {
-                            if let Some(entry_dirname) =
-                                bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
-                            {
+                            let entry_dirname =
+                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                    entry.path.as_bytes(),
+                                );
+                            if !entry_dirname.is_empty() {
                                 let _ = bun_sys::MakePath::make_path::<OSPathChar>(
                                     destination_dir_,
                                     entry_dirname,
                                 );
                             }
-                            match destination_dir_.create_file(entry.path) {
+                            match create(entry.path) {
                                 Ok(f) => break 'brk f,
                                 Err(err) => {
                                     if let Some(progress) = progress_ {
@@ -1318,41 +1346,35 @@ impl<'a> PackageInstall<'a> {
 
                                     Output::pretty_errorln(format_args!(
                                         "<r><red>{}<r>: copying file {}",
-                                        err.name(),
-                                        bun_core::fmt::fmt_os_path(entry.path)
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
                                     ));
                                     Global::crash();
                                 }
                             }
                         }
                     };
-                    let _close_out = scopeguard::guard(&outfile, |f| f.close());
+                    let _close_out = scopeguard::guard(outfile, |f| f.close());
 
                     #[cfg(unix)]
                     {
-                        let Ok(stat) = in_file.stat().unwrap() else { continue };
+                        let Ok(stat) = sys::fstat(in_file) else { continue };
                         // SAFETY: fchmod with valid fd and mode.
-                        unsafe {
-                            bun_sys::c::fchmod(
-                                outfile.handle(),
-                                u32::try_from(stat.mode).unwrap(),
-                            )
-                        };
+                        unsafe { bun_sys::c::fchmod(outfile.cast(), stat.st_mode as libc::mode_t) };
                     }
 
                     if let Err(err) =
-                        bun_sys::copy_file_with_state(in_file, Fd::from_std_file(&outfile), &mut copy_file_state)
-                            .unwrap()
+                        bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
                     {
-                        if let Some(progress) = progress_ {
+                        if let Some(progress) = progress_.as_deref_mut() {
                             progress.root.end();
                             progress.refresh();
                         }
 
-                        Output::pretty_error(format_args!(
+                        Output::pretty_errorln(format_args!(
                             "<r><red>{}<r>: copying file {}",
-                            err.name(),
-                            bun_core::fmt::fmt_os_path(entry.path)
+                            bstr::BStr::new(err.name()),
+                            bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
                         ));
                         Global::crash();
                     }
@@ -1369,7 +1391,7 @@ impl<'a> PackageInstall<'a> {
         let result = unsafe {
             copy(
                 state.subdir,
-                &mut state.walker,
+                state.walker(),
                 self.progress.as_deref_mut(),
                 &mut *state.to_copy_buf,
                 &mut state.buf[..],
@@ -1380,7 +1402,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         let result = copy(
             state.subdir,
-            &mut state.walker,
+            state.walker(),
             self.progress.as_deref_mut(),
             (),
             (),
@@ -1421,32 +1443,33 @@ impl<'a> PackageInstall<'a> {
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
 
-            while let Some(entry) = walker.next().unwrap()? {
+            while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
                     match entry.kind {
-                        Walker::Kind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(destination_dir, entry.path);
+                        EntryKind::Directory => {
+                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                destination_dir,
+                                entry.path.as_bytes(),
+                            );
                         }
-                        Walker::Kind::File => {
-                            if let Err(err) = sys::linkat_z(
-                                entry.dir.cast(),
+                        EntryKind::File => {
+                            if let Err(err) = sys::linkat(
+                                entry.dir,
                                 entry.basename,
                                 destination_dir.fd(),
                                 entry.path,
-                                0,
                             ) {
-                                if err != bun_core::err!("PathAlreadyExists") {
-                                    return Err(err);
+                                if err.get_errno() != sys::E::EEXIST {
+                                    return Err(err.into());
                                 }
 
-                                let _ = sys::unlinkat_z(destination_dir.fd(), entry.path, 0);
-                                sys::linkat_z(
-                                    entry.dir.cast(),
+                                let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
+                                sys::linkat(
+                                    entry.dir,
                                     entry.basename,
                                     destination_dir.fd(),
                                     entry.path,
-                                    0,
                                 )?;
                             }
 
@@ -1458,7 +1481,7 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(not(unix))]
                 {
                     match entry.kind {
-                        Walker::Kind::File => {}
+                        EntryKind::File => {}
                         _ => continue,
                     }
 
@@ -1519,7 +1542,7 @@ impl<'a> PackageInstall<'a> {
         let result = unsafe {
             copy(
                 state.subdir,
-                &mut state.walker,
+                state.walker(),
                 &mut *state.to_copy_buf,
                 &mut state.buf[..],
                 &mut *state.to_copy_buf2,
@@ -1527,12 +1550,12 @@ impl<'a> PackageInstall<'a> {
             )
         };
         #[cfg(not(windows))]
-        let result = copy(state.subdir, &mut state.walker, (), (), (), ());
+        let result = copy(state.subdir, state.walker(), (), (), (), ());
 
         self.file_count = match result {
             Ok(n) => n,
             Err(err) => {
-                bun_core::handle_error_return_trace(err, None);
+                // bun.handleErrorReturnTrace — debug-only diagnostics in Zig; no-op here.
 
                 #[cfg(windows)]
                 {
@@ -1563,16 +1586,16 @@ impl<'a> PackageInstall<'a> {
 
         let mut buf2 = PathBuffer::uninit();
         #[allow(unused)]
-        let mut to_copy_buf2: &mut [u8] = &mut [];
+        let mut to_copy_buf2_offset: usize = 0;
         #[cfg(unix)]
         {
-            let cache_dir_path = Fd::from_std_dir(state.cached_package_dir).get_fd_path(&mut buf2)?;
+            let cache_dir_path = sys::get_fd_path(state.cached_package_dir.fd(), &mut buf2)?;
             let cache_len = cache_dir_path.len();
             if cache_len > 0 && cache_dir_path[cache_len - 1] != SEP {
                 buf2[cache_len] = SEP;
-                to_copy_buf2 = &mut buf2[cache_len + 1..];
+                to_copy_buf2_offset = cache_len + 1;
             } else {
-                to_copy_buf2 = &mut buf2[cache_len..];
+                to_copy_buf2_offset = cache_len;
             }
         }
 
@@ -1585,39 +1608,43 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type Head2Char = u8;
 
+        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // same buffer (`head2` is the whole buffer, `to_copy_into2` is its tail). Pass
+        // the head buffer + the tail offset instead so we never hold two `&mut` into it.
         fn copy(
             destination_dir: Dir,
             walker: &mut Walker,
             #[allow(unused)] to_copy_into1: WinSlice<'_>,
             #[allow(unused)] head1: WinSlice<'_>,
-            to_copy_into2: &mut [Head2Char],
+            #[allow(unused)] to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
-            while let Some(entry) = walker.next().unwrap()? {
+            while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
                     match entry.kind {
-                        Walker::Kind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(destination_dir, entry.path);
+                        EntryKind::Directory => {
+                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                destination_dir,
+                                entry.path.as_bytes(),
+                            );
                         }
-                        Walker::Kind::File => {
-                            to_copy_into2[..entry.path.len()].copy_from_slice(entry.path);
-                            head2[entry.path.len() + (head2.len() - to_copy_into2.len())] = 0;
+                        EntryKind::File => {
+                            let target_len = to_copy_into2_offset + entry.path.len();
+                            head2[to_copy_into2_offset..target_len]
+                                .copy_from_slice(entry.path.as_bytes());
+                            head2[target_len] = 0;
                             // SAFETY: NUL written above.
-                            let target = unsafe {
-                                ZStr::from_raw_mut(
-                                    head2.as_mut_ptr(),
-                                    entry.path.len() + head2.len() - to_copy_into2.len(),
-                                )
-                            };
+                            let target =
+                                unsafe { ZStr::from_raw(head2.as_ptr(), target_len) };
 
                             if let Err(err) =
-                                sys::symlinkat(target.as_bytes(), destination_dir.fd(), entry.path)
+                                sys::symlinkat(target, destination_dir.fd(), entry.path)
                             {
-                                if err != bun_core::err!("PathAlreadyExists") {
-                                    return Err(err);
+                                if err.get_errno() != sys::E::EEXIST {
+                                    return Err(err.into());
                                 }
 
                                 let _ = sys::unlinkat(destination_dir.fd(), entry.path, 0);
@@ -1633,15 +1660,17 @@ impl<'a> PackageInstall<'a> {
                 {
                     use bun_sys::windows;
                     match entry.kind {
-                        Walker::Kind::Directory | Walker::Kind::File => {}
+                        EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
                     }
 
-                    if entry.path.len() > to_copy_into1.len() || entry.path.len() > to_copy_into2.len() {
+                    if entry.path.len() > to_copy_into1.len()
+                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path);
+                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
                     head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
                     // SAFETY: head1[len] == 0 written immediately above.
                     let dest = unsafe {
@@ -1651,28 +1680,24 @@ impl<'a> PackageInstall<'a> {
                         )
                     };
 
-                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path);
-                    head2[entry.path.len() + (head1.len() - to_copy_into2.len())] = 0;
-                    // SAFETY: head2[len] == 0 written immediately above.
-                    let src = unsafe {
-                        bun_str::WStr::from_raw(
-                            head2.as_ptr(),
-                            entry.path.len() + head2.len() - to_copy_into2.len(),
-                        )
-                    };
+                    let src_len = to_copy_into2_offset + entry.path.len();
+                    head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
+                    head2[src_len] = 0;
+                    // SAFETY: head2[src_len] == 0 written immediately above.
+                    let src = unsafe { bun_str::WStr::from_raw(head2.as_ptr(), src_len) };
 
                     match entry.kind {
-                        Walker::Kind::Directory => {
+                        EntryKind::Directory => {
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
                             // into head1/head2 above.
                             if unsafe {
                                 windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
                             } == 0
                             {
-                                let _ = bun_sys::MakePath::make_path_u16(destination_dir, entry.path);
+                                let _ = bun_sys::MakePath::make_path_u16(destination_dir, entry.path.as_slice());
                             }
                         }
-                        Walker::Kind::File => {
+                        EntryKind::File => {
                             match sys::symlink_w(dest, src, Default::default()) {
                                 sys::Result::Err(err) => {
                                     if let Some(entry_dirname) =
@@ -1715,34 +1740,29 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        // SAFETY: to_copy_buf/to_copy_buf2 are raw slices into state.buf/state.buf2 set by
-        // init_install_dir; they alias the head buffers but `copy` only writes the
-        // non-overlapping suffix region (mirrors Zig's overlapping slice usage).
+        // SAFETY: to_copy_buf is a raw slice into state.buf set by init_install_dir; it
+        // aliases head1 but `copy` only writes the non-overlapping suffix region
+        // (mirrors Zig's overlapping slice usage).
         let result = unsafe {
+            let to_copy2_off = state.buf2.len() - (*state.to_copy_buf2).len();
             copy(
                 state.subdir,
-                &mut state.walker,
+                state.walker(),
                 &mut *state.to_copy_buf,
                 &mut state.buf[..],
-                &mut *state.to_copy_buf2,
+                to_copy2_off,
                 &mut state.buf2[..],
             )
         };
         #[cfg(not(windows))]
-        let result = {
-            // PORT NOTE: reshaped for borrowck — to_copy_buf2 and &mut buf2 alias; pass head len separately.
-            // TODO(port): aliasing &mut into same buffer; Phase B may pass (head2_ptr, prefix_len, suffix_slice).
-            let head2_len = buf2.len();
-            copy(
-                state.subdir,
-                &mut state.walker,
-                (),
-                (),
-                to_copy_buf2,
-                // SAFETY: head2 covers all of buf2; copy() only writes within bounds derived from lengths.
-                unsafe { core::slice::from_raw_parts_mut(buf2.as_mut_ptr(), head2_len) },
-            )
-        };
+        let result = copy(
+            state.subdir,
+            state.walker(),
+            (),
+            (),
+            to_copy_buf2_offset,
+            &mut buf2[..],
+        );
 
         self.file_count = match result {
             Ok(n) => n,

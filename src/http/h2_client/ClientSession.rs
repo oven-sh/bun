@@ -320,7 +320,8 @@ impl ClientSession {
 
     /// Allocate a stream for `client`, serialise its request as HEADERS +
     /// DATA, and flush.
-    pub fn attach(&mut self, client: &mut HTTPClient) {
+    // PORT NOTE: see `create_session` rename note.
+    pub fn attach_client(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
 
         let send_window =
@@ -378,7 +379,7 @@ impl ClientSession {
             crate::print_request(
                 Protocol::Http2,
                 &request,
-                client.url.href(),
+                client.url.href,
                 !client.flags.reject_unauthorized,
                 // SAFETY: request_body points into original_request_body.bytes.
                 unsafe { &*client.state.request_body },

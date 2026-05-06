@@ -100,7 +100,6 @@ unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
     _opts: &InitOptions,
 ) -> OpaqueRuntimeState {
-    let _ = vm;
     // PORT NOTE: do NOT form `&mut *vm` here — the caller
     // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
     // same allocation. Dereference per-field via the raw `vm` ptr if needed.
@@ -131,16 +130,28 @@ unsafe fn init_runtime_state(
     // zeroed bytes are not a valid `Transpiler` to drop).
     //
     // PORT NOTE: `InitOptions` is the minimal-surface stub (no `args:
-    // api::TransformOptions` yet), so pass `Default` through
-    // `configure_transform_options_for_bun_vm`. Once the full `Options<'a>`
-    // un-gates, swap `Default::default()` for `opts.args`.
+    // api::TransformOptions` yet), so pass `Default` and inline the body of
+    // `configure_transform_options_for_bun_vm` (the `bun_jsc::config` module
+    // is `#[cfg(any())]`-gated). Once the full `Options<'a>` un-gates, swap
+    // `Default::default()` for `opts.args`.
+    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+    // `VirtualMachine::init` immediately before this hook fires.
+    let log: *mut bun_logger::Log =
+        unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
+    // TODO(b2-blocked): `bun_bundler::Transpiler::init` — the un-gated
+    // `Transpiler<'a>` (transpiler.rs:52) has no constructor; the real `init`
+    // lives in `bun_bundler::transpiler::__phase_a_draft`. Un-gate the body
+    // below once that fn moves to the public impl. The `ptr::write` shape is
+    // load-bearing: do not replace with `(*vm).transpiler = ...` (drops zeroed
+    // bytes → UB).
+    #[cfg(any())]
     {
-        // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-        // `VirtualMachine::init` immediately before this hook fires.
-        let log: *mut bun_logger::Log =
-            unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
-        let args = bun_jsc::config::configure_transform_options_for_bun_vm(Default::default())
-            .unwrap_or_default();
+        use bun_schema::api;
+        let mut args = api::TransformOptions::default();
+        // Inlined `configure_transform_options_for_bun_vm`:
+        args.write = Some(false);
+        args.resolve = Some(api::ResolveMode::Lazy);
+        args.target = Some(api::Target::Bun);
         match bun_bundler::Transpiler::init(log, args, None) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
@@ -153,13 +164,11 @@ unsafe fn init_runtime_state(
                 // channel, so log + leave the field zeroed (validity-UB on
                 // first read — same failure mode as before this hook existed).
                 // TODO(b2): widen `init_runtime_state` return to `Result<_, Error>`.
-                bun_core::Output::err(
-                    "Transpiler",
-                    format_args!("init failed: {e:?}"),
-                );
+                bun_core::Output::err("Transpiler", format_args!("init failed: {e:?}"));
             }
         }
     }
+    let _ = log;
 
     // TODO(b2-cycle): `webcore::Body::Value::HiveAllocator::init()` — gated.
     // TODO(b2-cycle): `Debugger::configure(vm, opts.debugger)` — `Debugger.rs`
@@ -1549,74 +1558,14 @@ pub static LOADER_HOOKS_INSTANCE: LoaderHooks = LoaderHooks {
 // Hook installation
 // ════════════════════════════════════════════════════════════════════════════
 
-// ──────────────────────────────────────────────────────────────────────────
-// Event-loop per-task hook bodies — `bun_jsc::event_loop` stores opaque
-// `*mut ImmediateObject` / `*mut WTFTimer` and dispatches through these.
-// Wired from [`crate::dispatch::install_dispatch_hooks`] (hot-path hooks live
-// alongside `RUN_TASK_HOOK` / `ON_POLL_DISPATCH`); the bodies stay here so the
-// `crate::timer` re-cast lives next to the `RuntimeState` that owns the heap.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `RUN_IMMEDIATE_HOOK` body — cast the opaque low-tier pointer to the real
-/// `bun_runtime::timer::ImmediateObject` and call `run_immediate_task(vm)`.
-///
-/// # Safety
-/// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject`; `vm` is the live per-thread VM.
-pub(crate) unsafe fn run_immediate_task_hook(
-    task: *mut bun_jsc::event_loop::ImmediateObject,
-    vm: *mut VirtualMachine,
-) -> bool {
-    // SAFETY: per fn contract — the opaque low-tier `ImmediateObject` is the
-    // same allocation as `crate::timer::ImmediateObject` (the low tier never
-    // dereferences it).
-    let real = unsafe { &mut *task.cast::<crate::timer::ImmediateObject>() };
-    // TODO(b2-blocked): `crate::timer::ImmediateObject::run_immediate_task` —
-    // body lives in the gated `timer/ImmediateObject.rs` Phase-A draft. The
-    // struct-only stub in `timer/mod.rs` carries `internals` but no method
-    // yet; un-gate the call below once the draft is wired into `timer/mod.rs`.
-    #[cfg(any())]
-    {
-        // SAFETY: per fn contract.
-        return real.run_immediate_task(unsafe { &mut *vm });
-    }
-    let _ = (real, vm);
-    todo!("dispatch: ImmediateObject::run_immediate_task")
-}
-
-/// `RUN_WTF_TIMER_HOOK` body — cast the opaque low-tier pointer to the real
-/// `bun_runtime::timer::WTFTimer` and call `run(vm)`.
-///
-/// # Safety
-/// `timer` was published by `WTFTimer::update` into `imminent_gc_timer`;
-/// `vm` is the live per-thread VM.
-pub(crate) unsafe fn run_wtf_timer_hook(
-    timer: *mut bun_jsc::event_loop::WTFTimer,
-    vm: *mut VirtualMachine,
-) {
-    // SAFETY: per fn contract — the opaque low-tier `WTFTimer` is the same
-    // allocation as `crate::timer::WTFTimer`.
-    let real = unsafe { &mut *timer.cast::<crate::timer::WTFTimer>() };
-    // TODO(b2-blocked): `crate::timer::WTFTimer::run` — body lives in the
-    // gated `timer/WTFTimer.rs` Phase-A draft. Un-gate the call below once
-    // the draft is wired into `timer/mod.rs`.
-    #[cfg(any())]
-    {
-        // SAFETY: per fn contract.
-        return real.run(unsafe { &mut *vm });
-    }
-    let _ = (real, vm);
-    todo!("dispatch: WTFTimer::run")
-}
+// PORT NOTE: the event-loop per-task hook bodies (`RUN_IMMEDIATE_HOOK` /
+// `RUN_WTF_TIMER_HOOK`) live in [`crate::dispatch`] alongside the other
+// §Dispatch hot-path hooks (`RUN_TASK_HOOK` / `ON_POLL_DISPATCH`) and are
+// wired from [`crate::dispatch::install_dispatch_hooks`], not here.
 
 /// Wire the high-tier `RuntimeHooks` / `LoaderHooks` into `bun_jsc`. Called
 /// once from `main.rs` immediately after [`crate::dispatch::install_dispatch_hooks`]
 /// (and before the first `VirtualMachine::init`).
-///
-/// NB: the event-loop per-task dispatchers (`RUN_IMMEDIATE_HOOK` /
-/// `RUN_WTF_TIMER_HOOK`) are wired from
-/// [`crate::dispatch::install_dispatch_hooks`] alongside the other §Dispatch
-/// hot-path hooks, not here.
 pub fn install_jsc_hooks() {
     bun_jsc::virtual_machine::set_runtime_hooks(&RUNTIME_HOOKS_INSTANCE);
     bun_jsc::module_loader::set_loader_hooks(&LOADER_HOOKS_INSTANCE);

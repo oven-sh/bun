@@ -9,6 +9,7 @@ use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BY
 use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 use bun_semver::semver_query::Wildcard;
+use bun_semver::version::VersionInt;
 use bun_str::strings;
 use bun_sys::File;
 
@@ -22,8 +23,12 @@ use crate::dependency::Behavior;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
 // stub that lib.rs exposes for downstream crates during the staged port.
+// PORT NOTE: `use super::{self as lockfile, ...}` is rejected by rustc (E0432:
+// "no `super` in the root" — rust-lang/rust#48067), so the parent-module alias
+// is hoisted to its own `use super as lockfile;` line.
+use super as lockfile;
 use super::{
-    self as lockfile, assert_no_uninitialized_padding, Cloner, DependencySlice, Lockfile,
+    assert_no_uninitialized_padding, Cloner, DependencySlice, Lockfile,
     PackageIDSlice, PatchedDep, PendingResolution, PositionalStream, Stream, StringBuilder,
     TrustedDependenciesSet,
 };
@@ -48,7 +53,7 @@ bun_output::declare_scope!(Lockfile, hidden);
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
 #[repr(C)]
-pub struct Package<SemverIntType = u64> {
+pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
     pub name_hash: PackageNameHash,
 
@@ -92,11 +97,11 @@ type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 /// `Package.List` (Zig: `MultiArrayList(Package)`). The associated-type
 /// indirection lets `lockfile.rs` name `<Package as PackageListProvider>::List`
 /// without instantiating the generic at the field site.
-impl<SemverIntType> super::PackageListProvider for Package<SemverIntType> {
+impl<SemverIntType: VersionInt> super::PackageListProvider for Package<SemverIntType> {
     type List = MultiArrayList<Package<SemverIntType>>;
 }
 
-impl<SemverIntType> Default for Package<SemverIntType> {
+impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
     fn default() -> Self {
         Self {
             name: String::default(),
@@ -147,13 +152,13 @@ impl DependencyGroup {
 
 // TODO(port): lifetime — Phase A forbids lifetime params on structs; these are
 // borrows into lockfile.packages SoA columns + string_bytes (no LIFETIMES.tsv entry).
-pub struct Alphabetizer<SemverIntType> {
+pub struct Alphabetizer<SemverIntType: VersionInt> {
     pub names: *const [String],
     pub buf: *const [u8],
     pub resolutions: *const [Resolution<SemverIntType>],
 }
 
-impl<SemverIntType> Alphabetizer<SemverIntType> {
+impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
     pub fn is_alphabetical(&self, lhs: PackageID, rhs: PackageID) -> bool {
         // SAFETY: caller constructs Alphabetizer with slices that outlive the sort call.
         let (names, buf, resolutions) = unsafe { (&*self.names, &*self.buf, &*self.resolutions) };
@@ -168,7 +173,7 @@ impl<SemverIntType> Alphabetizer<SemverIntType> {
     }
 }
 
-impl<SemverIntType> Package<SemverIntType> {
+impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
     pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
@@ -733,7 +738,7 @@ impl DiffSummary {
 }
 
 impl Diff {
-    pub fn generate<SemverIntType>(
+    pub fn generate<SemverIntType: VersionInt>(
         pm: &mut PackageManager,
         log: &mut logger::Log,
         from_lockfile: &mut Lockfile,

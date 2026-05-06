@@ -134,7 +134,7 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                 // bytes[start..i] is `{spec`, bytes[i] is `}` (or EOF)
                 let spec = &fmt[start..i];
                 match spec {
-                    "{s" | "{d" => out.push('{'),
+                    "{s" | "{d" | "{f" => out.push('{'),
                     "{any" | "{?" => out.push_str("{:?"),
                     _ => out.push_str(spec),
                 }

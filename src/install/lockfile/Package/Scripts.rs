@@ -3,6 +3,7 @@ use core::ffi::CStr;
 use bstr::BStr;
 
 use bun_core::{output, ZBox};
+use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Lockfile, StringBuilder as LockfileStringBuilder};
 use bun_install::lockfile::package::Package;
 use bun_install::lockfile::Scripts as LockfileScripts;
@@ -428,13 +429,13 @@ impl List {
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
                 BStr::new(strings::without_trailing_slash(&self.cwd.as_bytes()[i + 1..])),
-                resolution.fmt(resolution_buf, bun_paths::Style::Posix),
+                resolution.fmt(resolution_buf, PathSep::Posix),
             );
         } else {
             bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
                 BStr::new(strings::without_trailing_slash(self.cwd.as_bytes())),
-                resolution.fmt(resolution_buf, bun_paths::Style::Posix),
+                resolution.fmt(resolution_buf, PathSep::Posix),
             );
         }
 

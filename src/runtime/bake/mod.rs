@@ -191,11 +191,10 @@ pub struct HmrRuntime {
     pub line_count: u32,
 }
 
-/// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-/// `from_js`) gated in `bake_body.rs`; only the type identity is needed by
-/// `server/ServerConfig.rs`.
-pub struct UserOptions(());
-pub struct StringRefList(());
+// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
+// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
+// above; the keystone `(())` stub is gone now that `bake_body` compiles.
+pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════
 // FrameworkRouter

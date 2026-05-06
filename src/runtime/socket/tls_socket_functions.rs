@@ -740,7 +740,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
         let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
         // SAFETY: ssl_ptr is a live *mut SSL; session is a non-null *mut SSL_SESSION owned above.
-        if unsafe { boringssl::SSL_set_session(ssl_ptr, session) } != 1 {
+        if unsafe { ffi::SSL_set_session(ssl_ptr, session) } != 1 {
             return global.throw_value(get_ssl_exception(global, b"SSL_set_session error"));
         }
         Ok(JSValue::UNDEFINED)

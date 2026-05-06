@@ -2027,14 +2027,14 @@ impl RunCommand {
                 }
 
                 const HARDCODED_POPULAR_ONES: &[&ZStr] = &[
-                    ZStr::from_static(b"/bin/bash\0"),
-                    ZStr::from_static(b"/usr/bin/bash\0"),
-                    ZStr::from_static(b"/usr/local/bin/bash\0"), // don't think this is a real one
-                    ZStr::from_static(b"/bin/sh\0"),
-                    ZStr::from_static(b"/usr/bin/sh\0"), // don't think this is a real one
-                    ZStr::from_static(b"/usr/bin/zsh\0"),
-                    ZStr::from_static(b"/usr/local/bin/zsh\0"),
-                    ZStr::from_static(b"/system/bin/sh\0"), // Android
+                    bun_core::zstr!("/bin/bash"),
+                    bun_core::zstr!("/usr/bin/bash"),
+                    bun_core::zstr!("/usr/local/bin/bash"), // don't think this is a real one
+                    bun_core::zstr!("/bin/sh"),
+                    bun_core::zstr!("/usr/bin/sh"), // don't think this is a real one
+                    bun_core::zstr!("/usr/bin/zsh"),
+                    bun_core::zstr!("/usr/local/bin/zsh"),
+                    bun_core::zstr!("/system/bin/sh"), // Android
                 ];
                 for shell in HARDCODED_POPULAR_ONES {
                     if try_shell(shell) {

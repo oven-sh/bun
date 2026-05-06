@@ -412,24 +412,31 @@ impl InitCommand {
 
         if let Some(ifdir) = initialize_in_folder {
             // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
-            if let Err(err) = bun_sys::make_path(Fd::cwd(), ifdir) {
-                Output::pretty_errorln(
-                    "Failed to create directory {s}: {s}",
-                    format_args!("{} {}", bstr::BStr::new(ifdir), err.name()),
-                );
+            if let Err(err) = bun_sys::make_path(bun_sys::Dir::cwd(), ifdir) {
+                Output::pretty_errorln(format_args!(
+                    "Failed to create directory {}: {}",
+                    bstr::BStr::new(ifdir),
+                    err.name(),
+                ));
                 Global::exit(1);
             }
-            if let Err(err) = bun_sys::chdir(b"", ifdir).unwrap_result() {
-                Output::pretty_errorln(
-                    "Failed to change directory to {s}: {s}",
-                    format_args!("{} {}", bstr::BStr::new(ifdir), err.name()),
-                );
+            let mut ifdir_z = ifdir.to_vec();
+            ifdir_z.push(0);
+            // SAFETY: ifdir_z[len-1] == 0 written above.
+            let ifdir_zstr = unsafe { ZStr::from_raw(ifdir_z.as_ptr(), ifdir_z.len() - 1) };
+            if let Err(err) = bun_sys::chdir(ifdir_zstr) {
+                Output::pretty_errorln(format_args!(
+                    "Failed to change directory to {}: {}",
+                    bstr::BStr::new(ifdir),
+                    err.name(),
+                ));
                 Global::exit(1);
             }
         }
 
         let fs = Fs::FileSystem::init(None)?;
-        let pathname = Fs::PathName::init(fs.top_level_dir_without_trailing_slash());
+        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
+        let pathname = Fs::PathName::init(unsafe { (*fs).top_level_dir_without_trailing_slash() });
         // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 

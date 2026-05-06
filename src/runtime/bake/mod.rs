@@ -332,6 +332,26 @@ pub mod framework_router {
         // TODO(b2-blocked): `init_empty` (FrameworkRouter.zig:96) — needs
         // `Resolver` walk; un-gate from `FrameworkRouter.rs` once
         // `bun_resolver::DirInfo` is real.
+
+        /// `FrameworkRouter.matchSlow` — keystone shim. Real body lives in
+        /// `framework_router_body::FrameworkRouter::match_slow`; this struct
+        /// is a separate keystone type so we forward-declare the API and
+        /// `todo!()` until the two FrameworkRouter shapes are unified.
+        pub fn match_slow(
+            &self,
+            _path: &[u8],
+            _params: &mut MatchedParams,
+        ) -> Option<RouteIndex> {
+            todo!("blocked_on: framework_router::FrameworkRouter unification with framework_router_body")
+        }
+    }
+
+    impl MatchedParams {
+        /// `MatchedParams.toJS` — keystone shim; real body in
+        /// `framework_router_body::MatchedParams::to_js`.
+        pub fn to_js(&self, _global: &super::jsc::JSGlobalObject) -> super::jsc::JSValue {
+            todo!("blocked_on: framework_router::MatchedParams unification with framework_router_body")
+        }
     }
 
     /// `FrameworkRouter.InsertionContext` — manual vtable (Zig used

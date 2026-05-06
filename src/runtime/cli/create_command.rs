@@ -2571,7 +2571,7 @@ impl GitHandler {
         {
             Ok(t) => t,
             Err(err) => {
-                Output::pretty_errorln("<r><red>{}<r>", format_args!("{}", err));
+                Output::pretty_errorln(format_args!("<r><red>{}<r>", err));
                 Global::exit(1);
             }
         };

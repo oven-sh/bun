@@ -547,11 +547,11 @@ impl PmPkgCommand {
                             return Err(err!("NotFound"));
                         };
 
-                        if index >= arr.items.len() as usize {
+                        if index >= arr.items.len as usize {
                             return Err(err!("NotFound"));
                         }
 
-                        current = arr.items.ptr()[index];
+                        current = arr.items.slice()[index];
                         // TODO(port): Expr likely Copy via arena handle; verify in Phase B
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
@@ -569,10 +569,10 @@ impl PmPkgCommand {
                 if let Some(index) = parse_usize(part) {
                     match &current.data {
                         ExprData::EArray(arr) => {
-                            if index >= arr.items.len() as usize {
+                            if index >= arr.items.len as usize {
                                 return Err(err!("NotFound"));
                             }
-                            current = arr.items.ptr()[index];
+                            current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
                             current = current.get(part).ok_or(err!("NotFound"))?;

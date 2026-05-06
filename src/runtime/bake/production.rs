@@ -26,7 +26,7 @@ use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 use bun_core::{self as bun, Global, Output};
 use bun_dotenv as dotenv;
 use bun_http::AsyncHTTP;
-use bun_jsc::{self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult};
+use bun_jsc::{self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult, StringJsc as _};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer};

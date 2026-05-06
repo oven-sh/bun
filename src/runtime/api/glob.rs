@@ -180,8 +180,8 @@ pub enum WalkTaskErr {
 impl WalkTaskErr {
     pub fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            WalkTaskErr::Syscall(err) => err.to_js(global_this),
-            WalkTaskErr::Unknown(err) => Ok(ZigString::from_bytes(err.name().as_bytes()).to_js(global_this)),
+            WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
+            WalkTaskErr::Unknown(err) => bun_string_jsc::create_utf8_for_js(global_this, err.name().as_bytes()),
         }
     }
 }

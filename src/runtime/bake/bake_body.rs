@@ -909,7 +909,9 @@ impl Framework {
 
             let len = array.get_length(global)?;
             let mut files: ArrayHashMap<&'static [u8], BuiltInModule> = ArrayHashMap::new();
-            files.ensure_total_capacity(arena, len)?;
+            files
+                .ensure_total_capacity(len as usize)
+                .map_err(|e| throw_core_error(global, e.into(), "ensure_total_capacity"))?;
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
@@ -921,7 +923,7 @@ impl Framework {
                     )));
                 }
 
-                let path = match get_optional_string(file, global, "import", refs, arena)? {
+                let path = match get_optional_string(file, global, b"import", refs, arena)? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -932,9 +934,9 @@ impl Framework {
                 };
 
                 let value: BuiltInModule =
-                    if let Some(str) = get_optional_string(file, global, "path", refs, arena)? {
+                    if let Some(str) = get_optional_string(file, global, b"path", refs, arena)? {
                         BuiltInModule::Import(str)
-                    } else if let Some(str) = get_optional_string(file, global, "code", refs, arena)? {
+                    } else if let Some(str) = get_optional_string(file, global, b"code", refs, arena)? {
                         BuiltInModule::Code(str)
                     } else {
                         return Err(global.throw_invalid_arguments(format_args!(

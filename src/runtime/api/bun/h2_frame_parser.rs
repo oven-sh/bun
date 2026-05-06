@@ -472,14 +472,22 @@ impl FullSettingsPayload {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         let result = JSValue::create_empty_object(global_object, 8);
-        result.put(global_object, ZigString::static_("headerTableSize"), JSValue::js_number(self.header_table_size));
-        result.put(global_object, ZigString::static_("enablePush"), JSValue::from(self.enable_push > 0));
-        result.put(global_object, ZigString::static_("maxConcurrentStreams"), JSValue::js_number(self.max_concurrent_streams));
-        result.put(global_object, ZigString::static_("initialWindowSize"), JSValue::js_number(self.initial_window_size));
-        result.put(global_object, ZigString::static_("maxFrameSize"), JSValue::js_number(self.max_frame_size));
-        result.put(global_object, ZigString::static_("maxHeaderListSize"), JSValue::js_number(self.max_header_list_size));
-        result.put(global_object, ZigString::static_("maxHeaderSize"), JSValue::js_number(self.max_header_list_size));
-        result.put(global_object, ZigString::static_("enableConnectProtocol"), JSValue::from(self.enable_connect_protocol > 0));
+        // Packed-field reads are by-value (Copy) → no unaligned-ref hazard.
+        let header_table_size = self.header_table_size;
+        let enable_push = self.enable_push;
+        let max_concurrent_streams = self.max_concurrent_streams;
+        let initial_window_size = self.initial_window_size;
+        let max_frame_size = self.max_frame_size;
+        let max_header_list_size = self.max_header_list_size;
+        let enable_connect_protocol = self.enable_connect_protocol;
+        result.put(global_object, b"headerTableSize", JSValue::js_number(header_table_size as f64));
+        result.put(global_object, b"enablePush", JSValue::from(enable_push > 0));
+        result.put(global_object, b"maxConcurrentStreams", JSValue::js_number(max_concurrent_streams as f64));
+        result.put(global_object, b"initialWindowSize", JSValue::js_number(initial_window_size as f64));
+        result.put(global_object, b"maxFrameSize", JSValue::js_number(max_frame_size as f64));
+        result.put(global_object, b"maxHeaderListSize", JSValue::js_number(max_header_list_size as f64));
+        result.put(global_object, b"maxHeaderSize", JSValue::js_number(max_header_list_size as f64));
+        result.put(global_object, b"enableConnectProtocol", JSValue::from(enable_connect_protocol > 0));
         result
     }
 

@@ -359,10 +359,10 @@ pub fn load_config(
         // SAFETY: process-global Log; see `load_bunfig` note.
         let log = unsafe { &mut *ctx.log };
         if log.has_any() {
-            let _ = log.print(Output::error_writer());
+            let _ = log.print(Output::error_writer() as *mut _);
         }
         if log.has_any() {
-            Output::print_error("\n", ());
+            Output::print_error("\n");
         }
         Output::err(err, "failed to load bunfig", ());
         Global::crash();

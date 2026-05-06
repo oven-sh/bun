@@ -91,18 +91,20 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     contents.extend_from_slice(&body);
     contents.extend_from_slice(b"</testsuites>\n");
 
-    let out_z = ZStr::from_bytes(outfile);
+    let out_z = ZBox::from_bytes(outfile);
     match File::openat(Fd::cwd(), &out_z, O::WRONLY | O::CREAT | O::TRUNC, 0o664) {
         bun_sys::Result::Err(e) => Output::err(
             err!("JUnitReportFailed"),
-            format_args!("Failed to write JUnit report to {}\n{}", BStr::new(outfile), e),
+            "Failed to write JUnit report to {}\n{}",
+            (BStr::new(outfile), e),
         ),
         bun_sys::Result::Ok(fd) => {
             let fd = fd; // moved into scope; closed on drop
             match File::write_all(&fd, &contents) {
                 bun_sys::Result::Err(e) => Output::err(
                     err!("JUnitReportFailed"),
-                    format_args!("Failed to write JUnit report to {}\n{}", BStr::new(outfile), e),
+                    "Failed to write JUnit report to {}\n{}",
+                    (BStr::new(outfile), e),
                 ),
                 bun_sys::Result::Ok(()) => {}
             }

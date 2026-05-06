@@ -1724,14 +1724,14 @@ impl PublishCommand {
             "{{\"_id\":\"{}\",\"name\":\"{}\"",
             bstr::BStr::new(&ctx.package_name),
             bstr::BStr::new(&ctx.package_name),
-        )?;
+        ).ok();
 
         write!(
             &mut buf,
             ",\"dist-tags\":{{\"{}\":\"{}\"}}",
             bstr::BStr::new(tag),
             bstr::BStr::new(version_without_build_tag),
-        )?;
+        ).ok();
 
         // "versions"
         {
@@ -1740,11 +1740,11 @@ impl PublishCommand {
                 ",\"versions\":{{\"{}\":{}}}",
                 bstr::BStr::new(version_without_build_tag),
                 bstr::BStr::new(&ctx.normalized_pkg_info),
-            )?;
+            ).ok();
         }
 
-        if let Some(access) = ctx.manager.options.publish_config.access {
-            write!(&mut buf, ",\"access\":\"{}\"", <&'static str>::from(access))?;
+        if let Some(access) = ctx.manager.options.publish_config.access() {
+            write!(&mut buf, ",\"access\":\"{}\"", <&'static str>::from(access)).ok();
         } else {
             buf.extend_from_slice(b",\"access\":null");
         }

@@ -10,10 +10,10 @@ pub fn to_be_valid_date(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(global)` — scopeguard borrowing `this` conflicts with
-    // uses below. Phase B: either raw-ptr capture or an RAII `PostMatchGuard` on Expect.
-    let _guard = scopeguard::guard((), |_| this.post_match(global));
-    // PORT NOTE: reshaped for borrowck
+    // PORT NOTE: `defer this.postMatch(global)` — guard owns the `&mut Expect` and runs
+    // post_match on drop; the body re-borrows `this` through the guard's DerefMut so every
+    // exit path is covered without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeValidDate", "")?;

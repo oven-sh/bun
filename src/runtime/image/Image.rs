@@ -1736,8 +1736,10 @@ impl<'a> PipelineTask<'a> {
                         core::ptr::null_mut(),
                         out.free,
                     );
+                    // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
+                    // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                     let mut arg_slice =
-                        jsc::ArgumentsSlice::init(global.bun_vm(), &[dest_js]);
+                        jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, &[dest_js]);
                     let mut path_or_blob =
                         match crate::node::PathOrBlob::from_js_no_copy(global, &mut arg_slice)
                         {

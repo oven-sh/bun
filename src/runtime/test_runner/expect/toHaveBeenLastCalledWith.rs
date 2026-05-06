@@ -56,12 +56,12 @@ pub fn to_have_been_last_called_with(
             )));
         }
 
-        if last_call_value.get_length(global)? != arguments.len() {
+        if last_call_value.get_length(global)? != arguments.len() as u64 {
             pass = false;
         } else {
             let mut itr = last_call_value.array_iterator(global)?;
             while let Some(call_arg) = itr.next()? {
-                if !call_arg.jest_deep_equals(arguments[itr.i - 1], global)? {
+                if !call_arg.jest_deep_equals(arguments[itr.i as usize - 1], global)? {
                     pass = false;
                     break;
                 }

@@ -134,7 +134,14 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         vm.argv = ctx.passthrough.clone();
         vm.arena = NonNull::new(&mut arena as *mut Arena);
         // vm.allocator = arena.allocator() — dropped per §Allocators
-        b.options.install = ctx.install.as_deref();
+        // SAFETY: spec production.zig:50 assigns `ctx.install` (a `?*Api.BunInstall`)
+        // by raw pointer; `ctx` is process-lifetime CLI state that outlives `vm`
+        // (which is destroyed in `_vm_guard` above before `ctx` is dropped). Erase
+        // the `'1` borrow to `'static` to satisfy `Transpiler<'static>` invariance.
+        b.options.install = ctx
+            .install
+            .as_deref()
+            .map(|p| unsafe { &*(p as *const _) });
         b.resolver.opts.install = ctx
             .install
             .as_deref()
@@ -807,7 +814,7 @@ pub fn build_with_vm(
             for file in bundled_outputs {
                 if let Some(s) = file.side {
                     if s == bun_bundler::options::Side::Client
-                        && file.src_path.text.as_ref() != b"bun-framework-react/client.tsx"
+                        && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
                     {
                         break 'any_client_chunks true;
                     }

@@ -1198,7 +1198,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(ctx)?;
+        let create_command_info = CreateCommand::extract_info(&ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 
@@ -1229,7 +1229,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             return BunxCommand::exec(ctx, &bunx_args);
         }
 
-        CreateCommand::exec(ctx, example_tag, template)
+        CreateCommand::exec(&ctx, example_tag, template)
     }
 
     fn bun_info(log: &mut logger::Log) -> Result<(), bun_core::Error> {

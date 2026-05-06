@@ -22,12 +22,12 @@ impl JSValueZstdExt for JSValue {
     fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
             fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *mut JSGlobalObject,
+                global: *const JSGlobalObject,
                 callback: JSValue,
             ) -> JSValue;
         }
         // SAFETY: FFI into JSC; `global` is live for the call.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
     }
 }
 

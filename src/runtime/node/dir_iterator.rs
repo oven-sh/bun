@@ -824,8 +824,8 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
                     dir,
                     index: 0,
                     end_index: 0,
-                    // SAFETY: buf is plain [u8; N], any bit pattern valid
-                    buf: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
+                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    buf: [0u8; 8192],
                 },
             };
         }

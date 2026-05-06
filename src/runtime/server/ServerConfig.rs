@@ -734,7 +734,7 @@ impl ServerConfig {
                 // dropped its `arena` field in the Rust port (bake owns it instead).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
-                js_string_allocations: Default::default(), // .empty
+                js_string_allocations: crate::bake::StringRefList::EMPTY,
                 user_routes: &mut args.static_routes,
                 global,
             };
@@ -905,7 +905,10 @@ impl ServerConfig {
                     // {env, env_prefix, define} fields, and ServerInitContext.arena
                     // are not yet ported. The Zig body constructs `bake.UserOptions`
                     // from the resolved framework + transform_options here.
-                    let _ = core::mem::take(&mut init_ctx.js_string_allocations);
+                    let _ = core::mem::replace(
+                        &mut init_ctx.js_string_allocations,
+                        crate::bake::StringRefList::EMPTY,
+                    );
                     let _ = &vm.transpiler.options.transform_options;
                     todo!("blocked_on: crate::bake::Framework::auto + BuildConfigSubset.{{env,env_prefix,define}}");
                 } else {

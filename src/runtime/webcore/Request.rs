@@ -685,7 +685,7 @@ impl Request {
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
                     } else {
                         crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
-                            false, size, writer,
+                            false, size as usize, writer,
                         )?;
                     }
                 }
@@ -712,12 +712,15 @@ impl Request {
         Ok(())
     }
 
-    pub fn mime_type(&self) -> &[u8] {
-        if let Some(headers) = &self.headers {
+    pub fn mime_type(&mut self) -> &[u8] {
+        if let Some(headers) = &mut self.headers {
             // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
             // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
-            if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return content_type.slice();
+            if let Some(_content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
+                // TODO(port): blocked_on lifetimes — `fast_get` returns an owned
+                // `ZigString` whose slice borrows a local; cannot return `&[u8]`.
+                // Phase B: change return type to owned slice or `bun.String`.
+                todo!("blocked_on: bun_jsc::FetchHeaders::fast_get borrowed-slice return");
             }
         }
 
@@ -1458,7 +1461,7 @@ impl Request {
                 if !ct.is_empty()
                     && !req
                         .headers
-                        .as_ref()
+                        .as_mut()
                         .unwrap()
                         .fast_has(HTTPHeaderName::ContentType)
                 {

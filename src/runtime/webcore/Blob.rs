@@ -5381,15 +5381,17 @@ impl Any {
         // on Err. Mirrors Zig's `AnyPromise.wrap` (AnyPromise.zig).
         match self.to_action_value(global_this, action) {
             Ok(value) => match promise {
-                jsc::AnyPromise::Normal(p) => unsafe { (*p).resolve(global_this, value) },
+                jsc::AnyPromise::Normal(p) => {
+                    unsafe { (*p).resolve(global_this, value) }?;
+                }
                 jsc::AnyPromise::Internal(p) => unsafe { (*p).resolve(global_this, value) },
             },
             Err(e) => {
-                let err = global_this
-                    .take_exception(e)
-                    .unwrap_or(JSValue::UNDEFINED);
+                let err = global_this.take_exception(e);
                 match promise {
-                    jsc::AnyPromise::Normal(p) => unsafe { (*p).reject(global_this, err) },
+                    jsc::AnyPromise::Normal(p) => {
+                        unsafe { (*p).reject(global_this, Ok(err)) }?;
+                    }
                     jsc::AnyPromise::Internal(p) => unsafe { (*p).reject(global_this, err) },
                 }
             }

@@ -1425,12 +1425,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
 
         let response = Box::new(Response::init(
-            Response::Init {
+            response::Init {
                 status_code: 200,
                 ..Default::default()
             },
             Body {
-                value: Body::Value::Blob(blob_to_use),
+                value: BodyValue::Blob(blob_to_use),
             },
             url_string.clone(),
             false,
@@ -1475,7 +1475,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(Headers::from(
             None,
-            Headers::Options {
+            HeadersOptions {
                 body: body.get_any_blob(),
             },
         ));

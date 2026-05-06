@@ -4085,18 +4085,21 @@ impl RunCommand {
         };
 
         let rendered = match md::render_to_ansi(&contents, md_opts, theme) {
-            Err(e) if e == bun_core::err!("OutOfMemory") => bun_core::out_of_memory(),
-            Err(e) if e == bun_core::err!("StackOverflow") => {
-                Output::pretty_errorln(
-                    "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
-                    (),
-                );
-                Output::flush();
-                Global::exit(1);
+            Err(e) => {
+                if e == bun_core::err!("OutOfMemory") {
+                    bun_core::out_of_memory();
+                }
+                if e == bun_core::err!("StackOverflow") {
+                    Output::pretty_errorln(
+                        "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+                unreachable!()
             }
-            Err(_) => unreachable!(),
             Ok(None) => {
-                Output::pretty_errorln("<r><red>error<r>: failed to render markdown", ());
+                Output::pretty_errorln("<r><red>error<r>: failed to render markdown");
                 Output::flush();
                 Global::exit(1);
             }
@@ -4132,12 +4135,14 @@ impl RunCommand {
         let Ok(dup) = Box::<[u8]>::try_from(path) else { return false };
         // TODO(port): Box::try_from doesn't exist; use to_vec().into_boxed_slice()
         if let Err(err) = bun_bun_js::Run::boot(ctx, dup, loader) {
-            let _ = ctx.log.print(Output::error_writer());
+            // SAFETY: `ctx.log` is the process-lifetime CLI log.
+            let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
 
-            Output::pretty_errorln(
+            Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
-                (bstr::BStr::new(bun_paths::basename(path)), err.name()),
-            );
+                bstr::BStr::new(bun_paths::basename(path)),
+                err.name(),
+            ));
             bun_core::handle_error_return_trace(&err);
             Global::exit(1);
         }
@@ -4326,12 +4331,14 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+        let root_dir_info_ref = unsafe { &*root_dir_info };
         Self::configure_path_for_run(
             ctx,
-            root_dir_info,
+            root_dir_info_ref,
             this_transpiler,
             Some(&mut original_path),
-            root_dir_info.abs_path,
+            root_dir_info_ref.abs_path,
             force_using_bun,
         )?;
         // SAFETY: `Transpiler::env` is a non-null `*mut Loader` for the transpiler's lifetime.
@@ -4340,7 +4347,7 @@ impl RunCommand {
         // check for empty command
 
         if target_name.is_empty() {
-            if let Some(package_json) = root_dir_info.enclosing_package_json {
+            if let Some(package_json) = root_dir_info_ref.enclosing_package_json {
                 Self::print_help(Some(package_json));
             } else {
                 Self::print_help(None);
@@ -4400,7 +4407,7 @@ impl RunCommand {
         // run script with matching name
 
         if !skip_script_check {
-            if let Some(package_json) = root_dir_info.enclosing_package_json {
+            if let Some(package_json) = root_dir_info_ref.enclosing_package_json {
                 if let Some(scripts) = &package_json.scripts {
                     if let Some(script_content) = scripts.get(target_name) {
                         bun_output::scoped_log!(

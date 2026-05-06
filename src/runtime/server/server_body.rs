@@ -1825,7 +1825,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ));
         }
 
-        let arguments = callframe.arguments_old::<2>().slice();
+        let arguments_buf = callframe.arguments_old::<2>();
+        let arguments = arguments_buf.slice();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -2336,9 +2337,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // the engine rejects new conns and the timer keeps in-flight
                 // streams progressing until deinit. Abrupt: close the fd now.
                 if !abrupt {
-                    if let Some(h3a) = self.h3_app { unsafe { &*h3a }.close(); }
+                    if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.close(); }
                 } else {
-                    unsafe { &*h3l }.close();
+                    unsafe { &mut *h3l }.close();
                 }
             }
         }
@@ -2373,13 +2374,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if !abrupt {
-            unsafe { &*listener }.close();
+            unsafe { &mut *listener }.close();
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = &mut self.config.websocket {
                 ws.handler.app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
-            unsafe { &*self.app.unwrap() }.close();
+            unsafe { &mut *self.app.unwrap() }.close();
         }
     }
 
@@ -2484,7 +2485,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let dev_server: Option<Box<DevServer>> = if config.bake.is_some() {
             // TODO(port): bake::UserOptions field shapes (root: &ZStr, framework/bundler_options
             // by value) don't yet line up with dev_server::Options; defer until both stabilize.
-            let _ = dev_server_mod::init; // keep import live
+            let _ = core::any::type_name::<dev_server_mod::DevServer>(); // keep import live
             todo!("blocked_on: bun_runtime::bake::dev_server::Options field-shape mismatch")
         } else {
             None
@@ -3164,7 +3165,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let self_ptr: *mut Self = self;
         let prepared: ServerPreparedRequest<'_, SSL, DEBUG> = match &req {
             SavedRequestUnion::Stack(r) => {
-                let r: *mut uws::Request = *r;
+                let r: *mut uws::Request = &**r as *const uws::Request as *mut uws::Request;
                 match self.prepare_js_request_context(
                     // SAFETY: stack uws::Request still alive
                     unsafe { &mut *r },

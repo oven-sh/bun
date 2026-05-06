@@ -2747,14 +2747,18 @@ pub mod mock {
         Ok(value.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED))
     }
 
-    pub struct AllCallsWithArgsFormatter<'a> {
-        pub global_this: &'a JSGlobalObject,
+    // PORT NOTE: split lifetimes — `&'a mut Formatter<'a>` is the invariant-borrow trap
+    // (forces the &mut to live as long as the Formatter's own param, which outlives the
+    // local). `'g` tracks the JSGlobalObject borrow inside Formatter; `'a` is the short
+    // &mut borrow held by this struct.
+    pub struct AllCallsWithArgsFormatter<'a, 'g> {
+        pub global_this: &'g JSGlobalObject,
         pub calls: JSValue,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
+        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'g>>,
     }
 
-    impl fmt::Display for AllCallsWithArgsFormatter<'_> {
+    impl fmt::Display for AllCallsWithArgsFormatter<'_, '_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut formatter = self.formatter.borrow_mut();
             let mut printed_once = false;

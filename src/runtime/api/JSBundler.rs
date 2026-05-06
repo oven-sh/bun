@@ -1789,12 +1789,15 @@ pub mod js_bundler {
         fn run_on_js_thread(&mut self) {
             let is_server_side = self.bake_graph() != bun_bundler::bake_types::Graph::Client;
             let default_loader = self.default_loader;
+            // PORT NOTE: reshaped for borrowck — capture the erased self pointer
+            // before borrowing fields immutably for the FFI call.
+            let self_ptr = self as *mut Self as *mut c_void;
             // SAFETY: bv2 backref is valid; plugins is Some
             unsafe {
                 (*bv2_plugin(self.bv2)).match_on_load(
                     &self.path,
                     &self.namespace,
-                    self as *mut _ as *mut c_void,
+                    self_ptr,
                     default_loader,
                     is_server_side,
                 );

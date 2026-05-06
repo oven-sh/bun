@@ -2072,6 +2072,17 @@ pub fn is_default(_allocator: &dyn Allocator) -> bool {
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
 
+static DEFAULT_ALLOC: DefaultAlloc = DefaultAlloc;
+
+/// Zig: `bun.default_allocator` — global mimalloc-backed allocator. With
+/// `#[global_allocator] = Mimalloc`, this is a marker handle; callers that
+/// thread it should be rewritten to use `Box`/`Vec` directly. Kept so ported
+/// call sites that still pass an `&dyn Allocator` resolve.
+#[inline]
+pub fn default_allocator() -> &'static dyn Allocator {
+    &DEFAULT_ALLOC
+}
+
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // Zig's allocator-borrowing discipline (avoid double-deinit), which Rust's
 // ownership already enforces. Drafts that referenced them are gated under

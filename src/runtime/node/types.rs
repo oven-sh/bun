@@ -894,8 +894,14 @@ where
     CallbackTaskOption<Result>: Default,
 {
     fn default() -> Self {
-        // TODO(port): Zig only defaults `success = false`; other fields uninit.
-        unimplemented!()
+        // Zig only sets `success = false` and leaves the rest `undefined`;
+        // Rust requires every field initialized, so zero the callback handle
+        // and lean on the `CallbackTaskOption<Result>: Default` bound.
+        Self {
+            callback: core::ptr::null_mut(),
+            option: Default::default(),
+            success: false,
+        }
     }
 }
 

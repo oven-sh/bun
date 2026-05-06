@@ -239,7 +239,11 @@ impl JsonCache {
             // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
             // They are JSON files with comments and trailing commas.
             // Sometimes tooling expects this to work.
-            let f = match (mode, force_utf8) {
+            let f: fn(
+                &logger::Source,
+                &mut logger::Log,
+                &bun_alloc::Arena,
+            ) -> Result<json_parser::Expr, bun_core::Error> = match (mode, force_utf8) {
                 (JsonMode::Jsonc, true) => json_parser::parse_ts_config::<true>,
                 (JsonMode::Jsonc, false) => json_parser::parse_ts_config::<false>,
                 (JsonMode::Json, true) => json_parser::parse::<true>,

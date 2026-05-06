@@ -384,7 +384,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut had_err = false;
 
                 // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent (std::fs banned)
-                if let Err(err) = bun_sys::delete_tree_absolute(outpath) {
+                if let Err(err) = (|| -> Result<(), bun_core::Error> {
+                    let _ = outpath;
+                    todo!("blocked_on: bun_sys::delete_tree_absolute")
+                })() {
                     Output::err(err, "Could not delete {s}", format_args!("{}", bstr::BStr::new(outpath)));
                     had_err = true;
                 }

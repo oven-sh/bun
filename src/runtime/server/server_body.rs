@@ -3316,15 +3316,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // So we first use a hash of the main field:
         let first_hash_segment: [u8; 8] = 'brk: {
-            let buffer = paths::path_buffer_pool().get();
-            let main = VirtualMachine::get().main;
+            let buffer = paths::path_buffer_pool::get();
+            let main = self.vm.main;
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len])).to_ne_bytes();
         };
 
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
-            let buffer = paths::path_buffer_pool().get();
+            let buffer = paths::path_buffer_pool::get();
             let root = &self.dev_server.as_ref().unwrap().root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes();

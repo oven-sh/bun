@@ -372,8 +372,8 @@ impl napi_typedarray_type {
         }
     }
 
-    pub fn to_c(self) -> jsc::c_api::JSTypedArrayType {
-        self.to_js_type().to_c()
+    pub fn to_c(self) -> c_uint {
+        self.to_js_type().to_typed_array_type().to_c()
     }
 }
 

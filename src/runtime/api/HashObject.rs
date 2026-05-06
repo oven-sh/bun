@@ -319,6 +319,9 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
     let mut input: &[u8] = b"";
     let mut input_slice = ZigStringSlice::empty();
+    // Hoisted to outlive the borrow stored in `input` (Zig's stack-value
+    // `array_buffer` lived for the whole function; mirror that scope here).
+    let array_buffer;
     if let Some(arg) = args.next_eat() {
         if let Some(blob) = arg.as_::<Blob>() {
             // TODO: files

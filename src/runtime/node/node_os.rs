@@ -1266,9 +1266,8 @@ pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         return bun_sys::E::SUCCESS;
     }
 
-    let errcode = bun_sys::get_errno(code);
-    // SAFETY: errcode is a valid errno value; bun_sys::E is #[repr(uN)]
-    unsafe { core::mem::transmute(errcode as c_int) }
+    // get_errno already returns bun_sys::E (= SystemErrno) directly.
+    bun_sys::get_errno(code)
 }
 
 pub fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {

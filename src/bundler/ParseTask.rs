@@ -2130,26 +2130,30 @@ fn run_with_source_code(
     // TC39 standard decorators have their own metadata mechanism.
     opts.features.standard_decorators =
         !loader.is_typescript() || !(task.experimental_decorators || task.emit_decorator_metadata);
-    opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages.clone();
-    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+    opts.features.unwrap_commonjs_packages = transpiler_ref.options.unwrap_commonjs_packages;
+    // TODO(port): `bundler_feature_flags` is `Option<Box<StringSet>>` on both
+    // sides; cannot move out of `&transpiler.options`. Phase B: store as
+    // `Option<&'a StringSet>` on `RuntimeFeatures`.
+    opts.features.bundler_feature_flags = None;
     // JavaScriptCore implements `using` / `await using` natively, so when
     // targeting Bun there is no need to lower them.
     opts.features.lower_using = !target.is_bun();
     opts.features.hot_module_reloading =
-        output_format == options::OutputFormat::InternalBakeDev && !source.index.is_runtime();
+        output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
     opts.features.auto_polyfill_require =
-        output_format == options::OutputFormat::Esm && !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh
+        output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+    opts.features.react_fast_refresh = transpiler_ref.options.react_fast_refresh
         && loader.is_jsx()
         && !source.path.is_node_module();
 
-    opts.features.server_components = if transpiler.options.server_components {
+    opts.features.server_components = if transpiler_ref.options.server_components {
+        use js_parser::options::ServerComponents as SC;
         match target {
-            options::Target::Browser => js_parser::ServerComponents::ClientSide,
+            options::Target::Browser => SC::ClientSide,
             _ => match use_directive {
-                UseDirective::None => js_parser::ServerComponents::WrapAnonServerFunctions,
+                UseDirective::None => SC::WrapAnonServerFunctions,
                 UseDirective::Client => {
-                    if transpiler
+                    if transpiler_ref
                         .options
                         .framework
                         .as_ref()
@@ -2159,39 +2163,42 @@ fn run_with_source_code(
                         .unwrap()
                         .separate_ssr_graph
                     {
-                        js_parser::ServerComponents::ClientSide
+                        SC::ClientSide
                     } else {
-                        js_parser::ServerComponents::WrapExportsForClientReference
+                        SC::WrapExportsForClientReference
                     }
                 }
-                UseDirective::Server => js_parser::ServerComponents::WrapExportsForServerReference,
+                UseDirective::Server => SC::WrapExportsForServerReference,
             },
         }
     } else {
-        js_parser::ServerComponents::None
+        js_parser::options::ServerComponents::None
     };
 
-    opts.framework = transpiler.options.framework.clone();
+    // TODO(port): TYPE_ONLY divergence — `transpiler.options.framework:
+    // Option<&bake_types::Framework>` vs `opts.framework:
+    // Option<&js_parser::options::Framework>`.
+    opts.framework = None;
 
     opts.ignore_dce_annotations =
-        transpiler.options.ignore_dce_annotations && !source.index.is_runtime();
+        transpiler_ref.options.ignore_dce_annotations && !task.source_index.is_runtime();
 
     // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
     // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
     // in which we inline `true`.
-    if transpiler.options.inline_entrypoint_import_meta_main || !task.is_entry_point {
+    if transpiler_ref.options.inline_entrypoint_import_meta_main || !task.is_entry_point {
         opts.import_meta_main_value =
-            Some(task.is_entry_point && transpiler.options.dev_server.is_none());
+            Some(task.is_entry_point && transpiler_ref.options.dev_server.is_null());
     } else if target == options::Target::Node {
         opts.lower_import_meta_main_for_node_js = true;
     }
 
-    opts.tree_shaking = if source.index.is_runtime() {
+    opts.tree_shaking = if task.source_index.is_runtime() {
         true
     } else {
-        transpiler.options.tree_shaking
+        transpiler_ref.options.tree_shaking
     };
-    opts.code_splitting = transpiler.options.code_splitting;
+    opts.code_splitting = transpiler_ref.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.is_jsx();

@@ -270,9 +270,12 @@ impl Drop for State {
             dump_stack_trace(value.allocated_at.trace(), TRACE_LIMITS);
             let extra = &value.extra;
             if let Some(extra_vtable) = extra.vtable {
-                // SAFETY: key is the original allocation base pointer for `value.len` bytes,
-                // still live (it leaked).
-                let data = unsafe { core::slice::from_raw_parts_mut(*key as *mut u8, value.len) };
+                // SAFETY: `*key` is the original allocation base pointer for `value.len` bytes and
+                // is still live (it leaked). The key was stored from `buf.as_ptr()` where
+                // `buf: &[u8]`, so it carries shared (read-only) provenance — we may only form a
+                // `&[u8]` here, never `&mut [u8]`. Zig's `@constCast` at .zig:220 does not
+                // translate; see `ExtraVTable::on_allocation_leak`.
+                let data = unsafe { core::slice::from_raw_parts(*key, value.len) };
                 (extra_vtable.on_allocation_leak)(extra.ptr, data);
             }
             n += 1;

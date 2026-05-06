@@ -3,10 +3,9 @@ use std::sync::Arc;
 use bun_jsc::Strong;
 use bun_ptr::RefPtr;
 
-use crate::dev_server::{DevServer, IncrementalGraph, SerializedFailure, SourceMapStore};
-use crate::framework_router::{self, Route};
-// TODO(port): verify crate paths for HTMLBundle (jsc.API.HTMLBundle) and StaticRoute (bun.api.server.StaticRoute)
-use bun_jsc::api::html_bundle::{HTMLBundle, HTMLBundleRoute};
+use super::{incremental_graph, source_map_store, DevServer, SerializedFailure};
+use crate::bake::framework_router;
+use crate::server::html_bundle::HTMLBundleRoute;
 use crate::api::server::StaticRoute;
 
 // Zig: `pub const Index = bun.GenericIndex(u30, RouteBundle);`

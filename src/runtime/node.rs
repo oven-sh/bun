@@ -128,58 +128,10 @@ pub mod zlib {
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────
-// All `node/` subdir modules depend heavily on `bun_jsc` (currently broken
-// under concurrent B-2 work) — gated until the lower tier is green.
-// Phase-A drafts remain on disk; see  block below.
-
-mod _gated_submods {
-    /// node:fs
-    pub use crate::node::node_fs as fs;
-    /// node:path
-    pub use crate::node::path;
-    /// node:crypto
-    pub use crate::node::node_crypto_binding as crypto;
-    /// node:os
-    pub use crate::node::node_os as os;
-    /// node:process
-    pub use crate::node::node_process as process;
-    pub use crate::node::util::validators;
-    pub use crate::node::nodejs_error_code::Code as ErrorCode;
-
-    pub use bun_jsc::MarkedArrayBuffer as Buffer;
-
-    pub use self::types::PathOrBlob;
-    pub use self::types::Dirent;
-    pub use self::types::FileSystemFlags;
-    pub use self::types::PathOrFileDescriptor;
-    pub use self::types::mode_from_js;
-    pub use self::types::VectorArrayBuffer;
-    pub use self::types::Valid;
-    pub use self::types::PathLike;
-    pub use self::types::CallbackTask;
-    pub use self::types::PathOrBuffer;
-    pub use self::types::js_assert_encoding_valid;
-    pub use self::types::Encoding;
-    pub use self::types::StringOrBuffer;
-    pub use self::types::BlobOrStringOrBuffer;
-
-    pub use crate::node::fs_events as FSEvents;
-    pub use self::stat::Stats;
-    pub use self::stat::StatsBig;
-    pub use self::stat::StatsSmall;
-
-    pub use self::statfs::StatFSSmall;
-    pub use self::statfs::StatFSBig;
-    pub use self::statfs::StatFS;
-
-    pub use crate::node::time_like;
-    pub use self::time_like::TimeLike;
-    pub use self::time_like::from_js as time_like_from_js;
-
-    use crate::node::stat;
-    use crate::node::statfs;
-    use crate::node::types;
-}
+// PORT NOTE: the phase-A `_gated_submods` scaffold was removed once every
+// re-export it held (fs/path/crypto/os/process/validators/ErrorCode/Buffer/
+// types::*/FSEvents/Stats*/StatFS*/time_like*) was promoted to a real
+// top-level `pub mod`/`pub use` above. Nothing referenced the private mod.
 
 #[cfg(unix)]
 pub type uid_t = libc::uid_t;

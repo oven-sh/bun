@@ -11,7 +11,7 @@ use bun_core::{Global, Output};
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{EventLoopHandle};
 use bun_resolver::package_json::DependencyMap;
-use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
 

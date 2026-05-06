@@ -73,7 +73,7 @@ pub struct Route {
     // verified.
     bundle: *const HTMLBundle,
     /// One HTMLBundle.Route can be specified multiple times
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount<Route>,
     // TODO: attempt to remove the null case. null is only present during server
     // initialization as only a ServerConfig object is present.
     server: Cell<Option<AnyServer>>,

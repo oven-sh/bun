@@ -787,7 +787,7 @@ pub static AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     clap::parse_param!("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)"),
 ];
 
-pub static AUTO_ONLY_PARAMS: &[ParamType] = clap::concat_params!(
+pub static AUTO_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     [
         // clap::parse_param!("--all"),
         clap::parse_param!("--silent                          Don't print the script command"),
@@ -796,24 +796,24 @@ pub static AUTO_ONLY_PARAMS: &[ParamType] = clap::concat_params!(
         clap::parse_param!("--revision                        Print version with revision and exit"),
     ],
     AUTO_OR_RUN_PARAMS,
-);
-pub static AUTO_PARAMS: &[ParamType] = clap::concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+));
+pub static AUTO_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_));
 
-pub static RUN_ONLY_PARAMS: &[ParamType] = clap::concat_params!(
+pub static RUN_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     [
         clap::parse_param!("--silent                          Don't print the script command"),
         clap::parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."),
     ],
     AUTO_OR_RUN_PARAMS,
-);
-pub static RUN_PARAMS: &[ParamType] = clap::concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+));
+pub static RUN_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_));
 
-pub static BUNX_COMMANDS: &[ParamType] = clap::concat_params!(
+pub static BUNX_COMMANDS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     [
         clap::parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"),
     ],
     AUTO_ONLY_PARAMS,
-);
+));
 
 #[cfg(feature = "bake_debugging_features")]
 macro_rules! maybe_bake_debug_params {
@@ -827,7 +827,7 @@ macro_rules! maybe_bake_debug_params {
 #[cfg(not(feature = "bake_debugging_features"))]
 macro_rules! maybe_bake_debug_params { () => { [] }; }
 
-pub static BUILD_ONLY_PARAMS: &[ParamType] = clap::concat_params!(
+pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     [
         clap::parse_param!("--production                     Set NODE_ENV=production and enable minification"),
         clap::parse_param!("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production"),

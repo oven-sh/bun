@@ -1523,12 +1523,12 @@ pub mod js_bundler {
     }
 
     pub struct Resolve {
-        pub bv2: *mut BundleV2,
+        pub bv2: *mut BundleV2<'static>,
         pub import_record: MiniImportRecord,
         pub value: ResolveValue,
 
         pub js_task: jsc::AnyTask,
-        pub task: jsc::AnyEventLoop::Task,
+        pub task: jsc::AnyTaskWithExtraContext,
     }
 
     pub struct MiniImportRecord {

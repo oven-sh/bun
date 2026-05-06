@@ -1363,7 +1363,17 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :417-466 — RuntimeTranspilerCache hit: skip print.
-                if let Some(entry) = cache.entry.as_mut() {
+                // PORT NOTE: `cache.entry` is `Option<*mut ()>` (type-erased in
+                // T2 `bun_js_parser`); the concrete payload is the T4
+                // `bun_bundler::cache::RuntimeTranspilerCacheEntry` — round-trip
+                // via cast.
+                if let Some(entry_ptr) = cache.entry {
+                    // SAFETY: `cache.entry` is set by `RuntimeTranspilerCache::get`
+                    // (T6 vtable) to a `Box::into_raw(RuntimeTranspilerCacheEntry)`;
+                    // we hold the only reference for this synchronous transpile.
+                    let entry = unsafe {
+                        &mut *entry_ptr.cast::<bun_bundler::cache::RuntimeTranspilerCacheEntry>()
+                    };
                     // Spec :418-421 — register the cached sourcemap so error
                     // stacks remap to original positions even on a cache hit.
                     // PORT NOTE: spec wraps `entry.sourcemap` in a

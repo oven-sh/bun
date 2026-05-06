@@ -2041,7 +2041,7 @@ fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");
-    let name = FileSystem::tmpname(&full_prefix, name_buf.as_mut_slice(), bun_core::fast_random())
+    let name = FileSystem::tmpname(&full_prefix, name_buf.0.as_mut_slice(), bun_core::fast_random())
         .map_err(|_| bun_alloc::AllocError)?;
     let joined = path::resolve_path::join_abs_string::<path::platform::Auto>(
         RealFS::platform_temp_dir(),

@@ -1671,7 +1671,7 @@ pub fn join_posix_js_t<T: PathChar>(
     buf: &mut [T],
     buf2: &mut [T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, join_posix_t(paths, buf, buf2))
+    create_js_string_t::<T>(global_object, join_posix_t(paths, buf, buf2))
 }
 
 pub fn join_windows_js_t<T: PathChar>(

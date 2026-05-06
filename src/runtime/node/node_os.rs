@@ -296,7 +296,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
             // Actually create the JS object representing the CPU
             let cpu = JSValue::create_empty_object(global_this, 1);
-            cpu.put(global_this, ZigString::static_("times"), times.to_value(global_this));
+            cpu.put(global_this, b"times", times.to_value(global_this));
             values.put_index(global_this, num_cpus, cpu)?;
 
             num_cpus += 1;

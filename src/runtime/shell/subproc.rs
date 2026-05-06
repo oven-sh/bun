@@ -195,17 +195,17 @@ static SHELL_EXIT_VTABLE: bun_process::ProcessExitVTable = bun_process::ProcessE
 
 unsafe fn shell_on_process_exit_thunk(
     owner: *mut (),
-    _process: *mut Process,
-    _status: bun_process::Status,
-    _rusage: *const Rusage,
+    process: *mut Process,
+    status: bun_process::Status,
+    rusage: *const Rusage,
 ) {
     // SAFETY: `owner` was registered as `*mut ShellSubprocess` via
     // `set_exit_handler` and the owning Cmd outlives the Process exit callback.
-    let _this = unsafe { &mut *(owner as *mut ShellSubprocess) };
-    // PORT NOTE: ShellSubprocess::on_process_exit currently takes
-    // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
-    // cannot forward losslessly.
-    todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
+    // `process`/`rusage` are live for the duration of the callback.
+    let this = unsafe { &mut *(owner as *mut ShellSubprocess) };
+    let process_ref: &Process = unsafe { &*process };
+    let rusage_ref: &Rusage = unsafe { &*rusage };
+    this.on_process_exit(process_ref, status, rusage_ref);
 }
 
 impl ShellSubprocess {
@@ -685,8 +685,8 @@ impl ShellSubprocess {
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         log!("onProcessExit({:x})", self as *mut _ as usize);
         let exit_code: Option<u8> = 'brk: {
-            if let Status::Exited { code, .. } = status {
-                break 'brk Some(code);
+            if let Status::Exited(exited) = &status {
+                break 'brk Some(exited.code);
             }
 
             if matches!(status, Status::Err(_)) {

@@ -1,4 +1,4 @@
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
 
 use bun_aio::KeepAlive;

@@ -104,7 +104,10 @@ impl DateHeaderTimer {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(MS_PER_S);
             self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-            vm.timer.insert(&mut self.event_loop_timer);
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
+            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            unsafe { (*timer_all()).insert(elt) };
         }
     }
 }

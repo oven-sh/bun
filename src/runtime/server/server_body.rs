@@ -4370,8 +4370,8 @@ impl AnyServer {
     pub fn append_static_route(
         &self,
         path: &[u8],
-        route: AnyRoute,
-        method: Option<http::Method>,
+        route: super::AnyRoute,
+        method: server_config::MethodOptional,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         any_server_dispatch!(self, |s| s.append_static_route(path, route, method))

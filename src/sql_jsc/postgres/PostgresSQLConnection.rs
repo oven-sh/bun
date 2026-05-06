@@ -2180,12 +2180,12 @@ impl PostgresSQLConnection {
                 // callback with it; pass a raw `*mut Putter` so the closure can mutate it.
                 let putter_ptr: *mut DataCell::Putter<'_> = &mut putter;
                 let decode_result = if request.flags.result_mode == SQLQueryResultMode::Raw {
-                    protocol::DataRow::decode(putter_ptr, reader, |p, i, b| {
+                    protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
                         // SAFETY: putter outlives this call.
                         unsafe { &mut *p }.put_raw(i, b)
                     })
                 } else {
-                    protocol::DataRow::decode(putter_ptr, reader, |p, i, b| {
+                    protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
                         // SAFETY: putter outlives this call.
                         unsafe { &mut *p }.put(i, b)
                     })

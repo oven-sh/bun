@@ -772,15 +772,15 @@ pub mod command {
 
                     // SAFETY: single-threaded startup
                     unsafe {
-                        CONTEXT_DATA.write(ContextData {
-                            // SAFETY: all-zero is a valid api::TransformOptions
-                            // (#[repr(C)] POD, no NonNull/NonZero/enum fields)
-                            args: core::mem::zeroed::<api::TransformOptions>(),
+                        (*(&raw mut CONTEXT_DATA)).write(ContextData {
                             log,
                             start_time: START_TIME,
+                            // args left to Default — TransformOptions contains
+                            // NonNull-backed collections, so the Zig zero-init
+                            // does not translate.
                             ..Default::default()
                         });
-                        GLOBAL_CLI_CTX = CONTEXT_DATA.assume_init_mut();
+                        GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
                     }
 
                     // If no compile_exec_argv, skip executable name if present

@@ -2,7 +2,7 @@ use bun_core::Timespec;
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-use crate::timer::EventLoopTimer;
+use crate::timer::{ElTimespec, EventLoopTimer};
 
 pub struct EventLoopDelayMonitor {
     /// We currently only globally share the same instance, which is kept alive by
@@ -25,11 +25,7 @@ impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
             js_histogram: JSValue::ZERO,
-            event_loop_timer: EventLoopTimer {
-                next: Timespec::EPOCH,
-                tag: EventLoopTimerTag::EventLoopDelayMonitor,
-                ..Default::default()
-            },
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
             enabled: false,
@@ -37,8 +33,19 @@ impl Default for EventLoopDelayMonitor {
     }
 }
 
+/// PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier `VirtualMachine`;
+/// the real `timer::All` lives in `RuntimeState`. Recover it via the
+/// thread-local. Returns a raw ptr — callers dereference per-field under
+/// `// SAFETY:` blocks (see jsc_hooks.rs raw-ptr-per-field re-entry pattern).
+#[inline]
+fn timer_all() -> *mut crate::timer::All {
+    let state = crate::jsc_hooks::runtime_state();
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
+    unsafe { core::ptr::addr_of_mut!((*state).timer) }
+}
+
 impl EventLoopDelayMonitor {
-    pub fn enable(&mut self, vm: &mut VirtualMachine, histogram: JSValue, resolution_ms: i32) {
+    pub fn enable(&mut self, _vm: &mut VirtualMachine, histogram: JSValue, resolution_ms: i32) {
         if self.enabled {
             return;
         }
@@ -49,11 +56,17 @@ impl EventLoopDelayMonitor {
 
         // Schedule timer
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        self.event_loop_timer.next = now.add_ms(i64::from(resolution_ms));
-        vm.timer.insert(&mut self.event_loop_timer);
+        let next = now.add_ms(i64::from(resolution_ms));
+        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
+        // (same {sec,nsec} layout) until bun_event_loop switches to bun_core::Timespec.
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
+        // `fake_timers`, disjoint from `event_loop_delay` which `self` may alias.
+        unsafe { (*timer_all()).insert(elt) };
     }
 
-    pub fn disable(&mut self, vm: &mut VirtualMachine) {
+    pub fn disable(&mut self, _vm: &mut VirtualMachine) {
         if !self.enabled {
             return;
         }
@@ -61,14 +74,16 @@ impl EventLoopDelayMonitor {
         self.enabled = false;
         self.js_histogram = JSValue::ZERO;
         self.last_fire_ns = 0;
-        vm.timer.remove(&mut self.event_loop_timer);
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: see `enable` — disjoint-field access on `All`.
+        unsafe { (*timer_all()).remove(elt) };
     }
 
     pub fn is_enabled(&self) -> bool {
         self.enabled && !self.js_histogram.is_empty()
     }
 
-    pub fn on_fire(&mut self, vm: &mut VirtualMachine, now: &Timespec) {
+    pub fn on_fire(&mut self, _vm: &mut VirtualMachine, now: &Timespec) {
         if !self.enabled || self.js_histogram.is_empty() {
             return;
         }
@@ -90,8 +105,11 @@ impl EventLoopDelayMonitor {
         self.last_fire_ns = now_ns;
 
         // Reschedule
-        self.event_loop_timer.next = now.add_ms(i64::from(self.resolution_ms));
-        vm.timer.insert(&mut self.event_loop_timer);
+        let next = now.add_ms(i64::from(self.resolution_ms));
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        // SAFETY: see `enable` — disjoint-field access on `All`.
+        unsafe { (*timer_all()).insert(elt) };
     }
 }
 
@@ -110,14 +128,20 @@ pub extern "C" fn Timer_enableEventLoopDelayMonitoring(
 ) {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
-    vm.timer.event_loop_delay.enable(vm, histogram, resolution_ms);
+    // PORT NOTE (b2-cycle): `vm.timer` is `()` — recover `All` via runtime_state().
+    let state = crate::jsc_hooks::runtime_state();
+    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`; single
+    // JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
+    unsafe { (*state).timer.event_loop_delay.enable(vm, histogram, resolution_ms) };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualMachine) {
     // SAFETY: vm is a valid non-null pointer passed from C++.
     let vm = unsafe { &mut *vm };
-    vm.timer.event_loop_delay.disable(vm);
+    let state = crate::jsc_hooks::runtime_state();
+    // SAFETY: see `Timer_enableEventLoopDelayMonitoring`.
+    unsafe { (*state).timer.event_loop_delay.disable(vm) };
 }
 
 use crate::timer::EventLoopTimerTag;
@@ -128,5 +152,5 @@ use bun_core::TimespecMockMode;
 //   source:     src/runtime/timer/EventLoopDelayMonitor.zig (83 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      exported C fns borrow vm twice (event_loop_delay is a field of vm.timer) — Phase B may need to reshape for borrowck; bare JSValue field intentionally kept (rooted by JS closure).
+//   notes:      exported C fns operate on crate::timer::EventLoopDelayMonitor (mod.rs canonical type) via runtime_state(); ElTimespec stub conversion until bun_event_loop switches to bun_core::Timespec.
 // ──────────────────────────────────────────────────────────────────────────

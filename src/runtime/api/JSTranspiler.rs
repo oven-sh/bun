@@ -38,7 +38,7 @@ use bun_jsc::{
     JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, LogJsc, StringJsc,
     ComptimeStringMapExt,
 };
-use bun_jsc::ZigString as JscZigString;
+use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::{Encoding, StringOrBuffer};
 use bun_js_parser::runtime::Runtime;
@@ -849,7 +849,7 @@ impl<'a> TransformTask<'a> {
 impl<'a> Drop for TransformTask<'a> {
     fn drop(&mut self) {
         // log.deinit() → logger::Log: Drop
-        let input_code = core::mem::replace(&mut self.input_code, StringOrBuffer::empty());
+        let input_code = core::mem::take(&mut self.input_code);
         input_code.deinit_and_unprotect();
         // output_code.deref() → BunString: Drop
         // tsconfig is owned by JSTranspiler, not by TransformTask.
@@ -1444,7 +1444,7 @@ fn named_exports_to_js(
     // lacks `.sort`. Iterate unsorted for now and sort the output Vec instead.
     let mut named_exports_iter = named_exports.iterator();
     while let Some(entry) = named_exports_iter.next() {
-        names.push(BunString::from_bytes(entry.key_ptr));
+        names.push(BunString::from_bytes(&**entry.key_ptr));
     }
     // TODO(port): `bun_str::String::to_js_array` — use the free fn in bun_jsc.
     bun_jsc::bun_string_jsc::to_js_array(global, &names)

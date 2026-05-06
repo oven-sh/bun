@@ -5512,8 +5512,9 @@ fn bundle_new_route_js_function_impl(
 
     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
     let vm = unsafe { &*dev.vm };
-    vm.event_loop().enter();
-    let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
+    // SAFETY: `event_loop()` returns a stable raw pointer; deref for &mut.
+    unsafe { (*vm.event_loop()).enter() };
+    let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
 
     // TODO(port): `AnyRequestContext::dev_server()` returns the keystone
     // `&dev_server::DevServer`, but this body needs `&mut dev_server_body::DevServer`

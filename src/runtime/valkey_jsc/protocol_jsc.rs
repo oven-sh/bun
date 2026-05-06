@@ -12,9 +12,13 @@ use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
 #[allow(unused_imports)]
 use protocol as _; // keep `protocol` referenced for sibling drafts
 
+/// Zig: `valkeyErrorToJS(global, message: ?[]const u8, err)`.
+/// All Rust callers always provide a message (never `None`), so the parameter
+/// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
+/// uniformly without forcing `Some(..)` at every call site.
 pub fn valkey_error_to_js(
     global: &JSGlobalObject,
-    message: Option<&[u8]>,
+    message: impl AsRef<[u8]>,
     err: RedisError,
 ) -> JSValue {
     let error_code: JscError = match err {
@@ -51,7 +55,8 @@ pub fn valkey_error_to_js(
         RedisError::JSTerminated => return global.take_exception(JsError::Terminated),
     };
 
-    if let Some(msg) = message {
+    let msg = message.as_ref();
+    if !msg.is_empty() {
         return error_code.fmt(global, format_args!("{}", bstr::BStr::new(msg)));
     }
     error_code.fmt(

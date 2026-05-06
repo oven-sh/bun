@@ -364,7 +364,7 @@ impl<'a> State<'a> {
                 dependent.remaining_dependencies -= 1;
                 if dependent.remaining_dependencies == 0 {
                     if dependent.start().is_err() {
-                        Output::pretty_errorln("<r><red>error<r>: Failed to start process", ());
+                        Output::pretty_errorln("<r><red>error<r>: Failed to start process");
                         Global::exit(1);
                     }
                 }

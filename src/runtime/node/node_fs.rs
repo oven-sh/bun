@@ -174,8 +174,6 @@ use super::MaybeTodo as _;
 //   - `super::types::FdJsc`  → `Fd::from_js_validated()`
 //   - `bun_jsc::SysErrorJsc` → `bun_sys::Error::to_js()`
 #[allow(unused_imports)]
-use bun_sys::FdExt as _;
-#[allow(unused_imports)]
 use super::types::FdJsc as _;
 #[allow(unused_imports)]
 use bun_jsc::SysErrorJsc as _;
@@ -400,15 +398,11 @@ fn abort_err() -> sys::Error {
 /// (`Option<Maybe<()>>`) so `.unwrap_or(Ok(()))` chaining keeps working.
 #[inline]
 fn errno_sys_p_maybe(rc: c_int, syscall: sys::Tag, file_path: &[u8]) -> Option<Maybe<()>> {
-    match sys::get_errno(rc) {
-        sys::posix::E::SUCCESS => None,
-        e => Some(Maybe::Err(sys::Error {
-            errno: e as sys::ErrorInt,
-            syscall,
-            path: file_path.into(),
-            ..Default::default()
-        })),
+    let e = sys::get_errno(rc);
+    if e == sys::posix::E::SUCCESS {
+        return None;
     }
+    Some(Maybe::Err(sys::Error::from_code(e, syscall).with_path(file_path)))
 }
 
 /// `bun.sys.Error.withPathLike` — `with_path()` for a `PathOrFileDescriptor`.
@@ -6686,7 +6680,7 @@ impl ReaddirEntry for Dirent {
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::WithFileTypes(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding) {
         entries.push(Dirent {
-            name: webcore::encoding::to_bun_string(utf8_name, encoding),
+            name: webcore::encoding::to_bun_string(utf8_name, encoding.into()),
             path: dirent_path.dupe_ref(),
             kind,
         });
@@ -6694,7 +6688,7 @@ impl ReaddirEntry for Dirent {
     fn append_entry_recursive(entries: &mut Vec<Self>, utf8_name: &[u8], _name_to_copy: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         entries.push(Dirent {
             name: if apply_encoding {
-                webcore::encoding::to_bun_string(utf8_name, encoding)
+                webcore::encoding::to_bun_string(utf8_name, encoding.into())
             } else {
                 BunString::clone_utf8(utf8_name)
             },

@@ -67,12 +67,12 @@ pub fn to_have_been_nth_called_with(
             )));
         }
 
-        if nth_call_value.get_length(global)? != expected_args.len() {
+        if nth_call_value.get_length(global)? != expected_args.len() as u64 {
             pass = false;
         } else {
             let mut itr = nth_call_value.array_iterator(global)?;
             while let Some(call_arg) = itr.next()? {
-                if !call_arg.jest_deep_equals(expected_args[itr.i - 1], global)? {
+                if !call_arg.jest_deep_equals(expected_args[(itr.i - 1) as usize], global)? {
                     pass = false;
                     break;
                 }

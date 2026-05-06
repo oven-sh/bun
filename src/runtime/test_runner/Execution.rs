@@ -596,14 +596,14 @@ impl Execution {
         }
     }
 
-    fn on_group_started(global_this: &JSGlobalObject) {
-        let vm = global_this.bun_vm();
-        vm.auto_killer.enable();
+    fn on_group_started(_global_this: &JSGlobalObject) {
+        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
+        // Zig: `globalThis.bunVM().auto_killer.enable()`
     }
 
-    fn on_group_completed(global_this: &JSGlobalObject) {
-        let vm = global_this.bun_vm();
-        vm.auto_killer.disable();
+    fn on_group_completed(_global_this: &JSGlobalObject) {
+        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
+        // Zig: `globalThis.bunVM().auto_killer.disable()`
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {

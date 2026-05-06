@@ -604,7 +604,7 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         let mut size: usize = out.len();
         // SAFETY: valid buffer + size out-param
         if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }.to_error(bun_sys::Tag::uv_os_homedir) {
-            return global.throw_value(err.to_js(global)?);
+            return Err(global.throw_value(err.to_js(global)));
         }
         return Ok(BunString::clone_utf8(&out[0..size]));
     }
@@ -807,7 +807,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         // Node returns {} rather than throwing.
         #[cfg(target_os = "android")]
         {
-            if errno == bun_sys::posix::E::ACCES || errno == bun_sys::posix::E::PERM {
+            if errno == bun_sys::posix::E::EACCES as c_int || errno == bun_sys::posix::E::EPERM as c_int {
                 return Ok(JSValue::create_empty_object(global_this, 0));
             }
         }

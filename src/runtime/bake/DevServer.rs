@@ -3422,8 +3422,10 @@ pub fn finalize_bundle(
         // PORT NOTE: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
         if route_bundle.data.html_mut().cached_response.take().is_some() {
-            // Arc<StaticRoute> drop releases the ref.
-            route_bundle.invalidate_client_bundle(dev_ptr.cast());
+            // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
+            // is a disjoint field reborrowed through the raw `dev_ptr`.
+            route_bundle
+                .invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,

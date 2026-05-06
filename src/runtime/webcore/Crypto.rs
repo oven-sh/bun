@@ -7,10 +7,13 @@ use bun_str::String as BunString;
 use crate::node::Encoding;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local shims for `JSGlobalObject` methods that live in the cfg-gated
-// `src/jsc/JSGlobalObject.rs` impl block (not yet re-exported on the active
-// `bun_jsc::JSGlobalObject`). Kept local per phase-d rules; remove once
-// upstream un-gates them.
+// Local extension for `JSGlobalObject` methods whose canonical impls live in
+// `src/jsc/JSGlobalObject.rs` on a parallel `JSGlobalObject` struct (that
+// module defines its own opaque type, so its inherent impls don't attach to
+// `bun_jsc::JSGlobalObject`). Bodies here are full ports of the matching Zig
+// (`JSGlobalObject.zig` `throwDOMException` / `validateIntegerRange` /
+// `throwInvalidPropertyTypeValue`). Remove once upstream collapses the two
+// `JSGlobalObject` definitions.
 // ──────────────────────────────────────────────────────────────────────────
 trait JSGlobalObjectCryptoExt {
     fn throw_dom_exception(
@@ -18,7 +21,13 @@ trait JSGlobalObjectCryptoExt {
         code: bun_jsc::DOMExceptionCode,
         args: core::fmt::Arguments<'_>,
     ) -> JsError;
-    fn validate_integer_range<T>(
+    fn throw_invalid_property_type_value(
+        &self,
+        field: &[u8],
+        typename: &[u8],
+        value: JSValue,
+    ) -> JsError;
+    fn validate_integer_range<T: bun_core::Integer>(
         &self,
         value: JSValue,
         default: T,
@@ -29,18 +38,123 @@ trait JSGlobalObjectCryptoExt {
 impl JSGlobalObjectCryptoExt for JSGlobalObject {
     fn throw_dom_exception(
         &self,
-        _code: bun_jsc::DOMExceptionCode,
-        _args: core::fmt::Arguments<'_>,
+        code: bun_jsc::DOMExceptionCode,
+        args: core::fmt::Arguments<'_>,
     ) -> JsError {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::throw_dom_exception")
+        unsafe extern "C" {
+            fn ZigString__toDOMExceptionInstance(
+                this: *const bun_str::ZigString,
+                global: *const JSGlobalObject,
+                code: u8,
+            ) -> JSValue;
+        }
+        // PERF(port): Zig used a 4 KiB stack-fallback + MutableString.init2048;
+        // here we heap-format. The argument-free fast path (`@sizeOf(args)==0`)
+        // is recovered via `Arguments::as_str`.
+        let instance = if let Some(s) = args.as_str() {
+            let zs = bun_str::ZigString::init_utf8(s.as_bytes());
+            // SAFETY: `zs` borrows `s` for the FFI call; `self` is a live JSGlobalObject*.
+            unsafe { ZigString__toDOMExceptionInstance(&zs, self, code as u8) }
+        } else {
+            let buf = std::fmt::format(args);
+            let zs = bun_str::ZigString::init_utf8(buf.as_bytes());
+            // SAFETY: `zs` borrows `buf` for the FFI call; `self` is a live JSGlobalObject*.
+            unsafe { ZigString__toDOMExceptionInstance(&zs, self, code as u8) }
+        };
+        self.throw_value(instance)
     }
-    fn validate_integer_range<T>(
+
+    fn throw_invalid_property_type_value(
         &self,
-        _value: JSValue,
-        _default: T,
-        _range: bun_jsc::IntegerRange,
+        field: &[u8],
+        typename: &[u8],
+        value: JSValue,
+    ) -> JsError {
+        let ty_str = value.js_type_string(self).to_slice(self);
+        // `defer ty_str.deinit()` — ZigStringSlice's Drop handles cleanup.
+        self.err(
+            bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+            format_args!(
+                "The \"{}\" property must be of type {}. Received {}",
+                bstr::BStr::new(field),
+                bstr::BStr::new(typename),
+                bstr::BStr::new(ty_str.slice()),
+            ),
+        )
+        .throw()
+    }
+
+    fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: bun_jsc::IntegerRange,
     ) -> JsResult<T> {
-        todo!("blocked_on: bun_jsc::JSGlobalObject::validate_integer_range")
+        if value.is_undefined() || value.is_empty() {
+            return Ok(default);
+        }
+
+        let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(bun_jsc::MIN_SAFE_INTEGER));
+        let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(bun_jsc::MAX_SAFE_INTEGER));
+        // Zig: `comptime { if (min_t > max_t) @compileError(...) }` → debug_assert.
+        debug_assert!(min_t <= max_t, "max must be less than min");
+
+        let field_name = range.field_name;
+        // Zig: `comptime if (field_name.len == 0) @compileError(...)`.
+        debug_assert!(!field_name.is_empty(), "field_name must not be empty");
+        let always_allow_zero = range.always_allow_zero;
+        // min_t/max_t are clamped to ±MAX_SAFE_INTEGER above, so i64 fits.
+        let min_i64 = min_t as i64;
+        let max_i64 = max_t as i64;
+
+        if value.is_int32() {
+            let int = value.to_int32();
+            if always_allow_zero && int == 0 {
+                return Ok(T::ZERO);
+            }
+            if i128::from(int) < min_t || i128::from(int) > max_t {
+                return Err(self.throw_range_error(
+                    i64::from(int),
+                    bun_jsc::RangeErrorOptions {
+                        field_name,
+                        min: min_i64,
+                        max: max_i64,
+                        ..Default::default()
+                    },
+                ));
+            }
+            return Ok(T::from_i32(int));
+        }
+
+        if !value.is_number() {
+            return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
+        }
+        let f64_val = value.as_number();
+        if always_allow_zero && f64_val == 0.0 {
+            return Ok(T::ZERO);
+        }
+
+        if f64_val.is_nan() {
+            // node treats NaN as default
+            return Ok(default);
+        }
+        if f64_val.floor() != f64_val {
+            return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
+        }
+        // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
+        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
+            return Err(self.throw_range_error(
+                f64_val,
+                bun_jsc::RangeErrorOptions {
+                    field_name,
+                    min: min_i64,
+                    max: max_i64,
+                    ..Default::default()
+                },
+            ));
+        }
+
+        Ok(T::from_f64(f64_val))
     }
 }
 

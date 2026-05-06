@@ -436,11 +436,9 @@ impl FetchTasklet {
 
         // if we did not have a direct reference we check if the Weak ref is still alive
         if let Some(response_js) = self.response.get() {
-            // TODO(b2-blocked): `Response` doesn't impl `JsClass` yet (codegen
-            // wrapper not wired). `JSValue::as_::<Response>()` would resolve
-            // once `#[bun_jsc::JsClass]` lands on `Response`.
-            let _ = response_js;
-            todo!("blocked_on: bun_jsc::JsClass for webcore::Response");
+            if let Some(response) = response_js.as_::<Response>() {
+                return Some(response);
+            }
         }
 
         None
@@ -957,11 +955,21 @@ impl FetchTasklet {
             return Some(BodyValueError::JSValue(out));
         }
 
-        if let Some(_signal) = self.signal {
-            // TODO(b2-cycle): `bun_jsc::AbortSignal` at the crate root is a
-            // stub_ty!; the real `reason_if_aborted` (returning AbortReason) lives
-            // in `bun_jsc::abort_signal` which back-depends on `bun_runtime`.
-            todo!("blocked_on: bun_jsc::AbortSignal::reason_if_aborted");
+        if let Some(signal) = self.signal {
+            // SAFETY: signal is a live C++-owned WebCore::AbortSignal*; we hold one ref.
+            if let Some(reason) = unsafe { (*signal).reason_if_aborted(self.global_this) } {
+                // PORT NOTE: `AbortReason::to_body_value_error` lives in bun_jsc but
+                // would forward-depend on bun_runtime; reconstruct the trivial
+                // mapping at the call site (per AbortSignal.rs note).
+                let out = match reason {
+                    jsc::abort_signal::AbortReason::Common(r) => BodyValueError::AbortReason(r),
+                    jsc::abort_signal::AbortReason::Js(v) => {
+                        BodyValueError::JSValue(StrongOptional::create(v, self.global_this))
+                    }
+                };
+                self.clear_abort_signal();
+                return Some(out);
+            }
         }
 
         None
@@ -1181,11 +1189,9 @@ impl FetchTasklet {
         if let Some(readable) = self.readable_stream_ref.get(self.global_this) {
             if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-                // TODO(b2-blocked): `ByteStream::parent()` returns `&mut NewSource<ByteStream>`,
-                // but `ByteStream` doesn't impl `readable_stream::SourceContext` yet, so the
-                // generic struct bound is unsatisfied at this use site.
-                let _ = bytes;
-                todo!("blocked_on: webcore::byte_stream::ByteStream as SourceContext");
+                let source = unsafe { (*bytes).parent() };
+                source.cancel_handler = None;
+                source.cancel_ctx = None;
             }
         }
     }

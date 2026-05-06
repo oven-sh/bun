@@ -179,18 +179,40 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
-            let source = c.get_source(source_index as u32);
-            if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
-                // PORT NOTE: `generic_path_with_pretty_initialized` operates on
-                // `bun_resolver::fs::Path<'_>`, but `Source.path` is the distinct
-                // `bun_logger::fs::Path` stub. Round-tripping requires field-by-field
-                // copies of two duplicated structs (Path + PathName) plus a lifetime
-                // erase back to `'static`. This branch is a debug-only edge case
-                // ("does not reproduce when debugging" per the Zig comment), so defer
-                // until the two Path types are unified.
-                let _ = (&generic_path_with_pretty_initialized, allocator);
-                todo!("blocked_on: bun_logger::fs::Path vs bun_resolver::fs::Path unification");
-            }
+            let source_ref = c.get_source(source_index as u32);
+            // PORT NOTE: reshaped for borrowck — Zig copies the `Source` by value,
+            // mutates `.path`, and passes `&source`. `logger::Source` is not `Clone`
+            // (its `Cow` fields would deep-copy `Owned` data); instead, build a
+            // borrowed-field shadow only when the path needs fixing.
+            let mut source_storage: logger::Source;
+            let source: &logger::Source =
+                if core::ptr::eq(source_ref.path.text.as_ptr(), source_ref.path.pretty.as_ptr()) {
+                    // SAFETY: `resolver` is a backref into `BundleV2.transpiler.resolver`
+                    // valid for the link step; `resolver.fs` points at the singleton FS.
+                    let top_level_dir = unsafe { (*(*c.resolver).fs).top_level_dir };
+                    let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
+                        source_ref.path.clone(),
+                        c.options.target,
+                        top_level_dir,
+                        allocator,
+                    ));
+                    source_storage = logger::Source {
+                        path: new_path,
+                        // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                        // `Cow` payloads as `&'static [u8]` is sound regardless of arm.
+                        contents: std::borrow::Cow::Borrowed(unsafe {
+                            &*(source_ref.contents.as_ref() as *const [u8])
+                        }),
+                        contents_is_recycled: source_ref.contents_is_recycled,
+                        identifier_name: std::borrow::Cow::Borrowed(unsafe {
+                            &*(source_ref.identifier_name.as_ref() as *const [u8])
+                        }),
+                        index: source_ref.index,
+                    };
+                    &source_storage
+                } else {
+                    source_ref
+                };
 
             return c.print_code_for_file_in_chunk_js(
                 r,

@@ -295,14 +295,11 @@ pub mod api {
         Isolated,
     }
 
-    /// CYCLEBREAK local mirror of `install.PnpmMatcher`. The real body
-    /// (matchers/behavior + regex) lives in `bun_install_types`; nothing
-    /// reachable through `bun_options_types::schema::api::BunInstall` ever
-    /// reads inside it, so an opaque unit body is sufficient here.
-    #[derive(Default, Debug)]
-    pub struct PnpmMatcher {
-        _opaque: (),
-    }
+    /// CYCLEBREAK: re-export of the real `PnpmMatcher` body (matchers/behavior
+    /// + regex), which was hoisted into `bun_install_types::NodeLinker` so
+    /// `bunfig` / `.npmrc` parsing can construct it without depending on the
+    /// full `bun_install` package manager.
+    pub use bun_install_types::NodeLinker::PnpmMatcher;
 
     /// schema.zig:2973 — `api.BunInstall`. Full field set, order-faithful.
     /// `Default` ⇔ `std.mem.zeroes(Api.BunInstall)` (every field `None`/empty).

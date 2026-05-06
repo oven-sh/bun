@@ -69,19 +69,48 @@ pub fn view(
     json_output: bool,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
+    let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
-            // The stub `bun_install::PackageManager` does not yet expose
-            // `root_package_json_name_at_time_of_init` / `root_dir`; the full
-            // struct in `package_manager_real` does. The Zig code falls back to
-            // reading the cwd `package.json` here. Until the stub grows those
-            // fields, this branch is unreachable in practice.
-            todo!("blocked_on: bun_install::PackageManager::root_package_json_name_at_time_of_init");
-            #[allow(unreachable_code)]
-            {
-                break 'brk bun_paths::basename(bun_paths::fs::FileSystem::instance().top_level_dir());
+            if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
+                break 'brk &manager.root_package_json_name_at_time_of_init;
             }
+
+            // Try our best to get the package.json name they meant
+            'from_package_json: {
+                // SAFETY: `root_dir` is set once by `PackageManager::init()` and
+                // points into the resolver's directory cache for the process
+                // lifetime; mirrors Zig's non-optional `*DirEntry`.
+                let root_dir = unsafe { manager.root_dir.unwrap().as_ref() };
+                if !root_dir.has_comptime_query(b"package.json") {
+                    break 'from_package_json;
+                }
+                let fd = root_dir.fd();
+                if !fd.is_valid() {
+                    break 'from_package_json;
+                }
+                let str = match bun_sys::File::read_from(fd, b"package.json") {
+                    Ok(s) => s,
+                    Err(_) => break 'from_package_json,
+                };
+                // PORT NOTE: copy into the function-scope bump so the slice
+                // outlives this block (Zig never frees this allocation either).
+                let str: &[u8] = bump.alloc_slice_copy(&str);
+                let source = &logger::Source::init_path_string(b"package.json", str);
+                let mut pkg_log = logger::Log::init();
+                let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
+                    break 'from_package_json;
+                };
+                let pkg_json: ast::Expr = pkg_json.into();
+                if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
+                    if !name.is_empty() {
+                        break 'brk name;
+                    }
+                }
+            }
+
+            break 'brk bun_paths::basename(bun_paths::fs::FileSystem::instance().top_level_dir());
         }
 
         break 'brk spec_;
@@ -162,7 +191,6 @@ pub fn view(
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 
-    let bump = Bump::new();
     let mut log = logger::Log::init();
     let source = &logger::Source::init_path_string(b"view.json", response_buf.list.as_slice());
     let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
@@ -501,7 +529,7 @@ pub fn view(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/pm_view_command.zig (410 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      PackageManager stub missing root_dir/http_proxy/tls_reject_unauthorized — shimmed via local trait/todo!. JSON Expr converted to bun_js_parser::Expr immediately so the full accessor surface (get_object/get_array/get_string_cloned/set/get_path_may_be_index) is available.
+//   confidence: high
+//   todos:      0
+//   notes:      JSON Expr converted to bun_js_parser::Expr immediately so the full accessor surface (get_object/get_array/get_string_cloned/set/get_path_may_be_index) is available.
 // ──────────────────────────────────────────────────────────────────────────

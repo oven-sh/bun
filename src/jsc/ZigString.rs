@@ -13,9 +13,11 @@ use crate::{c_api, JSGlobalObject, JSValue, VM};
 // `bun_string::encoding::Encoding` (re-exported there as `NodeEncoding`).
 #[allow(unused_imports)]
 use bun_string::encoding::Encoding;
-// `webcore::encoding::{construct_from_u8,u16, byte_length_u8}` live in
-// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — callers stubbed
-// with `todo!()` until the dep cycle is broken or the encoder is hoisted.
+// `webcore::encoding::{construct_from_u8,u16}` live in
+// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — reached via
+// the fn-ptr hooks in `bun_string::webcore_encoding` (installed by
+// `bun_runtime::init()`), same dep-break pattern as `encode_into_from*`.
+use bun_string::webcore_encoding;
 use bun_paths::PathBuffer;
 use bun_simdutf_sys::simdutf;
 use bun_string::{strings, String as BunString, ZStr};
@@ -44,6 +46,7 @@ unsafe extern "C" {
     fn ZigString__toDOMExceptionInstance(this: *const ZigString, global: *const JSGlobalObject, code: u8) -> JSValue;
     fn ZigString__toSyntaxErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toRangeErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn BunString__toURL(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
 }
 
 // TODO(port): hoist into `c_api` (javascript_core_c_api.rs) once that module is
@@ -56,6 +59,7 @@ pub struct OpaqueJSString {
 pub type JSStringRef = *mut OpaqueJSString;
 unsafe extern "C" {
     fn JSStringCreateWithCharactersNoCopy(string: *const u16, num_chars: usize) -> JSStringRef;
+    fn JSStringCreateStatic(string: *const u8, num_chars: usize) -> JSStringRef;
 }
 
 /// Prefer using `bun_string::String` instead of `ZigString` in new code.
@@ -171,24 +175,20 @@ impl ZigString {
         }
     }
 
-    // TODO(port): `webcore::encoding::{construct_from_u8,u16}` live in
-    // `src/runtime/webcore/encoding.rs` (bun_runtime crate, forward-dep on
-    // bun_jsc). Gated until the dep cycle is broken or the encoder is
-    // hoisted into a leaf crate.
-    
     pub fn encode(&self, encoding: Encoding) -> Vec<u8> {
-        // PERF(port): was inline-else monomorphization over ByteString × Encoding — profile in Phase B
-        let _ = encoding;
-        match self.as_() {
-            ByteString::Latin1(_repr) => todo!("blocked_on: webcore::encoding::construct_from_u8 (forward-dep cycle)"),
-            ByteString::Utf16(_repr) => todo!("blocked_on: webcore::encoding::construct_from_u16 (forward-dep cycle)"),
-        }
+        self.encode_with_allocator(encoding)
     }
 
     // Zig: encodeWithAllocator — allocator param dropped (global mimalloc)
-    
     pub fn encode_with_allocator(&self, encoding: Encoding) -> Vec<u8> {
-        self.encode(encoding)
+        // PERF(port): was `inline else` monomorphization over ByteString ×
+        // Encoding (Zig). The dep-cycle hook takes `Encoding` at runtime; the
+        // real impl in `webcore/encoding.rs` already runtime-switches on the
+        // const tag, so no work is lost — profile in Phase B.
+        match self.as_() {
+            ByteString::Latin1(repr) => webcore_encoding::construct_from_u8(repr, encoding),
+            ByteString::Utf16(repr) => webcore_encoding::construct_from_u16(repr, encoding),
+        }
     }
 
     pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
@@ -309,11 +309,8 @@ impl ZigString {
 
     pub fn to_url(&self, global_this: &JSGlobalObject) -> JSValue {
         crate::mark_binding!();
-        // TODO(port): `BunString__toURL` does not exist on the C++ side. Route
-        // through `bun_jsc::DOMURL` once that binding lands; until then this
-        // path is unreachable from any live caller.
-        let _ = global_this;
-        todo!("blocked_on: ZigString.to_url — no C++ BunString__toURL export")
+        // SAFETY: self points to valid #[repr(C)] data; global_this is a live borrow.
+        unsafe { BunString__toURL(self, global_this) }
     }
 
     pub fn has_prefix_char(&self, char: u8) -> bool {
@@ -861,11 +858,10 @@ impl ZigString {
                 )
             }
         } else {
-            // TODO(port): `JSStringCreateStatic` is not part of the public
-            // JavaScriptCore C API; the Zig path used a private export that
-            // isn't visible to the Rust link. No live caller hits the latin1
-            // arm — stub until the c_api module grows a real binding.
-            todo!("blocked_on: c_api JSStringCreateStatic (latin1 → JSStringRef)")
+            // SAFETY: untagged ptr is valid for self.len latin1 bytes; JSC
+            // borrows the buffer (caller must keep it alive — same contract as
+            // the Zig `JSStringCreateStatic` path).
+            unsafe { JSStringCreateStatic(Self::untagged(self._unsafe_ptr_do_not_use), self.len) }
         }
     }
 

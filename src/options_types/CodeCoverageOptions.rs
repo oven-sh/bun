@@ -22,14 +22,16 @@ impl Default for Fraction {
 pub struct CodeCoverageOptions {
     pub skip_test_files: bool,
     pub reporters: Reporters,
-    // TODO(port): lifetime — CLI may populate this from argv; no deinit in Zig so treated as 'static
-    pub reports_directory: &'static [u8],
+    /// Zig: `[]const u8 = "coverage"` — process-lifetime in Zig (default_allocator-backed
+    /// when populated from argv/bunfig); owned `Box` here so bunfig parsing can write a
+    /// heap value without leaking.
+    pub reports_directory: Box<[u8]>,
     pub fractions: Fraction,
     pub ignore_sourcemap: bool,
     pub enabled: bool,
     pub fail_on_low_coverage: bool,
-    // TODO(port): lifetime — CLI may populate this from argv; no deinit in Zig so treated as 'static
-    pub ignore_patterns: &'static [&'static [u8]],
+    /// Zig: `[]const []const u8 = &.{}` — populated from CLI/bunfig.
+    pub ignore_patterns: Vec<Box<[u8]>>,
 }
 
 impl Default for CodeCoverageOptions {
@@ -39,12 +41,12 @@ impl Default for CodeCoverageOptions {
             // mapped to `!cfg!(debug_assertions)` — Phase B may want a `bun_core::Environment::ALLOW_ASSERT` const.
             skip_test_files: !cfg!(debug_assertions),
             reporters: Reporters { text: true, lcov: false },
-            reports_directory: b"coverage",
+            reports_directory: Box::from(b"coverage" as &[u8]),
             fractions: Fraction::default(),
             ignore_sourcemap: false,
             enabled: false,
             fail_on_low_coverage: false,
-            ignore_patterns: &[],
+            ignore_patterns: Vec::new(),
         }
     }
 }

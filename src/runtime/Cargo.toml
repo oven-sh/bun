@@ -50,6 +50,7 @@ bun_http.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true
 bun_install.workspace = true
+bun_install_types.workspace = true
 bun_interchange.workspace = true
 bun_io.workspace = true
 bun_js.workspace = true

@@ -575,7 +575,7 @@ enum DependencyType {
 fn process_deps(
     deps: &StringHashMap<&[u8]>,
     dep_type: DependencyType,
-    yarn_lock_: &mut YarnLock<'_>,
+    yarn_lock_: &YarnLock<'_>,
     string_buf_: &mut Semver::string::Buf,
     deps_buf: &mut [Dependency],
     res_buf: &mut [PackageID],
@@ -679,9 +679,21 @@ pub fn migrate_yarn_lockfile<'a>(
     this.init_empty();
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
-    // TODO(port): analytics counter API
 
-    let mut string_buf = this.string_buf();
+    // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+    // this.stringBuf()` for the whole function, but in Rust that would hold
+    // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
+    // function's lifetime and lock out every other `this.*` access. Instead,
+    // construct a fresh `Buf` per append via this macro so the mutable borrow
+    // ends immediately after each call.
+    macro_rules! sbuf {
+        () => {
+            Semver::string::Buf {
+                bytes: &mut this.buffers.string_bytes,
+                pool: &mut this.string_pool,
+            }
+        };
+    }
 
     let mut num_deps: u32 = 0;
     let mut root_dep_count: u32;
@@ -822,9 +834,9 @@ pub fn migrate_yarn_lockfile<'a>(
         this.package_index.ensure_total_capacity(num_packages as usize)?;
 
         let root_name = if let Some(name) = &package_name {
-            string_buf.append_with_hash(name, package_name_hash)?
+            sbuf!().append_with_hash(name, package_name_hash)?
         } else {
-            string_buf.append(b"")?
+            sbuf!().append(b"")?
         };
 
         this.packages.append(LockfilePackage {
@@ -1047,113 +1059,116 @@ pub fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        this.packages.append(LockfilePackage {
-            name: string_buf.append_with_hash(name_to_use, name_hash)?,
-            name_hash,
-            resolution: 'blk: {
-                if entry.workspace {
-                    break 'blk Resolution::init(ResolutionValue::Workspace(
-                        string_buf.append(base_name)?,
+        // PORT NOTE: reshaped for borrowck — compute the resolution before the
+        // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
+        // `this.buffers.string_bytes` don't overlap the two-phase reservation
+        // on `this.packages`.
+        let pkg_name = sbuf!().append_with_hash(name_to_use, name_hash)?;
+        let resolution = 'blk: {
+            if entry.workspace {
+                break 'blk Resolution::init(ResolutionValue::Workspace(
+                    sbuf!().append(base_name)?,
+                ));
+            } else if let Some(file) = entry.file {
+                if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
+                    break 'blk Resolution::init(ResolutionValue::LocalTarball(
+                        sbuf!().append(file)?,
                     ));
-                } else if let Some(file) = entry.file {
-                    if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
-                        break 'blk Resolution::init(ResolutionValue::LocalTarball(
-                            string_buf.append(file)?,
-                        ));
-                    } else {
-                        break 'blk Resolution::init(ResolutionValue::Folder(
-                            string_buf.append(file)?,
-                        ));
-                    }
-                } else if let Some(commit) = entry.commit {
-                    if let Some(resolved) = entry.resolved {
-                        let mut owner_str: &[u8] = b"";
-                        let mut repo_str: &[u8] = resolved;
+                } else {
+                    break 'blk Resolution::init(ResolutionValue::Folder(
+                        sbuf!().append(file)?,
+                    ));
+                }
+            } else if let Some(commit) = entry.commit {
+                if let Some(resolved) = entry.resolved {
+                    let mut owner_str: &[u8] = b"";
+                    let mut repo_str: &[u8] = resolved;
 
-                        if strings::index_of(resolved, b"github.com/").is_some() {
-                            if let Some(idx) = strings::index_of(resolved, b"github.com/") {
-                                let after_github = &resolved[idx + b"github.com/".len()..];
-                                if let Some(slash_idx) = strings::index_of(after_github, b"/") {
-                                    owner_str = &after_github[0..slash_idx];
-                                    repo_str = &after_github[slash_idx + 1..];
-                                    if repo_str.ends_with(b".git") {
-                                        repo_str = &repo_str[0..repo_str.len() - 4];
-                                    }
+                    if strings::index_of(resolved, b"github.com/").is_some() {
+                        if let Some(idx) = strings::index_of(resolved, b"github.com/") {
+                            let after_github = &resolved[idx + b"github.com/".len()..];
+                            if let Some(slash_idx) = strings::index_of(after_github, b"/") {
+                                owner_str = &after_github[0..slash_idx];
+                                repo_str = &after_github[slash_idx + 1..];
+                                if repo_str.ends_with(b".git") {
+                                    repo_str = &repo_str[0..repo_str.len() - 4];
                                 }
                             }
                         }
-
-                        let actual_name: &[u8] = if let Some(repo_name) = &entry.git_repo_name {
-                            repo_name
-                        } else {
-                            repo_str
-                        };
-
-                        if !owner_str.is_empty() && !repo_str.is_empty() {
-                            break 'blk Resolution::init(ResolutionValue::Github(
-                                Repository {
-                                    owner: string_buf.append(owner_str)?,
-                                    repo: string_buf.append(repo_str)?,
-                                    committish: string_buf
-                                        .append(&commit[0..b"github:".len().min(commit.len())])?,
-                                    resolved: SemverString::default(),
-                                    package_name: string_buf.append(actual_name)?,
-                                },
-                            ));
-                        } else {
-                            break 'blk Resolution::init(ResolutionValue::Git(
-                                Repository {
-                                    owner: string_buf.append(owner_str)?,
-                                    repo: string_buf.append(repo_str)?,
-                                    committish: string_buf.append(commit)?,
-                                    resolved: SemverString::default(),
-                                    package_name: string_buf.append(actual_name)?,
-                                },
-                            ));
-                        }
-                    }
-                    break 'blk Resolution::default();
-                } else if let Some(resolved) = entry.resolved {
-                    if is_direct_url_dep {
-                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                            string_buf.append(resolved)?,
-                        ));
                     }
 
-                    if Entry::is_remote_tarball(resolved) {
-                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                            string_buf.append(resolved)?,
-                        ));
-                    } else if resolved.ends_with(b".tgz") {
-                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                            string_buf.append(resolved)?,
-                        ));
-                    }
-
-                    let version = string_buf.append(entry.version)?;
-                    let result =
-                        Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
-                    if !result.valid {
-                        break 'blk Resolution::default();
-                    }
-
-                    let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
-                        || resolved.starts_with(b"https://registry.npmjs.org/");
-
-                    let url = if is_default_registry {
-                        SemverString::default()
+                    let actual_name: &[u8] = if let Some(repo_name) = &entry.git_repo_name {
+                        repo_name
                     } else {
-                        string_buf.append(resolved)?
+                        repo_str
                     };
 
-                    break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
-                        url,
-                        version: result.version.min(),
-                    }));
-                } else {
+                    if !owner_str.is_empty() && !repo_str.is_empty() {
+                        break 'blk Resolution::init(ResolutionValue::Github(Repository {
+                            owner: sbuf!().append(owner_str)?,
+                            repo: sbuf!().append(repo_str)?,
+                            committish: sbuf!()
+                                .append(&commit[0..b"github:".len().min(commit.len())])?,
+                            resolved: SemverString::default(),
+                            package_name: sbuf!().append(actual_name)?,
+                        }));
+                    } else {
+                        break 'blk Resolution::init(ResolutionValue::Git(Repository {
+                            owner: sbuf!().append(owner_str)?,
+                            repo: sbuf!().append(repo_str)?,
+                            committish: sbuf!().append(commit)?,
+                            resolved: SemverString::default(),
+                            package_name: sbuf!().append(actual_name)?,
+                        }));
+                    }
+                }
+                break 'blk Resolution::default();
+            } else if let Some(resolved) = entry.resolved {
+                if is_direct_url_dep {
+                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                        sbuf!().append(resolved)?,
+                    ));
+                }
+
+                if Entry::is_remote_tarball(resolved) {
+                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                        sbuf!().append(resolved)?,
+                    ));
+                } else if resolved.ends_with(b".tgz") {
+                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                        sbuf!().append(resolved)?,
+                    ));
+                }
+
+                let version = sbuf!().append(entry.version)?;
+                let result =
+                    Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
+                if !result.valid {
                     break 'blk Resolution::default();
                 }
-            },
+
+                let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
+                    || resolved.starts_with(b"https://registry.npmjs.org/");
+
+                let url = if is_default_registry {
+                    SemverString::default()
+                } else {
+                    sbuf!().append(resolved)?
+                };
+
+                break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
+                    url,
+                    version: result.version.min(),
+                }));
+            } else {
+                break 'blk Resolution::default();
+            }
+        };
+
+        this.packages.append(LockfilePackage {
+            name: pkg_name,
+            name_hash,
+            resolution,
             dependencies: Default::default(),
             resolutions: Default::default(),
             meta: PackageMeta {

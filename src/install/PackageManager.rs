@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, HashMap, HiveArray, LinearFifo, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_core::{err, Error, Global, Once, Output};
 use bun_dotenv as dot_env;
@@ -332,8 +332,8 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 pub type TaskCallbackList = Vec<TaskCallbackContext>;
 pub type TaskDependencyQueue = HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArray<Task::Task<'static>, 64 /* .Fallback */>;
-type PreallocatedNetworkTasks = HiveArray<NetworkTask, 128 /* .Fallback */>;
+type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
+type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;

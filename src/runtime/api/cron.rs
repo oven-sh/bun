@@ -1800,6 +1800,9 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 // TODO(port): merge with CronJobBase in Phase B.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
+    /// Per-type [`ProcessExitVTable`] static; replaces Zig's
+    /// `process.setExitHandler(this)` anytype dispatch.
+    const EXIT_VTABLE: &'static spawn::ProcessExitVTable;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     fn finish(this: *mut Self);
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
@@ -1808,7 +1811,33 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn remaining_fds(&mut self) -> &mut i8;
 }
 
+/// `ProcessExitVTable` thunk: recover `&mut T` from the type-erased owner ptr
+/// and forward to [`CronJobBase::on_process_exit`].
+unsafe fn cron_on_process_exit_thunk<T: CronJobBase>(
+    owner: *mut (),
+    process: *mut Process,
+    status: Status,
+    rusage: *const Rusage,
+) {
+    // SAFETY: `owner` was registered as `*mut T` via `set_exit_handler` in
+    // `spawn_cmd_generic`; the owning Box<T> outlives the Process exit
+    // callback (it is only freed in `T::finish`, gated on
+    // `has_called_process_exit`). `process`/`rusage` are live for the call.
+    let this = unsafe { &mut *(owner as *mut T) };
+    let process_ref: &Process = unsafe { &*process };
+    let rusage_ref: &Rusage = unsafe { &*rusage };
+    this.on_process_exit(process_ref, status, rusage_ref);
+}
+
+static CRON_REGISTER_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTable {
+    on_process_exit: cron_on_process_exit_thunk::<CronRegisterJob>,
+};
+static CRON_REMOVE_EXIT_VTABLE: spawn::ProcessExitVTable = spawn::ProcessExitVTable {
+    on_process_exit: cron_on_process_exit_thunk::<CronRemoveJob>,
+};
+
 impl SpawnCmdTarget for CronRegisterJob {
+    const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REGISTER_EXIT_VTABLE;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
     fn finish(this: *mut Self) { CronRegisterJob::finish(this) }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
@@ -1817,6 +1846,7 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
 }
 impl SpawnCmdTarget for CronRemoveJob {
+    const EXIT_VTABLE: &'static spawn::ProcessExitVTable = &CRON_REMOVE_EXIT_VTABLE;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
     fn finish(this: *mut Self) { CronRemoveJob::finish(this) }
     fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
@@ -1979,25 +2009,22 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let ev_handle = EventLoopHandle::init(unsafe { vm_mut() }.event_loop().cast::<()>());
     let process = spawned.to_process(ev_handle, false);
     *this.process_slot() = Some(process);
-    // TODO(port): `Process::set_exit_handler` now takes `(owner, &'static
-    // ProcessExitVTable)`; the per-type vtables (CronRegisterJob/CronRemoveJob)
-    // are owned by `api::bun::process`'s ProcessExitHandler dispatch table.
-    // Wire once that table publishes static entries for these types.
-    let _ = this as *mut T; // owner pointer (unused until vtable lands)
-    todo!("blocked_on: bun_runtime::api::bun::process::ProcessExitVTable for CronRegisterJob/CronRemoveJob");
-    #[allow(unreachable_code)]
-    {
-        // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
-        match unsafe { (*process).watch_or_reap() } {
-            Err(err) => {
-                if !unsafe { (*process).has_exited() } {
-                    // SAFETY: all-zero is a valid Rusage.
-                    let rusage = unsafe { core::mem::zeroed::<Rusage>() };
-                    unsafe { (*process).on_exit(Status::Err(err), &rusage) };
-                }
+    // Zig: `process.setExitHandler(this)` (anytype dispatch over the
+    // TaggedPointerUnion of handler types). The Rust port uses a per-type
+    // static vtable; see `cron_on_process_exit_thunk`.
+    // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
+    unsafe { (*process).set_exit_handler(this as *mut T as *mut (), T::EXIT_VTABLE) };
+    // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the
+    // exit handler (which re-enters `this` via the vtable thunk).
+    match unsafe { (*process).watch_or_reap() } {
+        Err(err) => {
+            if !unsafe { (*process).has_exited() } {
+                // SAFETY: all-zero is a valid Rusage.
+                let rusage = unsafe { core::mem::zeroed::<Rusage>() };
+                unsafe { (*process).on_exit(Status::Err(err), &rusage) };
             }
-            Ok(_) => {}
         }
+        Ok(_) => {}
     }
 }
 

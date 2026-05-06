@@ -2738,19 +2738,22 @@ impl<'a> BundleV2<'a> {
         })?;
         self.graph.ast.append(JSAst::empty());
 
-        #[allow(unreachable_code)]
-        let task = Box::leak(Box::new(ServerComponentParseTask {
+        // PORT NOTE: `bun.new(ServerComponentParseTask, …)` — heap-owned by the
+        // worker pool; freed via `bun.destroy` in `on_complete` after the
+        // result posts back to the bundle thread.
+        let task = Box::into_raw(Box::new(ServerComponentParseTask {
             data,
             // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
             ctx: (self as *mut Self).cast::<BundleV2<'static>>(),
             source: task_source,
-            ..todo!("blocked_on: ServerComponentParseTask task field init (private callback)")
+            // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
+            ..Default::default()
         }));
 
         self.increment_scan_counter();
 
         // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
-        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(task.task))) };
+        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!((*task).task))) };
 
         Ok(u32::try_from(source_index).unwrap())
     }
@@ -3467,7 +3470,9 @@ impl<'a> BundleV2<'a> {
 
                         this.graph.input_files.append(crate::Graph::InputFile {
                             source: Logger::Source {
-                                path: todo!("blocked_on: bun_resolver::Path::dupe_alloc"),
+                                // PORT NOTE: Zig assigned `path` (Fs.Path) directly;
+                                // shim to the field-identical `logger::fs::Path`.
+                                path: logger_path_from_fs(&path),
                                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                                 index: bun_logger::Index(source_index.get()),
                                 ..Default::default()

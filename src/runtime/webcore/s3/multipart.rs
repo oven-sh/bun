@@ -92,7 +92,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use std::io::Write as _;
-use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -136,7 +135,7 @@ pub struct MultiPartUpload {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
-    pub credentials: Arc<S3Credentials>,
+    pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub poll_ref: KeepAlive,
     pub vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim

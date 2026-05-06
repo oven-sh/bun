@@ -103,10 +103,10 @@ impl PackageManager {
                 let pm: *mut PackageManager = self;
                 let manifest = unsafe {
                     (*pm).manifests.by_name_hash(
-                        &mut *pm,
+                        pm,
                         &*scope,
                         name_hash,
-                        crate::package_manifest_map::CacheBehavior::LoadFromMemory,
+                        crate::package_manager::ManifestLoad::LoadFromMemory,
                         needs_extended,
                     )
                 }?;
@@ -406,7 +406,7 @@ impl PackageManager {
                     _ => self.options.remote_package_features,
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if failed_dep.behavior.optional || !failed_dep.behavior.is_enabled(features) {
+                if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
                     continue;
                 }
 

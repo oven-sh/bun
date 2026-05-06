@@ -82,7 +82,7 @@ impl<'a> NoOpRenamer<'a> {
 pub enum Renamer<'r, 'src> {
     NumberRenamer(&'r mut NumberRenamer),
     NoOpRenamer(&'r mut NoOpRenamer<'src>),
-    MinifyRenamer(Box<MinifyRenamer>),
+    MinifyRenamer(&'r mut MinifyRenamer),
 }
 
 impl<'r, 'src> Renamer<'r, 'src> {
@@ -112,8 +112,8 @@ impl<'r, 'src> Renamer<'r, 'src> {
 }
 
 // PORT NOTE: Zig `Renamer.deinit` freed NumberRenamer/MinifyRenamer internals.
-// In Rust, NumberRenamer is &'a mut (caller-owned, Drop on caller's stack) and
-// MinifyRenamer is Box<_> (Drop on enum drop). No explicit deinit needed.
+// In Rust all three variants are `&'r mut` (caller-owned, Drop on caller's
+// storage). No explicit deinit needed.
 
 #[derive(Clone, Copy)]
 pub struct SymbolSlot {
@@ -234,7 +234,7 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn to_renamer(self: Box<Self>) -> Renamer<'static, 'static> {
+    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
         Renamer::MinifyRenamer(self)
     }
 

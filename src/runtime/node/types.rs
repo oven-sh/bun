@@ -144,14 +144,30 @@ impl BunStringSliceExt for bun_str::String {
 }
 
 /// Extension trait giving `bun_sys::SystemError` a JSC bridge. The canonical
-/// `to_error_instance` lives on `bun_jsc::SystemError` (different field order);
-/// adapt at the call site instead of editing upstream crates.
+/// `to_error_instance` lives on `bun_jsc::SystemError` (the `#[repr(C)]` extern
+/// struct with ABI-load-bearing field order); `bun_sys::SystemError` has the
+/// same fields in a different order. Adapt at the call site by reshaping into
+/// the extern layout and calling through the C++ bridge.
 trait SystemErrorJscExt {
-    fn to_error_instance(&self, ctx: &JSGlobalObject) -> JSValue;
+    fn to_error_instance(self, ctx: &JSGlobalObject) -> JSValue;
 }
 impl SystemErrorJscExt for bun_sys::SystemError {
-    fn to_error_instance(&self, _ctx: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::SystemErrorJsc for bun_sys::SystemError")
+    fn to_error_instance(self, ctx: &JSGlobalObject) -> JSValue {
+        // PORT NOTE: in Zig `jsc.SystemError` *is* `bun.sys.SystemError` and
+        // `toErrorInstance` consumes the strings (it derefs them after the FFI
+        // call). Reshape by moving fields into the extern layout; ownership of
+        // each `bun.String` transfers to the C++ side.
+        let extern_err = jsc::SystemError {
+            errno: self.errno,
+            code: self.code,
+            message: self.message,
+            path: self.path,
+            syscall: self.syscall,
+            hostname: self.hostname,
+            fd: self.fd,
+            dest: self.dest,
+        };
+        extern_err.to_error_instance(ctx)
     }
 }
 
@@ -331,10 +347,39 @@ impl BlobOrStringOrBuffer {
                     return Ok(Some(Self::Blob(blob.dupe())));
                 }
                 if allow_request_response {
-                    // TODO(b2-blocked): `Request`/`Response` do not implement
-                    // `JsClass` yet — generated bindings pending.
-                    let _: (Option<&Request>, Option<&Response>) = (None, None);
-                    todo!("blocked_on: bun_jsc::JsClass for webcore::Request/Response");
+                    if let Some(request_ptr) = value.as_::<Request>() {
+                        // SAFETY: `as_::<Request>` returns a live JSC-owned `*mut Request`.
+                        let request = unsafe { &mut *request_ptr };
+                        let body_value = request.get_body_value();
+                        body_value.to_blob_if_possible();
+
+                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                            let blob = any_blob.to_blob(global);
+                            any_blob.detach();
+                            return Ok(Some(Self::Blob(blob)));
+                        }
+
+                        return Err(global.throw_invalid_arguments(
+                            "Only buffered Request/Response bodies are supported for now.",
+                        ));
+                    }
+
+                    if let Some(response_ptr) = value.as_::<Response>() {
+                        // SAFETY: `as_::<Response>` returns a live JSC-owned `*mut Response`.
+                        let response = unsafe { &mut *response_ptr };
+                        let body_value = response.get_body_value();
+                        body_value.to_blob_if_possible();
+
+                        if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
+                            let blob = any_blob.to_blob(global);
+                            any_blob.detach();
+                            return Ok(Some(Self::Blob(blob)));
+                        }
+
+                        return Err(global.throw_invalid_arguments(
+                            "Only buffered Request/Response bodies are supported for now.",
+                        ));
+                    }
                 }
             }
             _ => {}

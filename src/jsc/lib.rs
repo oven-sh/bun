@@ -1216,6 +1216,7 @@ unsafe extern "C" {
     fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut virtual_machine::VirtualMachine;
     fn JSGlobalObject__hasException(this: *const JSGlobalObject) -> bool;
     fn JSGlobalObject__throwOutOfMemoryError(this: *const JSGlobalObject);
+    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
     fn JSC__JSGlobalObject__createAggregateError(
         this: *const JSGlobalObject,
         errors: *const JSValue,

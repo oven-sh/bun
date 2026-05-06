@@ -129,47 +129,84 @@ impl ZigStringJs for ZigString {
 // TODO(port): hoist into `bun_sys` once that crate grows a `HOST_NAME_MAX`.
 const HOST_NAME_MAX: usize = 256;
 
-// TODO(port): generated bindings (`bun.gen.node_os` in Zig, emitted from
-// `node_os.bind.ts`) — the Rust bindgen backend does not exist yet, so the
-// `create_*_callback` thunks and the `UserInfoOptions` dictionary are stubbed
-// locally until Phase B wires the codegen output.
+// Generated bindings (`bun.gen.node_os` in Zig, emitted from
+// `node_os.bind.ts` via `src/codegen/bindgen.ts`). The C++ side
+// (`GeneratedBindings.cpp`) defines the SYSV-ABI `bindgen_Node_os_js*` host
+// functions, which validate/decode arguments and call back into the
+// `bindgen_Node_os_dispatch*` Zig (now Rust) entry points. This module ports
+// the Zig public surface — `js*` extern pointers + `create*Callback` wrappers
+// + the `UserInfoOptions` dictionary — verbatim from
+// `src/jsc/bindings/GeneratedBindings.zig`.
 mod gen_ {
-    use super::{JSGlobalObject, JSValue, BunString};
+    use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
+    use bun_jsc::host_fn;
 
-    macro_rules! cb_stub {
-        ($($name:ident),* $(,)?) => {$(
-            #[allow(dead_code)]
-            pub fn $name(_global: &JSGlobalObject) -> JSValue {
-                todo!(concat!(
-                    "blocked_on: bun.gen.node_os.",
-                    stringify!($name),
-                    " (bindgen .bind.ts → Rust backend)"
-                ))
+    // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
+    // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape); on every target
+    // Bun ships, that is the C calling convention.
+    // TODO(port): jsc.conv ABI — windows-x64 wants `extern "sysv64"` (tracked
+    // in `bun_jsc::host_fn::JsHostFn`).
+    unsafe extern "C" {
+        fn bindgen_Node_os_jsCpus(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsFreemem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsGetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsHomedir(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsHostname(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsLoadavg(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsNetworkInterfaces(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsRelease(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsTotalmem(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsUptime(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsUserInfo(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsVersion(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+        fn bindgen_Node_os_jsSetPriority(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
+    }
+
+    // Each `create*Callback` is identical modulo (display name, min arg
+    // count, host-fn symbol) — see `bindgen.ts:1538`. Generate them with the
+    // exact triples the Zig codegen would have produced.
+    macro_rules! create_callback {
+        ($($fn_name:ident, $js_name:literal, $argc:literal, $sym:ident;)*) => {$(
+            pub fn $fn_name(global: &JSGlobalObject) -> JSValue {
+                host_fn::new_runtime_function(
+                    global,
+                    Some(&ZigString::static_($js_name)),
+                    $argc,
+                    $sym,
+                    false,
+                    None,
+                )
             }
         )*};
     }
-    cb_stub!(
-        create_cpus_callback,
-        create_freemem_callback,
-        create_get_priority_callback,
-        create_homedir_callback,
-        create_hostname_callback,
-        create_loadavg_callback,
-        create_network_interfaces_callback,
-        create_release_callback,
-        create_totalmem_callback,
-        create_uptime_callback,
-        create_user_info_callback,
-        create_version_callback,
-        create_set_priority_callback,
-    );
+    create_callback! {
+        create_cpus_callback,               "cpus",              1, bindgen_Node_os_jsCpus;
+        create_freemem_callback,            "freemem",           0, bindgen_Node_os_jsFreemem;
+        create_get_priority_callback,       "getPriority",       2, bindgen_Node_os_jsGetPriority;
+        create_homedir_callback,            "homedir",           1, bindgen_Node_os_jsHomedir;
+        create_hostname_callback,           "hostname",          1, bindgen_Node_os_jsHostname;
+        create_loadavg_callback,            "loadavg",           1, bindgen_Node_os_jsLoadavg;
+        create_network_interfaces_callback, "networkInterfaces", 1, bindgen_Node_os_jsNetworkInterfaces;
+        create_release_callback,            "release",           0, bindgen_Node_os_jsRelease;
+        create_totalmem_callback,           "totalmem",          0, bindgen_Node_os_jsTotalmem;
+        create_uptime_callback,             "uptime",            1, bindgen_Node_os_jsUptime;
+        create_user_info_callback,          "userInfo",          2, bindgen_Node_os_jsUserInfo;
+        create_version_callback,            "version",           0, bindgen_Node_os_jsVersion;
+        create_set_priority_callback,       "setPriority",       2, bindgen_Node_os_jsSetPriority;
+    }
 
     /// `t.dictionary({ encoding: t.DOMString.default("") })` from
-    /// `node_os.bind.ts`. Only `encoding` exists; the field is currently
-    /// unused (see `user_info` body).
-    #[derive(Default)]
+    /// `node_os.bind.ts`. Mirrors the `extern struct` emitted by bindgen
+    /// (`GeneratedBindings.zig` `node_os.UserInfoOptions`); the C++ side
+    /// passes a pointer to this layout, so it must stay `#[repr(C)]`.
+    #[repr(C)]
     pub struct UserInfoOptions {
         pub encoding: BunString,
+    }
+    impl Default for UserInfoOptions {
+        fn default() -> Self {
+            Self { encoding: BunString::empty() }
+        }
     }
 }
 

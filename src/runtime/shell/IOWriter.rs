@@ -31,19 +31,44 @@ use crate::shell::yield_::Yield;
 /// In the NodeId-arena port, a "writer child" is `(NodeId, WriterTag)` — the
 /// id of the owning state node plus a tag saying which `on_io_writer_chunk`
 /// impl to dispatch to. Replaces Zig's `TaggedPtrUnion<(Builtin, Cmd,
-/// Pipeline, …)>`.
+/// Pipeline, …, PipeReader.CapturedWriter)>`.
+///
+/// The one tag that does **not** live in the NodeId arena is
+/// `WriterTag::Subproc` (the `subproc::CapturedWriter` embedded inside a
+/// heap-allocated `PipeReader`); for that variant the dispatch target is
+/// carried in `raw` instead of `node`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChildPtr {
     pub node: NodeId,
     pub tag: WriterTag,
+    /// Only meaningful when `tag == Subproc` — `*mut subproc::CapturedWriter`.
+    /// `core::ptr::null_mut()` otherwise. Stored untyped to keep this header
+    /// free of a `subproc` dependency.
+    pub raw: *mut core::ffi::c_void,
 }
 
 impl ChildPtr {
-    pub const NULL: ChildPtr = ChildPtr { node: NodeId::NONE, tag: WriterTag::Cmd };
+    pub const NULL: ChildPtr = ChildPtr {
+        node: NodeId::NONE,
+        tag: WriterTag::Cmd,
+        raw: core::ptr::null_mut(),
+    };
+
+    #[inline]
+    pub const fn new(node: NodeId, tag: WriterTag) -> ChildPtr {
+        ChildPtr { node, tag, raw: core::ptr::null_mut() }
+    }
+
+    /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
+    /// outside the NodeId arena, recovered via `@fieldParentPtr` in the Zig).
+    #[inline]
+    pub fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
+        ChildPtr { node: NodeId::NONE, tag: WriterTag::Subproc, raw: cw }
+    }
 
     #[inline]
     pub fn is_null(&self) -> bool {
-        self.node == NodeId::NONE
+        self.node == NodeId::NONE && self.raw.is_null()
     }
 }
 
@@ -57,7 +82,8 @@ pub enum WriterTag {
     Subshell,
     CondExpr,
     If,
-    /// Subprocess stdin pipe.
+    /// `subproc::PipeReader::CapturedWriter` — heap-allocated, addressed via
+    /// `ChildPtr::raw` rather than `node`.
     Subproc,
 }
 

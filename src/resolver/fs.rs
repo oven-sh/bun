@@ -3161,6 +3161,30 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
         Ok(unsafe { launder_static(r) })
     },
     get_default_temp_dir: RealFS::get_default_temp_dir,
+    read_directory: |p, dir, generation, store_fd| {
+        // SAFETY: `p` is the erased process-static `bun_resolver::fs::FileSystem`;
+        // single-threaded init contract (PackageManager::init) — sole `&mut`
+        // access to `instance.fs` for the duration of the call.
+        let fs = unsafe { &mut *(p as *const FileSystem as *mut FileSystem) };
+        let opt_ptr = fs.fs.read_directory(dir, None, generation, store_fd)?;
+        // SAFETY: `read_directory` returns a slot in the BSSMap singleton (or
+        // the threadlocal temp slot for the no-cache fallback); valid for the
+        // immediate match below.
+        Ok(match unsafe { &mut *opt_ptr } {
+            EntriesOption::Entries(e) => bun_sys::fs::EntriesOption::Entries(
+                &mut **e as *mut DirEntry as *const bun_sys::fs::DirEntry,
+            ),
+            EntriesOption::Err(e) => bun_sys::fs::EntriesOption::Err(bun_sys::fs::DirEntryErr {
+                original_err: e.original_err,
+                canonical_error: e.canonical_error,
+            }),
+        })
+    },
+    set_top_level_dir: |p, dir| {
+        // SAFETY: `p` is the erased process-static `bun_resolver::fs::FileSystem`;
+        // single-threaded CLI init only (PackageManager.zig:776).
+        unsafe { &mut *(p as *const FileSystem as *mut FileSystem) }.top_level_dir = dir;
+    },
 };
 
 /// One-shot registration; called from `FileSystem::init_with_force`. Idempotent.

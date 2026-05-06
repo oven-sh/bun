@@ -1,7 +1,11 @@
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use crate::webcore::EncodingLabel;
-use bun_str::strings;
 use bun_core::AllocError;
+use bun_str::strings;
+
+use jsc::text_codec::TextCodec;
+use jsc::zig_string::ZigString;
+use jsc::StringJsc as _;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -18,12 +22,7 @@ impl Buffered {
     }
 }
 
-// TODO(b2-blocked): #[bun_jsc::JsClass] — the proc-macro emits a
-// `${T}Class__construct` shim that calls `<T>::constructor(g, f) -> JsResult<*mut T>`.
-// The constructor body below depends on `JSGlobalObject::throw_invalid_arguments` /
-// `ErrorCode::ERR_ENCODING_*` surface that is still TODO(b2). Keep the struct
-// real (downstream `crate::webcore::TextDecoder` re-exports name it) and gate
-// the JsClass derive + JS-facing impl block below.
+#[bun_jsc::JsClass]
 pub struct TextDecoder {
     // used for utf8 decoding
     pub buffered: Buffered,
@@ -53,6 +52,28 @@ impl Default for TextDecoder {
 // pub const js = jsc.Codegen.JSTextDecoder;
 // pub const toJS / fromJS / fromJSDirect — provided by #[bun_jsc::JsClass] codegen.
 
+/// RAII guard for an FFI-owned `TextCodec` (matches Zig `defer codec.deinit()`).
+struct CodecGuard(core::ptr::NonNull<TextCodec>);
+impl Drop for CodecGuard {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `TextCodec::create` and has not been freed.
+        unsafe { TextCodec::destroy(self.0.as_ptr()) }
+    }
+}
+impl core::ops::Deref for CodecGuard {
+    type Target = TextCodec;
+    fn deref(&self) -> &TextCodec {
+        // SAFETY: pointer is live for the guard's lifetime.
+        unsafe { self.0.as_ref() }
+    }
+}
+impl core::ops::DerefMut for CodecGuard {
+    fn deref_mut(&mut self) -> &mut TextCodec {
+        // SAFETY: pointer is live for the guard's lifetime; `&mut self` is exclusive.
+        unsafe { self.0.as_mut() }
+    }
+}
+
 impl TextDecoder {
     pub fn new(init: TextDecoder) -> Box<TextDecoder> {
         Box::new(init)
@@ -64,9 +85,24 @@ impl TextDecoder {
         unsafe { drop(Box::from_raw(this)) };
     }
 
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(self.ignore_bom)
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(self.fatal)
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
+        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+    }
+
     // const Vector16 = std.meta.Vector(16, u16);
     // const max_16_ascii: Vector16 = @splat(@as(u16, 127));
-    // TODO(port): SIMD vector constants — unused in this file's hot paths in current Zig; revisit in Phase B.
+    // PORT NOTE: SIMD vector constants are unused in this file's hot paths in current Zig.
 
     fn process_code_unit_utf16(
         &mut self,
@@ -153,8 +189,7 @@ impl TextDecoder {
         if !remain.is_empty() && i == remain.len() - 1 {
             self.lead_byte = Some(remain[i]);
         } else {
-            // TODO(port): bun.assertWithLocation — using debug_assert! without source-location capture
-            debug_assert!(i == remain.len());
+            bun_core::assert_with_location!(i == remain.len());
         }
 
         if FLUSH {
@@ -168,60 +203,6 @@ impl TextDecoder {
         }
 
         Ok((output, saw_error))
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// JS-facing surface (getters / decode / constructor) — gated until the
-// `bun_jsc` ErrorCode + ZigStringJsc + TextCodec RAII helpers are wired.
-// ──────────────────────────────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA /
-// ERR_ENCODING_NOT_SUPPORTED, JSGlobalObject::err(ErrorCode, fmt),
-// strings::to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool>,
-// jsc::ZigString::to_external_u16, TextCodec::create() returning a Drop-guard.
-
-mod _gated {
-use super::*;
-use bun_jsc::StringJsc;
-use jsc::text_codec::TextCodec;
-use jsc::zig_string::ZigString;
-
-/// RAII guard for an FFI-owned `TextCodec` (matches Zig `defer codec.deinit()`).
-struct CodecGuard(core::ptr::NonNull<TextCodec>);
-impl Drop for CodecGuard {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` came from `TextCodec::create` and has not been freed.
-        unsafe { TextCodec::destroy(self.0.as_ptr()) }
-    }
-}
-impl core::ops::DerefMut for CodecGuard {
-    fn deref_mut(&mut self) -> &mut TextCodec {
-        // SAFETY: pointer is live for the guard's lifetime; `&mut self` is exclusive.
-        unsafe { self.0.as_mut() }
-    }
-}
-impl core::ops::Deref for CodecGuard {
-    type Target = TextCodec;
-    fn deref(&self) -> &TextCodec {
-        // SAFETY: pointer is live for the guard's lifetime.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl TextDecoder {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_boolean(self.ignore_bom))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_fatal(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_boolean(self.fatal))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -240,7 +221,7 @@ impl TextDecoder {
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
             if arguments.len() > 1 && arguments[1].is_object() {
-                if let Some(stream_value) = arguments[1].fast_get(global_this, jsc::BuiltinName::Stream)? {
+                if let Some(stream_value) = arguments[1].fast_get(global_this, jsc::BuiltinName::stream)? {
                     break 'stream stream_value.to_boolean();
                 }
             }
@@ -288,7 +269,7 @@ impl TextDecoder {
         buffer_slice: &[u8],
     ) -> JsResult<JSValue> {
         match self.encoding {
-            EncodingLabel::Windows1252 => {
+            EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
                     return Ok(ZigString::init(buffer_slice).to_js(global_this));
                 }
@@ -298,10 +279,10 @@ impl TextDecoder {
                 //
                 // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
                 let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
-                // TODO(port): allocate uninit u16 buffer for external JSC string ownership
                 let mut bytes = vec![0u16; out_length].into_boxed_slice();
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
+                // PERF(port): Box::into_raw transfers a tight allocation (no excess capacity).
                 Ok(ZigString::to_external_u16(
                     Box::into_raw(bytes) as *mut u16,
                     out.written as usize,
@@ -347,25 +328,21 @@ impl TextDecoder {
                     Ok(v) => v,
                     Err(err) => {
                         // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
-                        // `unicode_draft::ToUTF16Error` is private to `bun_str`; match by
-                        // its `IntoStaticStr` name to avoid naming the type.
-                        let err_name: &'static str = (&err).into();
                         if self.fatal {
-                            if err_name == "InvalidByteSequence" {
+                            if matches!(err, strings::ToUTF16Error::InvalidByteSequence) {
                                 return Err(global_this
                                     .err(jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
                                     .throw());
                             }
                         }
 
-                        debug_assert!(err_name == "OutOfMemory");
+                        debug_assert!(matches!(err, strings::ToUTF16Error::OutOfMemory));
                         return Err(global_this.throw_out_of_memory());
                     }
                 };
 
-                if let Some(decode_result) = maybe_decode_result {
+                if let Some((decoded, leftover, leftover_len)) = maybe_decode_result {
                     // `joined_owned` drops at scope exit (matches `if (deinit) free(input)`).
-                    let (decoded, leftover, leftover_len) = decode_result;
                     debug_assert!(self.buffered.len == 0);
                     if !FLUSH {
                         if leftover_len != 0 {
@@ -422,8 +399,8 @@ impl TextDecoder {
                 // Transfer ownership of the backing allocation to JSC; freed via
                 // free_global_string -> mi_free when the string is collected.
                 let len = decoded.len();
-                let ptr = decoded.leak().as_mut_ptr();
                 // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                let ptr = decoded.leak().as_mut_ptr();
                 Ok(ZigString::to_external_u16(ptr, len, global_this))
             }
 
@@ -531,12 +508,9 @@ impl TextDecoder {
     }
 }
 
-} // mod _gated
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/TextDecoder.zig (376 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      ZigString::to_external_u16 ownership-transfer + to_utf16_alloc_maybe_buffered error type need Phase B verification; UTF-8 joined-buffer path reshaped for borrowck. JS-facing impl gated under  until ErrorCode/ZigStringJsc surface lands.
+//   confidence: high
+//   notes:      ZigString::to_external_u16 ownership transfer matches Zig (mimalloc-backed Vec leaked to JSC, freed via free_global_string). UTF-8 joined-buffer path reshaped for borrowck.
 // ──────────────────────────────────────────────────────────────────────────

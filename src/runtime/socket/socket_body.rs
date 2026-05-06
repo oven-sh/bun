@@ -3114,19 +3114,29 @@ pub type TLSSocket = NewSocket<true>;
 /// `src/codegen/generate-classes.ts`). The const-generic `NewSocket<SSL>`
 /// dispatches between the two symbol sets at monomorphization time; see
 /// `to_js` / `data_{get,set}_cached` above.
+#[allow(non_snake_case)]
 mod socket_js {
     use super::{c_void, JSGlobalObject, JSValue};
     // PORT NOTE: signatures take `*mut c_void` (not `*mut NewSocket<SSL>`)
     // because `NewSocket` embeds non-`#[repr(C)]` fields and would trip the
     // `improper_ctypes` lint. The C++ side treats `m_ctx` as opaque.
-    bun_jsc::jsc_extern_fn! {
-        pub(super) fn TCPSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-        pub(super) fn TLSSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-        pub(super) fn TCPSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
-        pub(super) fn TLSSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
-        pub(super) fn TCPSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
-        pub(super) fn TLSSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
+    // `JSC_CALLCONV` ⇒ sysv64 on win-x64, C elsewhere.
+    macro_rules! extern_block {
+        ($abi:literal) => {
+            unsafe extern $abi {
+                pub(super) fn TCPSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+                pub(super) fn TLSSocket__create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+                pub(super) fn TCPSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
+                pub(super) fn TLSSocketPrototype__dataSetCachedValue(this: JSValue, global: *mut JSGlobalObject, value: JSValue);
+                pub(super) fn TCPSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
+                pub(super) fn TLSSocketPrototype__dataGetCachedValue(this: JSValue) -> JSValue;
+            }
+        };
     }
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    extern_block!("sysv64");
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    extern_block!("C");
 }
 
 // ── JsClass impls (manual — `#[bun_jsc::JsClass]` derive can't handle the

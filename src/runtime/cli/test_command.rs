@@ -1746,8 +1746,11 @@ impl TestCommand {
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
-        // TODO(port): `VirtualMachine::set_is_bun_test(true)` — upstream has no such fn yet.
-        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::set_is_bun_test") };
+        // SAFETY: `isBunTest` is a process-global written once at startup
+        // (before the VM thread spawns) and only read thereafter.
+        unsafe {
+            jsc::virtual_machine::isBunTest = true;
+        }
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
         // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
@@ -2243,11 +2246,16 @@ impl TestCommand {
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
+            // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
+            // `enable_hot_module_reloading`; non-null because
+            // `is_watcher_enabled()` checked it. The `c_void` type is a
+            // b2-cycle erasure (see field comment in VirtualMachine.rs); the
+            // cast recovers the concrete type.
+            let watcher =
+                unsafe { &mut *(vm.bun_watcher as *mut jsc::hot_reloader::ImportWatcher) };
             for path in &changed_module_graph_files {
-                // TODO(port): `vm.bun_watcher` is type-erased `*mut c_void` (b2-cycle);
-                // `ImportWatcher::add_file_by_path_slow` not reachable yet.
-                let _ = (path, vm.transpiler.options.loader(bun_path::extension(path)));
-                todo!("blocked_on: bun_jsc::ImportWatcher::add_file_by_path_slow");
+                let loader = vm.transpiler.options.loader(bun_path::extension(path));
+                let _ = watcher.add_file_by_path_slow(path, loader);
             }
         }
 

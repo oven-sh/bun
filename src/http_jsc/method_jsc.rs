@@ -1,10 +1,27 @@
 //! JSC bridge for `bun_http_types::Method`. Keeps `bun_http_types` free of JSC types.
 
 use bun_http_types::Method::Method;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_string::String as BunString;
 
 unsafe extern "C" {
     fn Bun__HTTPMethod__toJS(method: Method, global_object: *mut JSGlobalObject) -> JSValue;
+}
+
+/// Port of Zig `Method.fromJS` (= `Map.fromJS`, the `ComptimeStringMap` JSC
+/// bridge in `src/jsc/comptime_string_map_jsc.zig`). Converts a JS string
+/// value to UTF-8 and looks it up in the static method table.
+///
+/// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
+pub fn from_js(global_this: &JSGlobalObject, input: JSValue) -> JsResult<Option<Method>> {
+    let str = BunString::from_js(input, global_this)?;
+    debug_assert!(str.tag() != bun_string::Tag::Dead);
+    // `defer str.deref()` — handled by `Drop` on `bun_string::String`.
+    // PORT NOTE: Zig used `Map.getWithEql(str, bun.String.eqlComptime)`; the
+    // Rust phf table is keyed on `&[u8]`, so materialize UTF-8 and call the
+    // existing `Method::which` (which wraps the same map lookup).
+    let utf8 = str.to_utf8();
+    Ok(Method::which(utf8.slice()))
 }
 
 /// Extension trait providing `.to_js()` on `Method` (lives in the `*_jsc` crate so the

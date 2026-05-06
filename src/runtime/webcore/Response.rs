@@ -1042,19 +1042,34 @@ impl Response {
                         ..Default::default()
                     };
 
-                    let credentials = blob.store.as_ref().unwrap().data.as_s3().get_credentials();
-                    let _ = credentials;
+                    let s3 = blob.store.as_ref().unwrap().data.as_s3();
+                    let credentials = s3.get_credentials();
 
-                    // TODO(b2-blocked): bun_s3 — `s3_stub::S3Credentials` is an
-                    // opaque placeholder with no `sign_request`; the real call is
-                    //   credentials.sign_request::<false>(
-                    //       bun_s3_signing::SignOptions { path: ..s3().path(), method: Method::GET, ..Default },
-                    //       Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
-                    //   )
-                    // mapped through `crate::webcore::__s3_client::throw_sign_error` on Err.
-                    let result: bun_s3_signing::SignResult =
-                        todo!("blocked_on: bun_s3::S3Credentials::sign_request");
-                    // result drops at scope exit
+                    let result = match credentials.sign_request::<false>(
+                        bun_s3_signing::SignOptions {
+                            path: s3.path(),
+                            method: Method::GET,
+                            content_hash: None,
+                            content_md5: None,
+                            search_params: None,
+                            content_disposition: None,
+                            content_type: None,
+                            content_encoding: None,
+                            acl: None,
+                            storage_class: None,
+                            request_payer: false,
+                        },
+                        Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+                    ) {
+                        Ok(r) => r,
+                        Err(sign_err) => {
+                            return Err(crate::webcore::s3::client::throw_sign_error(
+                                sign_err.into(),
+                                global_this,
+                            ));
+                        }
+                    };
+                    // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected = true;
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(HTTPHeaderName::Location, &result.url, global_this)?;
@@ -1248,21 +1263,13 @@ impl Init {
         }
 
         if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {
-            if let Some(method) = method_from_js(global_this, method_value)? {
+            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
                 result.method = method;
             }
         }
 
         Ok(Some(result))
     }
-}
-
-// PORT NOTE: local shim for `Method::from_js` — `bun_http_jsc::MethodJsc`
-// only provides `to_js`. The real binding is `Method.fromJS(global, value)`
-// in `bun_http_types::Method`; until that lands, this is `todo!`.
-#[allow(dead_code)]
-fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
-    todo!("blocked_on: bun_http_jsc::Method::from_js")
 }
 
 // PORT NOTE: Zig @"404"/@"200" — Rust idents cannot start with a digit

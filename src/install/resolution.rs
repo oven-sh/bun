@@ -23,9 +23,14 @@ pub type OldV2Resolution = ResolutionType<u32>;
 #[derive(Clone, Copy)]
 pub struct ResolutionType<SemverInt: VersionInt> {
     pub tag: Tag,
-    _padding: [u8; 7],
+    pub _padding: [u8; 7],
     pub value: Value<SemverInt>,
 }
+
+/// Compat alias for the stub-era flat `npm` field type. Identical layout to
+/// `VersionedURLType<u64>` (`{ version, url }`); kept so existing
+/// `Value { npm: NpmVersionInfo { .. } }` initializers keep resolving.
+pub type NpmVersionInfo = VersionedURLType<u64>;
 
 impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
     fn default() -> Self {
@@ -81,6 +86,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             _padding: [0; 7],
             value: Value::init(value),
         }
+    }
+
+    /// Port of `Resolution.init(.{ .root = {} })` — convenience constructor.
+    #[inline]
+    pub fn init_root() -> Self {
+        Self::init(TaggedValue::Root)
+    }
+
+    /// Port of `Resolution.init(.{ .symlink = s })` — convenience constructor.
+    #[inline]
+    pub fn init_symlink(s: String) -> Self {
+        Self::init(TaggedValue::Symlink(s))
     }
 
     pub fn is_git(&self) -> bool {
@@ -740,6 +757,13 @@ pub union Value<SemverInt: VersionInt> {
     pub single_file_module: String,
 }
 
+impl<SemverInt: VersionInt> Default for Value<SemverInt> {
+    #[inline]
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
 impl<SemverInt: VersionInt> Value<SemverInt> {
     #[inline]
     pub fn zero() -> Self {
@@ -775,8 +799,15 @@ impl<SemverInt: VersionInt> Value<SemverInt> {
 // u8 newtype with associated consts. Const patterns (structural `PartialEq`) keep
 // `match tag { Tag::Npm => ... }` working, and the `_` arms in callers stay live.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
+
+impl Default for Tag {
+    #[inline]
+    fn default() -> Self {
+        Tag::Uninitialized
+    }
+}
 
 #[allow(non_upper_case_globals)]
 impl Tag {

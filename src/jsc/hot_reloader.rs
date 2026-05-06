@@ -163,6 +163,77 @@ impl HotReloaderCtx for VirtualMachine {
             .map(|l| unsafe { l.as_ref() }.level >= bun_logger::Level::Info)
             .unwrap_or(false)
     }
+
+    fn close_all_listen_sockets_for_watch_mode(&mut self) {
+        // Zig: `if (this.reloader.ctx.rare_data) |rare| rare.closeAllListenSocketsForWatchMode()`.
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.close_all_listen_sockets_for_watch_mode();
+        }
+    }
+
+    fn is_watcher_enabled(&self) -> bool {
+        // Zig: `this.bun_watcher != .none`. The field is stored type-erased
+        // (`*mut c_void` → `*mut ImportWatcher`); a null pointer means `.none`.
+        if self.bun_watcher.is_null() {
+            return false;
+        }
+        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
+        // `install_bun_watcher`; the cast recovers the concrete type.
+        !matches!(
+            unsafe { &*(self.bun_watcher as *const ImportWatcher) },
+            ImportWatcher::None
+        )
+    }
+
+    fn watcher_fs(&self) -> &'static bun_watcher::FileSystem {
+        // SAFETY: `transpiler.fs` is the process-global `FileSystem::instance()`
+        // pointer, set at startup and live for the process.
+        watcher_fs_shim(unsafe { &*self.transpiler.fs })
+    }
+
+    fn install_bun_watcher(
+        &mut self,
+        watcher: Box<Watcher>,
+        reload_immediately: bool,
+    ) -> *mut Watcher {
+        // Zig: `this.bun_watcher = if (reload_immediately) .{ .watch = w } else .{ .hot = w }`
+        // followed by `this.transpiler.resolver.watcher = ResolveWatcher(...).init(w)`.
+        let mut iw = Box::new(if reload_immediately {
+            ImportWatcher::Watch(watcher)
+        } else {
+            ImportWatcher::Hot(watcher)
+        });
+        let watcher_ptr: *mut Watcher = match &mut *iw {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
+            ImportWatcher::None => unreachable!(),
+        };
+        // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
+        self.bun_watcher = Box::into_raw(iw) as *mut core::ffi::c_void;
+
+        // Wire the resolver's directory-watch callback at the same time.
+        // PORT NOTE: `bun_resolver::AnyResolveWatcher` and
+        // `bun_watcher::AnyResolveWatcher` are distinct CYCLEBREAK twins;
+        // build the resolver-side shape directly instead of bridging.
+        fn on_watch(ctx: *mut (), dir_path: &[u8], dir_fd: Fd) {
+            // SAFETY: `ctx` was stored from `*mut Watcher` just below.
+            let w = unsafe { &mut *(ctx as *mut Watcher) };
+            Watcher::on_maybe_watch_directory(w, dir_path, dir_fd);
+        }
+        self.transpiler.resolver.watcher = Some(bun_resolver::AnyResolveWatcher {
+            context: core::ptr::NonNull::new(watcher_ptr as *mut ()).unwrap(),
+            callback: on_watch,
+        });
+
+        watcher_ptr
+    }
+
+    fn compute_clear_screen(&self) -> bool {
+        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
+        !unsafe {
+            (*self.transpiler.env)
+                .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
+        }
+    }
 }
 
 /// The concrete `HotReloadTask` instance the JS event loop dispatches
@@ -473,6 +544,7 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
+    EventLoopType: HotReloaderEventLoop,
 {
     pub fn init_empty(
         reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,

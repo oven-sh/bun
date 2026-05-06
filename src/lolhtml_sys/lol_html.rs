@@ -886,6 +886,7 @@ pub struct EndTag {
 unsafe extern "C" {
     fn lol_html_end_tag_before(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
     fn lol_html_end_tag_after(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
+    fn lol_html_end_tag_replace(end_tag: *mut EndTag, content: *const u8, content_len: usize, is_html: bool) -> c_int;
     fn lol_html_end_tag_remove(end_tag: *mut EndTag);
     fn lol_html_end_tag_name_get(end_tag: *const EndTag) -> HTMLString;
     fn lol_html_end_tag_name_set(end_tag: *mut EndTag, name: *const u8, name_len: usize) -> c_int;
@@ -911,6 +912,18 @@ impl EndTag {
         auto_disable();
         // SAFETY: caller guarantees `this` is valid; content ptr/len valid
         match unsafe { lol_html_end_tag_after(this, ptr_without_panic(content), content.len(), is_html) } {
+            0 => Ok(()),
+            -1 => Err(Error::Fail),
+            _ => unreachable!(),
+        }
+    }
+
+    /// # Safety
+    /// `this` must be a valid `*mut EndTag` passed to a handler.
+    pub unsafe fn replace(this: *mut EndTag, content: &[u8], is_html: bool) -> Result<(), Error> {
+        auto_disable();
+        // SAFETY: caller guarantees `this` is valid; content ptr/len valid
+        match unsafe { lol_html_end_tag_replace(this, ptr_without_panic(content), content.len(), is_html) } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
             _ => unreachable!(),

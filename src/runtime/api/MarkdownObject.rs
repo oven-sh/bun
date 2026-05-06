@@ -1,38 +1,5 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
-/// Slice the language token out of a fenced-code info string.
-pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
-    let mut lang_end = info_beg;
-    while (lang_end as usize) < src_text.len() {
-        let c = src_text[lang_end as usize];
-        if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-            break;
-        }
-        lang_end += 1;
-    }
-    if lang_end > info_beg {
-        return &src_text[info_beg as usize..lang_end as usize];
-    }
-    b""
-}
-
-/// Cached tag string indices — must match `BunMarkdownTagStrings.h`.
-#[repr(u8)]
-#[derive(Copy, Clone)]
-pub enum TagIndex {
-    H1 = 0, H2 = 1, H3 = 2, H4 = 3, H5 = 4, H6 = 5,
-    P = 6, Blockquote = 7, Ul = 8, Ol = 9, Li = 10, Pre = 11,
-    Hr = 12, Html = 13, Table = 14, Thead = 15, Tbody = 16,
-    Tr = 17, Th = 18, Td = 19, Div = 20, Em = 21, Strong = 22,
-    A = 23, Img = 24, Code = 25, Del = 26, Math = 27, U = 28, Br = 29,
-}
-
-// ─── JSC + bun_md host-fn bodies ────────────────────────────────────────────
-// Every render path takes (&JSGlobalObject, &CallFrame) and calls into
-// `bun_md`. The two pure pieces (`extract_language`, `TagIndex`) are
-// duplicated above.
-
-mod _jsc_gated {
 use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
@@ -44,31 +11,11 @@ use bun_md::root as md;
 use bun_md::parser::ParserError;
 use crate::node::StringOrBuffer;
 
-// ── Local upstream shims ────────────────────────────────────────────────────
 // `bun_str::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
 // (tier-6), not on `bun_str::String` itself.
 #[inline]
 fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
-}
-
-/// `JSGlobalObject::throw_stack_overflow` is defined on the
-/// `bun_jsc::js_global_object::JSGlobalObject` impl block but not yet on the
-/// canonical `bun_jsc::JSGlobalObject`. Shim locally via FFI until upstream
-/// merges the two impls.
-trait ThrowStackOverflowExt {
-    fn throw_stack_overflow(&self) -> bun_jsc::JsError;
-}
-impl ThrowStackOverflowExt for JSGlobalObject {
-    #[inline]
-    fn throw_stack_overflow(&self) -> bun_jsc::JsError {
-        unsafe extern "C" {
-            fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
-        }
-        // SAFETY: FFI — &self is a valid JSGlobalObject*; C++ side has no extra preconditions.
-        unsafe { JSGlobalObject__throwStackOverflow(self) };
-        bun_jsc::JsError::Thrown
-    }
 }
 
 /// `JSValue.push` (JSValue.zig:404) — not yet exposed on `bun_jsc::JSValue`.
@@ -1533,7 +1480,8 @@ impl<'a> JsCallbackRenderer<'a> {
     }
 }
 
-fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+/// Slice the language token out of a fenced-code info string.
+pub fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end = info_beg;
     while (lang_end as usize) < src_text.len() {
         let c = src_text[lang_end as usize];
@@ -1548,10 +1496,10 @@ fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     b""
 }
 
-// Cached tag string indices - must match BunMarkdownTagStrings.h
+/// Cached tag string indices — must match `BunMarkdownTagStrings.h`.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum TagIndex {
+pub enum TagIndex {
     H1 = 0,
     H2 = 1,
     H3 = 2,
@@ -1644,13 +1592,3 @@ fn get_span_type_tag(span_type: md::SpanType) -> TagIndex {
         md::SpanType::U => TagIndex::U,
     }
 }
-
-} // mod _jsc_gated
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/runtime/api/MarkdownObject.zig (1292 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      parse_options reflection over md::Options fields stubbed via assumed BOOL_FIELD_SETTERS table; MarkedArgumentBuffer.wrap hand-rolled; bun_md crate path/variant casing assumed; arenas dropped (non-AST crate)
-// ──────────────────────────────────────────────────────────────────────────

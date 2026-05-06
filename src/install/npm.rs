@@ -198,7 +198,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         }
     };
 
-    let Some(username) = json.get(b"username").and_then(|e| e.as_string()) else {
+    let Some(username) = json.get(b"username").and_then(|e| e.as_string(&bump)) else {
         // no username, invalid auth probably
         return Err(WhoamiError::ProbablyInvalidAuth);
     };
@@ -224,7 +224,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             Err(_) => break 'message None,
         };
 
-        let Some(error) = json.get(b"error").and_then(|e| e.as_string()) else {
+        let Some(error) = json.get(b"error").and_then(|e| e.as_string(&bump)) else {
             break 'message None;
         };
         Some(error.to_vec())
@@ -2271,7 +2271,7 @@ impl PackageManifest {
         };
 
         if let Some(error_q) = json.as_property(b"error") {
-            if let Some(err) = error_q.expr.as_string() {
+            if let Some(err) = error_q.expr.as_string(&bump) {
                 log.add_error_fmt(Some(&source), logger::Loc::EMPTY, format_args!("npm error: {}", bstr::BStr::new(err)))
                     .expect("unreachable");
                 return Ok(None);
@@ -2297,7 +2297,7 @@ impl PackageManifest {
 
         if PackageManager::verbose_install() {
             if let Some(name_q) = json.as_property(b"name") {
-                let Some(received_name) = name_q.expr.as_string() else {
+                let Some(received_name) = name_q.expr.as_string(&bump) else {
                     return Ok(None);
                 };
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
@@ -2318,7 +2318,7 @@ impl PackageManifest {
         string_builder.count(expected_name);
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string() else {
+            let Some(field) = name_q.expr.as_string(&bump) else {
                 return Ok(None);
             };
             string_builder.count(field);
@@ -2340,7 +2340,7 @@ impl PackageManifest {
 
             let versions = versions_obj.properties.slice();
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().unwrap().as_string() else {
+                let Some(version_name) = prop.key.as_ref().unwrap().as_string(&bump) else {
                     continue;
                 };
                 let sliced_version = SlicedString::init(version_name, version_name);
@@ -2392,18 +2392,18 @@ impl PackageManifest {
                                 }
 
                                 for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop.key.as_ref().unwrap().as_string() else {
+                                    let Some(k) = bin_prop.key.as_ref().unwrap().as_string(&bump) else {
                                         break 'bin;
                                     };
                                     string_builder.count(k);
-                                    let Some(v) = bin_prop.value.as_ref().unwrap().as_string() else {
+                                    let Some(v) = bin_prop.value.as_ref().unwrap().as_string(&bump) else {
                                         break 'bin;
                                     };
                                     string_builder.count(v);
                                 }
                             }
                             JSON::ExprData::EString(_) => {
-                                if let Some(str_) = bin.expr.as_string() {
+                                if let Some(str_) = bin.expr.as_string(&bump) {
                                     string_builder.count(str_);
                                     break 'bin;
                                 }
@@ -2414,7 +2414,7 @@ impl PackageManifest {
 
                     if let Some(dirs) = prop.value.as_ref().unwrap().as_property(b"directories") {
                         if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string() {
+                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
                                 string_builder.count(str_);
                                 break 'bin;
                             }
@@ -2437,7 +2437,7 @@ impl PackageManifest {
                         }
                         JSON::ExprData::EArray(arr) => {
                             for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string() else { continue };
+                                let Some(s) = bundled_dep.as_string(&bump) else { continue };
                                 bundled_deps_set.insert(s)?;
                             }
                         }
@@ -2452,7 +2452,7 @@ impl PackageManifest {
                             dependency_sum += obj.properties.slice().len();
                             let properties = obj.properties.slice();
                             for property in properties {
-                                if let Some(key) = property.key.as_ref().unwrap().as_string() {
+                                if let Some(key) = property.key.as_ref().unwrap().as_string(&bump) {
                                     if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
                                         // swap remove the dependency name because it could exist in
                                         // multiple behavior groups.
@@ -2460,7 +2460,7 @@ impl PackageManifest {
                                     }
                                     string_builder.count(key);
                                     string_builder.count(
-                                        property.value.as_ref().unwrap().as_string().unwrap_or(b""),
+                                        property.value.as_ref().unwrap().as_string(&bump).unwrap_or(b""),
                                     );
                                 }
                             }
@@ -2482,7 +2482,7 @@ impl PackageManifest {
                             if !b.value {
                                 continue;
                             }
-                            let Some(key) = meta_prop.key.as_ref().unwrap().as_string() else {
+                            let Some(key) = meta_prop.key.as_ref().unwrap().as_string(&bump) else {
                                 continue;
                             };
                             dependency_sum += 1;
@@ -2501,11 +2501,11 @@ impl PackageManifest {
             if let JSON::ExprData::EObject(obj) = &dist.expr.data {
                 let tags = obj.properties.slice();
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().unwrap().as_string() {
+                    if let Some(key) = tag.key.as_ref().unwrap().as_string(&bump) {
                         string_builder.count(key);
                         extern_string_count += 2;
 
-                        string_builder.count(tag.value.as_ref().unwrap().as_string().unwrap_or(b""));
+                        string_builder.count(tag.value.as_ref().unwrap().as_string(&bump).unwrap_or(b""));
                         dist_tags_count += 1;
                     }
                 }
@@ -2608,7 +2608,7 @@ impl PackageManifest {
             // TODO(port): bun.serializable() on empty_version
 
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().unwrap().as_string() else {
+                let Some(version_name) = prop.key.as_ref().unwrap().as_string(&bump) else {
                     continue;
                 };
                 let mut sliced_version = SlicedString::init(version_name, version_name);
@@ -2648,7 +2648,7 @@ impl PackageManifest {
                         }
                         JSON::ExprData::EArray(arr) => {
                             for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string() else { continue };
+                                let Some(s) = bundled_dep.as_string(&bump) else { continue };
                                 bundled_deps_set.insert(s)?;
                             }
                         }
@@ -2686,12 +2686,12 @@ impl PackageManifest {
                                     0 => {}
                                     1 => {
                                         let Some(bin_name) =
-                                            obj.properties.slice()[0].key.as_ref().unwrap().as_string()
+                                            obj.properties.slice()[0].key.as_ref().unwrap().as_string(&bump)
                                         else {
                                             break 'bin;
                                         };
                                         let Some(value) =
-                                            obj.properties.slice()[0].value.as_ref().unwrap().as_string()
+                                            obj.properties.slice()[0].value.as_ref().unwrap().as_string(&bump)
                                         else {
                                             break 'bin;
                                         };
@@ -2720,7 +2720,7 @@ impl PackageManifest {
                                         let mut group_i: u32 = 0;
 
                                         for bin_prop in obj.properties.slice() {
-                                            let Some(k) = bin_prop.key.as_ref().unwrap().as_string() else {
+                                            let Some(k) = bin_prop.key.as_ref().unwrap().as_string(&bump) else {
                                                 break 'bin;
                                             };
                                             // SAFETY: group_i < group_len by construction
@@ -2748,7 +2748,7 @@ impl PackageManifest {
                                             }
                                             group_i += 1;
 
-                                            let Some(v) = bin_prop.value.as_ref().unwrap().as_string() else {
+                                            let Some(v) = bin_prop.value.as_ref().unwrap().as_string(&bump) else {
                                                 break 'bin;
                                             };
                                             // SAFETY: group_i < group_len
@@ -2824,7 +2824,7 @@ impl PackageManifest {
                         // the files in an existing bin directory, use
                         // directories.bin.
                         if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                            if let Some(str_) = bin_prop.expr.as_string() {
+                            if let Some(str_) = bin_prop.expr.as_string(&bump) {
                                 if !str_.is_empty() {
                                     package_version.bin = Bin {
                                         tag: bin::Tag::Dir,
@@ -2868,7 +2868,7 @@ impl PackageManifest {
                             }
 
                             if let Some(shasum) = dist.expr.as_property(b"integrity") {
-                                if let Some(shasum_str) = shasum.expr.as_string() {
+                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
                                     package_version.integrity = Integrity::parse(shasum_str);
                                     if package_version.integrity.tag.is_supported() {
                                         break 'integrity;
@@ -2877,7 +2877,7 @@ impl PackageManifest {
                             }
 
                             if let Some(shasum) = dist.expr.as_property(b"shasum") {
-                                if let Some(shasum_str) = shasum.expr.as_string() {
+                                if let Some(shasum_str) = shasum.expr.as_string(&bump) {
                                     package_version.integrity =
                                         Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
                                 }
@@ -2954,7 +2954,7 @@ impl PackageManifest {
                                                 .key
                                                 .as_ref()
                                                 .unwrap()
-                                                .as_string()
+                                                .as_string(&bump)
                                                 .expect("unreachable");
                                             optional_peer_dep_names
                                                 .push(Semver::semver_string::Builder::string_hash(meta_key));
@@ -2974,7 +2974,7 @@ impl PackageManifest {
                         let mut i: usize = 0;
 
                         for item in items {
-                            let name_str = match item.key.as_ref().unwrap().as_string() {
+                            let name_str = match item.key.as_ref().unwrap().as_string(&bump) {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2984,7 +2984,7 @@ impl PackageManifest {
                                     }
                                 }
                             };
-                            let version_str = match item.value.as_ref().unwrap().as_string() {
+                            let version_str = match item.value.as_ref().unwrap().as_string(&bump) {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -3070,7 +3070,7 @@ impl PackageManifest {
                                         if !b.value {
                                             continue;
                                         }
-                                        let Some(meta_key) = meta_prop.key.as_ref().unwrap().as_string()
+                                        let Some(meta_key) = meta_prop.key.as_ref().unwrap().as_string(&bump)
                                         else {
                                             continue;
                                         };
@@ -3185,7 +3185,7 @@ impl PackageManifest {
 
                 if let Some(time_obj) = json.as_property(b"time") {
                     if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
-                        if let Some(publish_time_str) = publish_time_expr.as_string() {
+                        if let Some(publish_time_str) = publish_time_expr.as_string(&bump) {
                             // MOVE_DOWN(b0): bun_jsc::wtf::parse_es5_date → bun_wtf (date parser is
                             // jsc-independent FFI). The extern decl is duplicated locally so the
                             // minimum-release-age filter (`is_package_version_too_recent`) is not a
@@ -3242,11 +3242,11 @@ impl PackageManifest {
                 let mut dist_tag_i: usize = 0;
 
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().unwrap().as_string() {
+                    if let Some(key) = tag.key.as_ref().unwrap().as_string(&bump) {
                         all_extern_strings[extern_strings_slice_start + dist_tag_i] =
                             string_builder.append::<ExternalString>(key);
 
-                        let Some(version_name) = tag.value.as_ref().unwrap().as_string() else {
+                        let Some(version_name) = tag.value.as_ref().unwrap().as_string(&bump) else {
                             continue;
                         };
 
@@ -3291,7 +3291,7 @@ impl PackageManifest {
         }
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_string() else {
+            let Some(field) = name_q.expr.as_string(&bump) else {
                 return Ok(None);
             };
             result.pkg.modified = string_builder.append::<SemverString>(field);

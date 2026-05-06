@@ -32,7 +32,8 @@ use bun_sys::{self, Dir, E, Fd, FdExt, FdDirExt, FileKind, Mode, O};
 use bun_threading::{thread_pool, Mutex, ThreadPool};
 
 use crate::bun_fs::FileSystem;
-use crate::{NetworkTask, PackageManager};
+use crate::NetworkTask;
+use crate::package_manager_real::PackageManager;
 use crate::integrity::{self, Integrity};
 
 // `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
@@ -926,7 +927,7 @@ impl TarballStream {
         // threads, so we mutate via raw-ptr deref without forming a
         // long-lived `&mut PackageManager`.
         (*manager).resolve_tasks.push(task);
-        (*manager).wake();
+        PackageManager::wake_raw(manager);
         } // unsafe
     }
 

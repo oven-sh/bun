@@ -6,9 +6,9 @@ use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{fmt as bun_fmt, handle_oom, Output, ZBox};
 use bun_core::fmt::PathSep;
-use bun_paths::{self as Path, AutoAbsPath, EnvPath};
+use bun_paths::{self as Path, AbsPath, EnvPath};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_semver::StringBuilder as SemverStringBuilder;
+use bun_semver::string::Builder as SemverStringBuilder;
 use bun_str::{strings, ZStr};
 use bun_sys as Syscall;
 use bun_threading::Mutex;
@@ -16,7 +16,7 @@ use bun_threading::Mutex;
 use crate::bun_fs::FileSystem;
 
 use bun_install::lockfile::{self, Lockfile, Package};
-use bun_install::resolution::Tag as ResolutionTag;
+use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::{
     invalid_package_id, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
 };
@@ -293,7 +293,10 @@ impl PackageManager {
         if log_level == LogLevel::Silent {
             return;
         }
-        if bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING.get() {
+        if bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING
+            .get()
+            .unwrap_or(false)
+        {
             return;
         }
 
@@ -324,7 +327,7 @@ impl PackageManager {
             && current_time.saturating_sub(self.last_reported_slow_lifecycle_script_at) > interval
         {
             self.last_reported_slow_lifecycle_script_at = current_time;
-            let package_name = longest_running.package_name;
+            let package_name: &[u8] = &longest_running.package_name;
 
             if !(package_name.len() > 1 && package_name[package_name.len() - 1] == b's') {
                 Output::warn(format_args!(

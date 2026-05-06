@@ -11,11 +11,11 @@ use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
 use bun_sha_hmac::sha as hashers;
 
-// TODO(port): std.crypto.hash.{sha3,blake2} — Zig std crypto algos not in BoringSSL.
-// Phase B: pick a Rust impl (e.g. `sha3`/`blake2` crates or a thin Zig→C shim) and
-// wire into the `ZigHashAlgo` trait below. Until then these are local todo!-stubs
-// so the `for_each_zig_algo!` table type-checks.
-use zig_crypto_stubs::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
+// `std.crypto.hash.{sha3,blake2}` — pure-Zig stdlib algos with no BoringSSL
+// streaming context. Per docs/PORTING.md ("prefer a well-tested crates.io dep
+// over hand-porting bit-twiddling"), wire RustCrypto's `sha3`/`blake2` into the
+// `ZigHashAlgo` trait below.
+use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
 // Zig: `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
 type Digest = evp::Digest;
@@ -740,39 +740,70 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     fn final_(&mut self, out: &mut [u8]);
 }
 
-/// Stub hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
-/// that BoringSSL does not expose as a streaming context. The Zig original drives
-/// these via comptime-generic `KeccakP`/`Blake2` states; until a Rust backend
-/// (`sha3`/`blake2` crates or a C shim) is wired in, these `todo!()`-panic at use.
-mod zig_crypto_stubs {
+/// Hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
+/// that BoringSSL does not expose as a streaming context. Backed by RustCrypto's
+/// `sha3`/`blake2` crates (same Keccak-p[1600,24] permutation and BLAKE2s as
+/// Zig's `std.crypto`).
+mod zig_crypto_algos {
     use super::{evp, ZigHashAlgo};
+    use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
-    macro_rules! stub_algo {
-        ($ty:ident, $name:literal, $variant:ident, $len:expr) => {
-            #[derive(Default, Clone)]
-            pub struct $ty;
+    pub type Sha3_224 = sha3::Sha3_224;
+    pub type Sha3_256 = sha3::Sha3_256;
+    pub type Sha3_384 = sha3::Sha3_384;
+    pub type Sha3_512 = sha3::Sha3_512;
+    pub type Shake128 = sha3::Shake128;
+    pub type Shake256 = sha3::Shake256;
+    pub type Blake2s256 = blake2::Blake2s256;
+
+    /// Fixed-digest Keccak/BLAKE2 — Zig `T.final(state, *[digest_length]u8)`
+    /// writes exactly `digest_length` bytes; mirror via `FixedOutputReset`.
+    macro_rules! impl_fixed {
+        ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
             impl ZigHashAlgo for $ty {
                 const NAME: &'static [u8] = $name;
                 const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
                 const DIGEST_LENGTH: u8 = $len;
-                fn update(&mut self, _bytes: &[u8]) {
-                    todo!("blocked_on: bun_crypto_std::{}", stringify!($ty))
+                fn update(&mut self, bytes: &[u8]) {
+                    Update::update(self, bytes);
                 }
-                fn final_(&mut self, _out: &mut [u8]) {
-                    todo!("blocked_on: bun_crypto_std::{}", stringify!($ty))
+                fn final_(&mut self, out: &mut [u8]) {
+                    let len = Self::DIGEST_LENGTH as usize;
+                    FixedOutputReset::finalize_into_reset(
+                        self,
+                        Output::<$ty>::from_mut_slice(&mut out[..len]),
+                    );
                 }
             }
         };
     }
 
-    stub_algo!(Sha3_224, b"sha3-224", Sha3_224, 28);
-    stub_algo!(Sha3_256, b"sha3-256", Sha3_256, 32);
-    stub_algo!(Sha3_384, b"sha3-384", Sha3_384, 48);
-    stub_algo!(Sha3_512, b"sha3-512", Sha3_512, 64);
-    // Zig: digestLength(Shake128) = 16, digestLength(Shake256) = 32
-    stub_algo!(Shake128, b"shake128", Shake128, 16);
-    stub_algo!(Shake256, b"shake256", Shake256, 32);
-    stub_algo!(Blake2s256, b"blake2s256", Blake2s256, 32);
+    /// SHAKE XOF — Zig `digestLength(Shake128) = 16` / `Shake256 = 32` (the
+    /// Zig stdlib's `Shake.final` squeezes exactly `out.len` bytes).
+    macro_rules! impl_xof {
+        ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
+            impl ZigHashAlgo for $ty {
+                const NAME: &'static [u8] = $name;
+                const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
+                const DIGEST_LENGTH: u8 = $len;
+                fn update(&mut self, bytes: &[u8]) {
+                    Update::update(self, bytes);
+                }
+                fn final_(&mut self, out: &mut [u8]) {
+                    let len = Self::DIGEST_LENGTH as usize;
+                    ExtendableOutputReset::finalize_xof_reset_into(self, &mut out[..len]);
+                }
+            }
+        };
+    }
+
+    impl_fixed!(Sha3_224, b"sha3-224", Sha3_224, 28);
+    impl_fixed!(Sha3_256, b"sha3-256", Sha3_256, 32);
+    impl_fixed!(Sha3_384, b"sha3-384", Sha3_384, 48);
+    impl_fixed!(Sha3_512, b"sha3-512", Sha3_512, 64);
+    impl_xof!(Shake128, b"shake128", Shake128, 16);
+    impl_xof!(Shake256, b"shake256", Shake256, 32);
+    impl_fixed!(Blake2s256, b"blake2s256", Blake2s256, 32);
 }
 
 /// Expands `$body` once per `(name_literal, Type)` pair from the Zig `algo_map`.
@@ -1015,6 +1046,11 @@ pub trait StaticHasher: 'static {
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut Self::Digest);
     fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<*mut boring_ssl::ENGINE>);
+    /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
+    /// extern (`${NAME}__getConstructor`, generate-classes.ts:2449). Replaces the
+    /// Zig `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm
+    /// binds the C++ symbol for its concrete name.
+    fn get_constructor(global: &JSGlobalObject) -> JSValue;
 }
 
 /// Local impls of `StaticHasher` for the upstream `bun_sha_hmac::sha::evp::*`

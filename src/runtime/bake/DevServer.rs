@@ -1077,22 +1077,22 @@ fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
 }
 
 fn not_found(resp: AnyResponse) {
-    resp.corked(on_not_found_corked, (resp,));
+    resp.corked(move || on_not_found_corked(resp));
 }
 
 fn on_not_found_corked(resp: AnyResponse) {
-    resp.write_status("404 Not Found");
-    resp.end("Not Found", false);
+    resp.write_status(b"404 Not Found");
+    resp.end(b"Not Found", false);
 }
 
 fn on_outdated_js_corked(resp: AnyResponse) {
     // Send a payload to instantly reload the page. This only happens when the
     // client bundle is invalidated while the page is loading, aka when you
     // perform many file updates that cannot be hot-updated.
-    resp.write_status("200 OK");
-    resp.write_header("Content-Type", MimeType::JAVASCRIPT.value);
+    resp.write_status(b"200 OK");
+    resp.write_header(b"Content-Type", &MimeType::JAVASCRIPT.value);
     resp.end(
-        "try{location.reload()}catch(_){}\n\
+        b"try{location.reload()}catch(_){}\n\
          addEventListener(\"DOMContentLoaded\",function(event){location.reload()})",
         false,
     );
@@ -1150,7 +1150,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if route_bundle.client_script_generation != generation
         || route_bundle.server_state != route_bundle::State::Loaded
     {
-        return resp.corked(on_outdated_js_corked, (resp,));
+        return resp.corked(move || on_outdated_js_corked(resp));
     }
 
     dev.on_js_request_with_bundle(
@@ -1198,15 +1198,15 @@ pub fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
 // Request, AnyResponse)` shape `wrap_generic_request_handler` expects).
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
-        resp.write_status("501 Not Implemented");
+        resp.write_status(b"501 Not Implemented");
         resp.end(
-            "Viewing source without opening in editor is not implemented yet!",
+            b"Viewing source without opening in editor is not implemented yet!",
             false,
         );
         return;
     }
-    resp.write_status("501 Not Implemented");
-    resp.end("TODO", false);
+    resp.write_status(b"501 Not Implemented");
+    resp.end(b"TODO", false);
 }
 
 // TODO(port): `wrapGenericRequestHandler` returned a comptime-generated fn that
@@ -1240,27 +1240,27 @@ fn redirect_handler<const IS_SSL: bool>(
 }
 
 fn on_incremental_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
-    resp.corked(on_incremental_visualizer_corked, (resp,));
+    resp.corked(move || on_incremental_visualizer_corked(resp));
 }
 
 fn on_incremental_visualizer_corked(resp: AnyResponse) {
     let code = if Environment::CODEGEN_EMBED {
         include_bytes!("incremental_visualizer.html").as_slice()
     } else {
-        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html")
+        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/incremental_visualizer.html").as_bytes()
     };
     resp.end(code, false);
 }
 
 fn on_memory_visualizer(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
-    resp.corked(on_memory_visualizer_corked, (resp,));
+    resp.corked(move || on_memory_visualizer_corked(resp));
 }
 
 fn on_memory_visualizer_corked(resp: AnyResponse) {
     let code = if Environment::CODEGEN_EMBED {
         include_bytes!("memory_visualizer.html").as_slice()
     } else {
-        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html")
+        bun_core::runtime_embed_file(bun_core::EmbedKind::SrcEager, "bake/memory_visualizer.html").as_bytes()
     };
     resp.end(code, false);
 }
@@ -1295,8 +1295,9 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
             deferred_request::HandlerKind::ServerHandler => self.dev.on_framework_request_with_bundle(
                 self.route_bundle_index,
                 match &self.req {
-                    ReqOrSaved::Req(r) => SavedRequest::Union::Stack(*r),
-                    ReqOrSaved::Saved(s) => SavedRequest::Union::Saved(s.clone()),
+                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut **r }),
+                    // TODO(port): SavedRequest is not Clone; move semantics needed here.
+                    ReqOrSaved::Saved(_s) => todo!("blocked_on: SavedRequestUnion::Saved (SavedRequest not Clone)"),
                     _ => unreachable!(),
                 },
                 self.resp,
@@ -1320,11 +1321,12 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
             .unwrap();
         let failures = ::core::slice::from_ref(failure);
         self.dev
-            .send_serialized_failures(DevResponse::Http(self.resp), failures, ErrorPageKind::Evaluation, None)
+            .send_serialized_failures(DevResponse::Http(self.resp), failures, ErrorPageKind::Evaluation, None)?;
+        Ok(())
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
-        self.resp.end("Plugin Error", false);
+        self.resp.end(b"Plugin Error", false);
         Ok(())
     }
 
@@ -1528,7 +1530,7 @@ impl ReqOrSaved {
         match self {
             // SAFETY: req is valid for the duration of the handler callback
             ReqOrSaved::Req(req) => Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST),
-            ReqOrSaved::Saved(saved) => saved.request.method,
+            ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
             ReqOrSaved::Aborted => unreachable!(),
         }
     }
@@ -1551,7 +1553,7 @@ impl DevServer<'_> {
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
             ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
-            ReqOrSaved::Saved(saved) => saved.request.method,
+            ReqOrSaved::Saved(saved) => unsafe { (*saved.request).method },
             _ => unreachable!(),
         };
 

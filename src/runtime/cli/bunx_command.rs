@@ -1159,32 +1159,41 @@ impl BunxCommand {
             },
         };
 
-        match spawn_result.status {
-            SpawnStatus::Exited { code, signal } => {
-                if signal.valid() {
-                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+        match &spawn_result.status {
+            SpawnStatus::Exited(exited) => {
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
+                        .get()
+                        .unwrap_or(false)
+                    {
                         bun_crash_handler::suppress_reporting();
                     }
 
-                    Global::raise_ignoring_panic_handler(signal);
+                    Global::raise_ignoring_panic_handler(sig);
                 }
 
-                if code != 0 {
-                    Global::exit(code as i32);
+                if exited.code != 0 {
+                    Global::exit(exited.code as i32);
                 }
             }
-            SpawnStatus::Signaled(signal) => {
-                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+            SpawnStatus::Signaled(_) => {
+                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
+                    .get()
+                    .unwrap_or(false)
+                {
                     bun_crash_handler::suppress_reporting();
                 }
 
-                Global::raise_ignoring_panic_handler(signal);
+                if let Some(sig) = spawn_result.status.signal_code() {
+                    Global::raise_ignoring_panic_handler(sig);
+                }
             }
             SpawnStatus::Err(err) => {
-                Output::pretty_errorln(
+                Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    format_args!("{} {}", BStr::new(&install_param), err),
-                );
+                    BStr::new(&install_param),
+                    err,
+                ));
                 Global::exit(1);
             }
             _ => {}

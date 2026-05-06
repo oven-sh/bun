@@ -26,8 +26,7 @@ pub struct SourceLocation {
 ///
 /// ```ignore
 /// // Declare a TopExceptionScope surrounding the call that may throw an exception
-/// let mut scope = TopExceptionScope::uninit();
-/// scope.init(global, src!());
+/// let mut scope = TopExceptionScope::init(global);
 /// // ... Drop is NOT used here; see PORT NOTE on destroy ...
 ///
 /// let value: i32 = external_call(vm, foo, bar, baz);
@@ -47,10 +46,39 @@ pub struct TopExceptionScope {
 }
 
 impl TopExceptionScope {
+    /// Value-returning convenience constructor matching the ergonomic Zig
+    /// `var scope: ... = undefined; scope.init(global, @src())` pattern in one call.
+    /// Uses `#[track_caller]` to recover the caller's line number; `fn_name`/`file` are
+    /// placeholders until a `src!()` macro provides NUL-terminated literals.
+    ///
+    /// PORT NOTE: the underlying C++ object is placement-constructed into `bytes`, so the
+    /// returned value MUST NOT be moved again after binding (Rust does not guarantee NRVO).
+    /// Phase B should replace this with a Pin-based RAII guard / stack-allocating macro.
+    #[track_caller]
+    pub fn init(global: &JSGlobalObject) -> Self {
+        let loc = core::panic::Location::caller();
+        let mut this = Self {
+            bytes: [0u8; SIZE],
+            #[cfg(feature = "ci_assert")]
+            location: core::ptr::null(),
+        };
+        this.init_in_place(
+            global,
+            SourceLocation {
+                // TODO(port): `Location::file()` is not NUL-terminated; use placeholders
+                // until a `src!()` macro lands.
+                fn_name: c"<rust>".as_ptr(),
+                file: c"<rust>".as_ptr(),
+                line: loc.line(),
+            },
+        );
+        this
+    }
+
     // TODO(port): in-place init — `self` MUST NOT move after this call (C++ object is
     // placement-constructed into `bytes` and `location` self-references). Phase B should
     // wrap this in a Pin-based RAII guard or a `#[track_caller]` macro that stack-allocates.
-    pub fn init(&mut self, global: &JSGlobalObject, src: SourceLocation) {
+    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
         // SAFETY: `bytes` is SIZE bytes, ALIGNMENT-aligned (via #[repr(align(8))]); the C++
         // side asserts size/alignment match.
         unsafe {
@@ -194,9 +222,8 @@ impl TopExceptionScope {
 /// Gated by `cfg(feature = "ci_assert")`.
 ///
 /// ```ignore
-/// let mut scope = ExceptionValidationScope::uninit();
 /// // these do nothing when ci_assert is off
-/// scope.init(global, src!());
+/// let mut scope = ExceptionValidationScope::init(global);
 /// // defer ExceptionValidationScope::destroy(&mut scope);
 ///
 /// let maybe_empty: JSValue = external_function(global, foo, bar, baz);
@@ -214,9 +241,25 @@ pub struct ExceptionValidationScope {
 }
 
 impl ExceptionValidationScope {
-    pub fn init(&mut self, global: &JSGlobalObject, src: SourceLocation) {
+    /// Value-returning convenience constructor — see [`TopExceptionScope::init`].
+    /// When `ci_assert` is off this is a no-op ZST, so the move-after-init caveat
+    /// does not apply; with `ci_assert` on, the same Pin caveat as `TopExceptionScope` holds.
+    #[track_caller]
+    pub fn init(global: &JSGlobalObject) -> Self {
         #[cfg(feature = "ci_assert")]
-        self.scope.init(global, src);
+        {
+            Self { scope: TopExceptionScope::init(global) }
+        }
+        #[cfg(not(feature = "ci_assert"))]
+        {
+            let _ = global;
+            Self { scope: () }
+        }
+    }
+
+    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
+        #[cfg(feature = "ci_assert")]
+        self.scope.init_in_place(global, src);
         #[cfg(not(feature = "ci_assert"))]
         let _ = (global, src);
     }

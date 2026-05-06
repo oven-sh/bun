@@ -18,7 +18,6 @@ use crate::{MarkedArrayBuffer, Task as JscTask};
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(hot_reloader, visible);
 
 // TODO(port): Environment.isKqueue — verify exact target list matches Zig's `Environment.isKqueue`

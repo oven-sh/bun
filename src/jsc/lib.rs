@@ -84,6 +84,75 @@ pub const CONV: &str = "C";
 #[path = "ZigErrorType.rs"] pub mod zig_error_type;
 #[path = "Errorable.rs"] pub mod errorable;
 #[path = "ZigStackFramePosition.rs"] pub mod zig_stack_frame_position;
+
+/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
+/// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
+/// Ported from `src/options_types/schema.zig` (`StackFrameScope`, `StackFrame`,
+/// `StackFramePosition`, `SourceLine`, `StackTrace`).
+pub mod schema_api {
+    use crate::ZigStackFramePosition;
+
+    /// schema.zig:373 — `enum(u8) { _none, eval, module, function, global, wasm,
+    /// constructor, _ }` (non-exhaustive). Newtype keeps any-u8 FFI-safe.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub struct StackFrameScope(pub u8);
+
+    impl StackFrameScope {
+        pub const NONE: Self = Self(0);
+        pub const EVAL: Self = Self(1);
+        pub const MODULE: Self = Self(2);
+        pub const FUNCTION: Self = Self(3);
+        pub const GLOBAL: Self = Self(4);
+        pub const WASM: Self = Self(5);
+        pub const CONSTRUCTOR: Self = Self(6);
+    }
+
+    /// schema.zig:431 — `pub const StackFramePosition = bun.jsc.ZigStackFramePosition;`
+    pub type StackFramePosition = ZigStackFramePosition;
+
+    /// schema.zig:401 — `struct StackFrame`.
+    #[derive(Clone)]
+    pub struct StackFrame {
+        /// function_name
+        pub function_name: Box<[u8]>,
+        /// file
+        pub file: Box<[u8]>,
+        /// position
+        pub position: StackFramePosition,
+        /// scope
+        pub scope: StackFrameScope,
+    }
+
+    impl Default for StackFrame {
+        fn default() -> Self {
+            Self {
+                function_name: Box::default(),
+                file: Box::default(),
+                position: StackFramePosition::INVALID,
+                scope: StackFrameScope::NONE,
+            }
+        }
+    }
+
+    /// schema.zig:433 — `struct SourceLine`.
+    #[derive(Clone, Default)]
+    pub struct SourceLine {
+        /// line
+        pub line: i32,
+        /// text
+        pub text: Box<[u8]>,
+    }
+
+    /// schema.zig:455 — `struct StackTrace`.
+    #[derive(Clone, Default)]
+    pub struct StackTrace {
+        /// source_lines
+        pub source_lines: Vec<SourceLine>,
+        /// frames
+        pub frames: Vec<StackFrame>,
+    }
+}
 #[path = "JSType.rs"] pub mod js_type;
 #[path = "Exception.rs"] pub mod exception;
 #[path = "TopExceptionScope.rs"] pub mod top_exception_scope;

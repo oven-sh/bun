@@ -163,6 +163,99 @@ impl Status {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Process — low-tier shape of `bun.spawn.Process` (process.zig `Process`).
+//
+// MOVE_DOWN from `bun_runtime::api::bun::process` so that `bun_jsc`
+// (ProcessAutoKiller) can name `*mut Process` without the runtime → jsc → spawn
+// cycle. Only the fields/methods that cross the tier boundary are ported here:
+// `pid`, `status`, intrusive `ref_count`, and `has_exited`/`kill`/`ref_`/`deref`.
+// The full `Poller`/`ProcessExitHandler`/event-loop wiring remains owned by
+// `bun_runtime` and is layered on top via raw-ptr extension in Phase B.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Zig: process.zig `pid_t` — `std.posix.pid_t` on POSIX, `bun.windows.DWORD`
+/// (u32) on Windows.
+#[cfg(unix)]
+pub type PidT = libc::pid_t;
+#[cfg(windows)]
+pub type PidT = u32;
+
+pub struct Process {
+    pub pid: PidT,
+    pub status: Status,
+    /// Intrusive thread-safe refcount (Zig: `bun.ptr.ThreadSafeRefCount(Process, …)`).
+    /// Stored as a bare atomic at this tier to avoid pulling `bun_ptr`'s
+    /// destructor-dispatch (which needs the full `Poller` field) into a leaf
+    /// crate; `ref_`/`deref` below match the Zig acquire/release protocol.
+    pub ref_count: core::sync::atomic::AtomicU32,
+}
+
+impl Process {
+    /// Zig: `Process.hasExited`.
+    #[inline]
+    pub fn has_exited(&self) -> bool {
+        matches!(self.status, Status::Exited { .. } | Status::Signaled(_) | Status::Err(_))
+    }
+
+    /// Zig: `Process.kill(signal: u8) Maybe(void)`.
+    ///
+    /// At this tier the `Poller` discriminant is not available, so the POSIX
+    /// path issues `kill(2)` unconditionally on `pid` (the Zig guard only
+    /// short-circuits for `.detached`, which never reaches the auto-killer).
+    pub fn kill(&self, signal: u8) -> bun_sys::Maybe<()> {
+        #[cfg(unix)]
+        {
+            // SAFETY: libc kill(2) on a stored pid.
+            let err = unsafe { libc::kill(self.pid, signal as libc::c_int) };
+            if err != 0 {
+                let errno_ = bun_sys::get_errno(err as isize);
+                // if the process was already killed don't throw
+                if errno_ != bun_sys::E::ESRCH {
+                    return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::TODO));
+                }
+            }
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            let _ = signal;
+            // TODO(port): blocked_on bun_sys::windows::libuv::Process — the
+            // Windows kill path goes through the uv handle owned by `Poller`,
+            // which lives in `bun_runtime`. The auto-killer is POSIX-only in
+            // practice today; widen once `Poller` moves down.
+            Ok(())
+        }
+    }
+
+    /// Zig: `ref_count.ref()`. Takes `&self` — the count is atomic.
+    #[inline]
+    pub fn ref_(&self) {
+        self.ref_count
+            .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+    }
+
+    /// Zig: `ref_count.deref()`. Drops the heap allocation when the count hits
+    /// zero (Zig destructor = `Process.deinit` → `bun.destroy`).
+    ///
+    /// # Safety
+    /// `self` must have been allocated via `Box::into_raw` (the spawn entry
+    /// points uphold this) and must not be used after this call returns if it
+    /// released the last reference.
+    #[inline]
+    pub fn deref(&self) {
+        if self
+            .ref_count
+            .fetch_sub(1, core::sync::atomic::Ordering::AcqRel)
+            == 1
+        {
+            core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+            // SAFETY: see doc — last ref; allocation came from Box::into_raw.
+            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // sync — `process.zig` `pub const sync = struct { … }` (line 1910).
 // Blocking spawn options/result used by `bun patch`, `bun install` git
 // operations, and CLI helpers.

@@ -42,9 +42,9 @@ impl ZigStackFrame {
         origin: Option<&ZigURL<'_>>,
     ) -> Result<api::StackFrame, bun_alloc::AllocError> {
         // Zig was `!api.StackFrame` with alloc-only `try` sites; allocator param dropped.
-        // SAFETY: all-zero is a valid api::StackFrame (Zig used `comptime std.mem.zeroes`).
-        // TODO(port): verify api::StackFrame is #[repr(C)] POD with no NonNull/NonZero fields.
-        let mut frame: api::StackFrame = unsafe { core::mem::zeroed::<api::StackFrame>() };
+        // Zig used `comptime std.mem.zeroes` (zero-valued slices/enums) — `Default` is the
+        // semantic equivalent here since `Box<[u8]>` fields are NonNull and not zero-safe.
+        let mut frame: api::StackFrame = api::StackFrame::default();
         if !self.function_name.is_empty() {
             let slicer = self.function_name.to_utf8();
             // TODO(port): Zig did `(try slicer.cloneIfBorrowed(allocator)).slice()`.
@@ -67,18 +67,16 @@ impl ZigStackFrame {
         }
 
         frame.position = self.position;
-        // SAFETY: api::StackFrameScope is #[repr(u8)] with the same discriminants as ZigStackFrameCode.
-        // TODO(port): verify repr/discriminant match between ZigStackFrameCode and api::StackFrameScope.
-        frame.scope = unsafe {
-            core::mem::transmute::<u8, api::StackFrameScope>(self.code_type as u8)
-        };
+        // api::StackFrameScope is a #[repr(transparent)] u8 newtype with the same
+        // discriminants as ZigStackFrameCode (schema.zig:373 / ZigStackFrameCode.zig).
+        frame.scope = api::StackFrameScope(self.code_type.0);
 
         Ok(frame)
     }
 
     pub const ZERO: ZigStackFrame = ZigStackFrame {
         function_name: BunString::EMPTY,
-        code_type: ZigStackFrameCode::None,
+        code_type: ZigStackFrameCode::NONE,
         source_url: BunString::EMPTY,
         position: ZigStackFramePosition::INVALID,
         is_async: false,
@@ -100,7 +98,7 @@ impl ZigStackFrame {
     pub fn source_url_formatter<'a>(
         &self,
         root_path: &'a [u8],
-        origin: Option<&'a ZigURL>,
+        origin: Option<&'a ZigURL<'a>>,
         exclude_line_column: bool,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
@@ -122,7 +120,7 @@ pub struct SourceURLFormatter<'a> {
     pub source_url: BunString,
     pub position: ZigStackFramePosition,
     pub enable_color: bool,
-    pub origin: Option<&'a ZigURL>,
+    pub origin: Option<&'a ZigURL<'a>>,
     pub exclude_line_column: bool,
     pub remapped: bool,
     pub root_path: &'a [u8],
@@ -244,7 +242,7 @@ impl fmt::Display for NameFormatter {
         let name = &self.function_name;
 
         match self.code_type {
-            ZigStackFrameCode::Eval => {
+            ZigStackFrameCode::EVAL => {
                 if self.enable_color {
                     f.write_str(concat!(
                         Output::pretty_fmt!("<r><d>", true),
@@ -262,7 +260,7 @@ impl fmt::Display for NameFormatter {
                     }
                 }
             }
-            ZigStackFrameCode::Function => {
+            ZigStackFrameCode::FUNCTION => {
                 if !name.is_empty() {
                     if self.enable_color {
                         if self.is_async {
@@ -304,15 +302,15 @@ impl fmt::Display for NameFormatter {
                     }
                 }
             }
-            ZigStackFrameCode::Global => {}
-            ZigStackFrameCode::Wasm => {
+            ZigStackFrameCode::GLOBAL => {}
+            ZigStackFrameCode::WASM => {
                 if !name.is_empty() {
                     write!(f, "{}", name)?;
                 } else {
                     f.write_str("WASM")?;
                 }
             }
-            ZigStackFrameCode::Constructor => {
+            ZigStackFrameCode::CONSTRUCTOR => {
                 write!(f, "new {}", name)?;
             }
             _ => {

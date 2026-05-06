@@ -2,7 +2,7 @@ use bun_collections::ArrayHashMap;
 use bun_spawn::Process;
 use bun_sys::SignalCode;
 
-bun_output::declare_scope!(AutoKiller, hidden);
+bun_core::declare_scope!(AutoKiller, hidden);
 
 #[derive(Default)]
 pub struct ProcessAutoKiller {
@@ -37,8 +37,8 @@ impl ProcessAutoKiller {
             // until the matching deref() below.
             let p = unsafe { &*process };
             if !p.has_exited() {
-                bun_output::scoped_log!(AutoKiller, "process.kill {}", p.pid);
-                count += p.kill(SignalCode::DEFAULT as i32).is_ok() as u32;
+                bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
+                count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
             }
             p.deref();
         }

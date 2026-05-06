@@ -48,6 +48,7 @@ bun_resolver.workspace = true
 bun_sha_hmac.workspace = true
 bun_simdutf_sys.workspace = true
 bun_sourcemap.workspace = true
+bun_spawn.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true

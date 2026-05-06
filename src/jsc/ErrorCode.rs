@@ -10,9 +10,49 @@
 
 #![allow(non_upper_case_globals)]
 
+use core::ffi::c_void;
 use core::fmt::Arguments;
 
 use crate::{JSGlobalObject, JSPromise, JSValue, JsError};
+
+// ──────────────────────────────────────────────────────────────────────────
+// `JSGlobalObject` is currently defined twice during the port: the legacy
+// opaque stub at `crate::JSGlobalObject` (lib.rs) and the real port at
+// `crate::js_global_object::JSGlobalObject`. Both are `#[repr(C)]` zero-sized
+// opaque handles to the same C++ `JSC::JSGlobalObject`, so they are ABI-
+// identical and a `&T → *mut c_void` reinterpret is sound. `ErrorCode::fmt`
+// et al. are called from both sides; this trait erases the nominal split
+// until the stub is removed and `js_global_object::JSGlobalObject` becomes
+// the sole re-export.
+// ──────────────────────────────────────────────────────────────────────────
+pub trait GlobalObjectRef {
+    /// Raw `JSC::JSGlobalObject*` for FFI.
+    fn as_global_ptr(&self) -> *mut c_void;
+    /// `globalThis.vm().throwError(globalThis, value)`.
+    fn throw_js_value(&self, value: JSValue) -> JsError;
+}
+
+impl GlobalObjectRef for crate::JSGlobalObject {
+    #[inline]
+    fn as_global_ptr(&self) -> *mut c_void {
+        self as *const Self as *mut c_void
+    }
+    #[inline]
+    fn throw_js_value(&self, value: JSValue) -> JsError {
+        self.throw_value(value)
+    }
+}
+
+impl GlobalObjectRef for crate::js_global_object::JSGlobalObject {
+    #[inline]
+    fn as_global_ptr(&self) -> *mut c_void {
+        self as *const Self as *mut c_void
+    }
+    #[inline]
+    fn throw_js_value(&self, value: JSValue) -> JsError {
+        self.throw_value(value)
+    }
+}
 
 type ErrorCodeInt = u16;
 
@@ -1332,12 +1372,12 @@ impl ErrorCode {
     /// formats `args` into a `bun.String`, hands it to
     /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
-    pub fn fmt(self, global: &JSGlobalObject, args: Arguments<'_>) -> JSValue {
+    pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
         let mut message = bun_string::String::create_format(args);
-        // SAFETY: `global` is live; `message` is a valid `bun.String` borrowed
-        // for the call. C++ clones the impl into a JSString; Zig wrapper does
-        // `defer message.deref()`, mirrored below.
-        let v = unsafe { Bun__createErrorWithCode(global.as_ptr(), self, &mut message) };
+        // SAFETY: `global` is a live `JSC::JSGlobalObject*`; `message` is a
+        // valid `bun.String` borrowed for the call. C++ clones the impl into a
+        // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
+        let v = unsafe { Bun__createErrorWithCode(global.as_global_ptr(), self, &mut message) };
         message.deref();
         v
     }
@@ -1345,8 +1385,8 @@ impl ErrorCode {
     /// `Error.throw(this, globalThis, fmt, args)` — `.fmt` then
     /// `globalThis.throwValue`.
     #[inline]
-    pub fn throw(self, global: &JSGlobalObject, args: Arguments<'_>) -> JsError {
-        global.throw_value(self.fmt(global, args))
+    pub fn throw<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JsError {
+        global.throw_js_value(self.fmt(global, args))
     }
 }
 
@@ -1365,7 +1405,7 @@ impl core::fmt::Display for ErrorCode {
 
 unsafe extern "C" {
     fn Bun__createErrorWithCode(
-        global: *mut JSGlobalObject,
+        global: *mut c_void,
         code: ErrorCode,
         message: *mut bun_string::String,
     ) -> JSValue;
@@ -1374,15 +1414,15 @@ unsafe extern "C" {
 /// Runtime equivalent of Zig's comptime `ErrorBuilder(code, fmt, Args)`.
 /// Returned from `JSGlobalObject::err(code, args)` so callers can choose
 /// `.throw()` / `.to_js()` / `.reject()` at the use site.
-pub struct ErrorBuilder<'a> {
-    pub global: &'a JSGlobalObject,
+pub struct ErrorBuilder<'a, G: GlobalObjectRef + ?Sized = JSGlobalObject> {
+    pub global: &'a G,
     pub code: ErrorCode,
     pub args: Arguments<'a>,
 }
 
-impl<'a> ErrorBuilder<'a> {
+impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
     #[inline]
-    pub fn new(global: &'a JSGlobalObject, code: ErrorCode, args: Arguments<'a>) -> Self {
+    pub fn new(global: &'a G, code: ErrorCode, args: Arguments<'a>) -> Self {
         Self { global, code, args }
     }
 
@@ -1402,7 +1442,13 @@ impl<'a> ErrorBuilder<'a> {
     #[inline]
     pub fn reject(self) -> JSValue {
         let v = self.code.fmt(self.global, self.args);
-        JSPromise::rejected_promise(self.global, v).to_js()
+        // SAFETY: `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
+        // handles (see `GlobalObjectRef` doc); both name the same C++ object,
+        // so reinterpreting the pointer for `JSPromise::rejected_promise`
+        // (which is still typed against the lib.rs stub) is sound.
+        let global: &JSGlobalObject =
+            unsafe { &*(self.global.as_global_ptr() as *const JSGlobalObject) };
+        JSPromise::rejected_promise(global, v).to_js()
     }
 }
 

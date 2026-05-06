@@ -272,15 +272,9 @@ impl<'a> PatchTask<'a> {
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
-            // PORT NOTE: borrowck — `set_preinstall_state` / `determine_preinstall_state` borrow
-            // `&mut self` and also need a `&Lockfile`/`&mut Lockfile` (Zig passes `manager.lockfile`
-            // by-pointer alongside `*PackageManager`). Route through a raw pointer to break the
-            // overlapping borrow until the lockfile is split out of the stub.
-            let lockfile_ptr: *mut Lockfile = &mut manager.lockfile;
-            manager.set_preinstall_state(pkg_meta_id, unsafe { &*lockfile_ptr }, PreinstallState::Unknown);
+            manager.set_preinstall_state(pkg_meta_id, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
-                pkg,
-                unsafe { &mut *lockfile_ptr },
+                &pkg,
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
@@ -325,11 +319,7 @@ impl<'a> PatchTask<'a> {
                         )?
                         .unwrap_or_else(|| unreachable!());
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
-                        manager.set_preinstall_state(
-                            pkg_meta_id,
-                            unsafe { &*lockfile_ptr },
-                            PreinstallState::Extracting,
-                        );
+                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
                         manager.enqueue_network_task(network_task);
                     }
                 }
@@ -346,11 +336,7 @@ impl<'a> PatchTask<'a> {
                         name_and_version_hash,
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
-                        manager.set_preinstall_state(
-                            pkg_meta_id,
-                            unsafe { &*lockfile_ptr },
-                            PreinstallState::ApplyingPatch,
-                        );
+                        manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
                         manager.enqueue_patch_task(patch_task as *mut crate::PatchTask);
                     }
                 }

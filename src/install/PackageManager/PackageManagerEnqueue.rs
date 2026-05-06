@@ -846,7 +846,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            this.lockfile,
                                             install::PreinstallState::Extracting,
                                         );
                                         enqueue_network_task(this, network_task);
@@ -859,7 +858,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            this.lockfile,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
                                         enqueue_patch_task(this, patch_task);
@@ -869,7 +867,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     {
                                         this.set_preinstall_state(
                                             result.package.meta.id,
-                                            this.lockfile,
                                             install::PreinstallState::ApplyingPatch,
                                         );
                                         enqueue_patch_task(this, patch_task);
@@ -1872,8 +1869,7 @@ fn get_or_put_resolved_package_with_find_result(
     let mut patchfile_hash: Option<u64> = None;
 
     let result = match this.determine_preinstall_state(
-        package,
-        this.lockfile,
+        &package,
         &mut name_and_version_hash,
         &mut patchfile_hash,
     ) {

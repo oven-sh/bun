@@ -54,7 +54,7 @@ pub use source::Source;
 #[cfg(not(windows))]
 pub enum Source {}
 
-pub use pipe_reader::BufferedReader;
+pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
 /// Downstream alias (Zig: `bun.io.BufferedReader` is sometimes referenced as
 /// `PipeReader`).
 pub type PipeReader = BufferedReader;

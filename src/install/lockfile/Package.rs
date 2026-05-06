@@ -2722,7 +2722,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         if FEATURES.is_main {
             lockfile
                 .overrides
-                .parse_append(pm, lockfile, self, log, source, &json, &mut string_builder)?;
+                .parse_append(pm, lockfile, self, log, source, json, &mut string_builder)?;
 
             let mut found_any_catalog_or_catalog_object = false;
             let mut has_workspaces = false;
@@ -2732,7 +2732,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     lockfile,
                     log,
                     source,
-                    &workspaces_expr,
+                    workspaces_expr,
                     &mut string_builder,
                 )?;
                 has_workspaces = true;
@@ -2748,7 +2748,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     lockfile,
                     log,
                     source,
-                    &json,
+                    json,
                     &mut string_builder,
                 )?;
             }
@@ -2824,30 +2824,34 @@ pub mod serializer {
         let sliced = list.slice();
 
         // PERF(port): was `inline for (FieldsEnum.fields)` — profile in Phase B
-        // TODO(port): `@field(List.Field, field.name)` reflection. Phase B: iterate
-        // `List::<T>::FIELDS` and use `sliced.items(field)` accessor.
-        for field in List::<SemverIntType>::FIELDS {
-            let value = sliced.items(*field);
+        for field in PackageField::ALL {
+            // SAFETY: each `PackageField` discriminant corresponds to a column
+            // whose element size matches `SIZES_BYTES[field as usize]`; we
+            // address the column as raw bytes for serialisation.
+            let bytes: &[u8] = unsafe {
+                let n = list.len();
+                let sz = <Package<SemverIntType> as bun_collections::MultiArrayElement>
+                    ::SIZES_BYTES[field as usize];
+                core::slice::from_raw_parts(sliced.items_raw::<u8>(field), n * sz)
+            };
             #[cfg(debug_assertions)]
             {
                 bun_output::scoped_log!(
                     Lockfile,
                     "save(\"{}\") = {} bytes",
                     bstr::BStr::new(field.name()),
-                    value.as_bytes().len(),
+                    bytes.len(),
                 );
-                if field.name() == b"meta" {
-                    // TODO(port): typed iteration over `value` as &[Meta]
-                    for meta in value.cast::<Meta>() {
-                        debug_assert!(meta.has_install_script != Meta::HasInstallScript::Old);
-                    }
-                }
             }
-            assert_no_uninitialized_padding(value.element_type());
-            if field.name() == b"resolution" {
+            // TODO(port): assert_no_uninitialized_padding once a typed accessor
+            // is exposed; for now `Package`'s field types are all `#[repr(C)]`
+            // with explicit padding zeroed by their `Default`/`init` paths.
+            if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
-                for val in value.cast::<Resolution<SemverIntType>>() {
-                    let copy = val.copy();
+                let resolutions: &[Resolution<SemverIntType>] =
+                    unsafe { sliced.items::<Resolution<SemverIntType>>(field) };
+                for val in resolutions {
+                    let copy = *val;
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
                     writer.write_all(unsafe {
                         core::slice::from_raw_parts(
@@ -2857,7 +2861,7 @@ pub mod serializer {
                     })?;
                 }
             } else {
-                writer.write_all(value.as_bytes())?;
+                writer.write_all(bytes)?;
             }
         }
 

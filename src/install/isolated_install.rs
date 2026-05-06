@@ -1223,15 +1223,19 @@ pub fn install_isolated_packages(
                                 // patch or be mutated underneath other projects.
                                 if lockfile.patched_dependencies.count() > 0 {
                                     let mut name_version_buf = PathBuffer::uninit();
-                                    let name_version = match write!(
-                                        &mut &mut name_version_buf[..],
+                                    // TODO(port): std.fmt.bufPrint returned the written
+                                    // slice; emulate via cursor write into the PathBuffer.
+                                    let mut cursor = std::io::Cursor::new(&mut name_version_buf.0[..]);
+                                    let name_version: &[u8] = match write!(
+                                        &mut cursor,
                                         "{}@{}",
                                         BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
                                         pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix),
                                     ) {
-                                        // TODO(port): std.fmt.bufPrint returned the written slice;
-                                        // emulate via cursor tracking in Phase B.
-                                        Ok(()) => &name_version_buf[..],
+                                        Ok(()) => {
+                                            let n = cursor.position() as usize;
+                                            &name_version_buf.0[..n]
+                                        }
                                         Err(_) => {
                                             // Overflow is implausible (PathBuffer ≫
                                             // any name+version), but if it ever fired
@@ -1243,7 +1247,7 @@ pub fn install_isolated_packages(
                                     };
                                     if lockfile
                                         .patched_dependencies
-                                        .contains(semver::String::Builder::string_hash(name_version))
+                                        .contains(semver::semver_string::Builder::string_hash(name_version))
                                     {
                                         break 'eligible false;
                                     }
@@ -1279,7 +1283,7 @@ pub fn install_isolated_packages(
                                     )
                                 };
                                 if lockfile.has_trusted_dependency(dep_name, pkg_res)
-                                    || trusted_from_update.contains(&(dep_name_hash as u32))
+                                    || trusted_from_update.contains(&(dep_name_hash as crate::TruncatedPackageNameHash))
                                 {
                                     break 'eligible false;
                                 }
@@ -1304,7 +1308,7 @@ pub fn install_isolated_packages(
                         stack[top_idx].hasher = Wyhash::init(0x9E3779B97F4A7C15);
                         {
                             let mut hw = WyhashWriter { hasher: &mut stack[top_idx].hasher };
-                            write!(hw, "{}", StoreEntry::fmt_store_path(id, &store, lockfile))
+                            write!(hw, "{}", store::entry::fmt_store_path(id, &store, lockfile))
                                 .expect("unreachable");
                         }
                         // The store path for `.npm` is just `name@version`, which
@@ -1327,7 +1331,7 @@ pub fn install_isolated_packages(
                     let mut advanced = false;
                     while (stack[top_idx].dep_idx as usize) < deps.len() {
                         let dep = &deps[stack[top_idx].dep_idx as usize];
-                        let dep_idx = dep.entry_id.get();
+                        let dep_idx = dep.entry_id.get() as usize;
                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
                         match states[dep_idx] {
                             State::Done => {
@@ -1432,7 +1436,7 @@ pub fn install_isolated_packages(
                         let deps = entry_dependencies[v as usize].slice();
                         let mut recursed = false;
                         while (work[frame_idx].child as usize) < deps.len() {
-                            let w = deps[work[frame_idx].child as usize].entry_id.get();
+                            let w = deps[work[frame_idx].child as usize].entry_id.get() as usize;
                             if tarjan_index[w] == u32::MAX {
                                 work[frame_idx].child += 1;
                                 work.push(WorkFrame { v: u32::try_from(w).unwrap(), child: 0 });
@@ -1479,7 +1483,7 @@ pub fn install_isolated_packages(
                                         write!(
                                             hw,
                                             "{}",
-                                            StoreEntry::fmt_store_path(
+                                            store::entry::fmt_store_path(
                                                 store::entry::Id::from(m),
                                                 &store,
                                                 lockfile
@@ -1492,7 +1496,7 @@ pub fn install_isolated_packages(
                                     ));
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
-                                        let dh = entry_hashes[dep.entry_id.get()];
+                                        let dh = entry_hashes[dep.entry_id.get() as usize];
                                         if dh == 0 {
                                             poisoned = true;
                                             break;
@@ -1531,7 +1535,7 @@ pub fn install_isolated_packages(
                                         write!(
                                             hw,
                                             "{}",
-                                            StoreEntry::fmt_store_path(
+                                            store::entry::fmt_store_path(
                                                 store::entry::Id::from(m),
                                                 &store,
                                                 lockfile
@@ -1545,7 +1549,7 @@ pub fn install_isolated_packages(
                                     ));
                                     member_sub.push(sub.final_());
                                     for dep in entry_dependencies[m as usize].slice() {
-                                        let di = dep.entry_id.get();
+                                        let di = dep.entry_id.get() as usize;
                                         // Skip intra-SCC edges; those are captured
                                         // by member_sub.
                                         if members.contains(&u32::try_from(di).unwrap()) {

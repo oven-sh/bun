@@ -1974,10 +1974,10 @@ pub fn init(
             }
 
             // If any HTTP proxy is set, use a diferent limit
-            if env.has("http_proxy")
-                || env.has("https_proxy")
-                || env.has("HTTPS_PROXY")
-                || env.has("HTTP_PROXY")
+            if env.has(b"http_proxy")
+                || env.has(b"https_proxy")
+                || env.has(b"HTTPS_PROXY")
+                || env.has(b"HTTP_PROXY")
             {
                 break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
             }
@@ -1987,9 +1987,22 @@ pub fn init(
         Ordering::Relaxed, // .monotonic
     );
 
-    http::HTTPThread::init(&http::http_thread::InitOpts {
-        ca: ca.into_boxed_slice(),
-        abs_ca_file_name,
+    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`); pass the
+    // `ZBox` C-string pointers. The `ZBox`es are kept alive by `ca` for the
+    // duration of `init` (the HTTP thread copies them into BoringSSL).
+    let ca_ptrs: Vec<*const c_void> = ca.iter().map(|z| z.as_ptr() as *const c_void).collect();
+    // `InitOpts.abs_ca_file_name: &'static [u8]` — leak the `ZBox` (process-lifetime
+    // config string; matches Zig's `allocator.dupeZ` into a leaked singleton field).
+    let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
+        b""
+    } else {
+        // SAFETY: process-lifetime config string; never freed (Zig: leaked singleton).
+        let v = abs_ca_file_name.into_vec_with_nul().into_boxed_slice();
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(Box::leak(v)) }
+    };
+    http::http_thread::init(&http::http_thread::InitOpts {
+        ca: ca_ptrs,
+        abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,
         ..Default::default()
     });
@@ -1997,7 +2010,7 @@ pub fn init(
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
         if cfg!(debug_assertions) {
             // TODO(port): bun.Environment.allow_assert
-            if let Some(cache_control) = env.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
+            if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly (Zig: std.fmt.parseInt)
                 if let Some(int) = bun_str::strings::parse_int::<u32>(cache_control, 10) {
                     break 'brk int;
@@ -2029,13 +2042,13 @@ pub fn init_with_runtime(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
 ) -> *mut PackageManager {
-    INIT_WITH_RUNTIME_ONCE.call((log, bun_install, cli, env));
+    if !INIT_WITH_RUNTIME_ONCE.swap(true, Ordering::AcqRel) {
+        init_with_runtime_once(log, bun_install, cli, env);
+    }
     get()
 }
 
-static INIT_WITH_RUNTIME_ONCE: Once<
-    fn(&mut logger::Log, Option<&Api::BunInstall>, CommandLineArguments, &mut dot_env::Loader<'static>),
-> = Once::new(init_with_runtime_once);
+static INIT_WITH_RUNTIME_ONCE: AtomicBool = AtomicBool::new(false);
 
 pub fn init_with_runtime_once(
     log: &mut logger::Log,
@@ -2043,7 +2056,7 @@ pub fn init_with_runtime_once(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
 ) {
-    if env.get("BUN_INSTALL_VERBOSE").is_some() {
+    if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         // SAFETY: main-thread init
         unsafe {
             VERBOSE_INSTALL = true;

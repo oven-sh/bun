@@ -2933,7 +2933,7 @@ where
                 body_value.to_blob_if_possible();
                 match body_value {
                     Body::Value::Blob(blob) => {
-                        if blob.needs_to_read_file() {
+                        if shim::blob_needs_to_read_file(blob) {
                             fulfilled_value.protect();
                             ctx.flags.set_response_protected(true);
                         }

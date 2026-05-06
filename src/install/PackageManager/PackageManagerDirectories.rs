@@ -405,7 +405,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
             format_args!(
                 "@@{}__{}{}{}",
                 bstr::BStr::new(visible_hostname),
-                bun_fmt::hex_int_lower::<16>(Semver::Builder::string_hash(scope.url.href)),
+                bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(scope.url.href)),
                 CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
                 PatchHashFmt { hash: patch_hash },
             ),
@@ -533,7 +533,7 @@ pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch
         buf,
         format_args!(
             "@T@{}{}{}",
-            bun_fmt::hex_int_lower::<16>(Semver::Builder::string_hash(url)),
+            bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(url)),
             CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
             PatchHashFmt { hash: patch_hash },
         ),

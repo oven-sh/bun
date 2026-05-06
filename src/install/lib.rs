@@ -2080,6 +2080,14 @@ impl RootPackageId {
     pub patched_dependencies_to_remove: bun_collections::ArrayHashMap<u64, ()>,
     /// Zig: `any_failed_to_install: bool = false`.
     pub any_failed_to_install: bool,
+    /// Zig: `task_queue: TaskDependencyQueue` (src/install/PackageManager.zig)
+    /// — `Task.Id → TaskCallbackList`; install-side callers `fetch_remove` to
+    /// drain waiting entry callbacks once a tarball download/extract completes.
+    pub task_queue: package_manager_real::TaskDependencyQueue,
+    /// Zig: `trusted_deps_to_add_to_package_json: std.ArrayList([]const u8)`.
+    pub trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
+    /// Zig: `global_link_dir_path: stringZ = ""` (src/install/PackageManager.zig).
+    pub global_link_dir_path: Box<[u8]>,
     /// Zig: `async_network_task_queue: AsyncNetworkTaskQueue` -- see stub type below.
     pub async_network_task_queue: AsyncNetworkTaskQueueStub,
     /// Zig: `preallocated_resolve_tasks: PreallocatedTaskStore` (HiveArray.Fallback) -- see stub.
@@ -2109,6 +2117,22 @@ impl PackageManager {
     #[inline]
     pub fn log_mut(&self) -> &mut bun_logger::Log {
         unsafe { self.log.unwrap().as_mut() }
+    }
+
+    /// Zig: `PackageManager.wake` via raw pointer — never forms `&mut Self` so
+    /// concurrent task threads sharing one `*mut PackageManager` don't alias.
+    /// Real body in `package_manager_real::wake`.
+    #[inline]
+    pub unsafe fn wake_raw(_this: *mut Self) {
+        // TODO(port): event-loop wake; stub no-op until `package_manager_real`
+        // un-gates `event_loop.wakeup()` over `bun_event_loop::AnyEventLoop`.
+    }
+
+    /// Port of `PackageManager.globalLinkDirPath`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig).
+    #[inline]
+    pub fn global_link_dir_path(&self) -> &[u8] {
+        &self.global_link_dir_path
     }
     /// Port of `PackageManager.httpProxy` (PackageManager.zig) -- forwards to
     /// the env loader. Stub returns `None` until `package_manager_real`
@@ -2255,6 +2279,8 @@ impl PackageManager {
     pub enable: PackageManagerEnableStub,
     /// Zig: `Options.cpu: Npm.Architecture = Npm.Architecture.current`.
     pub cpu: npm::Architecture,
+    /// Zig: `Options.bin_path: stringZ` — global bin destination for `Bin.Linker`.
+    pub bin_path: &'static [u8],
     /// Zig: `Options.os: Npm.OperatingSystem = Npm.OperatingSystem.current`.
     pub os: npm::OperatingSystem,
     /// Zig: `Options.link_workspace_packages: bool = true`.

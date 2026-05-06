@@ -1433,10 +1433,11 @@ impl PackageManager {
 }
 
 pub fn flush_network_queue(this: &mut PackageManager) {
-    let network = &mut this.network_task_fifo;
-
-    while let Some(network_task) = network.read_item() {
-        network_task.schedule(if matches!(network_task.callback, NetworkTaskCallback::Extract(_)) {
+    while let Some(network_task) = this.network_task_fifo.read_item() {
+        // SAFETY: fifo stores live `*mut NetworkTask` pushed by
+        // `enqueue_network_task`; exclusive ownership transferred here.
+        let nt = unsafe { &mut *network_task };
+        nt.schedule(if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
             &mut this.network_tarball_batch
         } else {
             &mut this.network_resolve_batch
@@ -1445,10 +1446,11 @@ pub fn flush_network_queue(this: &mut PackageManager) {
 }
 
 pub fn flush_patch_task_queue(this: &mut PackageManager) {
-    let patch_task_fifo = &mut this.patch_task_fifo;
-
-    while let Some(patch_task) = patch_task_fifo.read_item() {
-        patch_task.schedule(if matches!(patch_task.callback, PatchTaskCallback::Apply(_)) {
+    while let Some(patch_task) = this.patch_task_fifo.read_item() {
+        // SAFETY: fifo stores live `*mut PatchTask` pushed by
+        // `enqueue_patch_task`; exclusive ownership transferred here.
+        let pt = unsafe { &mut *patch_task };
+        pt.schedule(if matches!(pt.callback, PatchTaskCallback::Apply(_)) {
             &mut this.patch_apply_batch
         } else {
             &mut this.patch_calc_hash_batch
@@ -1457,34 +1459,35 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
 }
 
 fn do_flush_dependency_queue(this: &mut PackageManager) {
-    let lockfile = &mut *this.lockfile;
-    let dependency_queue = &mut lockfile.scratch.dependency_list_queue;
-
-    while let Some(dependencies_list) = dependency_queue.read_item() {
+    while let Some(dependencies_list) =
+        this.lockfile.scratch.dependency_list_queue.read_item()
+    {
         let mut i: u32 = dependencies_list.off;
         let end = dependencies_list.off + dependencies_list.len;
         while i < end {
-            let dependency = lockfile.buffers.dependencies[i as usize].clone();
-            let _ = this.enqueue_dependency_with_main(
+            let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
+            let resolution = this.lockfile.buffers.resolutions[i as usize];
+            let _ = enqueue::enqueue_dependency_with_main(
+                this,
                 i,
                 &dependency,
-                lockfile.buffers.resolutions[i as usize],
+                resolution,
                 false,
             );
             i += 1;
         }
     }
 
-    this.flush_network_queue();
+    flush_network_queue(this);
 }
 
 pub fn flush_dependency_queue(this: &mut PackageManager) {
     let mut last_count = this.total_tasks;
     loop {
-        this.flush_network_queue();
+        flush_network_queue(this);
         do_flush_dependency_queue(this);
-        this.flush_network_queue();
-        this.flush_patch_task_queue();
+        flush_network_queue(this);
+        flush_patch_task_queue(this);
 
         if this.total_tasks == last_count {
             break;
@@ -1514,17 +1517,19 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
 
 pub fn drain_dependency_list(this: &mut PackageManager) {
     // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
-    this.flush_dependency_queue();
+    flush_dependency_queue(this);
 
-    if PackageManager::verbose_install() {
+    // SAFETY: `VERBOSE_INSTALL` is only mutated during single-threaded options
+    // parsing; reads here are race-free in practice (Zig: plain `pub var`).
+    if unsafe { super::VERBOSE_INSTALL } {
         Output::flush();
     }
 
     // It's only network requests here because we don't store tarballs.
-    let _ = this.schedule_tasks();
+    let _ = schedule_tasks(this);
 }
 
-pub fn get_network_task(this: &mut PackageManager) -> &mut NetworkTask {
+pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
     this.preallocated_network_tasks.get()
 }
 

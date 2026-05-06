@@ -631,7 +631,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(manager.lockfile);
+    let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&manager.lockfile);
     let mut resolution_buf = [0u8; 1024];
 
     #[cfg(windows)]

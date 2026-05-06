@@ -14,6 +14,7 @@ use crate::bun_bunfig::Arguments as Command;
 
 use crate::{self as install, DependencyID, PackageID, RunTasksCallbacks};
 use crate::lockfile::tree;
+#[allow(unused_imports)]
 use crate::bin_real as bin;
 use crate::PackageManager;
 use crate::package_manager::{self, WorkspaceFilter};
@@ -224,6 +225,13 @@ pub fn install_hoisted_packages(
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
             let parts = this.lockfile.packages.slice();
+            // Hoist the by-value reads out of the struct literal so they
+            // finish before the long-lived `&mut *mgr_ptr` borrow for
+            // `manager` begins (struct fields evaluate in source order).
+            let force_install = this.options.enable.force_install;
+            let pkg_len = this.lockfile.packages.len();
+            let trees_count = this.lockfile.buffers.trees.len();
+            let trusted_deps = this.find_trusted_dependencies_from_update_requests();
             // PORT NOTE: spec reads MultiArrayList column ptrs out of `parts`
             // and stuffs them into `PackageInstaller`. The stub `PackageList`
             // columns are typed against `crate::lockfile` (`bin::Bin`,
@@ -267,19 +275,21 @@ pub fn install_hoisted_packages(
                         .to_vec(),
                     tree_id: 0,
                 },
-                progress: &this.progress,
+                // SAFETY: same `mgr_ptr` BACKREF note as `manager` above —
+                // `&Progress` aliases the `&mut PackageManager` in `manager`;
+                // Phase B retypes one of them to a raw ptr.
+                progress: unsafe { &(*mgr_ptr).progress },
                 skip_verify_installed_version_number,
                 skip_delete,
                 summary: &mut summary,
-                force_install: this.options.enable.force_install,
-                successfully_installed: Bitset::init_empty(this.lockfile.packages.len())?,
+                force_install,
+                successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
                 trees: 'trees: {
-                    let count = this.lockfile.buffers.trees.len();
-                    let mut trees: Vec<TreeContext> = Vec::with_capacity(count);
-                    for _i in 0..count {
+                    let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
+                    for _i in 0..trees_count {
                         trees.push(TreeContext {
                             // TODO(port): blocked_on reconciler-6 —
                             // `TreeContext.binaries` is `bin::PriorityQueue
@@ -296,8 +306,7 @@ pub fn install_hoisted_packages(
                     }
                     break 'trees trees.into_boxed_slice();
                 },
-                trusted_dependencies_from_update_requests: this
-                    .find_trusted_dependencies_from_update_requests(),
+                trusted_dependencies_from_update_requests: trusted_deps,
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::uninit(),
                 folder_path_buf: bun_paths::PathBuffer::uninit(),
@@ -499,8 +508,8 @@ pub fn install_hoisted_packages(
             if cfg!(debug_assertions) {
                 debug_assert!(tree.pending_installs.len() == 0);
             }
-            const FORCE: bool = true;
-            installer.install_available_packages::<FORCE>(log_level);
+            // force = true
+            installer.install_available_packages::<true>(log_level);
         }
 
         // .monotonic is okay because this value is only accessed on this thread.

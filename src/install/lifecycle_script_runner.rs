@@ -966,10 +966,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn deinit_and_delete_package(&mut self) {
-        if self.manager.options.log_level.is_verbose() {
+        if self.manager().options.log_level.is_verbose() {
             Output::warn(format_args!(
                 "deleting optional dependency '{}' due to failed '{}' script",
-                bstr::BStr::new(self.package_name),
+                bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
             ));
         }
@@ -989,7 +989,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub fn spawn_package_scripts(
-        manager: &'a PackageManager,
+        manager: *mut PackageManager,
         list: ScriptsList,
         envp: *const *const c_char,
         shell_bin: Option<&'a ZStr>,
@@ -999,11 +999,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
+        let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager,
             envp,
             shell_bin,
-            package_name: list.package_name,
+            package_name,
             scripts: list,
             foreground,
             optional,
@@ -1025,7 +1026,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Output::pretty_errorln(format_args!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
                 // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
-                bstr::BStr::new(unsafe { &(*lifecycle_subprocess).scripts }.package_name),
+                bstr::BStr::new(unsafe { &(*lifecycle_subprocess).scripts.package_name }),
             ));
         }
 

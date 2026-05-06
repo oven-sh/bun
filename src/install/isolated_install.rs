@@ -150,25 +150,34 @@ struct Wait<'a, 'b> {
 
 impl<'a, 'b> Wait<'a, 'b> {
     pub fn is_done(&mut self) -> bool {
-        let pkg_manager = self.installer.manager;
-        if let Err(err) = pkg_manager.run_tasks(
+        // PORT NOTE: reshaped for borrowck — Zig passes both `installer` and
+        // `installer.manager` into `runTasks`; in Rust, capture a raw `*mut`
+        // to the manager so the `&mut Installer` arg doesn't alias.
+        let pkg_manager: *mut PackageManager = self.installer.manager;
+        let log_level = unsafe { (*pkg_manager).options.log_level };
+        if let Err(err) = unsafe { &mut *pkg_manager }.run_tasks(
             self.installer,
-            // TODO(port): Zig passed an anon struct of callbacks; model as a
-            // RunTasksCallbacks struct in Phase B.
-            PackageManager::RunTasksCallbacks {
-                on_extract: store::Installer::on_package_extracted,
+            // TODO(port): Zig passed an anon struct of callbacks; modeled as a
+            // value-level `RunTasksCallbacks` struct (lib.rs).
+            RunTasksCallbacks {
+                on_extract: store::Installer::on_package_extracted
+                    as fn(&mut store::Installer<'_>, crate::package_manager_task::Id),
                 on_resolve: (),
                 on_package_manifest_error: (),
-                on_package_download_error: store::Installer::on_package_download_error,
+                on_package_download_error: store::Installer::on_package_download_error
+                    as fn(&mut store::Installer<'_>, crate::package_manager_task::Id),
+                progress_bar: false,
+                manifests_only: false,
             },
             true,
-            pkg_manager.options.log_level,
+            log_level,
         ) {
             self.err = Some(err);
             return true;
         }
 
-        if let Some(node) = pkg_manager.scripts_node {
+        let pkg_manager = unsafe { &mut *pkg_manager };
+        if let Some(mut node) = pkg_manager.scripts_node {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -176,7 +185,10 @@ impl<'a, 'b> Wait<'a, 'b> {
             let pending_lifecycle_scripts = pkg_manager.pending_lifecycle_script_tasks.load(Ordering::Relaxed);
             // `+ 1` because the root task needs to wait for everything
             if pending_lifecycle_scripts > 0 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1 {
-                node.activate();
+                // SAFETY: scripts_node points at a stack-local Progress::Node
+                // owned by the calling install loop; alive for the duration
+                // of `Wait::is_done`.
+                unsafe { node.as_mut() }.activate();
                 pkg_manager.progress.refresh();
             }
         }
@@ -195,15 +207,19 @@ pub fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    let lockfile = manager.lockfile;
+    // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
+    // passing `*PackageManager` (which owns it); take a raw pointer so column
+    // borrows below don't tie up `&mut manager`.
+    let lockfile: *mut Lockfile = &mut manager.lockfile;
+    let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
         // TODO(port): std.time.Timer.start() catch unreachable → Instant::now()
         let pkgs = lockfile.packages.slice();
-        let pkg_dependency_slices = pkgs.items().dependencies;
-        let pkg_resolutions = pkgs.items().resolution;
-        let pkg_names = pkgs.items().name;
+        let pkg_dependency_slices = pkgs.items_dependencies();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_names = pkgs.items_name();
 
         let resolutions = &lockfile.buffers.resolutions[..];
         let dependencies = &lockfile.buffers.dependencies[..];
@@ -246,7 +262,7 @@ pub fn install_isolated_packages(
         let mut leaking_peers: DynamicBitSetList = DynamicBitSetList::init_empty(
             lockfile.packages.len(),
             peer_name_count as usize,
-        );
+        )?;
 
         if peer_name_count != 0 {
             // The runtime child of a peer edge is whichever package an ancestor's
@@ -273,11 +289,11 @@ pub fn install_isolated_packages(
             let mut own_peers: DynamicBitSetList = DynamicBitSetList::init_empty(
                 lockfile.packages.len(),
                 peer_name_count as usize,
-            );
+            )?;
             let mut provides: DynamicBitSetList = DynamicBitSetList::init_empty(
                 lockfile.packages.len(),
                 peer_name_count as usize,
-            );
+            )?;
             for pkg_idx in 0..lockfile.packages.len() {
                 let pkg_id: PackageID = u32::try_from(pkg_idx).unwrap();
                 let deps = pkg_dependency_slices[pkg_id as usize];

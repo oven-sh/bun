@@ -1597,16 +1597,19 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
-                                fs.top_level_dir = bun_str::ZStr::dupe_z(parent)?;
-                                // TODO(port): allocator.dupeZ → owned ZStr stored in singleton
+                                // Zig: `fs.top_level_dir = allocator.dupeZ(u8, parent)`.
+                                // The opaque `bun_sys::fs::FileSystem` exposes no setter;
+                                // route through the chdir below + `bun_paths::fs` re-init.
+                                // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
+                                let _ = parent;
                                 found = true;
-                                child_json.close();
+                                let _ = child_json.close();
                                 #[cfg(windows)]
                                 {
                                     json_file_guard.seek_to(0)?;
                                 }
                                 workspace_name_hash =
-                                    Some(SemverString::Builder::string_hash(entry.name));
+                                    Some(Semver::string::Builder::string_hash(&entry.name));
                                 let json_file = scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 break 'root_package_json_file json_file;
                             }
@@ -1620,12 +1623,16 @@ pub fn init(
             }
         }
 
-        fs.top_level_dir = bun_str::ZStr::dupe_z(child_cwd)?;
-        // TODO(port): allocator.dupeZ
+        // Zig: `fs.top_level_dir = allocator.dupeZ(u8, child_cwd)`.
+        // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
+        let _ = child_cwd;
         break 'root_package_json_file child_json;
     };
 
-    bun_sys::chdir(fs.top_level_dir, fs.top_level_dir).unwrap()?;
+    // Zig: `try bun.sys.chdir(fs.top_level_dir, fs.top_level_dir).unwrap()` —
+    // `bun_sys::chdir` takes a single `&ZStr` in the Rust port.
+    let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
+    bun_sys::chdir(&top_level_dir_z)?;
     // Zig: `try bun.cli.Arguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);`
     // The bunfig loader lives in tier-6 (`bun_runtime::cli::Arguments`); install
     // can't name it without a cycle. Route through the same hook pattern as
@@ -1635,13 +1642,15 @@ pub fn init(
     }
     // SAFETY: main-thread global
     unsafe {
-        CWD_BUF[..fs.top_level_dir.len()].copy_from_slice(fs.top_level_dir);
-        CWD_BUF[fs.top_level_dir.len()] = 0;
-        fs.top_level_dir = ZStr::from_raw(CWD_BUF.as_ptr(), fs.top_level_dir.len());
+        let tld = fs.top_level_dir();
+        CWD_BUF[..tld.len()].copy_from_slice(tld);
+        CWD_BUF[tld.len()] = 0;
+        // Zig: `fs.top_level_dir = cwd_buf[..len :0]` — opaque handle has no setter.
+        // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
         // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let p = bun_sys::get_fd_path(
-            Fd::from_std_file(&root_package_json_file),
+            root_package_json_file.handle,
             &mut ROOT_PACKAGE_JSON_PATH_BUF,
         )?;
         let plen = p.len();
@@ -1649,10 +1658,13 @@ pub fn init(
         ROOT_PACKAGE_JSON_PATH = ZStr::from_raw(ROOT_PACKAGE_JSON_PATH_BUF.as_ptr(), plen);
     }
 
-    let entries_option = fs.fs.read_directory(fs.top_level_dir, None, 0, true)?;
-    if let fs::EntriesOption::Err(e) = &*entries_option {
-        return Err(e.canonical_error);
-    }
+    // Zig: `fs.fs.readDirectory(fs.top_level_dir, ...)` — the resolver-tier
+    // `RealFS` cache. The opaque `bun_sys::fs::FileSystem` doesn't expose
+    // `fs.read_directory` (it lives behind the vtable). For init purposes the
+    // root dir is only used to seed `manager.root_dir` for env-file discovery.
+    // TODO(port): blocked_on bun_sys::fs vtable read_directory
+    let entries_option: &'static mut fs::DirEntry =
+        todo!("blocked_on: bun_sys::fs::FsVTable::read_directory (resolver T4 hook)");
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate

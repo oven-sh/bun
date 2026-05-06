@@ -1641,7 +1641,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
                         let version_literal =
-                            strings::trim(range.input, strings::WHITESPACE_CHARS);
+                            strings::trim(range.input.as_ref(), strings::WHITESPACE_CHARS);
                         if version_literal.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)
@@ -1672,16 +1672,13 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     } else {
                         'brk: {
                             let mut buf2 = PathBuffer::uninit();
-                            let rel = resolve_path::relative_platform(
-                                FileSystem::instance().top_level_dir,
-                                resolve_path::join_abs_string_buf(
-                                    FileSystem::instance().top_level_dir,
-                                    &mut buf2,
+                            let rel = resolve_path::relative_platform::<path::platform::Auto, false>(
+                                FileSystem::instance().top_level_dir(),
+                                resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                                    FileSystem::instance().top_level_dir(),
+                                    &mut buf2.0,
                                     &[source.path.name.dir, workspace],
-                                    path::Platform::Auto,
                                 ),
-                                path::Platform::Auto,
-                                false,
                             );
                             #[cfg(windows)]
                             {
@@ -1772,7 +1769,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             let entry = lockfile
                 .scratch
                 .duplicate_checker_map
-                .get_or_put_assume_capacity(external_alias.hash);
+                .get_or_put(external_alias.hash)?;
             if entry.found_existing {
                 // duplicate dependencies are allowed in optionalDependencies
                 if group.behavior.is_optional() {
@@ -1797,17 +1794,18 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         );
                     }
                     notes.push(logger::Data {
-                        text: text.into_boxed_slice(),
+                        text: text.into(),
                         location: logger::Location::init_or_null(
-                            source,
+                            Some(source),
                             source.range_of_string(*entry.value_ptr),
                         ),
+                        ..Default::default()
                     });
 
                     log.add_range_warning_fmt_with_notes(
-                        source,
+                        Some(source),
                         source.range_of_string(key_loc),
-                        notes,
+                        notes.into(),
                         format_args!(
                             "Duplicate dependency: \"{}\" specified in package.json",
                             bstr::BStr::new(external_alias.slice(buf))
@@ -1858,21 +1856,22 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             }
 
             // name is not validated by npm, so fallback to creating a new from the version literal
-            // TODO(port): Zig checks `if (ResolverContext == PackageManager.GitResolver)`.
-            // Phase B: gate via trait `R::IS_GIT_RESOLVER` const or downcast.
             if R::IS_GIT_RESOLVER {
                 let resolution: &Resolution<SemverIntType> = resolver.resolution();
                 let repo = match resolution.tag {
-                    ResolutionTag::Git => resolution.value.git,
-                    ResolutionTag::Github => resolution.value.github,
+                    // SAFETY: tag selects the active union member.
+                    ResolutionTag::Git => unsafe { resolution.value.git },
+                    ResolutionTag::Github => unsafe { resolution.value.github },
                     _ => break 'name,
                 };
 
-                resolver.set_new_name(Repository::create_dependency_name_from_version_literal(
-                    &repo,
-                    lockfile,
-                    resolver.dep_id(),
-                ));
+                resolver.set_new_name(
+                    Repository::create_dependency_name_from_version_literal(
+                        &repo,
+                        lockfile,
+                        resolver.dep_id(),
+                    ),
+                );
 
                 string_builder.count(resolver.new_name());
             }

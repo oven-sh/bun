@@ -215,7 +215,13 @@ impl NetworkTask {
         // Preserve metadata captured on an earlier streaming callback; the
         // final `result` won't have it.
         let saved_metadata = this.response.metadata.take();
-        this.response = result;
+        // SAFETY: `result.body` (the only borrowed field) points at
+        // `this.response_buffer`, which `this` owns and outlives the stored
+        // `HTTPClientResult`; erase the callback-scoped `'_` to `'static` to
+        // match the field type (Zig stores it lifetime-less).
+        this.response = unsafe {
+            core::mem::transmute::<HTTPClientResult<'_>, HTTPClientResult<'static>>(result)
+        };
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }

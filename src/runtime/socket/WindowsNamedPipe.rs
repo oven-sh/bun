@@ -25,7 +25,7 @@ use bun_boringssl_sys as boringssl;
 use bun_collections::BabyList;
 use bun_core::timespec;
 use bun_io::{StreamingWriter, WriteStatus};
-use bun_jsc::VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};

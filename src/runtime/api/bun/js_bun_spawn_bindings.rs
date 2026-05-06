@@ -899,7 +899,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         if !display_path.as_bytes().is_empty() {
                             let mut systemerror = err.with_path(display_path).to_system_error();
                             if errno == sys::Errno::NOENT {
-                                systemerror.errno = -sys::UV_E::NOENT;
+                                systemerror.errno = -UV_E::NOENT;
                             }
                             return global_this.throw_value(systemerror.to_error_instance(global_this));
                         }

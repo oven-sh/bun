@@ -1849,7 +1849,7 @@ fn run_on_entry_point(
             >(Analyzer::on_analyze)
         },
     };
-    crate::BuildCommand::exec(crate::Command::get(), &mut fetcher)
+    crate::cli::build_command::BuildCommand::exec(crate::cli::cli_body::command::get(), &mut fetcher)
 }
 
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to

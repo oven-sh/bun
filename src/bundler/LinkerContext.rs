@@ -238,31 +238,11 @@ impl<'a> LinkerContext<'a> {
 // Local re-exports for the un-gated tree-shaking impl below. `EntryPoint::Kind`
 // and `SideEffects` live in sibling modules; the Phase-A draft referenced them
 // via Zig-style nested paths. The real `EntryPoint` lives in
-// `bundle_v2::__phase_a_draft` (gated); mirror the value-type enum here so
-// the tree-shaking signatures resolve. Collapses to a re-export once
-// bundle_v2 un-gates.
+// `ungate_support::entry_point`; re-export so `EntryPoint::Kind` here is the
+// *same type* `items_entry_point_kind()` returns (was a duplicate enum before).
 #[allow(non_snake_case)]
 pub mod EntryPoint {
-    /// Mirrors `bundle_v2.zig:EntryPoint.Kind`.
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub enum Kind {
-        #[default]
-        None,
-        UserSpecified,
-        DynamicImport,
-        Html,
-    }
-    impl Kind {
-        #[inline]
-        pub fn is_entry_point(self) -> bool {
-            self != Self::None
-        }
-        #[inline]
-        pub fn is_user_specified_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-    }
+    pub use crate::ungate_support::entry_point::Kind;
 }
 use crate::Graph::{InputFileListExt as _, SideEffects as _GraphSideEffects};
 use crate::ungate_support::js_meta::JSMetaListExt as _;
@@ -285,7 +265,7 @@ impl<'a> LinkerContext<'a> {
         self.graph.allocator()
     }
 
-    pub fn path_with_pretty_initialized(&mut self, path: Fs::Path) -> Result<Fs::Path, BunError> {
+    pub fn path_with_pretty_initialized(&mut self, path: Logger::fs::Path) -> Result<Logger::fs::Path, BunError> {
         // SAFETY: resolver is a backref into BundleV2.transpiler.resolver, valid for self's lifetime;
         // resolver.fs is a `*mut Fs::FileSystem` backref into the singleton FS.
         let top_level_dir = unsafe { (*(*self.resolver).fs).top_level_dir };
@@ -299,7 +279,7 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer; valid for the link step.
         let stmts: &[Stmt] = unsafe { &*part.stmts };
         if stmts.len() == 1 {
-            if let Some(s_import) = stmts[0].data.as_s_import() {
+            if let Some(s_import) = stmts[0].data.s_import() {
                 let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index as usize);
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap == WrapKind::None
@@ -315,10 +295,16 @@ impl<'a> LinkerContext<'a> {
     pub fn load(
         &mut self,
         bundle: &mut BundleV2,
-        entry_points: &[Index],
-        server_component_boundaries: js_ast::server_component_boundary::List,
+        entry_points: &[js_ast::Index],
+        server_component_boundaries: js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<(), BunError> {
+        // PORT NOTE: `bun_js_parser::Index` and `crate::Index` are both
+        // `#[repr(transparent)]` u32 newtypes; callers pass the former, the
+        // linker graph is typed against the latter. Reinterpret in-place.
+        let entry_points: &[Index] = unsafe {
+            core::slice::from_raw_parts(entry_points.as_ptr().cast::<Index>(), entry_points.len())
+        };
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
         self.parse_graph = &mut bundle.graph;
 
@@ -327,7 +313,8 @@ impl<'a> LinkerContext<'a> {
         let transpiler = unsafe { &mut *bundle.transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // TODO(port): lifetime — log is &'a mut Log; reassigning here mirrors Zig's pointer assignment
-        self.log = transpiler.log;
+        // SAFETY: `transpiler.log` is a `*mut Log` backref valid for the bundle's lifetime.
+        self.log = unsafe { &mut *transpiler.log };
 
         self.resolver = &mut transpiler.resolver;
         self.cycle_detector = Vec::new();
@@ -350,7 +337,7 @@ impl<'a> LinkerContext<'a> {
         )?;
         // PERF(port): was arena bulk-free — `dynamic_import_entry_points` is
         // now a global-alloc `ArrayHashMap`; clearing drops it.
-        bundle.dynamic_import_entry_points.clear();
+        bundle.dynamic_import_entry_points.clear_retaining_capacity();
 
         let runtime_named_exports = &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
 

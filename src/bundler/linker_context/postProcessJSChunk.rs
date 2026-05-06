@@ -4,24 +4,37 @@ use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
 use crate::linker_graph::FileListExt as _;
 use crate::ungate_support::EntryPointListExt as _;
+use crate::ungate_support::DeclInfoKind;
 use crate::analyze_transpiled_module::{self, ModuleInfo};
 use bun_js_printer::{self as js_printer, PrintResult};
-use crate::linker_context_mod::GenerateChunkCtx;
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::LinkerContext;
 use crate::options;
+use crate::options_impl::{LoaderExt as _, TargetExt as _};
 use crate::bun_renamer as renamer;
-use crate::bun_fs as Fs;
+use crate::bundle_v2::__phase_a_draft::{get_hmr_runtime, HmrRuntimeSide};
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
     ResolvedExports, ThreadPool,
 };
 use bun_collections::MultiArrayList;
 use bun_core::perf;
-use bun_js_parser::ast::{self as js_ast, Binding, BindingData, Expr, Part, Ref, Scope, Stmt, B, E, G, S};
+use bun_js_parser::ast::{self as js_ast, Binding, Expr, Part, Ref, Scope, Stmt, StmtData, StmtOrExpr, B, E, G, S};
 use bun_logger as Logger;
-use bun_options_types::ImportRecord;
+use bun_options_types::{ImportRecord, ImportRecordTag, ImportRecordFlags};
 use bun_sourcemap as SourceMap;
-use bun_string::{strings, MutableString, string_joiner::StringJoiner};
+use bun_string::{strings, MutableString, string_joiner::{StringJoiner, Watcher}};
+
+#[allow(dead_code)]
+type IndexInt = u32;
+
+/// Helper: get printed code from a `PrintResult` (Zig: `result.result.code`).
+fn print_result_code(r: &PrintResult) -> &[u8] {
+    match r {
+        PrintResult::Result(ok) => &ok.code,
+        PrintResult::Err(_) => b"",
+    }
+}
 
 /// This runs after we've already populated the compile results
 pub fn post_process_js_chunk(
@@ -51,15 +64,17 @@ pub fn post_process_js_chunk(
     let cross_chunk_prefix: PrintResult;
     let cross_chunk_suffix: PrintResult;
 
+    let runtime_input_file =
+        c.graph.files.items_input_file()[Index::RUNTIME.value as usize].get() as usize;
     let runtime_scope: &mut Scope =
-        &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.value].get()];
+        &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
     let runtime_members = &mut runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().r#ref);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().r#ref);
+    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().ref_);
+    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == options::OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().r#ref))
+        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().ref_))
     };
 
     // Create ModuleInfo for ESM bytecode in --compile builds

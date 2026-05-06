@@ -426,18 +426,35 @@ pub mod bake_types {
     /// Mirrors src/bake/bake.zig:936 `server_virtual_source` / :942 `client_virtual_source`.
     /// `Logger::Source` is not `const`-constructible (owns a `fs::Path`), so these
     /// are lazy statics. PERF(port): was `pub const` — verify in Phase B.
-    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source<'static>> =
+    pub static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
         std::sync::LazyLock::new(|| {
             let mut s = bun_logger::Source::default();
-            s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/server");
-            s.index = bun_logger::Index(Index::BAKE_SERVER_DATA.get());
+            // Port of `Fs.Path.initForKitBuiltIn("bun", "bake/server")` (fs.zig:1992) —
+            // inlined because `bun_logger::fs::Path` is the local TYPE_ONLY stub and
+            // does not yet expose that constructor.
+            s.path = bun_logger::fs::Path {
+                pretty: b"bun:bake/server",
+                text: b"_bun/bake/server",
+                namespace: b"bun",
+                name: bun_logger::fs::PathName::init(b"bake/server"),
+                is_disabled: false,
+                is_symlink: true,
+            };
+            s.index = bun_logger::Index(crate::Index::BAKE_SERVER_DATA.get());
             s
         });
-    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source<'static>> =
+    pub static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_logger::Source> =
         std::sync::LazyLock::new(|| {
             let mut s = bun_logger::Source::default();
-            s.path = crate::ungate_support::bun_fs::Path::init_for_kit_built_in(b"bun", b"bake/client");
-            s.index = bun_logger::Index(Index::BAKE_CLIENT_DATA.get());
+            s.path = bun_logger::fs::Path {
+                pretty: b"bun:bake/client",
+                text: b"_bun/bake/client",
+                namespace: b"bun",
+                name: bun_logger::fs::PathName::init(b"bake/client"),
+                is_disabled: false,
+                is_symlink: true,
+            };
+            s.index = bun_logger::Index(crate::Index::BAKE_CLIENT_DATA.get());
             s
         });
     /// Alias kept for callers that referenced the DevServer constant name directly.
@@ -635,10 +652,17 @@ pub mod api {
             /// can build a `Resolver::Result` around it.
             pub fn resolve(&self, _source_file: &[u8], specifier: &[u8]) -> Option<bun_resolver::Result> {
                 if self.map.is_empty() { return None; }
-                let entry = self.map.get_entry(specifier)?;
+                let (key, _) = self.map.get_key_value(specifier)?;
+                // SAFETY: Zig `getKey` returns the map-owned key slice; the Rust
+                // `bun_resolver::Result` stores `Path<'static>` as the porting
+                // convention for Zig `[]const u8` fields. The borrow is valid for
+                // the lifetime of `self.map` — callers must not outlive the
+                // `FileMap`. PERF(port): revisit once `Result` is lifetime-generic.
+                let key: &'static [u8] =
+                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key.as_ref()) };
                 Some(bun_resolver::Result {
                     path_pair: bun_resolver::PathPair {
-                        primary: crate::ungate_support::bun_fs::Path::init(entry.key.clone()),
+                        primary: crate::ungate_support::bun_fs::Path::init_with_namespace(key, b"file"),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -869,6 +893,13 @@ pub mod dispatch {
         pub owner: *mut (),
         pub vtable: &'static DevServerVTable,
     }
+    // SAFETY: `owner` is an erased `*mut bake::DevServer` — the Zig side passes it
+    // across the worker pool freely (DevServer is the single-instance coordinator
+    // and its methods take `*DevServer`). The vtable is `&'static`. Marking the
+    // handle `Send + Sync` matches the Zig threading model; callee fns are
+    // responsible for any internal synchronization.
+    unsafe impl Send for DevServerHandle {}
+    unsafe impl Sync for DevServerHandle {}
     pub struct DevServerVTable {
         pub barrel_needed_exports:
             unsafe fn(*mut ()) -> *mut bun_collections::StringHashMap<bun_collections::StringHashMap<()>>,

@@ -2178,7 +2178,7 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
-    pub fn _generic_flush<S: NativeSocketWrite>(&mut self, socket: S) -> usize {
+    pub fn _generic_flush<S: NativeSocketWrite>(&mut self, mut socket: S) -> usize {
         let buffer_len = {
             let buffer = &self.write_buffer.slice()[self.write_buffer_offset..];
             buffer.len()

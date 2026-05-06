@@ -122,7 +122,11 @@ pub struct Entry {
     // TODO(port): inner-slice lifetime is borrowed from IncrementalGraph; using &'static [u8] as a Phase-A placeholder.
     pub paths: Box<[&'static [u8]]>,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    pub files: MultiArrayList<packed_map::Shared>,
+    // PORT NOTE: Zig used `bun.MultiArrayList(PackedMap.Shared)` (SoA over a tagged union).
+    // `MultiArrayElement` cannot be derived for an enum, and the column split buys nothing
+    // for a 2-word payload, so this is a plain `Vec`. `slice()` → `as_slice()`, `get(i)` →
+    // index. Revisit if a derive lands for tagged-union SoA.
+    pub files: Vec<packed_map::Shared>,
     /// The memory cost can be shared between many entries and IncrementalGraph
     /// So this is only used for eviction logic, to pretend this was the only
     /// entry. To compute the memory cost of DevServer, this cannot be used.

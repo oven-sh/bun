@@ -970,28 +970,25 @@ impl InitCommand {
                 }
 
                 if !fields.entry_point.is_empty() && !did_load_package_json {
-                    Output::pretty("\nTo get started, run:\n\n    ", format_args!(""));
+                    Output::pretty(format_args!("\nTo get started, run:\n\n    "));
 
-                    if strings::contains_any(b" \"'", &fields.entry_point) {
-                        Output::pretty(
-                            "<cyan>bun run {f}<r>\n\n",
-                            format_args!(
-                                "{}",
-                                bun_fmt::format_json_string_latin1(&fields.entry_point)
-                            ),
-                        );
+                    if strings::index_of_any(&fields.entry_point, b" \"'").is_some() {
+                        Output::pretty(format_args!(
+                            "<cyan>bun run {}<r>\n\n",
+                            bun_fmt::format_json_string_latin1(&fields.entry_point),
+                        ));
                     } else {
-                        Output::pretty(
-                            "<cyan>bun run {s}<r>\n\n",
-                            format_args!("{}", bstr::BStr::new(&fields.entry_point)),
-                        );
+                        Output::pretty(format_args!(
+                            "<cyan>bun run {}<r>\n\n",
+                            bstr::BStr::new(&fields.entry_point),
+                        ));
                     }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
-                    Output::prettyln("", format_args!(""));
+                    Output::prettyln(format_args!(""));
                     // Zig: std.process.Child .{stderr,stdin,stdout}=.Inherit → spawnAndWait
                     let self_exe = bun::self_exe_path()?;
                     let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;

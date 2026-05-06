@@ -968,9 +968,12 @@ fn get_ast(
             // Reuse existing code for creating the AST
             // because it handles the various Ref and other structs we
             // need in order to print code later.
+            let import_records = scanner.import_records;
+            let import_records_len = import_records.len;
+            let output_format = opts.output_format;
             let mut ast = js_parser::new_lazy_export_ast(
                 bump,
-                &transpiler.options.define,
+                &mut transpiler.options.define,
                 opts,
                 log,
                 Expr::init(E::Missing {}, Loc::EMPTY),
@@ -978,7 +981,7 @@ fn get_ast(
                 b"",
             )?
             .unwrap();
-            ast.import_records = scanner.import_records;
+            ast.import_records = import_records;
 
             // We're banning import default of html loader files for now.
             //
@@ -990,15 +993,18 @@ fn get_ast(
             // gave up on figuring out how to fix it so that
             // this feature could ship.
             ast.has_lazy_export = false;
-            ast.parts.ptr_mut()[1] = Part {
-                stmts: &[],
+            ast.parts.slice_mut()[1] = Part {
+                stmts: core::ptr::slice_from_raw_parts_mut(
+                    core::ptr::NonNull::<ast::Stmt>::dangling().as_ptr(),
+                    0,
+                ),
                 is_live: true,
                 import_record_indices: 'brk2: {
                     // Generate a single part that depends on all the import records.
                     // This is to ensure that we generate a JavaScript bundle containing all the user's code.
                     let mut import_record_indices =
-                        Part::ImportRecordIndices::init_capacity(bump, scanner.import_records.len)?;
-                    import_record_indices.len = scanner.import_records.len as u32;
+                        BabyList::<u32>::init_capacity(import_records_len as usize)?;
+                    import_record_indices.len = import_records_len;
                     for (index, import_record) in import_record_indices.slice_mut().iter_mut().enumerate() {
                         *import_record = u32::try_from(index).unwrap();
                     }
@@ -1008,8 +1014,8 @@ fn get_ast(
             };
 
             // Try to avoid generating unnecessary ESM <> CJS wrapper code.
-            if opts.output_format == options::OutputFormat::Esm
-                || opts.output_format == options::OutputFormat::Iife
+            if output_format == js_parser::options::Format::Esm
+                || output_format == js_parser::options::Format::Iife
             {
                 ast.exports_kind = ast::ExportsKind::Esm;
             }

@@ -390,12 +390,32 @@ pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
 /// non-existent `bun_renamer` crate).
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
-    /// Owned-erased renamer placeholder for `Chunk.renamer`. The Zig field is
-    /// the union `renamer.Renamer` set late (`= undefined`); the Rust enum has
-    /// borrowed lifetimes (`Renamer<'r,'src>`) that can't be stored in a
-    /// 'static-ish struct yet. TODO(port): thread `'bump` once Chunk gains a
-    /// lifetime.
-    pub type ChunkRenamer = Option<Box<bun_js_printer::renamer::NumberRenamer>>;
+    /// Owned renamer stored on `Chunk.renamer`. The Zig field is the union
+    /// `renamer.Renamer` set late (`= undefined`); the Rust `Renamer<'r,'src>`
+    /// enum has borrowed lifetimes that can't be stored in a 'static-ish
+    /// struct, so this owns the boxed concrete renamer instead and produces a
+    /// borrowed `Renamer` view on demand. TODO(port): thread `'bump` once
+    /// Chunk gains a lifetime.
+    #[derive(Default)]
+    pub enum ChunkRenamer {
+        #[default]
+        None,
+        Number(Box<bun_js_printer::renamer::NumberRenamer>),
+        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+    }
+    impl ChunkRenamer {
+        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, 'static> {
+            match self {
+                ChunkRenamer::None => unreachable!("Chunk.renamer accessed before assignment"),
+                ChunkRenamer::Number(r) => r.to_renamer(),
+                // PORT NOTE: `MinifyRenamer::to_renamer` consumes `Box<Self>`;
+                // build the borrowed view directly here instead.
+                ChunkRenamer::Minify(r) => {
+                    bun_js_printer::renamer::Renamer::MinifyRenamer(core::mem::take(r))
+                }
+            }
+        }
+    }
 }
 
 /// `HTMLImportManifest` — bundler-calling-convention adapter over the real

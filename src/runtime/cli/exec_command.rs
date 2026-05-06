@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
-use bun_jsc::config::configure_transform_options_for_bun_vm;
+use bun_options_types::schema::api;
 
 use bun_paths::{self, PathBuffer, Platform};
 use crate::shell::Interpreter;

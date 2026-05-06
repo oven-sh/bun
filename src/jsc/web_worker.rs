@@ -163,8 +163,10 @@ pub struct WebWorker {
     // the VM's allocator IS this arena (load-bearing). Profile in Phase B.
     arena: Option<MimallocArena>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
-    /// `process.exit(code)`.
-    exit_called: bool,
+    /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
+    /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
+    /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
+    exit_called: AtomicBool,
 }
 
 #[repr(u8)]
@@ -225,12 +227,18 @@ mod live_workers {
             }
             HEAD = worker;
         }
-        MUTEX.unlock();
+        // fetch_add and wake MUST happen under MUTEX (matching the Zig
+        // `defer mutex.unlock()` ordering) so that `terminate_all_and_wait`
+        // can never observe the worker in the list while OUTSTANDING is still
+        // at its pre-increment value — otherwise it could sweep B, see
+        // OUTSTANDING==0 (A's unregister already ran, B's add hasn't), and
+        // return early while B is still starting.
         OUTSTANDING.fetch_add(1, Ordering::Release);
         // Wake terminateAllAndWait so it re-sweeps and catches this worker
         // (it may have been created by another worker mid-sweep). No-op if
         // nothing is waiting.
         Futex::wake(&OUTSTANDING, 1);
+        MUTEX.unlock();
     }
 
     pub(super) fn unregister(worker: *mut WebWorker) {

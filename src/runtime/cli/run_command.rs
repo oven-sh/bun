@@ -80,19 +80,43 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Best-effort default-loader lookup by file extension. Mirrors
-    /// `options.defaultLoaders.get(ext)`; routed through the lower-tier
+    /// `options.defaultLoaders.get(ext)` (the *file-extension*→Loader map at
+    /// options.zig:1041 — NOT `Loader::NAMES`, which is the *loader-name*
+    /// table and has different membership, e.g. `.sh` is unconditional there
+    /// but Windows-only in `defaultLoaders`). Routed through the lower-tier
     /// `BundleEnums::Loader` so this file does not name `bun_bundler`'s
     /// (duplicate, soon-to-collapse) `options::Loader`.
     #[inline]
     fn default_loader_for(target: &[u8]) -> Option<Loader> {
         let ext = paths::extension(target);
-        if ext.is_empty() {
-            return None;
+        // Keyed with the leading dot, exactly as in options.zig `defaultLoaders`.
+        match ext {
+            b".jsx" => Some(Loader::Jsx),
+            b".json" => Some(Loader::Json),
+            b".js" => Some(Loader::Jsx),
+            b".mjs" => Some(Loader::Js),
+            b".cjs" => Some(Loader::Js),
+            b".css" => Some(Loader::Css),
+            b".ts" => Some(Loader::Ts),
+            b".tsx" => Some(Loader::Tsx),
+            b".mts" => Some(Loader::Ts),
+            b".cts" => Some(Loader::Ts),
+            b".toml" => Some(Loader::Toml),
+            b".yaml" => Some(Loader::Yaml),
+            b".yml" => Some(Loader::Yaml),
+            b".wasm" => Some(Loader::Wasm),
+            b".node" => Some(Loader::Napi),
+            b".txt" => Some(Loader::Text),
+            b".text" => Some(Loader::Text),
+            b".html" => Some(Loader::Html),
+            b".jsonc" => Some(Loader::Jsonc),
+            b".json5" => Some(Loader::Json5),
+            b".md" => Some(Loader::Md),
+            b".markdown" => Some(Loader::Md),
+            #[cfg(windows)]
+            b".sh" => Some(Loader::Bunsh),
+            _ => None,
         }
-        // `Loader::NAMES` keys are dot-stripped; `paths::extension` includes the
-        // leading dot, so trim it before lookup.
-        let key = if ext[0] == b'.' { &ext[1..] } else { ext };
-        Loader::NAMES.get(key).copied()
     }
 
     /// Minimal port of `bun_js.Run.boot` — wire the now-real
@@ -104,7 +128,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// call into that crate, this inlines the load-bearing steps.
     fn boot(
         ctx: &mut ContextData,
-        entry_path: &'static [u8],
+        entry_path: Box<[u8]>,
         loader: Option<Loader>,
     ) -> Result<(), bun_core::Error> {
         let _ = loader;
@@ -132,6 +156,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         vm.is_main_thread = true;
+        // TODO(port): `VirtualMachine::main` is still `&'static [u8]`; it should
+        // be `Box<[u8]>` so ownership transfers (PORTING.md §Forbidden patterns).
+        // Until that field is retyped (out of this file's scope), leak the owned
+        // copy here — process exits via `globalExit`/`exit(1)` so the bytes are
+        // never freed anyway (matches Zig's `allocator.dupe` + no-free).
+        let entry_path: &'static [u8] = Box::leak(entry_path);
         vm.main = entry_path;
 
         // TODO(b2-blocked): full transpiler/resolver option mapping
@@ -183,10 +213,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         });
 
-        // `entry_path` must outlive the VM (it's stored in `vm.main`); leak the
-        // owned copy to `'static`. Process exits via `globalExit`/`exit(1)` so
-        // this is never freed (matches Zig's `allocator.dupe` + no-free).
-        let owned: &'static [u8] = Box::leak(path.to_vec().into_boxed_slice());
+        // `entry_path` must outlive the VM (it's stored in `vm.main`); pass an
+        // owned copy by value (Zig: `ctx.allocator.dupe(u8, path)`).
+        let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
         if let Err(err) = Self::boot(ctx, owned, loader) {
             // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
@@ -200,7 +229,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
                 bstr::BStr::new(paths::basename(path)),
-                err,
+                bstr::BStr::new(err.name()),
             );
             Global::exit(1);
         }
@@ -377,45 +406,70 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             return false;
         }
 
-        let mut buf = PathBuffer::uninit();
-        // Build absolute, NUL-terminated path into `buf`.
-        let abs_len: usize = if paths::is_absolute(target) {
+        // PORT NOTE (run_command.zig:1586-1640): Zig OPENS the file (rather than
+        // just stat()ing the path), fstat()s the fd, then derives the canonical
+        // absolute path via `bun.getFdPath(fd, &buf)` before booting. The
+        // get_fd_path step matters: it resolves symlinks so module-relative
+        // resolution sees the real location.
+        let mut script_name_buf = PathBuffer::uninit();
+
+        // Build a NUL-terminated path to open (mirrors the Zig branching for
+        // absolute vs. simple-relative vs. `..`/`~`-prefixed).
+        let open_len: usize = if paths::is_absolute(target) {
+            // TODO(port): `PosixToWinNormalizer.resolveCWD` + Windows
+            // `normalizeString` — Phase B once those land at this tier.
             if target.len() >= MAX_PATH_BYTES {
                 return false;
             }
-            buf[..target.len()].copy_from_slice(target);
+            script_name_buf[..target.len()].copy_from_slice(target);
             target.len()
-        } else {
-            // join cwd + SEP + target into `buf`
-            let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else { return false };
-            let cwd_bytes = cwd.as_bytes();
-            // TODO(port): `resolve_path::join_abs_string_buf` for `..`/`.`
-            // normalisation. Do the trivial `cwd + SEP + target` join inline
-            // (covers `bun run ./x`); full normalisation happens in the
-            // resolver once `configure_env_for_run` un-gates.
-            let cwd_len = cwd_bytes.len();
-            if cwd_len + 1 + target.len() >= MAX_PATH_BYTES {
+        } else if !target.starts_with(b"..") && target[0] != b'~' {
+            // open relative to cwd as-is
+            if target.len() >= MAX_PATH_BYTES {
                 return false;
             }
-            buf[..cwd_len].copy_from_slice(cwd_bytes);
-            buf[cwd_len] = paths::SEP;
-            buf[cwd_len + 1..cwd_len + 1 + target.len()].copy_from_slice(target);
-            cwd_len + 1 + target.len()
-        };
-        buf[abs_len] = 0;
-        // SAFETY: `buf[abs_len] == 0` written above; `buf[..abs_len]` is init.
-        let abs_z = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), abs_len) };
-
-        // Probe: must exist and not be a directory. directories cannot be run.
-        // if only there was a faster way to check this
-        match bun_sys::stat(abs_z) {
-            Ok(st) => {
-                if bun_sys::S::ISDIR(st.st_mode as _) {
-                    return false;
-                }
+            script_name_buf[..target.len()].copy_from_slice(target);
+            target.len()
+        } else {
+            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else { return false };
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = paths::SEP;
+            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                &cwd_buf[..cwd_len + 1],
+                &mut script_name_buf.0,
+                &[target],
+            );
+            if joined.is_empty() {
+                return false;
             }
-            Err(_) => return false,
+            joined.len()
+        };
+        script_name_buf[open_len] = 0;
+        // SAFETY: `script_name_buf[open_len] == 0` written above;
+        // `script_name_buf[..open_len]` is init.
+        let open_z = unsafe { bun_core::ZStr::from_raw(script_name_buf.as_ptr(), open_len) };
+
+        // Open read-only. `catch return false` in Zig.
+        let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
+            return false;
+        };
+        // TODO(port): `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` —
+        // Windows-only fd-ownership shim; no-op on POSIX.
+
+        // fstat: directories cannot be run. if only there was a faster way to
+        // check this
+        let is_dir = match bun_sys::fstat(fd) {
+            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+            Err(_) => {
+                let _ = bun_sys::close(fd);
+                return false;
+            }
+        };
+        if is_dir {
+            let _ = bun_sys::close(fd);
+            return false;
         }
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
@@ -423,10 +477,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ..Default::default()
         });
 
-        // TODO(port): Zig re-derives the absolute path via `bun.getFdPath` on
-        // the opened fd (canonicalises symlinks). We pass the joined path
-        // directly until `bun_core::get_fd_path` is on this tier's surface.
-        Self::_boot_and_handle_error(ctx, abs_z.as_bytes(), None)
+        // Re-derive the canonical absolute path from the open fd (resolves
+        // symlinks). On non-Windows Zig writes back into `script_name_buf`.
+        let absolute_script_path: Box<[u8]> = {
+            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
+                Ok(p) => p,
+                Err(_) => {
+                    let _ = bun_sys::close(fd);
+                    return false;
+                }
+            };
+            resolved.to_vec().into_boxed_slice()
+        };
+        let _ = bun_sys::close(fd);
+
+        Self::_boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -462,8 +527,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let cwd_len = cwd_bytes.len();
             entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
             entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-            let entry: &'static [u8] =
-                Box::leak(entry_point_buf[..cwd_len + EVAL_TRIGGER.len()].to_vec().into_boxed_slice());
+            let entry: Box<[u8]> =
+                entry_point_buf[..cwd_len + EVAL_TRIGGER.len()].to_vec().into_boxed_slice();
             return Self::boot(ctx, entry, None);
         }
 
@@ -494,8 +559,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             joined.into_boxed_slice()
         };
 
-        if !Self::_boot_and_handle_error(ctx, &normalized, None) {
-            // unreachable in practice — `_boot_and_handle_error` exits on error
+        // PORT NOTE (run_command.zig:1987-1992): this arm calls `Run.boot`
+        // directly — NOT `_bootAndHandleError` — so it (a) does not call
+        // `Global::configure_allocator` and (b) uses the
+        // `Output.err(err, "Failed to run script \"...\"")` form.
+        let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
+        if let Err(err) = Self::boot(ctx, normalized, None) {
+            // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
+            // `Output::error_writer()` is `*mut io::Writer`. Route through a
+            // shim once io::Writer implements fmt::Write.
+            #[cfg(any())]
+            let _ = unsafe { ctx.log() }.print(Output::error_writer());
+
+            Output::err(
+                err,
+                format_args!(
+                    "Failed to run script \"<b>{}<r>\"",
+                    bstr::BStr::new(&basename),
+                ),
+            );
+            Global::exit(1);
         }
         Ok(())
     }

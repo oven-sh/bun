@@ -1,7 +1,6 @@
-use crate as css;
-use crate::Printer;
-use crate::PrintErr;
-use crate::Result;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult as Result, PrintErr, Printer};
+use crate::values::protocol::{IsCompatible, Parse, ToCss};
 use crate::targets::Browsers;
 
 // PORT NOTE: the Zig `needsDeinit(comptime T: type) bool` switch and the
@@ -27,24 +26,30 @@ pub struct Rect<T> {
 }
 
 impl<T> Rect<T> {
-    pub fn eql(&self, other: &Self) -> bool {
-        css::generic::eql(&self.top, &other.top)
-            && css::generic::eql(&self.right, &other.right)
-            && css::generic::eql(&self.bottom, &other.bottom)
-            && css::generic::eql(&self.left, &other.left)
+    pub fn eql(&self, other: &Self) -> bool
+    where
+        T: PartialEq,
+    {
+        self.top == other.top
+            && self.right == other.right
+            && self.bottom == other.bottom
+            && self.left == other.left
     }
 
-    pub fn deep_clone(&self, bump: &css::Allocator) -> Self {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
+    where
+        T: Clone,
+    {
         // PORT NOTE: Zig branched on `comptime needs_deinit` to decide between
         // bitwise copy and per-field `.deepClone(allocator)`. In Rust this is
         // just the `DeepClone`/`Clone` trait on `T` — the cheap-copy types
         // (`f32`, `NumberOrPercentage`, `LineStyle`) impl it as a bit copy.
         // TODO(port): narrow trait bound once css::generic::DeepClone lands.
         Self {
-            top: css::generic::deep_clone(&self.top, bump),
-            right: css::generic::deep_clone(&self.right, bump),
-            bottom: css::generic::deep_clone(&self.bottom, bump),
-            left: css::generic::deep_clone(&self.left, bump),
+            top: self.top.clone(),
+            right: self.right.clone(),
+            bottom: self.bottom.clone(),
+            left: self.left.clone(),
         }
     }
 
@@ -60,7 +65,10 @@ impl<T> Rect<T> {
         }
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<Self> {
+    pub fn parse(input: &mut css::Parser) -> Result<Self>
+    where
+        T: Parse + Clone,
+    {
         Self::parse_with(input, Self::val_parse)
     }
 
@@ -69,10 +77,7 @@ impl<T> Rect<T> {
         F: Fn(&mut css::Parser) -> Result<T>,
         T: Clone,
     {
-        let first = match parse_fn(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let first = parse_fn(input)?;
         let second = match input.try_parse(&parse_fn) {
             Ok(v) => v,
             // <first>
@@ -98,37 +103,45 @@ impl<T> Rect<T> {
         Ok(Self { top: first, right: second, bottom: third, left: fourth })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::generic::to_css(&self.top, dest)?;
-        let same_vertical = css::generic::eql(&self.top, &self.bottom);
-        let same_horizontal = css::generic::eql(&self.right, &self.left);
-        if same_vertical && same_horizontal && css::generic::eql(&self.top, &self.right) {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    where
+        T: ToCss + PartialEq,
+    {
+        self.top.to_css(dest)?;
+        let same_vertical = self.top == self.bottom;
+        let same_horizontal = self.right == self.left;
+        if same_vertical && same_horizontal && self.top == self.right {
             return Ok(());
         }
-        dest.write_str(" ")?;
-        css::generic::to_css(&self.right, dest)?;
+        dest.write_str(b" ")?;
+        self.right.to_css(dest)?;
         if same_vertical && same_horizontal {
             return Ok(());
         }
-        dest.write_str(" ")?;
-        css::generic::to_css(&self.bottom, dest)?;
+        dest.write_str(b" ")?;
+        self.bottom.to_css(dest)?;
         if same_horizontal {
             return Ok(());
         }
-        dest.write_str(" ")?;
-        css::generic::to_css(&self.left, dest)
+        dest.write_str(b" ")?;
+        self.left.to_css(dest)
     }
 
-    pub fn val_parse(i: &mut css::Parser) -> Result<T> {
-        css::generic::parse(i)
+    pub fn val_parse(i: &mut css::Parser) -> Result<T>
+    where
+        T: Parse,
+    {
+        T::parse(i)
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
-        // TODO(port): bound `T: IsCompatible` once that trait exists in bun_css.
-        css::generic::is_compatible(&self.top, browsers)
-            && css::generic::is_compatible(&self.right, browsers)
-            && css::generic::is_compatible(&self.bottom, browsers)
-            && css::generic::is_compatible(&self.left, browsers)
+    pub fn is_compatible(&self, browsers: Browsers) -> bool
+    where
+        T: IsCompatible,
+    {
+        self.top.is_compatible(browsers)
+            && self.right.is_compatible(browsers)
+            && self.bottom.is_compatible(browsers)
+            && self.left.is_compatible(browsers)
     }
 }
 

@@ -1,7 +1,7 @@
-use bun_css as css;
-use bun_css::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
-use bun_css::{PrintErr, Printer, Result};
-use bun_str::strings;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult as Result, PrintErr, Printer, Token};
+use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use bun_string::strings;
 
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
 #[derive(Clone, PartialEq)]
@@ -95,7 +95,7 @@ impl EasingFunction {
                     }),
                 }
             } else {
-                return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+                return Err(location.new_unexpected_token_error(Token::Ident(ident)));
             };
 
             return Ok(keyword);
@@ -122,7 +122,7 @@ impl EasingFunction {
                     .unwrap_or(StepPosition::default());
                 Ok(EasingFunction::Steps(Steps { count, position }))
             } else {
-                Err(location.new_unexpected_token_error(css::Token::Ident(function)))
+                Err(location.new_unexpected_token_error(Token::Ident(function)))
             }
         })
     }
@@ -163,13 +163,13 @@ impl EasingFunction {
                 match self {
                     EasingFunction::CubicBezier(cb) => {
                         dest.write_str("cubic-bezier(")?;
-                        css::generic::to_css::<CSSNumber>(&cb.x1, dest)?;
+                        CSSNumberFns::to_css(&cb.x1, dest)?;
                         dest.write_char(',')?;
-                        css::generic::to_css::<CSSNumber>(&cb.y1, dest)?;
+                        CSSNumberFns::to_css(&cb.y1, dest)?;
                         dest.write_char(',')?;
-                        css::generic::to_css::<CSSNumber>(&cb.x2, dest)?;
+                        CSSNumberFns::to_css(&cb.x2, dest)?;
                         dest.write_char(',')?;
-                        css::generic::to_css::<CSSNumber>(&cb.y2, dest)?;
+                        CSSNumberFns::to_css(&cb.y2, dest)?;
                         dest.write_char(')')
                     }
                     EasingFunction::Steps(steps) => {
@@ -270,7 +270,7 @@ impl StepPosition {
                 StepPositionKeyword::JumpBoth => StepPosition::JumpBoth,
             }
         } else {
-            return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
+            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
         };
 
         Ok(keyword)

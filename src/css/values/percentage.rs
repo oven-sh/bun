@@ -1,11 +1,9 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
 use crate::values::angle::Angle;
-use crate::values::calc::Calc;
-#[cfg(any())]
-use crate::values::calc::MathFunction;
+use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::CSSNumber;
-#[cfg(any())]
+use crate::values::protocol;
 use crate::targets::Browsers;
 use core::cmp::Ordering;
 
@@ -166,12 +164,12 @@ impl<D: Clone> Clone for DimensionPercentage<D> {
     }
 }
 
-// ─── B-2 round 3: generic-D method block stays gated ──────────────────────
-// blocked_on: generics.rs `Zero`/`MulF32`/`TryAdd` protocol traits + the
-// `D: Parse/ToCss/IsCompatible` bounds (Parse<'bump> lifetime threading).
-// The enum + Clone above are real so `Calc<DimensionPercentage<D>>` and
-// `AnglePercentage` resolve; behavior un-gates with length.rs.
-#[cfg(any())]
+// ─── B-2 round 5: generic-D method block un-gated ─────────────────────────
+// `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
+// `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
+// un-gates. The bound set below mirrors the full Zig comptime-method surface
+// on `D`; per-method `where` clauses narrow further so plain
+// `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
 impl<D> DimensionPercentage<D>
 where
     // TODO(port): narrow these bounds in Phase B; mirroring methods called on D below.
@@ -179,30 +177,32 @@ where
 {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self>
     where
-        D: css::generic::Parse,
+        Self: crate::values::calc::CalcValue,
+        D: protocol::Parse,
     {
-        if let Some(calc_value) = input.try_parse(Calc::<Self>::parse).as_value() {
+        if let Ok(calc_value) = input.try_parse(Calc::<Self>::parse) {
             if let Calc::Value(v) = calc_value {
-                return CssResult::Ok(*v);
+                return Ok(*v);
             }
             // PERF(port): was arena alloc (bun.create with input.allocator()) — profile in Phase B.
-            return CssResult::Ok(Self::Calc(Box::new(calc_value)));
+            return Ok(Self::Calc(Box::new(calc_value)));
         }
 
-        if let Some(length) = input.try_parse(D::parse).as_value() {
-            return CssResult::Ok(Self::Dimension(length));
+        if let Ok(length) = input.try_parse(D::parse) {
+            return Ok(Self::Dimension(length));
         }
 
-        if let Some(percentage) = input.try_parse(Percentage::parse).as_value() {
-            return CssResult::Ok(Self::Percentage(percentage));
+        if let Ok(percentage) = input.try_parse(Percentage::parse) {
+            return Ok(Self::Percentage(percentage));
         }
 
-        CssResult::Err(input.new_error_for_next_token())
+        Err(input.new_error_for_next_token())
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
-        D: css::generic::ToCss,
+        Self: crate::values::calc::CalcValue,
+        D: protocol::ToCss,
     {
         match self {
             Self::Dimension(length) => length.to_css(dest),
@@ -213,7 +213,8 @@ where
 
     pub fn is_compatible(&self, browsers: Browsers) -> bool
     where
-        D: css::generic::IsCompatible,
+        Self: crate::values::calc::CalcValue,
+        D: protocol::IsCompatible,
     {
         match self {
             Self::Dimension(d) => d.is_compatible(browsers),
@@ -251,7 +252,7 @@ where
 
     pub fn zero() -> Self
     where
-        D: css::generic::Zero,
+        D: protocol::Zero,
     {
         // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32 in Phase B.
         Self::Dimension(D::zero())
@@ -259,7 +260,7 @@ where
 
     pub fn is_zero(&self) -> bool
     where
-        D: css::generic::Zero,
+        D: protocol::Zero,
     {
         match self {
             // TODO(port): Zig special-cased D == f32 → d == 0.0. Handle via trait impl on f32.
@@ -271,7 +272,7 @@ where
 
     fn mul_value_f32(lhs: D, rhs: f32) -> D
     where
-        D: css::generic::MulF32,
+        D: protocol::MulF32,
     {
         // TODO(port): Zig special-cased D == f32 → lhs * rhs. Handle via trait impl on f32.
         lhs.mul_f32(rhs)
@@ -279,7 +280,8 @@ where
 
     pub fn mul_f32(self, other: f32) -> Self
     where
-        D: css::generic::MulF32,
+        Self: crate::values::calc::CalcValue,
+        D: protocol::MulF32,
     {
         match self {
             Self::Dimension(d) => Self::Dimension(Self::mul_value_f32(d, other)),
@@ -291,7 +293,7 @@ where
 
     pub fn add(self, other: Self) -> Self
     where
-        D: css::generic::TryAdd + css::generic::Zero + css::generic::TrySign + css::generic::MulF32,
+        D: protocol::TryAdd + protocol::Zero + protocol::TrySign + protocol::MulF32,
     {
         // Unwrap calc(...) functions so we can add inside.
         // Then wrap the result in a calc(...) again if necessary.
@@ -321,7 +323,7 @@ where
 
     pub fn add_internal(self, other: Self) -> Self
     where
-        D: css::generic::TryAdd + css::generic::Zero + css::generic::TrySign,
+        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
         if let Some(res) = self.add_recursive(&other) {
             return res;
@@ -331,7 +333,7 @@ where
 
     fn add_recursive(&self, other: &Self) -> Option<Self>
     where
-        D: css::generic::TryAdd + css::generic::Zero + css::generic::TrySign,
+        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => {
@@ -344,37 +346,33 @@ where
             }
             (Self::Calc(this_calc), _) => match this_calc.as_ref() {
                 Calc::Value(v) => return v.add_recursive(other),
-                Calc::Sum(sum) => {
+                Calc::Sum { left, right } => {
                     // PORT NOTE: reshaped for borrowck — Zig wrapped sum.left/right (raw ptrs)
                     // directly in This{.calc = ...}. Here we deep_clone since Box is owning.
                     // TODO(port): lifetime — sum.left/right ownership semantics need review.
-                    let left_calc = Self::Calc(sum.left.deep_clone_boxed());
+                    let left_calc = Self::Calc(left.deep_clone_boxed());
                     if let Some(res) = left_calc.add_recursive(other) {
-                        return Some(res.add_impl(Self::Calc(sum.right.deep_clone_boxed())));
+                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
                     }
 
-                    let right_calc = Self::Calc(sum.right.deep_clone_boxed());
+                    let right_calc = Self::Calc(right.deep_clone_boxed());
                     if let Some(res) = right_calc.add_recursive(other) {
-                        return Some(
-                            Self::Calc(sum.left.deep_clone_boxed()).add_impl(res),
-                        );
+                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
                     }
                 }
                 _ => {}
             },
             (_, Self::Calc(other_calc)) => match other_calc.as_ref() {
                 Calc::Value(v) => return self.add_recursive(v),
-                Calc::Sum(sum) => {
-                    let left_calc = Self::Calc(sum.left.deep_clone_boxed());
+                Calc::Sum { left, right } => {
+                    let left_calc = Self::Calc(left.deep_clone_boxed());
                     if let Some(res) = self.add_recursive(&left_calc) {
-                        return Some(res.add_impl(Self::Calc(sum.right.deep_clone_boxed())));
+                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
                     }
 
-                    let right_calc = Self::Calc(sum.right.deep_clone_boxed());
+                    let right_calc = Self::Calc(right.deep_clone_boxed());
                     if let Some(res) = self.add_recursive(&right_calc) {
-                        return Some(
-                            Self::Calc(sum.left.deep_clone_boxed()).add_impl(res),
-                        );
+                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
                     }
                 }
                 _ => {}
@@ -387,7 +385,7 @@ where
 
     fn add_impl(self, other: Self) -> Self
     where
-        D: css::generic::Zero + css::generic::TrySign,
+        D: protocol::Zero + protocol::TrySign,
     {
         let mut a = self;
         let mut b = other;
@@ -425,7 +423,7 @@ where
     #[inline]
     fn is_sign_positive(&self) -> bool
     where
-        D: css::generic::TrySign,
+        D: protocol::TrySign,
     {
         let Some(sign) = self.try_sign() else {
             return false;
@@ -436,7 +434,7 @@ where
     #[inline]
     fn is_sign_negative(&self) -> bool
     where
-        D: css::generic::TrySign,
+        D: protocol::TrySign,
     {
         let Some(sign) = self.try_sign() else {
             return false;
@@ -460,7 +458,7 @@ where
 
     pub fn partial_cmp(&self, other: &Self) -> Option<Ordering>
     where
-        D: css::generic::PartialCmp,
+        D: protocol::PartialCmp,
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.partial_cmp(b),
@@ -471,10 +469,11 @@ where
 
     pub fn try_sign(&self) -> Option<f32>
     where
-        D: css::generic::TrySign,
+        Self: crate::values::calc::CalcValue,
+        D: protocol::TrySign,
     {
         match self {
-            Self::Dimension(d) => css::generic::try_sign(d),
+            Self::Dimension(d) => d.try_sign(),
             Self::Percentage(p) => p.try_sign(),
             Self::Calc(c) => c.try_sign(),
         }
@@ -482,17 +481,17 @@ where
 
     pub fn try_from_angle(angle: Angle) -> Option<Self>
     where
-        D: css::generic::TryFromAngle,
+        D: protocol::TryFromAngle,
     {
         Some(Self::Dimension(D::try_from_angle(angle)?))
     }
 
     pub fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>
     where
-        D: css::generic::TryMap,
+        D: protocol::TryMap,
     {
         match self {
-            Self::Dimension(vv) => css::generic::try_map(vv, map_fn).map(Self::Dimension),
+            Self::Dimension(vv) => vv.try_map(map_fn).map(Self::Dimension),
             _ => None,
         }
     }
@@ -505,17 +504,34 @@ where
     ) -> Option<Self>
     where
         C: Copy,
-        D: css::generic::TryOp,
+        D: protocol::TryOp,
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => {
-                Some(Self::Dimension(css::generic::try_op(a, b, ctx, &op_fn)?))
+                Some(Self::Dimension(a.try_op(b, ctx, &op_fn)?))
             }
             (Self::Percentage(a), Self::Percentage(b)) => {
                 Some(Self::Percentage(Percentage {
                     v: op_fn(ctx, a.v, b.v),
                 }))
             }
+            _ => None,
+        }
+    }
+
+    pub fn try_op_to<R, C>(
+        &self,
+        other: &Self,
+        ctx: C,
+        op_fn: impl Fn(C, f32, f32) -> R,
+    ) -> Option<R>
+    where
+        C: Copy,
+        D: protocol::TryOpTo<R>,
+    {
+        match (self, other) {
+            (Self::Dimension(a), Self::Dimension(b)) => a.try_op_to(b, ctx, &op_fn),
+            (Self::Percentage(a), Self::Percentage(b)) => Some(op_fn(ctx, a.v, b.v)),
             _ => None,
         }
     }

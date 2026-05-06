@@ -118,6 +118,11 @@ impl Default for JSONOptions {
 /// `generic_const_exprs` lets each field project into a `const bool` slot, so
 /// callers write `NewLexer<'a, { JSONOptions { is_json: true, ..JSONOptions::DEFAULT } }>`
 /// instead of spelling out eight positional bools.
+// TODO(port): nightly-2025-12-10 rejects field access (`J.is_json`) inside
+// generic-const expressions even with `generic_const_exprs` enabled. The alias
+// is currently unused (callers spell out `LexerType<..bools..>` directly), so
+// gate it until the feature stabilizes or a `const fn` projection lands.
+#[cfg(any())]
 pub type NewLexer<'a, const J: JSONOptions> = LexerType<
     'a,
     { J.is_json },

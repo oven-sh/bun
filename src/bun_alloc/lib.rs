@@ -1129,6 +1129,12 @@ pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub used: u32,
 }
 
+// SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
+// `self`; all mutation goes through `self.mutex`. The raw pointer is the only `!Sync` field;
+// the type is logically a mutex-guarded global (matches Zig's threadsafe singleton).
+unsafe impl<ValueType: Send, const COUNT: usize> Send for BSSList<ValueType, COUNT> {}
+unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COUNT> {}
+
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.

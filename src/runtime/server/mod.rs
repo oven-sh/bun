@@ -494,7 +494,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Allocate and populate a `NewServer` from `config`. The config is moved
     /// into the server (left as `Default` in the caller's slot). Route
     /// registration and the listen socket happen later in `listen()`.
-    pub fn init(config: &mut ServerConfig, global: &JSGlobalObject) -> JsResult<*mut Self> {
+    pub fn init(config: &mut ServerConfig, global: &JSGlobalObject) -> JsResult<*mut Self>
+    where
+        Self: ServerPools<SSL, DEBUG>,
+    {
         let base_url: Box<[u8]> =
             bun_str::strings::trim(config.base_url.href, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
@@ -517,8 +520,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
-            request_pool_allocator: <Self as ServerPools>::request_pool(),
-            h3_request_pool_allocator: <Self as ServerPools>::h3_request_pool(),
+            request_pool_allocator: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
+            h3_request_pool_allocator: <Self as ServerPools<SSL, DEBUG>>::h3_request_pool(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
                 ctx: None,
@@ -580,7 +583,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.handler.app = Some(app as *mut _ as *mut c_void);
-            websocket.handler.flags.ssl = SSL;
+            websocket
+                .handler
+                .flags
+                .set(web_socket_server_context::HandlerFlags::SSL, SSL);
             // TODO(b2-blocked): websocket.global_object = self.global_this once
             // WebSocketServerContext exposes the field mutably.
         }
@@ -588,9 +594,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 3. Compiled user routes + "/*" coverage tracking ---
         let mut star_covered_by_user_any = false;
         for user_route in self.user_routes.iter_mut() {
+            let ud: *mut c_void = (user_route as *mut UserRoute<SSL, DEBUG>).cast();
             let path = user_route.route.path.as_bytes();
             let is_star = path == b"/*";
-            let ud = user_route as *mut UserRoute<SSL, DEBUG> as *mut c_void;
             match user_route.route.method {
                 server_config::RouteMethod::Any => {
                     app.any(path, Some(trampoline::on_user_route_request::<SSL, DEBUG>), ud);
@@ -703,6 +709,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = self_.set_routes();
 
             // add serverName to the SSL context using the default ssl options
+            // PORT NOTE: ssl_config / sni borrow self_.config while set_routes()
+            // needs &mut self; reborrow via the raw `this` pointer (Zig had no
+            // aliasing checker here — config.sni is never touched by set_routes).
+            // SAFETY: `this` is live; set_routes() does not invalidate config.ssl_config/sni.
+            let ssl_config = unsafe { (*this).config.ssl_config.as_ref().unwrap() };
             if let Some(server_name) = ssl_config.server_name.as_deref() {
                 if !server_name.to_bytes().is_empty() {
                     // SAFETY: app is the live handle just stored in self_.app.
@@ -736,12 +747,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
 
                     // Ensure routes are set for that domain name.
-                    let _ = self_.set_routes();
+                    // SAFETY: see PORT NOTE above; disjoint from ssl_config borrow.
+                    let _ = unsafe { (*this).set_routes() };
                 }
             }
 
             // SNI: per-hostname contexts
-            if let Some(sni) = self_.config.sni.as_ref() {
+            // SAFETY: see PORT NOTE above; config.sni is not touched by set_routes().
+            if let Some(sni) = unsafe { (*this).config.sni.as_ref() } {
                 for sni_ssl_config in sni.slice() {
                     let Some(sni_name) = sni_ssl_config.server_name.as_deref() else { continue };
                     if sni_name.to_bytes().is_empty() {
@@ -774,7 +787,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         Self::deinit(this);
                         return JSValue::ZERO;
                     }
-                    let _ = self_.set_routes();
+                    // SAFETY: see PORT NOTE above; disjoint from sni borrow.
+                    let _ = unsafe { (*this).set_routes() };
                 }
             }
         } else {
@@ -846,10 +860,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
-                        bun_core::Output::warn(
-                            "h3: true with a unix socket — HTTP/3 listener skipped",
-                            &[],
-                        );
+                        bun_core::Output::warn(format_args!(
+                            "h3: true with a unix socket — HTTP/3 listener skipped"
+                        ));
                         // SAFETY: h3a is a live H3::App handle just taken from self_.h3_app.
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
@@ -977,22 +990,14 @@ mod trampoline {
 // and hand the leaked pointer back through a trait. PERF(port): was threadlocal
 // — `Bun.serve` is single-threaded so a process-static is equivalent today;
 // revisit if servers ever span worker threads.
-trait ServerPools {
-    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, { Self::SSL_ }, { Self::DEBUG_ }, false>
-    where
-        Self: Sized;
-    fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, { Self::SSL_ }, { Self::DEBUG_ }, true>
-    where
-        Self: Sized;
-    const SSL_: bool;
-    const DEBUG_: bool;
+pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
+    fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
+    fn h3_request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
 }
 
 macro_rules! impl_server_pools {
     ($(($ssl:literal, $debug:literal)),* $(,)?) => {$(
-        impl ServerPools for NewServer<$ssl, $debug> {
-            const SSL_: bool = $ssl;
-            const DEBUG_: bool = $debug;
+        impl ServerPools<$ssl, $debug> for NewServer<$ssl, $debug> {
             fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, $ssl, $debug, false> {
                 static POOL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
                 *POOL.get_or_init(|| {
@@ -1228,13 +1233,16 @@ pub struct ServerAllConnectionsClosedTask {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/server.zig (5193 lines)
-//   confidence: low (cycle-6: ServerLike widened for un-gated RequestContext)
+//   confidence: low (cycle-7: init/listen/set_routes un-gated)
 //   notes:      NewServer/AnyServer/AnyRoute structs real; stop/stop_listening/
-//               on_listen bodies real (uws calls only). ServerLike grew
-//               js_value/h3_alt_svc/terminated/release_request_context and
-//               vm/global_this now hand back references so the per-request
-//               state machine can call straight through. listen()/init() and
-//               all JS-facing host_fn bodies gated — preserved in server_body.rs.
-//               Blocked on: bun_jsc dep (VirtualMachine/JsRef/Strong methods),
-//               bun_uws_sys h3::App close/num_connections.
+//               on_listen bodies real (uws calls only). init() now constructs
+//               the boxed server (per-monomorphization pool statics via
+//               `impl_server_pools!`); listen() creates the uws::App<SSL>,
+//               registers routes, and binds the listen socket; set_routes()
+//               wires user/negative routes + the "/*" fallback through extern
+//               "C" trampolines. Static-route/DevServer/H3-listen paths and
+//               the on_request JS dispatch body remain narrowly gated where
+//               they touch not-yet-real surface — full drafts preserved in
+//               server_body.rs. Blocked on: bun_uws_sys::h3 listen trampoline,
+//               bake::DevServer::init, .classes.ts RouteList codegen extern.
 // ──────────────────────────────────────────────────────────────────────────

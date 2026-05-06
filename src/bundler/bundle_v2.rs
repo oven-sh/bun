@@ -295,7 +295,9 @@ impl<'a> BundleV2<'a> {
             let source = match &parse_result.value {
                 ParseResultValue::Empty { source_index } => source_index.get(),
                 ParseResultValue::Err(data) => data.source_index.get(),
-                ParseResultValue::Success(val) => val.source.index.get(),
+                // `Logger::Source.index` is `bun_logger::Index(pub u32)` (a
+                // distinct newtype from `crate::Index`); access the tuple field.
+                ParseResultValue::Success(val) => val.source.index.0,
             };
             let loader: Loader = this.graph.input_files.items_loader()[source as usize];
             if !loader.should_copy_for_bundling() {
@@ -376,7 +378,7 @@ impl<'a> BundleV2<'a> {
                         Bundle,
                         "onParse({}, {}) = empty",
                         source_index.get(),
-                        bstr::BStr::new(&this.graph.input_files.items_source()[idx].path.text)
+                        bstr::BStr::new(this.graph.input_files.items_source()[idx].path.text)
                     );
                 }
             }
@@ -391,11 +393,18 @@ impl<'a> BundleV2<'a> {
                 this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                     || !result.ast.top_level_await_keyword.is_empty();
 
-                let idx = result.source.index.get() as usize;
+                let idx = result.source.index.0 as usize;
                 // Warning: `input_files` and `ast` arrays may resize in this
                 // function call. It is not safe to cache slices from them.
-                this.graph.input_files.items_source_mut()[idx] = result.source.clone();
-                this.source_code_length += if !result.source.index.is_runtime() {
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): `Logger::Source: !Clone` (logger/lib.rs:2607);
+                    // Zig moved by value here. Restructure once `Success.source`
+                    // is consumed by-value (needs `parse_task::Result` to own).
+                    this.graph.input_files.items_source_mut()[idx] = result.source.clone();
+                }
+                // `bun_logger::Index` lacks `.is_runtime()`; runtime is index 0.
+                this.source_code_length += if result.source.index.0 != 0 {
                     result.source.contents.len()
                 } else {
                     0
@@ -427,8 +436,8 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(
                     Bundle,
                     "onParse({}, {}) = {} imports, {} exports",
-                    result.source.index.get(),
-                    bstr::BStr::new(&result.source.path.text),
+                    result.source.index.0,
+                    bstr::BStr::new(result.source.path.text),
                     result.ast.import_records.len(),
                     result.ast.named_exports.count()
                 );
@@ -493,7 +502,8 @@ impl<'a> BundleV2<'a> {
                         // `__phase_a_draft` for the full body.
                     }
                 }
-                let _ = &mut resolve_queue;
+                // Suppress unused-mut while the resolution block above is gated.
+                let _ = (&mut resolve_queue, &mut diff);
             }
             ParseResultValue::Err(err) => {
                 bun_core::scoped_log!(Bundle, "onParse() = err");
@@ -527,7 +537,7 @@ impl<'a> BundleV2<'a> {
                                 Logger::Loc::EMPTY,
                                 format_args!(
                                     "{} while {}",
-                                    err.err.name(),
+                                    bstr::BStr::new(err.err.name()),
                                     parse_task_step_name(err.step)
                                 ),
                             )

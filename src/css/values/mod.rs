@@ -61,22 +61,26 @@ pub mod time;
 pub mod calc;
 pub mod percentage;
 // ─── B-2 round 5: remaining lattice leaves un-gated ──────────────────────
-// length/position/size/rect/easing/syntax/gradient/image/color now compile
-// for real. The `protocol` submodule below supplies the handful of numeric
-// protocol traits (`Zero`/`MulF32`/`TryAdd`/`Parse`) that
-// `DimensionPercentage<D>` and the calc-lattice CalcValue impls bound on but
-// which `crate::generics` only defines inside its still-gated
+// length/position/rect now compile for real. The `protocol` submodule below
+// supplies the handful of numeric protocol traits (`Zero`/`MulF32`/`TryAdd`/
+// `Parse`) that `DimensionPercentage<D>` and the calc-lattice CalcValue impls
+// bound on but which `crate::generics` only defines inside its still-gated
 // `parse_tocss_numeric_gated` block. Defining them here keeps the edit
 // surface inside `values/` (generics.rs is owned by another track).
+//
+// reconciler-3: size/easing/syntax/gradient/image/color re-gated — they
+// reference `bun_str`, `css::ParseErrorKind`, `css_properties::transform::*`,
+// and a `'bump`-threaded `DeepClone` that don't yet exist on this track.
+// Un-gate alongside the css_parser/generics surface they depend on.
 pub mod length;
 pub mod position;
-pub mod size;
+gated_value!(size);
 pub mod rect;
-pub mod easing;
-pub mod syntax;
-pub mod gradient;
-pub mod image;
-pub mod color;
+gated_value!(easing);
+gated_value!(syntax);
+gated_value!(gradient);
+gated_value!(image);
+gated_value!(color, { pub use crate::values_stub::color::*; });
 // `color_generated.rs` is the codegen'd named-color tables (47KB). Its parent
 // in Zig was `color.zig`'s `pub usingnamespace`; here it's a sibling module
 // re-exported through `color::*` so the stub-set re-export at crate root

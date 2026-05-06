@@ -341,40 +341,895 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
 // LoaderHooks bodies
 // ════════════════════════════════════════════════════════════════════════════
 
+/// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
+/// byte-equal to `s`, in which case bump `s`'s refcount instead.
+///
+/// PORT NOTE: lives here (not `bun_string`) because the canonical impl is in
+/// the gated `lib_draft_b1.rs`; remove once that un-gates.
+#[inline]
+fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::String {
+    if s.eql_utf8(other) {
+        return s.dupe_ref();
+    }
+    bun_string::String::clone_utf8(other)
+}
+
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path.
-/// Port of `src/jsc/ModuleLoader.zig` `transpileSourceCode`; the body needs
-/// `bun_bundler::Transpiler::parse` + `bun_js_printer` and writes a
-/// `ResolvedSource` into `*ret`.
+/// Port of `src/jsc/ModuleLoader.zig:85-826`: read file → `Transpiler::parse`
+/// → `js_printer::print` → `ResolvedSource`.
 ///
 /// # Safety
-/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param.
+/// `jsc_vm` is the live per-thread VM; `ret` is a valid out-param;
+/// `args.extra`, when non-null, points at a live [`TranspileExtra`].
 unsafe fn transpile_source_code(
-    _jsc_vm: *mut VirtualMachine,
-    _args: &TranspileArgs<'_>,
-    _ret: *mut ErrorableResolvedSource,
+    jsc_vm: *mut VirtualMachine,
+    args: &TranspileArgs<'_>,
+    ret: *mut ErrorableResolvedSource,
 ) -> bool {
-    // TODO(b2-cycle): full port — needs `vm.transpiler.parse(...)` (real in
-    // `bun_bundler::transpiler`) followed by `printer.printAst`. Gated until
-    // `Transpiler<'static>` field on `VirtualMachine` is populated and
-    // `RuntimeTranspilerStore` un-gates.
-    #[cfg(any())]
-    {
-        use bun_bundler::transpiler::Transpiler;
-        let vm = unsafe { &mut *_jsc_vm };
-        let result = vm.transpiler.parse(/* … */);
+    // ── Recover (path, loader, module_type, printer) ────────────────────────
+    // PORT NOTE: Zig took these as positional params; the §Dispatch shim packs
+    // them into `args.extra`. When null (low-tier `Bun__*` shim entry), the
+    // hook recomputes from `specifier` — that path is owned by `transpile_file`
+    // and not exercised here, so a null `extra` is a hard error.
+    let extra = args.extra.cast::<TranspileExtra>();
+    if extra.is_null() {
+        // SAFETY: per fn contract — `ret` is a valid out-param.
+        unsafe {
+            *ret = ErrorableResolvedSource::err(
+                bun_core::err!("MissingTranspileExtra"),
+                JSValue::UNDEFINED,
+            );
+        }
+        return false;
     }
-    // Contract (ModuleLoader.rs:123-126): `false` means "error written into
-    // `*ret` as `.err(...)`". Spec ModuleLoader.zig always populates `ret.*`
-    // before signalling failure; leaving it uninit lets C++ read garbage.
-    // SAFETY: per fn contract — `_ret` is a valid out-param.
-    unsafe {
-        *_ret = ErrorableResolvedSource::err(
-            bun_core::err!("TranspileNotImplemented"),
-            JSValue::UNDEFINED,
-        );
+    match transpile_source_code_inner(jsc_vm, args, extra) {
+        Ok(resolved) => {
+            // SAFETY: per fn contract.
+            unsafe { *ret = ErrorableResolvedSource::ok(resolved) };
+            // PORT NOTE: spec calls `resetArena` only on the `Bun__transpileFile`
+            // path, never inside `transpileSourceCode` itself — the
+            // `transpile_file` hook owns that. Do NOT reset here.
+            true
+        }
+        Err(e) => {
+            // PORT NOTE: spec ModuleLoader.zig — on `error.ParseError` /
+            // `error.AsyncModule` the caller (`Bun__transpileFile`) catches and
+            // routes through `processFetchLog`. Mirror that: write `.err` so the
+            // low tier surfaces it; `process_fetch_log` is invoked by the
+            // `transpile_file` hook, not here.
+            // SAFETY: per fn contract.
+            unsafe { *ret = ErrorableResolvedSource::err(e, JSValue::UNDEFINED) };
+            false
+        }
     }
-    false
 }
+
+/// Inner body of [`transpile_source_code`] — split so the `?`-on-`Result`
+/// flow matches Zig's `try`/`!ResolvedSource` shape (ModuleLoader.zig:99).
+///
+/// PORT NOTE: takes `*mut VirtualMachine` (NOT `&mut`) — the body re-enters
+/// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
+/// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
+/// the raw ptr, mirroring `auto_tick` above.
+#[allow(unused_variables, unused_mut, unreachable_code)]
+fn transpile_source_code_inner(
+    jsc_vm: *mut VirtualMachine,
+    args: &TranspileArgs<'_>,
+    extra: *mut TranspileExtra,
+) -> Result<ResolvedSource, bun_core::Error> {
+    use Loader as L;
+
+    // SAFETY: per fn contract — `extra` is a live `TranspileExtra` for the call.
+    // PORT NOTE: raw-ptr (not `&mut`) so the recursive `.wasm` arm can mutate
+    // `extra.loader` and re-enter without borrowck seeing aliased `&mut`.
+    let path: &Fs::Path = unsafe { &(*extra).path };
+    let loader: Loader = unsafe { (*extra).loader };
+    let module_type: ModuleType = unsafe { (*extra).module_type };
+
+    let disable_transpilying = args.flags.disable_transpiling();
+    let specifier = args.specifier;
+    let referrer = args.referrer;
+    let input_specifier = &args.input_specifier;
+    let global_object = args.global_object;
+
+    // ── disable_transpiling fast-path for non-JS-like loaders ───────────────
+    // Spec ModuleLoader.zig:102-112.
+    if disable_transpilying
+        && !(loader.is_java_script_like()
+            || matches!(
+                loader,
+                L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
+            ))
+    {
+        // TODO(b2-blocked): real `ResolvedSource` is a `stub_ty!` in `bun_jsc`
+        // — field-init form un-gates with `ResolvedSource.rs`.
+        #[cfg(any())]
+        {
+            return Ok(ResolvedSource {
+                source_code: bun_string::String::empty(),
+                specifier: input_specifier.dupe_ref(),
+                source_url: create_if_different(input_specifier, path.text),
+                ..Default::default()
+            });
+        }
+        return Ok(ResolvedSource::default());
+    }
+
+    match loader {
+        // ────────────────────────────────────────────────────────────────────
+        // JS-like + JSON/TOML/YAML/text/md — the parse→print path.
+        // Spec ModuleLoader.zig:115-593.
+        // ────────────────────────────────────────────────────────────────────
+        L::Js | L::Jsx | L::Ts | L::Tsx | L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5
+        | L::Text | L::Md => {
+            // TODO(b2-blocked): `js_ast::ASTMemoryAllocator::Scope` — gated in
+            // `bun_js_parser`. Spec :117-119.
+            #[cfg(any())]
+            let _ast_scope = bun_js_parser::ASTMemoryAllocator::Scope::enter();
+
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            unsafe { (*jsc_vm).transpiled_count += 1 };
+            // TODO(b2-blocked): `Transpiler::reset_store` — gated in
+            // `bun_bundler::transpiler::__phase_a_draft`. Spec :122.
+            #[cfg(any())]
+            unsafe { (*jsc_vm).transpiler.reset_store() };
+
+            let hash = bun_watcher::Watcher::get_hash(path.text);
+            // SAFETY: per fn contract.
+            let (main, main_hash) = unsafe { ((*jsc_vm).main, (*jsc_vm).main_hash) };
+            let is_main =
+                main.len() == path.text.len() && main_hash == hash && main == path.text;
+
+            // ── Arena take/give-back ────────────────────────────────────────
+            // Spec :128-165. Reuse the per-VM arena when free; allocate a
+            // fresh boxed one otherwise. `give_back_arena` is cleared on the
+            // ParseError / AsyncModule paths (which hand the arena to the
+            // async queue or leak it intentionally for the caller to inspect).
+            // SAFETY: per fn contract.
+            let mut arena: Box<bun_alloc::Arena> = unsafe {
+                (*jsc_vm).module_loader.transpile_source_code_arena.take()
+            }
+            .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+            let mut give_back_arena = true;
+            // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
+            // scopeguard so `?`-early-returns still run it.
+            let mut arena_guard = scopeguard::guard(
+                (jsc_vm, arena, give_back_arena, args.flags),
+                |(jsc_vm, mut arena, give_back, flags)| {
+                    if !give_back {
+                        // Caller (AsyncModule queue) took ownership; do nothing.
+                        // PORT NOTE: spec :161-163 destroys via `vm.allocator`;
+                        // Rust `Box` drop is the equivalent — but on the
+                        // give_back=false path the arena was already moved out
+                        // (see `core::mem::forget` at the AsyncModule site).
+                        return;
+                    }
+                    // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
+                    // on the same thread, before the hook returns).
+                    let slot = unsafe {
+                        &mut (*jsc_vm).module_loader.transpile_source_code_arena
+                    };
+                    if slot.is_none() {
+                        if flags != FetchFlags::PrintSource {
+                            // PERF(port): Zig `.retain_with_limit(8M)` — bumpalo
+                            // has only `.reset()` (free-all). Profile in Phase B.
+                            arena.reset();
+                        }
+                        *slot = Some(arena);
+                    }
+                    // else: drop the fresh Box (spec :161-163).
+                },
+            );
+            // ── Watcher fd / package_json lookup ────────────────────────────
+            // Spec :170-176.
+            // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher
+            // gated). `index_of` / `watchlist()` un-gate with `hot_reloader.rs`.
+            let mut fd: Option<bun_sys::Fd> = None;
+            #[allow(unused)]
+            let mut package_json: Option<*mut c_void> = None;
+            #[cfg(any())]
+            unsafe {
+                if let Some(index) = (*jsc_vm).bun_watcher.index_of(hash) {
+                    fd = (*jsc_vm).bun_watcher.watchlist().items_fd()[index].unwrap_valid();
+                    package_json = (*jsc_vm).bun_watcher.watchlist().items_package_json()[index];
+                }
+            }
+
+            // ── RuntimeTranspilerCache ──────────────────────────────────────
+            // Spec :178-182.
+            // TODO(b2-blocked): `RuntimeTranspilerCache` is `stub_ty!` in
+            // `bun_jsc`. Field-init un-gates with `RuntimeTranspilerCache.rs`.
+            #[cfg(any())]
+            let mut cache = bun_jsc::RuntimeTranspilerCache {
+                output_code_allocator: arena,
+                sourcemap_allocator: bun_alloc::default_allocator(),
+                esm_record_allocator: bun_alloc::default_allocator(),
+            };
+
+            // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
+            // Spec :184-199.
+            // SAFETY: per fn contract; `args.log` is a valid `*mut Log`.
+            let old_log = unsafe { (*jsc_vm).transpiler.log };
+            unsafe {
+                (*jsc_vm).transpiler.log = args.log;
+                // TODO(port): lifetime — `Resolver.log` is `&'static mut Log`
+                // (Transpiler<'static>); `args.log` is `*mut Log`. Spec aliases
+                // freely; Rust would need `Resolver.log: *mut Log` first.
+                #[cfg(any())]
+                {
+                    (*jsc_vm).transpiler.resolver.log = args.log;
+                }
+                // TODO(b2-blocked): `Linker` is a unit stub in `bun_bundler`
+                // — `.log` field un-gates with `linker.rs`.
+                #[cfg(any())]
+                {
+                    (*jsc_vm).transpiler.linker.log = args.log;
+                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                        (*pm).log = args.log;
+                    }
+                }
+            }
+            let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
+                (*jsc_vm).transpiler.log = old_log;
+                #[cfg(any())]
+                {
+                    (*jsc_vm).transpiler.resolver.log = old_log;
+                    (*jsc_vm).transpiler.linker.log = old_log;
+                    if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
+                        (*pm).log = old_log;
+                    }
+                }
+            });
+
+            // Spec :202.
+            let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
+
+            // Spec :204-207.
+            // SAFETY: per fn contract.
+            let (macro_mode, has_any_macro_remappings) =
+                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
+            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override
+            {
+                bun_resolver::package_json::MacroMap::default()
+            } else {
+                // SAFETY: per fn contract.
+                // TODO(port): `MacroMap` may not be `Clone`; spec passes by
+                // value (Zig copies the struct). If `MacroMap` is by-ref only,
+                // change `ParseOptions::macro_remappings` to `&MacroMap`.
+                unsafe { (*jsc_vm).transpiler.options.macro_remap.clone() }
+            };
+
+            // Spec :211-215.
+            let mut should_close_input_file_fd = fd.is_none();
+
+            // Spec :218-222 — only JS-like loaders get the cjs/esm wrapper hint.
+            let module_type_only_for_wrappables = match loader {
+                L::Js | L::Jsx | L::Ts | L::Tsx => module_type,
+                _ => ModuleType::Unknown,
+            };
+
+            let mut input_file_fd = bun_sys::Fd::INVALID;
+            // PORT NOTE: spec :251-256 `defer { if should_close ... close() }` —
+            // moved into the gated parse block below; `input_file_fd` is only
+            // ever written by `parse_maybe_return_file_only`.
+
+            // ── Node-fallback virtual source ────────────────────────────────
+            // Spec :258-264.
+            let mut fallback_source: bun_logger::Source;
+            let mut virtual_source = args.virtual_source;
+            if is_node_override {
+                if let Some(code) = node_fallbacks::contents_from_path(specifier) {
+                    // TODO(port): lifetime — `Fs::Path::init` wants `'static`;
+                    // `specifier` is `&'a [u8]`. Spec stores the `Path` in a
+                    // stack `logger::Source`, so the borrow is sound for the
+                    // call. Un-gate once `Fs::Path<'a>` lands.
+                    #[cfg(any())]
+                    {
+                        let fallback_path = Fs::Path::init_with_namespace(specifier, b"node");
+                        fallback_source = bun_logger::Source {
+                            path: fallback_path,
+                            contents: code,
+                            ..Default::default()
+                        };
+                        virtual_source = Some(&fallback_source);
+                    }
+                    let _ = code;
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════════
+            // Transpiler::parse — the read-file step happens inside
+            // `parse_maybe_return_file_only` (it opens `path` itself when
+            // `virtual_source` is `None`). Spec :225-297.
+            //
+            // TODO(b2-blocked): `bun_bundler::transpiler::{ParseOptions,
+            // ParseResult, Transpiler::parse_maybe_return_file_only,
+            // print_with_source_map}` are gated behind `__phase_a_draft`. The
+            // entire parse→print arm below is preserved verbatim and un-gates
+            // as a unit once that module compiles.
+            // ════════════════════════════════════════════════════════════════
+            #[cfg(any())]
+            {
+                use bun_bundler::analyze_transpiled_module;
+                use bun_bundler::transpiler::{ParseOptions, ParseResult, AlreadyBundled};
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                use bun_jsc::RuntimeTranspilerCache;
+
+                let set_breakpoint_on_first_line = is_main
+                    && unsafe { (*jsc_vm).debugger.is_some() }
+                    // TODO(b2-cycle): `Debugger::set_breakpoint_on_first_line` +
+                    // `runtime_transpiler_store::set_break_point_on_first_line`.
+                    && false;
+
+                let arena: &mut bun_alloc::Arena = &mut arena_guard.1;
+                let _fd_guard = scopeguard::guard((), |()| {
+                    if should_close_input_file_fd && input_file_fd != bun_sys::Fd::INVALID {
+                        input_file_fd.close();
+                    }
+                });
+                let parse_options = ParseOptions {
+                    allocator: arena,
+                    path: path.clone(),
+                    loader,
+                    dirname_fd: bun_sys::Fd::INVALID,
+                    file_descriptor: fd,
+                    file_fd_ptr: Some(&mut input_file_fd),
+                    file_hash: Some(hash),
+                    macro_remappings,
+                    jsx: unsafe { (*jsc_vm).transpiler.options.jsx.clone() },
+                    emit_decorator_metadata: unsafe {
+                        (*jsc_vm).transpiler.options.emit_decorator_metadata
+                    },
+                    experimental_decorators: unsafe {
+                        (*jsc_vm).transpiler.options.experimental_decorators
+                    },
+                    virtual_source,
+                    dont_bundle_twice: true,
+                    allow_commonjs: true,
+                    module_type: module_type_only_for_wrappables,
+                    inject_jest_globals: unsafe {
+                        (*jsc_vm).transpiler.options.rewrite_jest_for_tests
+                    },
+                    keep_json_and_toml_as_one_statement: true,
+                    allow_bytecode_cache: true,
+                    set_breakpoint_on_first_line,
+                    runtime_transpiler_cache: if !disable_transpilying
+                        && !RuntimeTranspilerCache::is_disabled()
+                    {
+                        Some(&mut cache)
+                    } else {
+                        None
+                    },
+                    remove_cjs_module_wrapper: is_main
+                        && unsafe { (*jsc_vm).module_loader.eval_source.is_some() },
+                    macro_js_ctx: core::ptr::null_mut(),
+                    replace_exports: Default::default(),
+                };
+
+                // PORT NOTE: spec uses `comptime switch (disable_transpilying or loader == .json)`
+                // to monomorphize; Rust dispatches at runtime (PERF(port): const-generic
+                // specialization once `parse_maybe_return_file_only` is callable).
+                let return_file_only = disable_transpilying || loader == L::Json;
+                let parse_result: Option<ParseResult<'_>> = if return_file_only {
+                    unsafe {
+                        (*jsc_vm)
+                            .transpiler
+                            .parse_maybe_return_file_only::<true>(parse_options, None)
+                    }
+                } else {
+                    unsafe {
+                        (*jsc_vm)
+                            .transpiler
+                            .parse_maybe_return_file_only::<false>(parse_options, None)
+                    }
+                };
+
+                let Some(mut parse_result) = parse_result else {
+                    // Spec :273-295 — register with watcher even on parse failure.
+                    if !disable_transpilying {
+                        maybe_watch_file(
+                            jsc_vm,
+                            &mut should_close_input_file_fd,
+                            input_file_fd,
+                            is_node_override,
+                            path,
+                            hash,
+                            loader,
+                            package_json,
+                        );
+                    }
+                    arena_guard.2 = false; // give_back_arena = false
+                    return Err(bun_core::err!("ParseError"));
+                };
+
+                // Spec :301-317 — `.wasm` discovered post-parse: recurse with
+                // the parsed source as virtual.
+                if parse_result.loader == L::Wasm {
+                    unsafe {
+                        (*extra).loader = L::Wasm;
+                        (*extra).module_type = ModuleType::Unknown;
+                    }
+                    // PORT NOTE: reshaped — spec passes `&parse_result.source`
+                    // as `virtual_source`; we re-enter via the hook with a
+                    // patched `TranspileArgs`. Gated until `TranspileArgs` can
+                    // borrow `parse_result.source` without lifetime gymnastics.
+                    return transpile_source_code_inner(
+                        jsc_vm,
+                        &TranspileArgs {
+                            virtual_source: Some(&parse_result.source),
+                            ..*args
+                        },
+                        extra,
+                    );
+                }
+
+                // Spec :319-336 — register with watcher on success too.
+                if !disable_transpilying {
+                    maybe_watch_file(
+                        jsc_vm,
+                        &mut should_close_input_file_fd,
+                        input_file_fd,
+                        is_node_override,
+                        path,
+                        hash,
+                        loader,
+                        package_json,
+                    );
+                }
+
+                // Spec :338-341.
+                if unsafe { (*(*jsc_vm).transpiler.log).errors > 0 } {
+                    arena_guard.2 = false;
+                    return Err(bun_core::err!("ParseError"));
+                }
+
+                let source = &parse_result.source;
+
+                // Spec :343-351 — raw JSON: hand the source bytes straight to JSC.
+                if loader == L::Json {
+                    return Ok(ResolvedSource {
+                        source_code: bun_string::String::clone_utf8(source.contents),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        tag: ResolvedSourceTag::JsonForObjectLoader,
+                        ..Default::default()
+                    });
+                }
+
+                // Spec :353-364 — disable_transpiling: return raw source.
+                if disable_transpilying {
+                    let source_code = match args.flags {
+                        FetchFlags::PrintSourceAndClone => {
+                            bun_string::String::clone_utf8(source.contents)
+                        }
+                        FetchFlags::PrintSource => {
+                            bun_string::String::borrow_utf8(source.contents)
+                        }
+                        FetchFlags::Transpile => unreachable!(),
+                    };
+                    return Ok(ResolvedSource {
+                        source_code,
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        ..Default::default()
+                    });
+                }
+
+                // Spec :366-384 — JSON/TOML/YAML/JSON5: export as a JS object.
+                if matches!(loader, L::Json | L::Jsonc | L::Toml | L::Yaml | L::Json5) {
+                    let jsvalue_for_export = if parse_result.empty {
+                        JSValue::create_empty_object(unsafe { &*(*jsc_vm).global }, 0)
+                    } else {
+                        // TODO(b2-blocked): `Expr::to_js` — gated in `bun_js_parser`.
+                        parse_result.ast.parts.at(0).stmts[0]
+                            .data
+                            .s_expr
+                            .value
+                            .to_js(arena, unsafe { &*(*jsc_vm).global })?
+                    };
+                    return Ok(ResolvedSource {
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportsObject,
+                        ..Default::default()
+                    });
+                }
+
+                // Spec :386-398 — already-bundled (bytecode cache hit).
+                if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
+                    let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+                    return Ok(ResolvedSource {
+                        source_code: bun_string::String::clone_latin1(source.contents),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        already_bundled: true,
+                        bytecode_cache: if bytecode_slice.is_empty() {
+                            core::ptr::null_mut()
+                        } else {
+                            bytecode_slice.as_ptr().cast_mut()
+                        },
+                        bytecode_cache_size: bytecode_slice.len(),
+                        is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                        ..Default::default()
+                    });
+                }
+
+                // Spec :400-415 — empty .cjs/.cts: synthetic `(function(){})`.
+                if parse_result.empty && matches!(loader, L::Js | L::Ts) {
+                    let ext = bun_paths::extension(source.path.text);
+                    if ext == b".cjs" || ext == b".cts" {
+                        return Ok(ResolvedSource {
+                            source_code: bun_string::String::static_(b"(function(){})"),
+                            specifier: input_specifier.dupe_ref(),
+                            source_url: create_if_different(input_specifier, path.text),
+                            is_commonjs_module: true,
+                            tag: ResolvedSourceTag::Javascript,
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                // Spec :417-466 — RuntimeTranspilerCache hit: skip print.
+                if let Some(entry) = cache.entry.as_mut() {
+                    // TODO(b2-blocked): `SavedSourceMap::put_mappings` +
+                    // `ModuleInfoDeserialized::create_from_cached_record`.
+                    let source_code = match &mut entry.output_code {
+                        bun_jsc::runtime_transpiler_cache::OutputCode::String(s) => s.dupe_ref(),
+                        bun_jsc::runtime_transpiler_cache::OutputCode::Utf8(utf8) => {
+                            let r = bun_string::String::clone_utf8(utf8);
+                            // PORT NOTE: spec frees via `cache.output_code_allocator`;
+                            // arena-backed in Rust, so just clear the slice.
+                            *utf8 = b"";
+                            r
+                        }
+                    };
+                    return Ok(ResolvedSource {
+                        source_code,
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        is_commonjs_module: entry.metadata.module_type == ModuleType::Cjs,
+                        // TODO(b2-blocked): `module_info` + `tag` package_json probe (:448-464).
+                        tag: ResolvedSourceTag::Javascript,
+                        ..Default::default()
+                    });
+                }
+
+                // Spec :468-479 — link import records.
+                let start_count = unsafe { (*jsc_vm).transpiler.linker.import_counter };
+                unsafe {
+                    (*jsc_vm).transpiler.linker.link(
+                        path,
+                        &mut parse_result,
+                        (*jsc_vm).origin,
+                        bun_bundler::linker::ImportPathFormat::AbsolutePath,
+                        false,
+                        true,
+                    )?;
+                }
+
+                // Spec :481-510 — pending imports → AsyncModule queue.
+                if parse_result.pending_imports.len() > 0 {
+                    if unsafe { (*extra).promise_ptr.is_null() } {
+                        return Err(bun_core::err!("UnexpectedPendingResolution"));
+                    }
+                    // TODO(b2-blocked): `vm.modules.enqueue` — `AsyncModule::Queue`
+                    // gated. Hands `arena` ownership to the queue.
+                    arena_guard.2 = false;
+                    return Err(bun_core::err!("AsyncModule"));
+                }
+
+                if !macro_mode {
+                    unsafe {
+                        (*jsc_vm).resolved_count +=
+                            (*jsc_vm).transpiler.linker.import_counter - start_count;
+                    }
+                }
+                unsafe { (*jsc_vm).transpiler.linker.import_counter = 0 };
+
+                // Spec :516-523.
+                let is_commonjs_module = parse_result.ast.has_commonjs_export_names
+                    || parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
+                // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                let module_info: Option<*mut c_void> = None;
+
+                // ── js_printer::print ───────────────────────────────────────
+                // Spec :525-539.
+                // SAFETY: `extra.source_code_printer` is non-null per `TranspileExtra`
+                // contract.
+                let printer: &mut bun_js_printer::BufferPrinter =
+                    unsafe { &mut *(*extra).source_code_printer };
+                printer.ctx.reset();
+                {
+                    let mapper = unsafe { (*jsc_vm).source_map_handler(printer) };
+                    unsafe {
+                        (*jsc_vm)
+                            .transpiler
+                            .print_with_source_map::<_, { bun_js_printer::Format::EsmAscii }>(
+                                parse_result,
+                                printer,
+                                mapper,
+                                None,
+                            )?;
+                    }
+                }
+
+                if is_main {
+                    unsafe { (*jsc_vm).has_loaded = true };
+                }
+
+                // Spec :553-558 — watcher path uses ref-counted source.
+                if unsafe { (*jsc_vm).is_watcher_enabled() } {
+                    // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
+                }
+
+                // Spec :561-592 — final ResolvedSource.
+                let tag = match loader {
+                    L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
+                    L::Js | L::Jsx | L::Ts | L::Tsx => {
+                        let mt = package_json
+                            .and_then(|pj| unsafe { (*pj).module_type })
+                            .unwrap_or(module_type);
+                        match mt {
+                            ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
+                            ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
+                            ModuleType::Unknown => ResolvedSourceTag::Javascript,
+                        }
+                    }
+                    _ => ResolvedSourceTag::Javascript,
+                };
+
+                let written = printer.ctx.get_written();
+                let source_code = cache
+                    .output_code
+                    .take()
+                    .unwrap_or_else(|| bun_string::String::clone_latin1(written));
+                if written.len() > 1024 * 1024 * 2 || unsafe { (*jsc_vm).smol } {
+                    // PERF(port): spec deinits the printer buffer; Rust drops on
+                    // next `reset()`. TODO(port): expose `BufferWriter::deinit`.
+                }
+
+                return Ok(ResolvedSource {
+                    source_code,
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    is_commonjs_module,
+                    module_info: module_info.unwrap_or(core::ptr::null_mut()),
+                    tag,
+                    ..Default::default()
+                });
+            }
+
+            // Un-gated fallthrough: until `__phase_a_draft` compiles, signal
+            // ParseError so the caller routes through `process_fetch_log`.
+            let _ = (
+                macro_remappings,
+                module_type_only_for_wrappables,
+                virtual_source,
+                hash,
+                is_main,
+                fd,
+                input_file_fd,
+                should_close_input_file_fd,
+            );
+            arena_guard.2 = false;
+            Err(bun_core::err!("ParseError"))
+        }
+
+        // Spec :595 — `provideFetch()` should be called.
+        L::Napi => unreachable!("napi modules go through provideFetch()"),
+
+        // ────────────────────────────────────────────────────────────────────
+        // .wasm — Spec :636-676.
+        // ────────────────────────────────────────────────────────────────────
+        L::Wasm => {
+            // SAFETY: per fn contract.
+            let main = unsafe { (*jsc_vm).main };
+            if referrer == b"undefined" && main == path.text {
+                // TODO(b2-blocked): `globalThis.wasmSourceBytes` put +
+                // `@embedFile("../js/wasi-runner.js")` — needs `ArrayBuffer::create`
+                // and a Rust `include_bytes!` of the wasi runner. Spec :638-658.
+                #[cfg(any())]
+                {
+                    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                    return Ok(ResolvedSource {
+                        source_code: bun_string::String::static_(include_bytes!(
+                            "../js/wasi-runner.js"
+                        )),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        tag: ResolvedSourceTag::Esm,
+                        ..Default::default()
+                    });
+                }
+            }
+            // Spec :661-675 — recurse as `.file`.
+            // SAFETY: per fn contract — `extra` is live for the call.
+            unsafe {
+                (*extra).loader = L::File;
+                (*extra).module_type = ModuleType::Unknown;
+            }
+            transpile_source_code_inner(jsc_vm, args, extra)
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // .sqlite / .sqlite_embedded — Spec :678-718.
+        // ────────────────────────────────────────────────────────────────────
+        L::Sqlite | L::SqliteEmbedded => {
+            // SAFETY: per fn contract.
+            let hot = unsafe { (*jsc_vm).hot_reload } != 0;
+            // TODO(b2-cycle): `hot_reload` is `cli::Command::HotReload` enum
+            // (gated as `u8`); `!= 0` is a placeholder for `== .hot`.
+            let sqlite_module_source_code_string: &'static [u8] = if hot {
+                SQLITE_MODULE_SOURCE_HOT
+            } else {
+                SQLITE_MODULE_SOURCE
+            };
+            #[cfg(any())]
+            {
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                return Ok(ResolvedSource {
+                    source_code: bun_string::String::clone_utf8(
+                        sqlite_module_source_code_string,
+                    ),
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::Esm,
+                    ..Default::default()
+                });
+            }
+            let _ = sqlite_module_source_code_string;
+            Ok(ResolvedSource::default())
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // .html — Spec :720-743.
+        // ────────────────────────────────────────────────────────────────────
+        L::Html => {
+            if disable_transpilying {
+                #[cfg(any())]
+                {
+                    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                    return Ok(ResolvedSource {
+                        source_code: bun_string::String::empty(),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        tag: ResolvedSourceTag::Esm,
+                        ..Default::default()
+                    });
+                }
+                return Ok(ResolvedSource::default());
+            }
+            if global_object.is_null() {
+                return Err(bun_core::err!("NotSupported"));
+            }
+            // TODO(b2-cycle): `jsc::API::HTMLBundle::init` — gated in
+            // `bun_runtime::api`. Spec :735-742.
+            Err(bun_core::err!("NotSupported"))
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // Everything else — Spec :745-825 (file loader: `export default <path>`).
+        // ────────────────────────────────────────────────────────────────────
+        _ => {
+            if disable_transpilying {
+                #[cfg(any())]
+                {
+                    use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                    return Ok(ResolvedSource {
+                        source_code: bun_string::String::empty(),
+                        specifier: input_specifier.dupe_ref(),
+                        source_url: create_if_different(input_specifier, path.text),
+                        tag: ResolvedSourceTag::Esm,
+                        ..Default::default()
+                    });
+                }
+                return Ok(ResolvedSource::default());
+            }
+
+            // Spec :756-803 — auto-watch for non-virtual absolute paths.
+            // TODO(b2-cycle): `vm.bun_watcher.addFile` — ImportWatcher gated.
+
+            // Spec :805-823 — `export default <path string>`.
+            // TODO(b2-blocked): `bun_string::String::create_utf8_for_js` is a
+            // tier-6 (jsc) ctor not yet exposed; `JSValue` is `stub_ty!`.
+            #[cfg(any())]
+            {
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                let value = if !unsafe { (*jsc_vm).origin.is_empty() } {
+                    // TODO(b2-cycle): `api::Bun::get_public_path` — gated.
+                    bun_string::String::create_utf8_for_js(
+                        unsafe { &*global_object },
+                        path.text,
+                    )?
+                } else {
+                    bun_string::String::create_utf8_for_js(
+                        unsafe { &*global_object },
+                        path.text,
+                    )?
+                };
+                return Ok(ResolvedSource {
+                    jsvalue_for_export: value,
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::ExportDefaultObject,
+                    ..Default::default()
+                });
+            }
+            Ok(ResolvedSource::default())
+        }
+    }
+}
+
+/// Spec ModuleLoader.zig:273-291 / :319-336 — register the just-opened file
+/// with the dev-server watcher (if enabled, absolute, and not in
+/// `node_modules`). Factored out because the spec inlines it twice.
+#[cfg(any())] // TODO(b2-cycle): un-gate with `ImportWatcher` (`hot_reloader.rs`).
+#[inline]
+fn maybe_watch_file(
+    jsc_vm: *mut VirtualMachine,
+    should_close_input_file_fd: &mut bool,
+    input_file_fd: bun_sys::Fd,
+    is_node_override: bool,
+    path: &Fs::Path,
+    hash: u32,
+    loader: Loader,
+    package_json: Option<*mut c_void>,
+) {
+    if !unsafe { (*jsc_vm).is_watcher_enabled() } {
+        return;
+    }
+    if !input_file_fd.is_valid() {
+        return;
+    }
+    if is_node_override
+        || !bun_paths::is_absolute(path.text)
+        || bun_string::strings::contains(path.text, b"node_modules")
+    {
+        return;
+    }
+    *should_close_input_file_fd = false;
+    let _ = unsafe {
+        (*jsc_vm).bun_watcher.add_file(
+            input_file_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            package_json,
+            true,
+        )
+    };
+}
+
+// Spec ModuleLoader.zig:681-708 — generated `bun:sqlite` import shims.
+const SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
+// Generated code
+import {Database} from 'bun:sqlite';
+const {path} = import.meta;
+
+// Don't reload the database if it's already loaded
+const registry = (globalThis[Symbol.for(\"bun:sqlite:hot\")] ??= new Map());
+
+export let db = registry.get(path);
+export const __esModule = true;
+if (!db) {
+   // Load the database
+   db = new Database(path);
+   registry.set(path, db);
+}
+
+export default db;
+";
+
+const SQLITE_MODULE_SOURCE: &[u8] = b"\
+// Generated code
+import {Database} from 'bun:sqlite';
+export const db = new Database(import.meta.path);
+
+export const __esModule = true;
+export default db;
+";
 
 /// `ModuleLoader.zig` `jsSyntheticModule(tag, specifier)` — produce a
 /// `ResolvedSource` whose `tag` indexes into the C++ `InternalModuleRegistry`
@@ -646,7 +1501,9 @@ pub fn install_jsc_hooks() {
 //               src/jsc/ModuleLoader.zig transpileSourceCode/fetchBuiltinModule
 //   confidence: low — vtable wiring + Timer::All/ServerEntryPoint real;
 //               fetch_builtin_module HardcodedModule lookup real;
-//               transpile bodies + uws Loop polling gated.
+//               transpile_source_code body ported (arena mgmt / loader
+//               dispatch / log-swap real, parse→print arm gated on
+//               bun_bundler::transpiler::__phase_a_draft + ResolvedSource.rs).
 //   todos:      see TODO(b2-cycle) markers — uws::Loop surface,
 //               HiveAllocator, Debugger, RuntimeTranspilerStore,
 //               ResolvedSource #[repr(C)] ctor + resolved_source_tag::Tag,

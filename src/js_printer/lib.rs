@@ -1050,27 +1050,36 @@ pub struct SourceMapHandler<'a> {
     _marker: core::marker::PhantomData<&'a mut ()>,
 }
 
+/// PORTING.md §Dispatch — manual vtable. Zig's `For(comptime Type, handler)` monomorphized
+/// a typed callback into an erased thunk at comptime. Rust cannot bake a *runtime* fn pointer
+/// into a captureless `fn(*mut (), ..)` thunk, so the handler is moved to a trait method and
+/// the thunk is monomorphized over `T: OnSourceMapChunk` instead.
+pub trait OnSourceMapChunk {
+    fn on_source_map_chunk(&mut self, chunk: SourceMap::Chunk, source: &logger::Source) -> Result<(), bun_core::Error>;
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub fn on_source_map_chunk(&self, chunk: SourceMap::Chunk, source: &logger::Source) -> Result<(), bun_core::Error> {
         (self.callback)(self.ctx.as_ptr(), chunk, source)
     }
 
-    pub fn for_<T>(
-        ctx: &'a mut T,
-        handler: fn(&mut T, SourceMap::Chunk, &logger::Source) -> Result<(), bun_core::Error>,
-    ) -> SourceMapHandler<'a> {
-        // TODO(port): Zig used a comptime fn-type generator (`For`) to monomorphize
-        // the typed `handler` into the erased `callback`. Rust cannot bake a runtime
-        // `fn(&mut T, ..)` into a captureless `fn(*mut (), ..)` thunk without either
-        // (a) const-generic fn pointers or (b) widening the struct to carry the typed
-        // pointer. Until one of those lands, fail loudly rather than silently dropping
-        // source-map chunks (PORTING.md: "Flagging is better than wrong code").
-        let _ = handler;
+    pub fn for_<T: OnSourceMapChunk>(ctx: &'a mut T) -> SourceMapHandler<'a> {
+        // Monomorphized erased thunk: cast `*mut ()` back to `*mut T` and forward to the trait.
+        fn thunk<T: OnSourceMapChunk>(
+            p: *mut (),
+            chunk: SourceMap::Chunk,
+            source: &logger::Source,
+        ) -> Result<(), bun_core::Error> {
+            // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
+            // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
+            // valid, exclusive `*mut T` for as long as the handler exists.
+            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
+        }
         SourceMapHandler {
             // SAFETY: `ctx` is a live `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
             ctx: unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) },
-            callback: |_, _, _| unreachable!("TODO(port): SourceMapHandler thunk not wired"),
+            callback: thunk::<T>,
             _marker: core::marker::PhantomData,
         }
     }
@@ -1260,25 +1269,30 @@ impl Default for RequireOrImportMetaCallback {
     }
 }
 
+/// PORTING.md §Dispatch — manual vtable. Zig's `init(comptime Context, ctx, callback)`
+/// `@ptrCast`-erased the typed callback at comptime. Rust monomorphizes the erased thunk
+/// over `T: RequireOrImportMetaSource` instead, so `callback` stays a captureless `fn`.
+pub trait RequireOrImportMetaSource {
+    fn require_or_import_meta_for_source(&mut self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta;
+}
+
 impl RequireOrImportMetaCallback {
     pub fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
-    pub fn init<T>(
-        ctx: &mut T,
-        callback: fn(&mut T, u32, bool) -> RequireOrImportMeta,
-    ) -> Self {
-        // TODO(port): Zig monomorphized `callback` at comptime via @ptrCast. Rust cannot
-        // bake a runtime `fn(&mut T, ..)` into a captureless `fn(*mut (), ..)` thunk; until
-        // the struct is widened to carry the typed pointer (or const-generic fn ptrs land),
-        // fail loudly instead of returning all-Ref::NONE wrapper refs for every source.
-        let _ = callback;
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+        fn thunk<T: RequireOrImportMetaSource>(p: *mut (), id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
+            // `ctx` outlives this `RequireOrImportMetaCallback` (same contract as the Zig
+            // `*anyopaque` erasure), so the cast-back deref is valid and exclusive.
+            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+        }
         Self {
             // SAFETY: `ctx` is `&mut T` so the pointer is non-null; type-erased to `*mut ()`
             // and cast back to `*mut T` inside the thunk before dereference.
             ctx: Some(unsafe { NonNull::new_unchecked(ctx as *mut T as *mut ()) }),
-            callback: |_, _, _| unreachable!("TODO(port): RequireOrImportMeta thunk not wired"),
+            callback: thunk::<T>,
         }
     }
 }
@@ -6527,7 +6541,11 @@ impl DirectWriter {
 
 pub struct BufferWriter {
     pub buffer: MutableString,
-    pub written: Box<[u8]>,
+    /// Watermark into `buffer.list` set by `done()`. Zig stored `written: []u8` aliasing
+    /// `buffer`; Rust can't keep a self-borrowing slice in a field, so store the length and
+    /// reslice on read (`written()` / `written_without_trailing_zero()`). Avoids the O(n)
+    /// `to_vec().into_boxed_slice()` copy the previous port did on every `done()`.
+    pub written_len: usize,
     pub sentinel: &'static bun_core::ZStr, // TODO(port): lifetime — Zig stored a sentinel slice into `buffer`
     pub append_null_byte: bool,
     pub append_newline: bool,
@@ -6544,10 +6562,13 @@ impl BufferWriter {
 
     pub fn get_written(&self) -> &[u8] { self.buffer.list.as_slice() }
 
+    /// Slice set by `done()` — zero-cost reslice of `buffer` (matches Zig's `ctx.written`).
+    pub fn written(&self) -> &[u8] { &self.buffer.list[..self.written_len] }
+
     pub fn init() -> BufferWriter {
         BufferWriter {
             buffer: MutableString::init_empty(),
-            written: Box::default(),
+            written_len: 0,
             sentinel: bun_core::ZStr::EMPTY,
             append_null_byte: false,
             append_newline: false,
@@ -6620,11 +6641,11 @@ impl BufferWriter {
     pub fn reset(&mut self) {
         self.buffer.reset();
         self.approximate_newline_count = 0;
-        self.written = Box::default();
+        self.written_len = 0;
     }
 
     pub fn written_without_trailing_zero(&self) -> &[u8] {
-        let mut written = &self.written[..];
+        let mut written = &self.buffer.list[..self.written_len];
         while !written.is_empty() && written[written.len() - 1] == 0 {
             written = &written[..written.len() - 1];
         }
@@ -6639,9 +6660,9 @@ impl BufferWriter {
 
         if self.append_null_byte {
             // TODO(port): self.sentinel = self.buffer.slice_with_sentinel() — borrows buffer
-            self.written = self.buffer.slice().to_vec().into_boxed_slice(); // TODO(port): avoid copy; Zig aliased
+            self.written_len = self.buffer.list.len();
         } else {
-            self.written = self.buffer.slice().to_vec().into_boxed_slice(); // TODO(port): avoid copy
+            self.written_len = self.buffer.list.len();
         }
         Ok(())
     }

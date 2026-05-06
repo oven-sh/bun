@@ -223,8 +223,11 @@ pub trait CryptoJobCtx: Sized {
     fn deinit(&mut self);
 }
 
+// PORT NOTE: `Ctx: CryptoJobCtx` bound lives on the `impl` blocks, not the
+// struct, so the `Job`/`ScryptJob` type aliases below type-check while the
+// trait impls themselves remain gated.
 #[repr(C)]
-pub struct CryptoJob<Ctx: CryptoJobCtx> {
+pub struct CryptoJob<Ctx> {
     vm: &'static VirtualMachine,
     task: WorkPoolTask,
     any_task: jsc::AnyTask,

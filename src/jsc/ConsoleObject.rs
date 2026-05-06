@@ -1374,10 +1374,34 @@ pub use formatter::{Formatter, Tag, TagPayload};
 pub mod formatter {
     use super::*;
 
+    /// Mirror Zig's `defer this.field = prev;` without holding a live borrow
+    /// on `self` for the body of the scope. Zig `defer` reads at scope-exit
+    /// time and never aliases, so we capture a raw `*mut` to the field and
+    /// write through it on drop. This lets the body freely take `&mut self`.
+    macro_rules! defer_restore {
+        ($place:expr, $prev:expr) => {{
+            let __p: *mut _ = core::ptr::addr_of_mut!($place);
+            let __prev = $prev;
+            scopeguard::guard((), move |_| unsafe { *__p = __prev; })
+        }};
+    }
+
+    /// Mirror Zig's `defer this.field -|= 1;` without holding a live borrow.
+    macro_rules! defer_decrement {
+        ($place:expr) => {{
+            let __p: *mut _ = core::ptr::addr_of_mut!($place);
+            scopeguard::guard((), move |_| unsafe { *__p = (*__p).saturating_sub(1); })
+        }};
+    }
+
     pub struct Formatter<'a> {
         pub global_this: &'a JSGlobalObject,
 
-        pub remaining_values: &'a [JSValue],
+        /// Raw pointer because callers seat this to a stack slice and reset it
+        /// to `&[]` before the backing storage goes away (mirrors the Zig
+        /// `defer self.formatter.remaining_values = &.{}` pattern). A `&'a`
+        /// slice cannot express that without forcing `'a` to outlive locals.
+        pub remaining_values: *const [JSValue],
         pub map: visited::Map,
         pub map_node: Option<Box<visited::PoolNode>>,
         pub hide_native: bool,
@@ -1431,12 +1455,58 @@ pub mod formatter {
         }
 
         /// Zig copies `Formatter` by value (`var f = this.value_formatter;`).
-        // TODO(port): verify which fields need to alias vs copy in Phase B.
+        /// In Rust `Formatter` has a `Drop` impl and owns `map`/`map_node`,
+        /// so a bit-copy via `ptr::read` would double-free. The Zig copy
+        /// only ever ships scalar config — `map`/`map_node` are always empty
+        /// on the source at the call sites — so we copy those fields
+        /// explicitly and leave `map`/`map_node` fresh on the clone.
         pub(super) fn shallow_clone(&self) -> Self {
-            // SAFETY: all fields are POD or `Copy` except `map`/`map_node`; the
-            // Zig code intentionally bit-copies them and re-seats `map_node`
-            // before drop.
-            unsafe { core::ptr::read(self) }
+            debug_assert!(
+                self.map_node.is_none() && self.map.is_empty(),
+                "shallow_clone source must not own a visited map"
+            );
+            Self {
+                global_this: self.global_this,
+                remaining_values: self.remaining_values,
+                map: visited::Map::default(),
+                map_node: None,
+                hide_native: self.hide_native,
+                indent: self.indent,
+                depth: self.depth,
+                max_depth: self.max_depth,
+                quote_strings: self.quote_strings,
+                quote_keys: self.quote_keys,
+                failed: self.failed,
+                estimated_line_length: self.estimated_line_length,
+                always_newline_scope: self.always_newline_scope,
+                single_line: self.single_line,
+                ordered_properties: self.ordered_properties,
+                custom_formatted_object: self.custom_formatted_object,
+                disable_inspect_custom: self.disable_inspect_custom,
+                stack_check: self.stack_check,
+                can_throw_stack_overflow: self.can_throw_stack_overflow,
+                error_display_level: self.error_display_level,
+                format_buffer_as_text: self.format_buffer_as_text,
+            }
+        }
+
+        /// View the queued `%`-format arguments as a slice.
+        ///
+        /// SAFETY: callers always seat `remaining_values` to a slice that
+        /// outlives the dereference site and reset it to `&[]` before the
+        /// backing storage is released.
+        #[inline]
+        pub fn remaining(&self) -> &[JSValue] {
+            unsafe { &*self.remaining_values }
+        }
+
+        /// Drop the first queued `%`-format argument.
+        #[inline]
+        pub fn advance_remaining(&mut self) {
+            unsafe {
+                let s = &*self.remaining_values;
+                self.remaining_values = &s[1..];
+            }
         }
     }
 

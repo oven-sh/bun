@@ -751,6 +751,101 @@ impl Length {
     }
 }
 
+// ─── protocol-trait impls for the calc lattice ────────────────────────────
+// These wire `LengthValue`/`Angle` into `DimensionPercentage<D>`'s bound set
+// (`protocol::{Zero,MulF32,TryAdd,TrySign,TryMap,TryOp,PartialCmp,Parse,
+// ToCss,IsCompatible}`). All forward to the inherent methods above; once
+// `crate::generics::parse_tocss_numeric_gated` un-gates these collapse into
+// blanket impls there.
+impl protocol::Zero for LengthValue {
+    #[inline] fn zero() -> Self { LengthValue::zero() }
+    #[inline] fn is_zero(&self) -> bool { LengthValue::is_zero(self) }
+}
+impl protocol::MulF32 for LengthValue {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { LengthValue::mul_f32(self, rhs) }
+}
+impl protocol::TryAdd for LengthValue {
+    #[inline] fn try_add(&self, rhs: &Self) -> Option<Self> { LengthValue::try_add(self, rhs) }
+}
+impl protocol::TryFromAngle for LengthValue {
+    #[inline] fn try_from_angle(_: Angle) -> Option<Self> { None }
+}
+impl protocol::TrySign for LengthValue {
+    #[inline] fn try_sign(&self) -> Option<f32> { LengthValue::try_sign(self) }
+}
+impl protocol::TryMap for LengthValue {
+    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map_value(f)) }
+}
+impl protocol::TryOp for LengthValue {
+    #[inline]
+    fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+        LengthValue::try_op(self, rhs, |a, b| f(ctx, a, b))
+    }
+}
+impl<R> protocol::TryOpTo<R> for LengthValue {
+    #[inline]
+    fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+        LengthValue::try_op_to(self, rhs, |a, b| f(ctx, a, b))
+    }
+}
+impl protocol::PartialCmp for LengthValue {
+    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { LengthValue::partial_cmp(self, rhs) }
+}
+impl protocol::Parse for LengthValue {
+    #[inline] fn parse(input: &mut Parser) -> CssResult<Self> { LengthValue::parse(input) }
+}
+impl protocol::ToCss for LengthValue {
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { LengthValue::to_css(self, dest) }
+}
+impl protocol::IsCompatible for LengthValue {
+    #[inline] fn is_compatible(&self, browsers: Browsers) -> bool { LengthValue::is_compatible(self, browsers) }
+}
+
+// Angle protocol impls (needed for `DimensionPercentage<Angle>` = AnglePercentage).
+impl protocol::Zero for Angle {
+    #[inline] fn zero() -> Self { Angle::zero() }
+    #[inline] fn is_zero(&self) -> bool { Angle::is_zero(self) }
+}
+impl protocol::MulF32 for Angle {
+    #[inline] fn mul_f32(self, rhs: f32) -> Self { Angle::mul_f32(self, rhs) }
+}
+impl protocol::TryAdd for Angle {
+    #[inline] fn try_add(&self, rhs: &Self) -> Option<Self> { Angle::try_add(self, rhs) }
+}
+impl protocol::TryFromAngle for Angle {
+    #[inline] fn try_from_angle(a: Angle) -> Option<Self> { Some(a) }
+}
+impl protocol::TrySign for Angle {
+    #[inline] fn try_sign(&self) -> Option<f32> { Angle::try_sign(self) }
+}
+impl protocol::TryMap for Angle {
+    #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map(f)) }
+}
+impl protocol::TryOp for Angle {
+    #[inline]
+    fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
+        Some(self.op(rhs, |a, b| f(ctx, a, b)))
+    }
+}
+impl<R> protocol::TryOpTo<R> for Angle {
+    #[inline]
+    fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
+        Some(self.op_to(rhs, |a, b| f(ctx, a, b)))
+    }
+}
+impl protocol::PartialCmp for Angle {
+    #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { Angle::partial_cmp(self, rhs) }
+}
+impl protocol::Parse for Angle {
+    #[inline] fn parse(input: &mut Parser) -> CssResult<Self> { Angle::parse(input) }
+}
+impl protocol::ToCss for Angle {
+    #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { Angle::to_css(self, dest) }
+}
+impl protocol::IsCompatible for Angle {
+    #[inline] fn is_compatible(&self, _: Browsers) -> bool { true }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/css/values/length.zig (797 lines)

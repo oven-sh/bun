@@ -353,6 +353,21 @@ throughput.
 
 Never write these. The verify gate flags them as `logic-bug`.
 
+- **Re-implementing C/C++ library code in Rust.** We port **Zig**, not C++.
+  If the `.zig` calls into WTF, JSC, BoringSSL, simdutf, highway, mimalloc,
+  libarchive, lol-html, c-ares, lsquic, libuv, picohttp, ICU, libdeflate,
+  zlib, brotli, zstd, tinycc, etc. — those `.a`/`.o` files are linked into
+  the binary. Declare `extern "C" { fn X(...) }` (often already in a `*_sys`
+  crate) and call it. Never hand-roll a Rust equivalent. Never add a
+  crates.io dep (`chrono`, `ring`, `sha2`, …) to replace something the
+  linked C/C++ already provides. Find the C signature with
+  `grep -rn '<symbol>' src/jsc/bindings/ vendor/`.
+  **Exception:** if the Zig calls a *pure-Zig* stdlib function (e.g.
+  `std.hash.Wyhash`, `std.hash.XxHash64`, `std.crypto.pwhash.argon2`) with
+  no C backing, **prefer a well-tested crates.io dep** (`twox-hash`,
+  `argon2`, `bcrypt`, `adler`, etc.) over hand-porting the algorithm —
+  hand-ported bit-twiddling is a bug magnet. Only hand-port if no crate
+  matches the exact algorithm variant (e.g. `Wyhash11` is Bun-specific).
 - **`Box::leak` / `mem::forget`** to satisfy a `&'static` lifetime — the field
   should be `Box<[T]>` / `Vec<T>` / `Cow<'static, [T]>`, not `&'static [T]`.
   If the Zig freed it (via arena or `deinit`), Rust must too.

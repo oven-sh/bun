@@ -108,27 +108,30 @@ mod tests {
     /// Mirrors the `RapidHash.hash` test in `src/bun_core/deprecated.zig`.
     #[test]
     fn vectors() {
-        const BYTES: [u8; 100] = {
-            let mut a = [0u8; 100];
-            let mut i = 0u8;
-            while i < 100 {
-                a[i as usize] = i;
-                i += 1;
-            }
-            a
-        };
-        const SIZES: [u64; 7] = [0, 3, 4, 16, 24, 32, 100];
-        const OUTPUTS: [u64; 7] = [
-            0x93228a4de0eec5a2,
-            0x0dc3b86978ecf01a,
-            0x1ddcfedbee9b69bb,
-            0x0e6ea0ae36208ae5,
-            0xf1a934408a826e6c,
-            0xf5246e93237ffaf7,
-            0x806e54bee5e034ee,
+        // "abcdefgh" ** 128
+        let mut bytes = [0u8; 1024];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = b"abcdefgh"[i % 8];
+        }
+
+        const SIZES: [u64; 13] = [0, 1, 2, 3, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+        const OUTCOMES: [u64; 13] = [
+            0x5a6ef77074ebc84b,
+            0xc11328477bc0f5d1,
+            0x5644ac035e40d569,
+            0x347080fbf5fcd81,
+            0x56b66b8dc802bcc,
+            0xb6bf9055973aac7c,
+            0xed56d62eead1e402,
+            0xc19072d767da8ffb,
+            0x89bb40a9928a4f0d,
+            0xe0af7c5e7b6e29fd,
+            0x9a3ed35fbedfa11a,
+            0x4c684b2119ca19fb,
+            0x4b575f5bf25600d6,
         ];
-        for (s, o) in SIZES.iter().zip(OUTPUTS.iter()) {
-            assert_eq!(RapidHash::hash(RapidHash::RAPID_SEED, &BYTES[..*s as usize]), *o);
+        for (s, e) in SIZES.iter().zip(OUTCOMES.iter()) {
+            assert_eq!(RapidHash::hash(RapidHash::RAPID_SEED, &bytes[..*s as usize]), *e, "size={s}");
         }
     }
 }

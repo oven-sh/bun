@@ -1,7 +1,8 @@
-use crate as css;
-use crate::css_values::length::LengthPercentage;
-use crate::css_values::percentage::Percentage;
-use crate::{PrintErr, Printer, Result as CssResult};
+use crate::css_parser as css;
+use crate::css_parser::{CssResult, EnumProperty, PrintErr, Printer};
+use crate::values::length::LengthPercentage;
+use crate::values::percentage::{DimensionPercentage, Percentage};
+use crate::values::protocol;
 use bun_alloc::Arena;
 
 /// A CSS `<position>` value,
@@ -17,12 +18,12 @@ pub struct Position {
 impl Position {
     pub fn parse(input: &mut css::Parser) -> CssResult<Position> {
         // Try parsing a horizontal position first
-        if let Some(horizontal_pos) = input.try_parse(HorizontalPosition::parse).as_value() {
+        if let Some(horizontal_pos) = input.try_parse(HorizontalPosition::parse).ok() {
             match horizontal_pos {
                 PositionComponent::Center => {
                     // Try parsing a vertical position next
-                    if let Some(y) = input.try_parse(VerticalPosition::parse).as_value() {
-                        return CssResult::Ok(Position {
+                    if let Some(y) = input.try_parse(VerticalPosition::parse).ok() {
+                        return Ok(Position {
                             x: PositionComponent::Center,
                             y,
                         });
@@ -34,33 +35,33 @@ impl Position {
                         .try_parse(HorizontalPosition::parse)
                         .unwrap_or(HorizontalPosition::Center);
                     let y = VerticalPosition::Center;
-                    return CssResult::Ok(Position { x, y });
+                    return Ok(Position { x, y });
                 }
                 PositionComponent::Length(x) => {
                     // If we got a length as the first component, then the second must
                     // be a keyword or length (not a side offset).
                     if let Some(y_keyword) =
-                        input.try_parse(VerticalPositionKeyword::parse).as_value()
+                        input.try_parse(VerticalPositionKeyword::parse).ok()
                     {
                         let y = VerticalPosition::Side(PositionComponentSide {
                             side: y_keyword,
                             offset: None,
                         });
-                        return CssResult::Ok(Position {
+                        return Ok(Position {
                             x: PositionComponent::Length(x),
                             y,
                         });
                     }
-                    if let Some(y_lp) = input.try_parse(LengthPercentage::parse).as_value() {
+                    if let Some(y_lp) = input.try_parse(LengthPercentage::parse).ok() {
                         let y = VerticalPosition::Length(y_lp);
-                        return CssResult::Ok(Position {
+                        return Ok(Position {
                             x: PositionComponent::Length(x),
                             y,
                         });
                     }
                     let y = VerticalPosition::Center;
-                    let _ = input.try_parse(|i| i.expect_ident_matching("center"));
-                    return CssResult::Ok(Position {
+                    let _ = input.try_parse(|i| i.expect_ident_matching(b"center"));
+                    return Ok(Position {
                         x: PositionComponent::Length(x),
                         y,
                     });
@@ -72,7 +73,7 @@ impl Position {
                     // If we got a horizontal side keyword (and optional offset), expect another for the vertical side.
                     // e.g. `left center` or `left 20px center`
                     if input
-                        .try_parse(|i| i.expect_ident_matching("center"))
+                        .try_parse(|i| i.expect_ident_matching(b"center"))
                         .is_ok()
                     {
                         let x = HorizontalPosition::Side(PositionComponentSide {
@@ -80,16 +81,16 @@ impl Position {
                             offset: lp,
                         });
                         let y = VerticalPosition::Center;
-                        return CssResult::Ok(Position { x, y });
+                        return Ok(Position { x, y });
                     }
 
                     // e.g. `left top`, `left top 20px`, `left 20px top`, or `left 20px top 20px`
                     if let Some(y_keyword) =
-                        input.try_parse(VerticalPositionKeyword::parse).as_value()
+                        input.try_parse(VerticalPositionKeyword::parse).ok()
                     {
                         let y_lp = match input.try_parse(LengthPercentage::parse) {
-                            CssResult::Ok(vv) => Some(vv),
-                            CssResult::Err(_) => None,
+                            Ok(vv) => Some(vv),
+                            Err(_) => None,
                         };
                         let x = HorizontalPosition::Side(PositionComponentSide {
                             side: x_keyword,
@@ -99,7 +100,7 @@ impl Position {
                             side: y_keyword,
                             offset: y_lp,
                         });
-                        return CssResult::Ok(Position { x, y });
+                        return Ok(Position { x, y });
                     }
 
                     // If we didn't get a vertical side keyword (e.g. `left 20px`), then apply the offset to the vertical side.
@@ -112,43 +113,41 @@ impl Position {
                     } else {
                         VerticalPosition::Center
                     };
-                    return CssResult::Ok(Position { x, y });
+                    return Ok(Position { x, y });
                 }
             }
         }
 
         // If the horizontal position didn't parse, then it must be out of order. Try vertical position keyword.
         let y_keyword = match VerticalPositionKeyword::parse(input) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         };
         let lp_and_x_pos = input.try_parse(
             |i: &mut css::Parser| -> CssResult<(Option<LengthPercentage>, HorizontalPosition)> {
-                let y_lp = i.try_parse(LengthPercentage::parse).as_value();
-                if let Some(x_keyword) = i.try_parse(HorizontalPositionKeyword::parse).as_value() {
-                    let x_lp = i.try_parse(LengthPercentage::parse).as_value();
+                let y_lp = i.try_parse(LengthPercentage::parse).ok();
+                if let Some(x_keyword) = i.try_parse(HorizontalPositionKeyword::parse).ok() {
+                    let x_lp = i.try_parse(LengthPercentage::parse).ok();
                     let x_pos = HorizontalPosition::Side(PositionComponentSide {
                         side: x_keyword,
                         offset: x_lp,
                     });
-                    return CssResult::Ok((y_lp, x_pos));
+                    return Ok((y_lp, x_pos));
                 }
-                if let Some(e) = i.expect_ident_matching("center").as_err() {
-                    return CssResult::Err(e);
-                }
+                i.expect_ident_matching(b"center")?;
                 let x_pos = HorizontalPosition::Center;
-                CssResult::Ok((y_lp, x_pos))
+                Ok((y_lp, x_pos))
             },
         );
 
-        if let Some(tuple) = lp_and_x_pos.as_value() {
+        if let Ok(tuple) = lp_and_x_pos {
             let y_lp = tuple.0;
             let x = tuple.1;
             let y = VerticalPosition::Side(PositionComponentSide {
                 side: y_keyword,
                 offset: y_lp,
             });
-            return CssResult::Ok(Position { x, y });
+            return Ok(Position { x, y });
         }
 
         let x = HorizontalPosition::Center;
@@ -156,7 +155,7 @@ impl Position {
             side: y_keyword,
             offset: None,
         });
-        CssResult::Ok(Position { x, y })
+        Ok(Position { x, y })
     }
 
     pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
@@ -216,7 +215,7 @@ impl Position {
         }
 
         let zero = LengthPercentage::zero();
-        let fifty = LengthPercentage::Percentage(Percentage { v: 0.5 });
+        let fifty = DimensionPercentage::Percentage(Percentage { v: 0.5 });
         let x_len: Option<&LengthPercentage> = 'x_len: {
             match &self.x {
                 PositionComponent::Side(side) => {
@@ -298,17 +297,17 @@ impl Position {
         self.x.is_zero() && self.y.is_zero()
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
         // TODO(port): css::implement_deep_clone is comptime-reflection; relies on Clone/arena semantics in Phase B
-        css::implement_deep_clone(self, allocator)
+        self.clone()
     }
 }
 
 impl Default for Position {
     fn default() -> Self {
         Position {
-            x: HorizontalPosition::Length(LengthPercentage::Percentage(Percentage { v: 0.0 })),
-            y: VerticalPosition::Length(LengthPercentage::Percentage(Percentage { v: 0.0 })),
+            x: HorizontalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),
+            y: VerticalPosition::Length(DimensionPercentage::Percentage(Percentage { v: 0.0 })),
         }
     }
 }
@@ -322,10 +321,10 @@ pub struct PositionComponentSide<S> {
     pub offset: Option<LengthPercentage>,
 }
 
-impl<S: PartialEq> PositionComponentSide<S> {
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+impl<S: Clone + PartialEq> PositionComponentSide<S> {
+    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
         // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
-        css::implement_deep_clone(self, allocator)
+        self.clone()
     }
 
     pub fn eql(&self, other: &Self) -> bool {
@@ -344,9 +343,10 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-// TODO(port): trait names `css::Parse`/`css::ToCss` are best-guess — confirm against the css crate's
-// actual trait names in Phase B (Zig used duck-typed `S.parse`/`S.toCss`).
-impl<S: css::Parse + css::ToCss + PartialEq> PositionComponent<S> {
+// PORT NOTE: Zig used duck-typed `S.parse`/`S.toCss`; Rust bounds on the
+// values-local `protocol::{Parse,ToCss}` shapes until `generics::Parse`
+// un-gates.
+impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
     pub fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
             if l.is_zero() {
@@ -356,9 +356,9 @@ impl<S: css::Parse + css::ToCss + PartialEq> PositionComponent<S> {
         false
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, _allocator: &Arena) -> Self {
         // TODO(port): implement_deep_clone is comptime reflection — replace with arena-aware DeepClone trait/derive in Phase B
-        css::implement_deep_clone(self, allocator)
+        self.clone()
     }
 
     pub fn eql(&self, other: &Self) -> bool {
@@ -367,22 +367,22 @@ impl<S: css::Parse + css::ToCss + PartialEq> PositionComponent<S> {
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if input
-            .try_parse(|i: &mut css::Parser| i.expect_ident_matching("center"))
+            .try_parse(|i: &mut css::Parser| i.expect_ident_matching(b"center"))
             .is_ok()
         {
-            return CssResult::Ok(PositionComponent::Center);
+            return Ok(PositionComponent::Center);
         }
 
-        if let Some(lp) = input.try_parse(LengthPercentage::parse).as_value() {
-            return CssResult::Ok(PositionComponent::Length(lp));
+        if let Some(lp) = input.try_parse(LengthPercentage::parse).ok() {
+            return Ok(PositionComponent::Length(lp));
         }
 
         let side = match S::parse(input) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
+            Ok(vv) => vv,
+            Err(e) => return Err(e),
         };
-        let offset = input.try_parse(LengthPercentage::parse).as_value();
-        CssResult::Ok(PositionComponent::Side(PositionComponentSide {
+        let offset = input.try_parse(LengthPercentage::parse).ok();
+        Ok(PositionComponent::Side(PositionComponentSide {
             side,
             offset,
         }))
@@ -413,7 +413,7 @@ impl<S: css::Parse + css::ToCss + PartialEq> PositionComponent<S> {
         match self {
             PositionComponent::Center => return true,
             PositionComponent::Length(l) => {
-                if let LengthPercentage::Percentage(p) = l {
+                if let DimensionPercentage::Percentage(p) = l {
                     return p.v == 0.5;
                 }
             }
@@ -422,6 +422,33 @@ impl<S: css::Parse + css::ToCss + PartialEq> PositionComponent<S> {
         false
     }
 }
+
+// `enum_property_util::parse` requires `EnumProperty`; provide for both side
+// keywords (case-insensitive matching mirrors Zig `comptimeEnumMap`).
+macro_rules! impl_position_keyword {
+    ($T:ident { $($lit:literal => $V:ident),* $(,)? }) => {
+        impl EnumProperty for $T {
+            fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+                $(
+                    if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, $lit) {
+                        return Some($T::$V);
+                    }
+                )*
+                None
+            }
+        }
+        impl protocol::Parse for $T {
+            #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { $T::parse(input) }
+        }
+        impl protocol::ToCss for $T {
+            #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+                $T::to_css(self, dest)
+            }
+        }
+    };
+}
+impl_position_keyword!(HorizontalPositionKeyword { b"left" => Left, b"right" => Right });
+impl_position_keyword!(VerticalPositionKeyword { b"top" => Top, b"bottom" => Bottom });
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum HorizontalPositionKeyword {
@@ -441,7 +468,7 @@ impl HorizontalPositionKeyword {
         *self == *other
     }
 
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 
@@ -457,7 +484,7 @@ impl HorizontalPositionKeyword {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
             HorizontalPositionKeyword::Right => {
-                LengthPercentage::Percentage(Percentage { v: 1.0 })
+                DimensionPercentage::Percentage(Percentage { v: 1.0 })
             }
         }
     }
@@ -481,7 +508,7 @@ impl VerticalPositionKeyword {
         *self == *other
     }
 
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 
@@ -497,7 +524,7 @@ impl VerticalPositionKeyword {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),
             VerticalPositionKeyword::Bottom => {
-                LengthPercentage::Percentage(Percentage { v: 1.0 })
+                DimensionPercentage::Percentage(Percentage { v: 1.0 })
             }
         }
     }

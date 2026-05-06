@@ -1,12 +1,9 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, PrintErr, Printer};
 use crate::values::angle::Angle;
-#[cfg(any())] // blocked_on: values/length.rs un-gate
 use crate::values::length::{Length, LengthValue};
 use crate::values::number::{CSSNumber, CSSNumberFns};
-#[cfg(any())] // blocked_on: DimensionPercentage<D> generic impl block
-use crate::values::percentage::DimensionPercentage;
-use crate::values::percentage::Percentage;
+use crate::values::percentage::{DimensionPercentage, Percentage};
 use crate::values::time::Time;
 
 use core::cmp::Ordering;
@@ -777,7 +774,6 @@ impl<V: CalcValue> Calc<V> {
         // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
         // incompleteness; no behaviour stub is added because a partial
         // dimension matcher would mis-reduce mixed-unit lengths.
-        #[cfg(any())] // blocked_on: values/length.rs un-gate
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
             return Ok(v);
         }
@@ -1641,7 +1637,6 @@ impl CalcValue for Time {
     #[inline] fn eql(&self, other: &Self) -> bool { Time::eql(self, other) }
 }
 
-#[cfg(any())] // blocked_on: values/length.rs un-gate
 impl CalcValue for Length {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { Length::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { Length::add_internal(self, rhs) }
@@ -1668,7 +1663,6 @@ impl CalcValue for Length {
     #[inline] fn eql(&self, other: &Self) -> bool { self == other }
 }
 
-#[cfg(any())] // blocked_on: values/length.rs + DimensionPercentage<D> impl block
 impl CalcValue for DimensionPercentage<LengthValue> {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }
@@ -1699,7 +1693,6 @@ impl CalcValue for DimensionPercentage<LengthValue> {
     #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
 }
 
-#[cfg(any())] // blocked_on: DimensionPercentage<D> impl block (parse/to_css/try_* bounds)
 impl CalcValue for DimensionPercentage<Angle> {
     #[inline] fn mul_f32(self, rhs: f32) -> Self { DimensionPercentage::mul_f32(self, rhs) }
     #[inline] fn add_internal(self, rhs: Self) -> Self { DimensionPercentage::add_internal(self, rhs) }

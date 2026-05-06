@@ -1,7 +1,8 @@
 use crate::css_parser as css;
-use crate::css_parser::{Parser, Printer, PrintErr, Result};
-use crate::css_values::length::LengthPercentage;
-use crate::css_values::number::CSSNumberFns;
+use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
+use crate::values::length::LengthPercentage;
+use crate::values::number::CSSNumberFns;
+use crate::values::protocol::{IsCompatible, Parse, ToCss};
 use crate::targets::Browsers;
 use bun_alloc::Arena;
 
@@ -18,61 +19,75 @@ pub struct Size2D<T> {
 // `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql` traits as other CSS value
 // types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
 // therefore collapsed into trait method calls below.
-// TODO(port): confirm trait names (`css::Parse`, `css::ToCss`, `css::Eql`, `css::IsCompatible`, `css::DeepClone`) match Phase-B crate API.
+// TODO(port): confirm trait names match Phase-B crate API once `generics::
+// parse_tocss_numeric_gated` un-gates; for now bound on `values::protocol`.
 impl<T> Size2D<T>
 where
-    T: css::Parse + css::ToCss + css::Eql + css::IsCompatible + css::DeepClone + Clone,
+    T: Clone + PartialEq,
 {
-    fn parse_val(input: &mut Parser) -> Result<T> {
+    fn parse_val(input: &mut Parser) -> Result<T>
+    where
+        T: Parse,
+    {
         // PORT NOTE: f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
         // else → T::parse — all unified under the `Parse` trait in Rust.
         T::parse(input)
     }
 
-    pub fn parse(input: &mut Parser) -> Result<Size2D<T>> {
-        let first = match Self::parse_val(input) {
-            Result::Ok(vv) => vv,
-            Result::Err(e) => return Result::Err(e),
-        };
-        let second = input.try_parse(Self::parse_val).unwrap_or(first.clone());
-        Result::Ok(Size2D { a: first, b: second })
+    pub fn parse(input: &mut Parser) -> Result<Size2D<T>>
+    where
+        T: Parse,
+    {
+        let first = Self::parse_val(input)?;
+        let second = input.try_parse(Self::parse_val).unwrap_or_else(|_| first.clone());
+        Ok(Size2D { a: first, b: second })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    where
+        T: ToCss,
+    {
         Self::val_to_css(&self.a, dest)?;
         if !Self::val_eql(&self.b, &self.a) {
-            dest.write_str(" ")?;
+            dest.write_str(b" ")?;
             Self::val_to_css(&self.b, dest)?;
         }
         Ok(())
     }
 
-    pub fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn val_to_css(val: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    where
+        T: ToCss,
+    {
         // PORT NOTE: f32 → CSSNumberFns::to_css, else → val.to_css — unified under `ToCss` trait.
         val.to_css(dest)
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: Browsers) -> bool
+    where
+        T: IsCompatible,
+    {
         self.a.is_compatible(browsers) && self.b.is_compatible(browsers)
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
         // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
-        // replace with #[derive(DeepClone)] or hand-written field-wise deep_clone in Phase B.
-        css::implement_deep_clone(self, bump)
+        // replace with #[derive(DeepClone)] or arena-aware deep_clone in Phase B.
+        // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
+        Size2D { a: self.a.clone(), b: self.b.clone() }
     }
 
     #[inline]
     pub fn val_eql(lhs: &T, rhs: &T) -> bool {
-        // PORT NOTE: f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under `Eql` trait.
-        lhs.eql(rhs)
+        // PORT NOTE: f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
+        lhs == rhs
     }
 
     #[inline]
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
         // PORT NOTE: preserved verbatim from Zig — compares lhs.a against rhs.b only
         // (not a/a && b/b). Suspect upstream bug, but ported faithfully.
-        lhs.a.eql(&rhs.b)
+        lhs.a == rhs.b
     }
 }
 

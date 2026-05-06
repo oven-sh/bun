@@ -85,6 +85,16 @@ pub const USE_MIMALLOC: bool = true;
 
 // Stub types so re-exports / downstream `use` resolve.
 pub struct AllocationScope;
+impl AllocationScope {
+    /// Zig: `AllocationScope.allocator()` — returns the tracking allocator
+    /// vtable. Stub form: with the global-allocator model there is no per-scope
+    /// vtable to hand back, so this degenerates to `default_allocator()`. The
+    /// full debug tracker lives in `allocation_scope::AllocationScopeIn::allocator`.
+    #[inline]
+    pub fn allocator(&self) -> &dyn Allocator {
+        crate::default_allocator()
+    }
+}
 pub struct AllocationScopeIn;
 pub struct NullableAllocator;
 pub struct LinuxMemFdAllocator;

@@ -1804,13 +1804,15 @@ impl AsyncReaddirRecursiveTask {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.root_fd == FD::INVALID); // should already have closed it
-        if let Some(err) = &mut this_ref.pending_err { err.deinit(); }
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        this_ref.r#ref.unref(unsafe { &*this_ref.global_object }.bun_vm());
+        // Zig `err.deinit()` — `bun_sys::Error` frees on Drop; nothing to do.
+        let _ = this_ref.pending_err.take();
+        // Zig passed `bunVM()`; Rust `KeepAlive::unref` takes the type-erased
+        // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
+        this_ref.r#ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         this_ref.args.deinit();
         // TODO(port): free root_path slice
         this_ref.clear_result_list();
-        this_ref.promise.deinit();
+        // Zig `promise.deinit()` — `JSPromiseStrong` releases on Drop (via Box::from_raw below).
         // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }

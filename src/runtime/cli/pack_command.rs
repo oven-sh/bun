@@ -80,14 +80,16 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_logger::Sourc
 
 // `PackageManager` stub-field accessors - real fields gated behind
 // `bun_install::package_manager_real` (`#![cfg(any())]` reconciler-6).
+#[allow(clippy::mut_from_ref)]
 #[inline]
-fn pm_log(_m: &mut PackageManager) -> &mut bun_logger::Log {
+fn pm_log<'a>(_m: *const PackageManager) -> &'a mut bun_logger::Log {
     todo!("blocked_on: bun_install::PackageManager::log")
 }
+#[allow(clippy::mut_from_ref)]
 #[inline]
-fn pm_workspace_cache(
-    _m: &mut PackageManager,
-) -> &mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
+fn pm_workspace_cache<'a>(
+    _m: *const PackageManager,
+) -> &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
     todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache")
 }
 #[inline]

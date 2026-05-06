@@ -508,7 +508,11 @@ impl HTMLRewriterLoader {
         }
         if DEINIT {
             // PERF(port): was comptime monomorphization — profile in Phase B
-            bytes.deinit();
+            drop(bytes);
+        } else {
+            // Borrowed `Temporary` payload — leak the BabyList header so Drop
+            // doesn't free caller-owned bytes.
+            core::mem::forget(bytes);
         }
         None
     }
@@ -516,28 +520,28 @@ impl HTMLRewriterLoader {
     pub fn write(&mut self, data: StreamResult) -> streams::Writable {
         match data {
             StreamResult::Owned(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
+                let len = bytes.len as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::Owned(len)
             }
             StreamResult::OwnedAndDone(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
+                let len = bytes.len as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::OwnedAndDone(len)
             }
             StreamResult::TemporaryAndDone(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
+                let len = bytes.len as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }
                 Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
+                let len = bytes.len as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
                     return Writable::Err(err);
                 }

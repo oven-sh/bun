@@ -723,13 +723,10 @@ impl UpgradeCommand {
 
             let version_name = version.name().unwrap();
 
-            let save_dir_ = match filesystem.tmpdir() {
+            let save_dir_: sys::Dir = match filesystem.tmpdir() {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to open temporary directory: {}",
-                        err.name()
-                    ));
+                    Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
                     Global::exit(1);
                 }
             };
@@ -737,25 +734,21 @@ impl UpgradeCommand {
             let save_dir_it = match save_dir_.make_open_path(&version_name, Default::default()) {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::err_generic(format_args!(
-                        "Failed to open temporary directory: {}",
-                        err.name()
-                    ));
+                    Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
                     Global::exit(1);
                 }
             };
-            let save_dir = save_dir_it;
+            let save_dir: sys::Dir = save_dir_it;
 
             // PORT NOTE: reshaped for borrowck — use a stack-local PathBuffer instead of thread_local
             let mut tmpdir_path_buf = PathBuffer::uninit();
-            let tmpdir_path = match sys::Fd::from_std_dir(&save_dir).get_fd_path(&mut tmpdir_path_buf)
-            {
+            let tmpdir_path = match sys::get_fd_path(save_dir.fd(), &mut tmpdir_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
-                    Output::err_generic(format_args!(
+                    Output::err_generic(
                         "Failed to read temporary directory: {}",
-                        err.name()
-                    ));
+                        (bstr::BStr::new(err.name()),),
+                    );
                     Global::exit(1);
                 }
             };
@@ -764,9 +757,10 @@ impl UpgradeCommand {
             tmpdir_path_buf[tmpdir_path_len] = 0;
             // SAFETY: buf[tmpdir_path_len] == 0 written above
             let tmpdir_z = unsafe { ZStr::from_raw(tmpdir_path_buf.as_ptr(), tmpdir_path_len) };
-            let _ = sys::chdir(b"", tmpdir_z);
+            let _ = sys::chdir(tmpdir_z);
 
-            let tmpname = b"bun.zip";
+            // SAFETY: literal ends with NUL.
+            let tmpname: &ZStr = unsafe { ZStr::from_raw(b"bun.zip\0".as_ptr(), 7) };
             let exe: &[u8] = if use_profile {
                 Self::PROFILE_EXE_SUBPATH.as_bytes()
             } else {

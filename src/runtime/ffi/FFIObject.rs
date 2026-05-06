@@ -55,6 +55,7 @@ fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
 /// upstream `JSValue::create_buffer` hard-codes `MarkedArrayBuffer_deallocator`,
 /// which would free FFI-owned memory. This variant passes the caller's
 /// (possibly null) deallocator through.
+#[allow(deprecated)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,

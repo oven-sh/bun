@@ -23,6 +23,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
+use bun_string::immutable::Appender as _;
+use bun_bundler::RuntimeTranspilerCacheExt as _;
+
 use bun_jsc::module_loader::{
     FetchBuiltinResult, FetchFlags, LoaderHooks, ModuleLoader, TranspileArgs, TranspileExtra,
 };
@@ -194,7 +197,7 @@ unsafe fn init_runtime_state(
                 // channel, so log + leave the field zeroed (validity-UB on
                 // first read — same failure mode as before this hook existed).
                 // TODO(b2): widen `init_runtime_state` return to `Result<_, Error>`.
-                bun_core::Output::err("Transpiler", format_args!("init failed: {e:?}"));
+                bun_core::Output::err("Transpiler", "{}", format_args!("init failed: {e:?}"));
             }
         }
     }
@@ -299,7 +302,8 @@ unsafe fn load_preloads(
     if unsafe { (*vm).transpiler.fs.is_null() } {
         bun_core::Output::err(
             "preload",
-            format_args!("transpiler not initialized; ignoring --preload"),
+            "transpiler not initialized; ignoring --preload",
+            (),
         );
         return Ok(ptr::null_mut());
     }
@@ -512,7 +516,7 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     if let Err(e) =
         bun_jsc::debugger::Debugger::create(unsafe { &mut *vm }, unsafe { &*global })
     {
-        bun_core::Output::err("Debugger", format_args!("create failed: {e:?}"));
+        bun_core::Output::err("Debugger", "{}", format_args!("create failed: {e:?}"));
         return;
     }
     if block_until_connected {

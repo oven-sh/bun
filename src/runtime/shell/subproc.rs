@@ -153,6 +153,24 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
+impl bun_process::ProcessExitOwner for ShellSubprocess {
+    unsafe fn on_process_exit_dyn(
+        this: *mut Self,
+        process: *mut Process,
+        status: bun_process::Status,
+        rusage: &Rusage,
+    ) {
+        let _ = (process, rusage);
+        // SAFETY: `this` was registered via `set_exit_handler` and outlives the
+        // Process (it holds the Arc).
+        // PORT NOTE: shell::Subprocess::on_process_exit currently takes
+        // `bun_spawn::Status`; until those crates' Status types are unified,
+        // re-dispatch is left to the inherent method via a manual conversion.
+        let _ = status;
+        todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
+    }
+}
+
 impl ShellSubprocess {
     pub const DEFAULT_MAX_BUFFER_SIZE: u32 = DEFAULT_MAX_BUFFER_SIZE;
 

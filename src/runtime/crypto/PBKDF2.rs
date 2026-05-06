@@ -83,7 +83,13 @@ impl PBKDF2 {
         true
     }
 
-    // Plain `deinit` (free owned StringOrBuffer fields) is handled by `Drop` on `StringOrBuffer`.
+    /// Plain `deinit` — free owned `StringOrBuffer` fields. Idempotent (fields replaced
+    /// with empty sentinels) so a subsequent `Drop` is a no-op.
+    pub fn deinit(&mut self) {
+        core::mem::take(&mut self.password).deinit();
+        core::mem::take(&mut self.salt).deinit();
+    }
+
     // `deinit_and_unprotect` is kept as an explicit method because async callers must additionally
     // unprotect JS-rooted buffers. The fields are moved out and replaced with empty sentinels so
     // that the subsequent `Drop` of `PBKDF2` (which still runs after this — e.g. via the

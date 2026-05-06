@@ -1361,15 +1361,13 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(loaders) = config.get_own_object(global_this, "loader")? {
-                let mut loader_iter = jsc::JSPropertyIterator::init(
-                    global_this,
-                    loaders,
-                    jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: true,
-                        include_value: true,
-                    },
-                )?;
+            if let Some(loaders) = get_own_object(config, global_this, "loader")? {
+                const LOADER_OPTS: jsc::JSPropertyIteratorOptions =
+                    jsc::JSPropertyIteratorOptions::new(true, true);
+                // SAFETY: `get_own_object` only returns non-null live JSObject*.
+                let loaders_ref = unsafe { &*loaders };
+                let mut loader_iter =
+                    jsc::JSPropertyIterator::<LOADER_OPTS>::init(global_this, loaders_ref)?;
 
                 // `loader_iter.i` is the property position, not a dense index of yielded
                 // entries. With `skip_empty_name = true` (or a skipped property getter),

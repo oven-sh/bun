@@ -1016,22 +1016,23 @@ impl<'a, Ctx: RequestCtx> PreparedRequestFor<'a, Ctx> {
     /// to until the bundle is actually ready.
     pub fn save(
         self,
-        global: &JSGlobalObject,
-        req: &mut Ctx::Req,
-        resp: &mut Ctx::Resp,
+        _global: &JSGlobalObject,
+        _req: &mut Ctx::Req,
+        _resp: &mut Ctx::Resp,
     ) -> SavedRequest<'a> {
         // TODO(port): if Ctx::IS_H3 { compile_error!("PreparedRequest.save is HTTP/1-only") }
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        self.ctx.to_async(req, self.request_object);
-
-        SavedRequest {
-            js_request: Strong::create(self.js_request, global),
-            request: self.request_object,
-            ctx: AnyRequestContext::init(self.ctx),
-            response: uws::AnyResponse::init(resp),
-        }
+        //
+        // PORT NOTE: `to_async` is an inherent method on the concrete
+        // `NewRequestContext<..>` monomorphizations, not exposed via the
+        // `RequestCtx` trait yet; likewise `AnyRequestContext::init` is
+        // bounded by `CtxKind` (only implemented for the six concrete ctx
+        // aliases) and `AnyResponse::init` only accepts the three concrete
+        // `*mut Response<_>` types. The generic `Ctx` here erases those, so
+        // this body is deferred until the trait surface is widened.
+        todo!("blocked_on: bun_runtime::server::request_context::RequestContext::to_async (generic dispatch)")
     }
 }
 

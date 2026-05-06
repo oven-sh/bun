@@ -1121,7 +1121,7 @@ impl BunxCommand {
             "installing package: {}",
             bun_core::fmt::fmt_slice(argv_to_use, " "),
         );
-        this_transpiler.env.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true").expect("oom");
+        env_loader.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true").expect("oom");
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
@@ -1143,10 +1143,11 @@ impl BunxCommand {
             ..Default::default()
         }) {
             Err(err) => {
-                Output::pretty_errorln(
+                Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
-                    format_args!("{} {}", BStr::new(&install_param), err.name()),
-                );
+                    BStr::new(&install_param),
+                    err.name(),
+                ));
                 // TODO(port): @errorName(err) → err.name()
                 Global::exit(1);
             }

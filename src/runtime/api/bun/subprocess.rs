@@ -1528,9 +1528,11 @@ pub mod testing_apis {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let [subprocess_value, kind_value] = callframe.arguments_as_array::<2>();
-        let Some(subprocess) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw("first argument must be a Subprocess", &[]));
+        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
+            return Err(global_this.throw("first argument must be a Subprocess"));
         };
+        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
+        let subprocess = unsafe { &mut *subprocess_ptr };
         let kind_str = kind_value.to_bun_string(global_this)?;
         // defer kind_str.deref() — bun_str::String Drop handles deref.
 
@@ -1539,7 +1541,7 @@ pub mod testing_apis {
         } else if kind_str.eql_comptime(b"stderr") {
             &mut subprocess.stderr
         } else {
-            return Err(global_this.throw("second argument must be 'stdout' or 'stderr'", &[]));
+            return Err(global_this.throw("second argument must be 'stdout' or 'stderr'"));
         };
 
         let Readable::Pipe(pipe) = out else {
@@ -1548,7 +1550,7 @@ pub mod testing_apis {
 
         // Mirror what the real error path does (onStreamRead on Windows,
         // read() on Posix) so the teardown exercised is identical.
-        let fake_err = bun_sys::Error::from_code(bun_sys::Errno::BADF, bun_sys::Tag::read);
+        let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
         #[cfg(windows)]
         {
             let _ = pipe.reader.stop_reading();

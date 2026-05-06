@@ -1702,14 +1702,17 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let _guard = scopeguard::guard((), |_| CronJob::release_pending_ref(this));
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
-    let vm = this_ref.global.bun_vm();
+    // SAFETY: `bun_vm()` returns the per-thread singleton.
+    let vm = unsafe { &mut *this_ref.global.bun_vm() };
     let err = args[0];
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this_ref.this_value.try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
     }
-    vm.unhandled_rejection(vm.global, err, promise_value);
+    // SAFETY: `vm.global` is live for the per-thread VM.
+    let global_ref = unsafe { &*vm.global };
+    vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
     Ok(JSValue::UNDEFINED)
 }

@@ -1282,7 +1282,7 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, e.to_error_instance(global));
+                let _ = outer.reject(global, Ok(e.to_js(global)));
             }
         }
     }

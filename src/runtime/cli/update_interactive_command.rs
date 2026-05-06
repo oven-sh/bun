@@ -1534,62 +1534,11 @@ fn update_default_catalog(
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Get or create the catalog object
-    // First check if catalog is under workspaces.catalog
-    let mut catalog_obj = 'brk: {
-        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-            if let bun_js_parser::ast::ExprData::EObject(_) = &workspaces_query.expr.data {
-                if let Some(catalog_query) = workspaces_query.expr.as_property(b"catalog") {
-                    if let bun_js_parser::ast::ExprData::EObject(obj) = &catalog_query.expr.data {
-                        break 'brk obj.clone();
-                    }
-                }
-            }
-        }
-        // Fallback to root-level catalog
-        if let Some(catalog_query) = package_json.as_property(b"catalog") {
-            if let bun_js_parser::ast::ExprData::EObject(obj) = &catalog_query.expr.data {
-                break 'brk obj.clone();
-            }
-        }
-        E::Object::default()
-    };
-
-    // Get original version to preserve prefix if it exists
-    let mut version_with_prefix: Box<[u8]> = Box::from(new_version);
-    if let Some(existing_prop) = catalog_obj.get(package_name) {
-        if let bun_js_parser::ast::ExprData::EString(e_string) = &existing_prop.data {
-            let original_version = &e_string.data;
-            version_with_prefix = preserve_version_prefix(original_version, new_version)?;
-        }
-    }
-
-    // Update or add the package version
-    let new_expr = Expr::allocate(E::String { data: version_with_prefix }, logger::Loc::EMPTY);
-    catalog_obj.put(package_name, new_expr)?;
-
-    // Check if we need to update under workspaces.catalog or root-level catalog
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-        if let bun_js_parser::ast::ExprData::EObject(ws_obj) = &mut workspaces_query.expr.data {
-            if workspaces_query.expr.as_property(b"catalog").is_some() {
-                // Update under workspaces.catalog
-                ws_obj.put(
-                    b"catalog",
-                    Expr::allocate(E::Object::from(catalog_obj), logger::Loc::EMPTY),
-                )?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Otherwise update at root level
-    if let bun_js_parser::ast::ExprData::EObject(root_obj) = &mut package_json.data {
-        root_obj.put(
-            b"catalog",
-            Expr::allocate(E::Object::from(catalog_obj), logger::Loc::EMPTY),
-        )?;
-    }
-    Ok(())
+    let _ = (package_json, package_name, new_version);
+    // Real body needs `Expr::allocate(&Bump, …)` and `E::Object::put(&Bump, …)`
+    // — the AST allocator handle isn't plumbed through here yet (Zig used the
+    // global Store). Body preserved in update_interactive_command.zig.
+    todo!("blocked_on: bun_js_parser::Expr::allocate Bump plumbing")
 }
 
 fn update_named_catalog(
@@ -1598,78 +1547,11 @@ fn update_named_catalog(
     package_name: &[u8],
     new_version: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // Get or create the catalogs object
-    // First check if catalogs is under workspaces.catalogs (newer structure)
-    let mut catalogs_obj = 'brk: {
-        if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-            if let bun_js_parser::ast::ExprData::EObject(_) = &workspaces_query.expr.data {
-                if let Some(catalogs_query) = workspaces_query.expr.as_property(b"catalogs") {
-                    if let bun_js_parser::ast::ExprData::EObject(obj) = &catalogs_query.expr.data {
-                        break 'brk obj.clone();
-                    }
-                }
-            }
-        }
-        // Fallback to root-level catalogs
-        if let Some(catalogs_query) = package_json.as_property(b"catalogs") {
-            if let bun_js_parser::ast::ExprData::EObject(obj) = &catalogs_query.expr.data {
-                break 'brk obj.clone();
-            }
-        }
-        E::Object::default()
-    };
-
-    // Get or create the specific catalog
-    let mut catalog_obj = 'brk: {
-        if let Some(catalog_query) = catalogs_obj.get(catalog_name) {
-            if let bun_js_parser::ast::ExprData::EObject(obj) = &catalog_query.data {
-                break 'brk obj.clone();
-            }
-        }
-        E::Object::default()
-    };
-
-    // Get original version to preserve prefix if it exists
-    let mut version_with_prefix: Box<[u8]> = Box::from(new_version);
-    if let Some(existing_prop) = catalog_obj.get(package_name) {
-        if let bun_js_parser::ast::ExprData::EString(e_string) = &existing_prop.data {
-            let original_version = &e_string.data;
-            version_with_prefix = preserve_version_prefix(original_version, new_version)?;
-        }
-    }
-
-    // Update or add the package version
-    let new_expr = Expr::allocate(E::String { data: version_with_prefix }, logger::Loc::EMPTY);
-    catalog_obj.put(package_name, new_expr)?;
-
-    // Update the catalog in catalogs object
-    catalogs_obj.put(
-        catalog_name,
-        Expr::allocate(E::Object::from(catalog_obj), logger::Loc::EMPTY),
-    )?;
-
-    // Check if we need to update under workspaces.catalogs or root-level catalogs
-    if let Some(workspaces_query) = package_json.as_property(b"workspaces") {
-        if let bun_js_parser::ast::ExprData::EObject(ws_obj) = &mut workspaces_query.expr.data {
-            if workspaces_query.expr.as_property(b"catalogs").is_some() {
-                // Update under workspaces.catalogs
-                ws_obj.put(
-                    b"catalogs",
-                    Expr::allocate(E::Object::from(catalogs_obj), logger::Loc::EMPTY),
-                )?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Otherwise update at root level
-    if let bun_js_parser::ast::ExprData::EObject(root_obj) = &mut package_json.data {
-        root_obj.put(
-            b"catalogs",
-            Expr::allocate(E::Object::from(catalogs_obj), logger::Loc::EMPTY),
-        )?;
-    }
-    Ok(())
+    let _ = (package_json, catalog_name, package_name, new_version);
+    // Real body needs `Expr::allocate(&Bump, …)` and `E::Object::put(&Bump, …)`
+    // — the AST allocator handle isn't plumbed through here yet (Zig used the
+    // global Store). Body preserved in update_interactive_command.zig.
+    todo!("blocked_on: bun_js_parser::Expr::allocate Bump plumbing")
 }
 
 fn preserve_version_prefix(

@@ -859,18 +859,18 @@ impl CompileC {
 
         #[cfg(unix)]
         {
-            if Fd::cwd().directory_exists_at(b"/usr/local/include").is_true() {
+            if dir_exists(b"/usr/local/include") {
                 if state
-                    .add_sys_include_path(ZStr::from_static(b"/usr/local/include\0"))
+                    .add_sys_include_path(zstr!(b"/usr/local/include"))
                     .is_err()
                 {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
 
-            if Fd::cwd().directory_exists_at(b"/usr/local/lib").is_true() {
+            if dir_exists(b"/usr/local/lib") {
                 if state
-                    .add_library_path(ZStr::from_static(b"/usr/local/lib\0"))
+                    .add_library_path(zstr!(b"/usr/local/lib"))
                     .is_err()
                 {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
@@ -882,9 +882,7 @@ impl CompileC {
             if let Some(c_include_path) = env_var::C_INCLUDE_PATH.get() {
                 for path in c_include_path.split(|b| *b == b':') {
                     if !path.is_empty() {
-                        let Ok(path_z) = ZStr::from_bytes(path) else {
-                            continue;
-                        };
+                        let path_z = ZBox::from_bytes(path);
                         if state.add_sys_include_path(&path_z).is_err() {
                             bun_output::scoped_log!(
                                 TCC,
@@ -900,9 +898,7 @@ impl CompileC {
             if let Some(library_path) = env_var::LIBRARY_PATH.get() {
                 for path in library_path.split(|b| *b == b':') {
                     if !path.is_empty() {
-                        let Ok(path_z) = ZStr::from_bytes(path) else {
-                            continue;
-                        };
+                        let path_z = ZBox::from_bytes(path);
                         if state.add_library_path(&path_z).is_err() {
                             bun_output::scoped_log!(
                                 TCC,

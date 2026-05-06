@@ -14,6 +14,29 @@ use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
 use bun_threading::UnboundedQueue;
 
+// ─── Module-level constructor forwarders ────────────────────────────────────
+// Zig spelled these as namespace calls (`ConcurrentTask.createFrom(...)`,
+// `ConcurrentTask.fromCallback(...)`). Several Rust callers import this file
+// as a *module* (`use bun_jsc::ConcurrentTask;`) rather than the struct, so
+// `ConcurrentTask::create_from(x)` resolves as a free-function lookup, not an
+// inherent-method call. Provide thin module-level forwarders so both spellings
+// work — the struct's inherent methods remain the canonical impls below.
+#[inline]
+pub fn create(task: Task) -> *mut ConcurrentTask {
+    ConcurrentTask::create(task)
+}
+#[inline]
+pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
+    ConcurrentTask::create_from(task)
+}
+#[inline]
+pub fn from_callback<T>(
+    ptr: *mut T,
+    callback: fn(*mut T) -> crate::JsResult<()>,
+) -> *mut ConcurrentTask {
+    ConcurrentTask::from_callback(ptr, callback)
+}
+
 // ─── Task (hot-dispatch tag+ptr, see CYCLEBREAK.md §Hot dispatch list) ──────
 // Low tier (event_loop) stores `(tag, ptr)`; `bun_runtime::dispatch::run_task`
 // owns the `match` over ~96 variants. Tag constants live in

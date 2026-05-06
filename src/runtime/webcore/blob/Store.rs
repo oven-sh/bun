@@ -509,10 +509,10 @@ impl File {
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone()?,
                 };
                 // TODO(port): jsc.Node.fs.Async.unlink.create — second arg is `undefined` in Zig
-                node::fs::async_::Unlink::create(
+                node_fs::async_::Unlink::create(
                     global_this,
                     /* undefined */ Default::default(),
-                    node::fs::UnlinkArgs {
+                    node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },
                     global_this.bun_vm(),
@@ -680,7 +680,7 @@ impl S3 {
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
-        s3::delete(
+        s3_client::delete(
             &aws_options.credentials,
             self.path(),
             Wrapper::resolve as *const _,

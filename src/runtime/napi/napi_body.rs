@@ -802,10 +802,9 @@ pub extern "C" fn napi_get_prototype(
 
     result.set(
         env,
-        JSValue::c(jsc::c_api::JSObjectGetPrototype(
-            env.to_js().ref_(),
-            object.as_object_ref(),
-        )),
+        JSValue::c(unsafe {
+            JSObjectGetPrototype(env.to_js().as_ptr(), object.as_object_ref())
+        }),
     );
     env.ok()
 }

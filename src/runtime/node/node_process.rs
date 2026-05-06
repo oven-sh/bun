@@ -293,9 +293,27 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // TODO(port): the Zig builds this set at comptime by iterating
         // `bun.cli.Arguments.auto_params` and emitting `--long` / `-s` for every
         // param with `takes_value != .none`. Rust cannot reflect over that list
-        // at compile time; Phase B should generate this phf::Set from the same
-        // source via build.rs or a proc-macro.
-        static MAP: phf::Set<&'static [u8]> = crate::cli::arguments::AUTO_PARAMS_TAKING_VALUE_SET;
+        // at compile time, so build the set lazily at runtime from the same
+        // `AUTO_PARAMS` table. Phase B may swap this for a phf::Set via
+        // build.rs or a proc-macro.
+        static MAP: std::sync::LazyLock<std::collections::HashSet<Vec<u8>>> =
+            std::sync::LazyLock::new(|| {
+                let mut set = std::collections::HashSet::new();
+                for param in crate::cli::arguments::AUTO_PARAMS.iter() {
+                    if param.takes_value != bun_clap::Values::None {
+                        if let Some(name) = param.names.long {
+                            let mut k = Vec::with_capacity(2 + name.len());
+                            k.extend_from_slice(b"--");
+                            k.extend_from_slice(name);
+                            set.insert(k);
+                        }
+                        if let Some(name) = param.names.short {
+                            set.insert(vec![b'-', name]);
+                        }
+                    }
+                }
+                set
+            });
 
         if let Some(p) = prev {
             if MAP.contains(p) {
@@ -397,7 +415,7 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
 #[unsafe(export_name = "Bun__Process__getCwd")]
 pub fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     let mut buf = PathBuffer::uninit();
-    match super::path::get_cwd(&mut buf) {
+    match crate::node::path::get_cwd(&mut buf) {
         bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
         bun_sys::Result::Err(e) => global_object.throw_value(e.to_js(global_object)?),
     }

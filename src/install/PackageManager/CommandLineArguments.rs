@@ -667,7 +667,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
 "#;
 
                 Output::pretty(intro_text);
-                clap::simple_help(OUTDATED_PARAMS);
+                clap::simple_help(&OUTDATED_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -688,7 +688,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(PACK_PARAMS);
+                clap::simple_help(&PACK_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }

@@ -137,7 +137,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
             unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
         }
     }
+}
 
+// reconciler-3: the full HTTPContext state machine below dispatches into
+// gated `HTTPThread`/`h2::ClientSession`/`crate::state` surface that hasn't
+// landed yet (see lib.rs `_phase_a_draft`). Re-gate as a draft module so
+// the type-only surface above stays green; un-gate together with H2Client.rs.
+#[cfg(any())]
+mod _phase_a_draft {
+use super::*;
+impl<const SSL: bool> HTTPContext<SSL> {
     pub fn mark_tagged_socket_as_dead(socket: HTTPSocket<SSL>, tagged: ActiveSocket<SSL>) {
         if tagged.is::<PooledSocket<SSL>>() {
             // SAFETY: tag check above guarantees the pointer is a PooledSocket<SSL>.
@@ -1291,6 +1300,7 @@ mod dispatch_deps {
         }
     }
 }
+} // mod _phase_a_draft
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

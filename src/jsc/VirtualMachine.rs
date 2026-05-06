@@ -469,13 +469,16 @@ impl VirtualMachine {
         unsafe { &*self.global }
     }
 
-    /// Spec returns a raw `*EventLoop` (no aliasing guarantee). Taking `&mut
-    /// self` lets borrowck enforce uniqueness so a caller cannot mint two
-    /// aliased `&mut EventLoop` from one shared borrow.
+    /// Spec VirtualMachine.zig: `pub fn eventLoop(this: *VirtualMachine) *EventLoop`
+    /// — returns a raw `*EventLoop` (no aliasing guarantee). Returning `&mut`
+    /// here would let two overlapping callers (e.g. a JS callback re-entering
+    /// `vm.event_loop()` from inside `tick()`) mint aliased `&mut EventLoop` to
+    /// the same allocation — UB per PORTING.md §Forbidden. Callers form a
+    /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
     #[inline]
-    pub fn event_loop(&mut self) -> &mut EventLoop {
-        // SAFETY: event_loop is a self-pointer to regular_event_loop or macro_event_loop
-        unsafe { &mut *self.event_loop }
+    pub fn event_loop(&self) -> *mut EventLoop {
+        // self-pointer to regular_event_loop or macro_event_loop
+        self.event_loop
     }
 
     #[inline]
@@ -557,7 +560,8 @@ impl VirtualMachine {
     }
 
     pub fn wakeup(&mut self) {
-        self.event_loop().wakeup();
+        // SAFETY: `event_loop` is a self-pointer into this VM; uniquely accessed here.
+        unsafe { (*self.event_loop()).wakeup() };
     }
 
     pub fn on_quiet_unhandled_rejection_handler(this: &mut VirtualMachine, _: &JSGlobalObject, _: JSValue) {

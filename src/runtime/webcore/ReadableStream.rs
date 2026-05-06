@@ -2,11 +2,13 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::SysErrorJsc as _;
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_sys as syscall;
 use bun_collections::ByteList;
 
+#[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 use crate::webcore::streams;
 
@@ -27,8 +29,6 @@ impl Default for Strong {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — Strong methods (has/get/set/create), from_js, tee.
-#[cfg(any())]
 impl Strong {
     pub fn has(&mut self) -> bool {
         self.held.has()
@@ -43,8 +43,12 @@ impl Strong {
 
     pub fn init(this: ReadableStream, global: &JSGlobalObject) -> Strong {
         Strong {
-            held: bun_jsc::Strong::create(this.value, global),
+            held: bun_jsc::strong::Optional::create(this.value, global),
         }
+    }
+
+    pub fn deinit(&mut self) {
+        self.held.deinit();
     }
 
     pub fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
@@ -117,9 +121,6 @@ unsafe extern "C" {
 }
 
 // ─── ReadableStream methods ──────────────────────────────────────────────────
-// TODO(b2-blocked): bun_jsc::* — every method body calls into JSC FFI helpers
-// (from_js_host_call_generic, JSValue::ZERO, ReadableStream__* externs).
-#[cfg(any())]
 impl ReadableStream {
     pub fn tee(&self, global_this: &JSGlobalObject) -> JsResult<Option<(ReadableStream, ReadableStream)>> {
         let mut out1 = JSValue::ZERO;

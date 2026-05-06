@@ -968,13 +968,12 @@ impl PseudoClass {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PERF(alloc): I don't like making these little allocations
-        // TODO(port): Zig builds a fresh `Printer` over an allocating writer, calls
-        // `serialize::serializePseudoClass`, then writes the buffer to `dest`. Phase B
-        // should expose a `Printer::new_buffered(dest)` helper or write directly.
-        let mut s: Vec<u8> = Vec::new();
-        let mut printer = Printer::new_buffered(&mut s, css::PrinterOptions::default(), dest.import_info, dest.local_names, dest.symbols);
-        serialize::serialize_pseudo_class(self, &mut printer, None)?;
-        dest.write_str_bytes(&s)
+        // PORT NOTE: Zig builds a fresh `Printer` over an allocating writer,
+        // calls `serialize::serializePseudoClass`, then writes the buffer to
+        // `dest`. The buffered indirection only matters for length-dependent
+        // minification decisions made by callers (none here), so write
+        // directly to `dest` until `Printer::new_buffered` lands.
+        serialize::serialize_pseudo_class(self, dest, None)
     }
 
     pub fn eql(&self, rhs: &PseudoClass) -> bool {
@@ -2617,11 +2616,9 @@ impl PseudoElement {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PERF(alloc): I don't like making small allocations here for the string.
-        // TODO(port): see PseudoClass::to_css note.
-        let mut s: Vec<u8> = Vec::new();
-        let mut printer = Printer::new_buffered(&mut s, css::PrinterOptions::default(), dest.import_info, dest.local_names, dest.symbols);
-        serialize::serialize_pseudo_element(self, &mut printer, None)?;
-        dest.write_str_bytes(&s)
+        // PORT NOTE: see PseudoClass::to_css — write directly until
+        // `Printer::new_buffered` lands.
+        serialize::serialize_pseudo_element(self, dest, None)
     }
 }
 

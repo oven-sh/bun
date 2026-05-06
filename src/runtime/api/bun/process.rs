@@ -2058,7 +2058,7 @@ pub fn spawn_process_posix(
                 // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
                 // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
                 // Right now we only allow one output redirection so it's okay.
-                if i == 1 && dup2.to == jsc::subprocess::StdioKind::Stderr {
+                if i == 1 && dup2.to == StdioKind::Stderr {
                     dup_stdout_to_stderr = true;
                 } else {
                     actions.dup2(dup2.to.to_fd(), dup2.out.to_fd())?;
@@ -2068,15 +2068,21 @@ pub fn spawn_process_posix(
                 actions.inherit(fileno)?;
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
-                actions.open_z(fileno, b"/dev/null\0", flag | bun_sys::O::CREAT, 0o664)?;
+                actions.open_z(
+                    fileno,
+                    // SAFETY: literal is NUL-terminated with no interior NUL.
+                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
+                    flag | bun_sys::O::CREAT as u32,
+                    0o664,
+                )?;
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT, 0o664)?;
+                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
                 #[cfg(target_os = "linux")]
                 'use_memfd: {
-                    if !options.stream && i > 0 && bun_sys::can_use_memfd() {
+                    if !options.stream && i > 0 && spawn_sys::can_use_memfd() {
                         // use memfd if we can
                         let label: &[u8] = match i {
                             0 => b"spawn_stdio_stdin",
@@ -2085,15 +2091,14 @@ pub fn spawn_process_posix(
                             _ => b"spawn_stdio_generic",
                         };
 
-                        let fd = match bun_sys::memfd_create(label, bun_sys::MemfdFlag::CrossProcess)
-                            .unwrap()
+                        let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess)
                         {
                             Ok(fd) => fd,
                             Err(_) => break 'use_memfd,
                         };
 
-                        let _ = to_close_on_error.push(fd);
-                        let _ = to_set_cloexec.push(fd);
+                        to_close_on_error.push(fd);
+                        to_set_cloexec.push(fd);
                         actions.dup2(fd, fileno)?;
                         set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
@@ -2102,22 +2107,29 @@ pub fn spawn_process_posix(
                 }
 
                 let fds: [Fd; 2] = 'brk: {
-                    let pair = if !options.no_sigpipe {
-                        bun_sys::socketpair_for_shell(
+                    let pair_result = if !options.no_sigpipe {
+                        spawn_sys::socketpair_for_shell(
                             libc::AF_UNIX,
                             libc::SOCK_STREAM,
                             0,
-                            bun_sys::SocketpairMode::Blocking,
+                            spawn_sys::SocketpairMode::Blocking,
                         )
-                        .unwrap()?
                     } else {
-                        bun_sys::socketpair(
+                        spawn_sys::socketpair(
                             libc::AF_UNIX,
                             libc::SOCK_STREAM,
                             0,
-                            bun_sys::SocketpairMode::Blocking,
+                            spawn_sys::SocketpairMode::Blocking,
                         )
-                        .unwrap()?
+                    };
+                    let pair = match pair_result {
+                        Ok(p) => p,
+                        Err(e) => {
+                            for fd in to_close_on_error.iter() { fd.close(); }
+                            for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
+                            for fd in to_close_at_end.iter() { fd.close(); }
+                            return Ok(Err(e));
+                        }
                     };
                     break 'brk [pair[if i == 0 { 1 } else { 0 }], pair[if i == 0 { 0 } else { 1 }]];
                 };
@@ -2175,7 +2187,12 @@ pub fn spawn_process_posix(
                 to_close_on_error.push(fds[0]);
 
                 if !options.sync {
-                    bun_sys::set_nonblocking(fds[0]).unwrap()?;
+                    if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
+                        for fd in to_close_on_error.iter() { fd.close(); }
+                        for fd in to_set_cloexec.iter() { let _ = spawn_sys::set_close_on_exec(*fd); }
+                        for fd in to_close_at_end.iter() { fd.close(); }
+                        return Ok(Err(e));
+                    }
                 }
 
                 actions.dup2(fds[1], fileno)?;

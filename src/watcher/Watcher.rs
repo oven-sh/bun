@@ -486,9 +486,23 @@ impl Watcher {
         }
         #[cfg(target_os = "linux")]
         {
-            let buf = file_path.as_ptr();
-            // SAFETY: file_path[file_path.len()] == 0 — Zig assumed sentinel here
-            let slice = unsafe { ZStr::from_raw(buf, file_path.len()) };
+            // Zig builds the `[:0]const u8` from `file_path_` (the dupeZ'd copy when
+            // clone_file_path=true), guaranteeing a trailing NUL for inotify. When
+            // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
+            // so we must copy into a NUL-terminated scratch buffer (mirrors the
+            // directory branch below) instead of pointing at the caller's slice.
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let slice: &ZStr = if CLONE_FILE_PATH {
+                buf[0..file_path.len()].copy_from_slice(file_path);
+                buf[file_path.len()] = 0;
+                // SAFETY: buf[file_path.len()] == 0 written above
+                unsafe { ZStr::from_raw(buf.as_ptr(), file_path.len()) }
+            } else {
+                // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
+                // interned in `bun.fs.FileSystem` with a NUL sentinel at [len];
+                // Zig's `buf[0..file_path_.len :0]` assumed the same.
+                unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
+            };
             item.eventlist_index = self.platform.watch_path(slice)?;
         }
 

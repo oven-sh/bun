@@ -1,3 +1,244 @@
+// ─── B-2 round 6: color types un-gated ───────────────────────────────────
+// Data-only colorspace structs + `CssColor` + `ColorFallbackKind` are now
+// real so `gradient.rs`/`image.rs` (and the crate-root `pub use values::
+// color::{CssColor, RGBA, ...}`) compile against concrete types with the
+// derives they need (`Clone`/`PartialEq`). The full 3.5k-line behavior body
+// (parse / to_css / colorspace conversion matrices / ComponentParser /
+// RelativeComponentParser / interpolate / map_gamut) stays gated below in
+// `gated_full_impl` until `color_generated::generated_color_conversions`
+// (codegen — `color_via.ts` needs Rust output) lands; the parse/to_css
+// surface is kept callable via `todo!()` stubs so cross-module callers
+// type-check.
+//
+// blocked_on:
+//   - color_generated.rs (color_via.ts → Rust `impl From<X> for Y` chains)
+//   - css_parser::color::{parse_hash_color, parse_named_color} hookup
+//   - Printer::write_ident path for SystemColor::to_css
+
+use crate::css_parser as css;
+use crate::printer::Printer;
+use crate::PrintErr;
+use crate::targets;
+use bun_alloc::Arena;
+
+// ───────────────────────── colorspace structs ────────────────────────────
+// Field layout matches `color.zig`; every space is 3 channels + alpha.
+macro_rules! colorspace {
+    ($name:ident { $($f:ident),* $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        pub struct $name { $(pub $f: f32,)* pub alpha: f32 }
+    };
+}
+colorspace!(LAB { l, a, b });
+colorspace!(SRGB { r, g, b });
+colorspace!(HSL { h, s, l });
+colorspace!(HWB { h, w, b });
+colorspace!(SRGBLinear { r, g, b });
+colorspace!(P3 { r, g, b });
+colorspace!(A98 { r, g, b });
+colorspace!(ProPhoto { r, g, b });
+colorspace!(Rec2020 { r, g, b });
+colorspace!(XYZd50 { x, y, z });
+colorspace!(XYZd65 { x, y, z });
+colorspace!(LCH { l, c, h });
+colorspace!(OKLAB { l, a, b });
+colorspace!(OKLCH { l, c, h });
+
+/// A color with red, green, blue, and alpha components, in a byte each.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RGBA {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub alpha: u8,
+}
+
+impl RGBA {
+    #[inline] pub fn red_f32(&self)   -> f32 { self.red   as f32 / 255.0 }
+    #[inline] pub fn green_f32(&self) -> f32 { self.green as f32 / 255.0 }
+    #[inline] pub fn blue_f32(&self)  -> f32 { self.blue  as f32 / 255.0 }
+    #[inline] pub fn alpha_f32(&self) -> f32 { self.alpha as f32 / 255.0 }
+
+    #[inline]
+    pub fn from_floats(red: f32, green: f32, blue: f32, alpha: f32) -> RGBA {
+        #[inline]
+        fn clamp_unit_f32(val: f32) -> u8 {
+            (val * 255.0).round().clamp(0.0, 255.0) as u8
+        }
+        RGBA {
+            red:   clamp_unit_f32(red),
+            green: clamp_unit_f32(green),
+            blue:  clamp_unit_f32(blue),
+            alpha: clamp_unit_f32(alpha),
+        }
+    }
+
+    #[inline]
+    pub fn into_srgb(&self) -> SRGB {
+        SRGB { r: self.red_f32(), g: self.green_f32(), b: self.blue_f32(), alpha: self.alpha_f32() }
+    }
+}
+
+/// A color in a LAB color space (`lab()`/`lch()`/`oklab()`/`oklch()`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LABColor {
+    Lab(LAB),
+    Lch(LCH),
+    Oklab(OKLAB),
+    Oklch(OKLCH),
+}
+/// Dependent crates spell this `LabColor`; alias both casings.
+pub type LabColor = LABColor;
+
+/// A color in a predefined color space, e.g. `display-p3`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PredefinedColor {
+    Srgb(SRGB),
+    SrgbLinear(SRGBLinear),
+    DisplayP3(P3),
+    A98(A98),
+    Prophoto(ProPhoto),
+    Rec2020(Rec2020),
+    XyzD50(XYZd50),
+    XyzD65(XYZd65),
+}
+
+/// Floating-point RGB/HSL/HWB used when a color carries `none` components.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FloatColor {
+    Rgb(SRGB),
+    Hsl(HSL),
+    Hwb(HWB),
+}
+
+/// CSS system-color keyword. Full 47-variant set lives in `gated_full_impl`;
+/// the un-gated stub is empty (uninhabited) so `CssColor::System` arms are
+/// dead until the parser actually constructs one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SystemColor {}
+
+/// A CSS `<color>` value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CssColor {
+    /// The `currentColor` keyword.
+    CurrentColor,
+    /// An RGBA color (hex / `rgb()` / `hsl()` / `hwb()`).
+    Rgba(RGBA),
+    /// A LAB-space color (`lab()`/`lch()`/`oklab()`/`oklch()`).
+    Lab(Box<LABColor>),
+    /// A predefined-space color (`color(display-p3 …)`).
+    Predefined(Box<PredefinedColor>),
+    /// Float RGB/HSL/HWB carrying `none` components.
+    Float(Box<FloatColor>),
+    /// `light-dark()`.
+    LightDark { light: Box<CssColor>, dark: Box<CssColor> },
+    /// A system-color keyword.
+    System(SystemColor),
+}
+
+/// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
+pub type ParseResult = css::CssResult<CssColor>;
+
+impl Default for CssColor {
+    #[inline]
+    fn default() -> CssColor { CssColor::CurrentColor }
+}
+
+impl CssColor {
+    /// Parse a CSS `<color>` from the parser cursor.
+    // blocked_on: gated_full_impl (parse_hash_color / parse_named_color /
+    // parse_color_function / ComponentParser).
+    pub fn parse(input: &mut css::Parser) -> css::CssResult<CssColor> {
+        let _ = input;
+        todo!("bun_css::values::color::CssColor::parse — gated_full_impl")
+    }
+
+    /// Serialize this color to CSS text via `dest`.
+    // blocked_on: gated_full_impl (write_components / short_color_name /
+    // compact_hex).
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let _ = dest;
+        todo!("bun_css::values::color::CssColor::to_css — gated_full_impl")
+    }
+
+    pub fn is_compatible(&self, browsers: targets::Browsers) -> bool {
+        use crate::compat::Feature;
+        match self {
+            CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) => true,
+            CssColor::Lab(lab) => match **lab {
+                LABColor::Lab(_) | LABColor::Lch(_) => Feature::LabColors.is_compatible(browsers),
+                LABColor::Oklab(_) | LABColor::Oklch(_) => Feature::OklabColors.is_compatible(browsers),
+            },
+            CssColor::Predefined(_) => Feature::ColorFunction.is_compatible(browsers),
+            CssColor::LightDark { .. } => Feature::LightDark.is_compatible(browsers),
+            CssColor::System(_) => true,
+        }
+    }
+
+    /// Project this color into the given fallback colorspace. Conversion
+    /// chains live in `gated_full_impl`; until those un-gate this clones
+    /// (callers only invoke this when `get_necessary_fallbacks` returned a
+    /// non-empty set, which the stub never does).
+    pub fn get_fallback(&self, _allocator: &Arena, _kind: ColorFallbackKind) -> CssColor {
+        // blocked_on: gated_full_impl::CssColor::{to_rgb,to_p3,to_lab}
+        self.clone()
+    }
+
+    /// Returns the color fallback types needed for the given browser targets.
+    pub fn get_necessary_fallbacks(&self, _targets: targets::Targets) -> ColorFallbackKind {
+        // blocked_on: gated_full_impl::CssColor::get_possible_fallbacks
+        ColorFallbackKind::empty()
+    }
+
+    #[inline]
+    pub fn deep_clone(&self, _allocator: &Arena) -> CssColor { self.clone() }
+
+    #[inline]
+    pub fn eql(&self, other: &CssColor) -> bool { self == other }
+}
+
+// ──────────────────────────── ColorFallbackKind ──────────────────────────
+bitflags::bitflags! {
+    /// A color type that is used as a fallback when compiling colors for
+    /// older browsers.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct ColorFallbackKind: u8 {
+        const RGB   = 1 << 0;
+        const P3    = 1 << 1;
+        const LAB   = 1 << 2;
+        const OKLAB = 1 << 3;
+    }
+}
+
+impl ColorFallbackKind {
+    pub fn lowest(self) -> ColorFallbackKind {
+        ColorFallbackKind::from_bits_truncate(self.bits() & self.bits().wrapping_neg())
+    }
+
+    pub fn highest(self) -> ColorFallbackKind {
+        if self.is_empty() {
+            return ColorFallbackKind::empty();
+        }
+        let zeroes: u32 = 7 - self.bits().leading_zeros();
+        ColorFallbackKind::from_bits_truncate(1u8 << zeroes)
+    }
+
+    pub fn and_below(self) -> ColorFallbackKind {
+        if self.is_empty() {
+            return ColorFallbackKind::empty();
+        }
+        self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
+    }
+}
+
+// ──────────────────────── full implementation (gated) ─────────────────────
+// The original 3.5k-line port lives below, gated until its hub deps un-gate.
+// Nothing is lost — the wrapper module preserves the source verbatim so the
+// next round can lift method bodies out of here into the real impls above.
+#[cfg(any())]
+#[allow(dead_code, unused_imports, unused_variables)]
+mod gated_full_impl {
 use bun_css as css;
 use bun_css::css_values::angle::Angle;
 use bun_css::css_values::calc::Calc;
@@ -3523,3 +3764,5 @@ pub enum ConvertTo {
 //   todos:      14
 //   notes:      Heavy comptime-reflection mixins (DefineColorspace/ColorIntoMixin) folded into Colorspace/ColorGamut/Interpolate traits + define_colorspace! macro + From impls; Calc::parse_with stack-ptr closures need Phase B API review; several Zig bugs (a99-rgb, XYZd50→XYZd65, SRGBLinear angle channel, LABColor::new_*) mirrored for parity; allocator params dropped (Box owns).
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod gated_full_impl

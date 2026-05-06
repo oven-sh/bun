@@ -1127,18 +1127,18 @@ impl RealFS {
     pub fn mod_key_with_file(
         &mut self,
         path: &[u8],
-        file: bun_sys::File,
+        file: &bun_sys::File,
     ) -> Result<ModKey, bun_core::Error> {
         ModKey::generate(self, path, file)
     }
 
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
-        // TODO(port): std.fs.cwd().openFile — bun_sys::File::open
-        let file = bun_sys::File::open_read_only(Fd::cwd(), path)?;
+        // TODO(port): std.fs.cwd().openFile — bun_sys::open_file
+        let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
         let need_close = self.need_to_close_files();
-        let result = self.mod_key_with_file(path, file);
+        let result = self.mod_key_with_file(path, &file);
         if need_close {
-            file.close();
+            let _ = bun_sys::close(file.handle());
         }
         result
     }
@@ -1174,17 +1174,18 @@ impl Default for TmpfilePosix {
 impl TmpfilePosix {
     #[inline]
     pub fn dir(&self) -> bun_sys::Dir {
-        self.dir_fd.std_dir()
+        bun_sys::Dir::from_fd(self.dir_fd)
     }
 
     #[inline]
     pub fn file(&self) -> bun_sys::File {
-        self.fd.std_file()
+        bun_sys::File::from_fd(self.fd)
     }
 
     pub fn close(&mut self) {
         if self.fd.is_valid() {
-            self.fd.close();
+            let _ = bun_sys::close(self.fd);
+            self.fd = Fd::INVALID;
         }
     }
 
@@ -1194,30 +1195,24 @@ impl TmpfilePosix {
         self.dir_fd = dir_fd;
 
         let flags = bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
-        self.fd = bun_sys::openat(dir_fd, name, flags, bun_sys::S::IRWXU).unwrap()?;
+        self.fd = bun_sys::openat(dir_fd, name, flags, bun_sys::S::IRWXU as bun_sys::Mode)?;
         Ok(())
     }
 
     pub fn promote_to_cwd(
         &mut self,
-        from_name: &CStr,
-        name: &CStr,
+        from_name: &ZStr,
+        name: &ZStr,
     ) -> Result<(), bun_core::Error> {
         debug_assert!(self.fd != Fd::INVALID);
         debug_assert!(self.dir_fd != Fd::INVALID);
 
-        bun_sys::move_file_z_with_handle(
-            self.fd,
-            self.dir_fd,
-            from_name.to_bytes(),
-            Fd::cwd(),
-            name.to_bytes(),
-        )?;
+        bun_sys::move_file_z_with_handle(self.fd, self.dir_fd, from_name, Fd::cwd(), name)?;
         self.close();
         Ok(())
     }
 
-    pub fn close_and_delete(&mut self, name: &CStr) {
+    pub fn close_and_delete(&mut self, name: &ZStr) {
         self.close();
 
         #[cfg(not(target_os = "linux"))]
@@ -1225,7 +1220,7 @@ impl TmpfilePosix {
             if self.dir_fd == Fd::INVALID {
                 return;
             }
-            let _ = self.dir().delete_file_z(name);
+            let _ = bun_sys::unlinkat(self.dir_fd, name, 0);
         }
         #[cfg(target_os = "linux")]
         {
@@ -1254,12 +1249,13 @@ impl TmpfileWindows {
 
     #[inline]
     pub fn file(&self) -> bun_sys::File {
-        self.fd.std_file()
+        bun_sys::File::from_fd(self.fd)
     }
 
     pub fn close(&mut self) {
         if self.fd.is_valid() {
-            self.fd.close();
+            let _ = bun_sys::close(self.fd);
+            self.fd = Fd::INVALID;
         }
     }
 
@@ -1268,10 +1264,10 @@ impl TmpfileWindows {
 
         let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
 
-        self.fd = bun_sys::openat(Fd::from_std_dir(tmp_dir), name, flags, 0).unwrap()?;
+        self.fd = bun_sys::openat(tmp_dir.fd(), name, flags, 0)?;
         let mut buf = PathBuffer::uninit();
         let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
-        self.existing_path = Box::<[u8]>::from(existing_path);
+        self.existing_path = Box::<[u8]>::from(&*existing_path);
         Ok(())
     }
 

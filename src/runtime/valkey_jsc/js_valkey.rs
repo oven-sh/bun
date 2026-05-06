@@ -1442,10 +1442,11 @@ impl JSValkeyClient {
     pub fn on_valkey_close(&mut self) -> JsTerminatedResult<()> {
         let global_object = self.global_object;
 
-        let _defer = scopeguard::guard((), |_| {
+        let self_ptr = self as *mut Self;
+        let _defer = scopeguard::guard(self_ptr, |p| unsafe {
             // Update poll reference to allow garbage collection of disconnected clients
-            self.update_poll_ref();
-            self.deref();
+            (*p).update_poll_ref();
+            (*p).deref();
         });
 
         let Some(this_jsvalue) = self.this_value.try_get() else {
@@ -1460,14 +1461,17 @@ impl JSValkeyClient {
             protocol::RedisError::ConnectionClosed,
         );
 
-        let loop_ = self.client.vm.event_loop();
-        loop_.enter();
-        let _exit = scopeguard::guard((), |_| loop_.exit());
+        let loop_ = self.vm().event_loop();
+        // SAFETY: VM-owned; non-null on the JS thread.
+        unsafe { (*loop_).enter() };
+        let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
 
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = Js::connection_promise_get_cached(this_jsvalue) {
                 Js::connection_promise_set_cached(this_jsvalue, global_object, JSValue::ZERO);
-                promise.as_promise().unwrap().reject(global_object, error_value)?;
+                // SAFETY: cached slot held a valid JSPromise.
+                unsafe { &mut *promise.as_promise().unwrap() }
+                    .reject(global_object, Ok(error_value))?;
             }
         }
 
@@ -1499,9 +1503,10 @@ impl JSValkeyClient {
         };
         let global_object = self.global_object;
         if let Some(on_close) = Js::onclose_get_cached(this_value) {
-            let loop_ = self.client.vm.event_loop();
-            loop_.enter();
-            let _exit = scopeguard::guard((), |_| loop_.exit());
+            let loop_ = self.vm().event_loop();
+            // SAFETY: VM-owned; non-null on the JS thread.
+            unsafe { (*loop_).enter() };
+            let _exit = scopeguard::guard(loop_, |el| unsafe { (*el).exit() });
             if let Err(e) = on_close.call(global_object, this_value, &[value]) {
                 global_object.report_active_exception_as_unhandled(e);
             }

@@ -1482,38 +1482,42 @@ impl CAresReverse {
         _timeout: i32,
         result: Option<*mut c_ares::struct_hostent>,
     ) {
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        if let Some(err) = err_ {
-            err.to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let global_this = &*(*this).global_this;
+            if let Some(err) = err_ {
+                err.to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            }
+            let Some(node) = result else {
+                c_ares::Error::ENOTFOUND
+                    .to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            };
+            // node is a valid c-ares hostent for the callback's duration
+            let array = super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b"")
+                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            Self::on_complete(this, array);
         }
-        let Some(node) = result else {
-            c_ares::Error::ENOTFOUND
-                .to_deferred("getHostByAddr", Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
-        };
-        // SAFETY: node is a valid c-ares hostent for the callback's duration
-        let array = super::cares_jsc::hostent_to_js_response(&mut *node, global_this, b"")
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        Self::on_complete(this, array);
     }
 
     /// SAFETY: see `process_resolve`.
     pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
-        let promise = core::mem::take(&mut (*this).promise);
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = (*this).resolver.as_ref() {
-            // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            (*resolver.data.as_ptr()).request_completed();
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let mut promise = core::mem::take(&mut (*this).promise);
+            let global_this = &*(*this).global_this;
+            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            if let Some(resolver) = (*this).resolver.as_ref() {
+                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                (*resolver.data.as_ptr()).request_completed();
+            }
+            Self::destroy(this);
         }
-        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the

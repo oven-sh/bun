@@ -1437,6 +1437,15 @@ trait ArchivePtrExt {
     fn write_close(self) -> ArchiveResult;
     fn write_free(self) -> ArchiveResult;
     fn error_string(self) -> &'static [u8];
+    fn read_support_format_tar(self) -> ArchiveResult;
+    fn read_support_format_gnutar(self) -> ArchiveResult;
+    fn read_support_filter_gzip(self) -> ArchiveResult;
+    fn read_set_options(self, opts: &core::ffi::CStr) -> ArchiveResult;
+    fn read_open_memory(self, buf: &[u8]) -> ArchiveResult;
+    fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult;
+    fn read_data(self, buf: &mut [u8]) -> isize;
+    fn read_close(self) -> ArchiveResult;
+    fn read_free(self) -> ArchiveResult;
 }
 impl ArchivePtrExt for *mut Archive {
     #[inline]

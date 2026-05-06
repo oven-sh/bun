@@ -10,9 +10,9 @@ use crate::webcore::blob::{self, Blob};
 use crate::webcore::blob::store::StoreRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3_client::S3CredentialsExt as _;
-use crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 #[allow(unused_imports)]
-use crate::webcore::s3::error_jsc::S3ErrorJsc as _;
+use crate::webcore::s3::client::error_jsc::S3ErrorJsc as _;
 use bun_str::strings;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -806,7 +806,9 @@ pub fn construct_internal_js(
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
     // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
-    Ok(unsafe { (*blob).to_js(global) })
+    // Call the inherent `&mut self` method (not the by-value `JsClass::to_js`),
+    // which hands the existing heap pointer to the C++ wrapper.
+    Ok(unsafe { Blob::to_js(&mut *blob, global) })
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {

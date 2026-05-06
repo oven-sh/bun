@@ -188,15 +188,17 @@ impl NativeZlib {
     pub fn params(&mut self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_undef::<2>();
 
-        if arguments.len() != 2 {
+        if arguments.len != 2 {
             return Err(global
-                .err(bun_jsc::ErrorCode::MISSING_ARGS)
-                .fmt(format_args!("params(level, strategy)"))
+                .err(
+                    bun_jsc::ErrorCode::MISSING_ARGS,
+                    format_args!("params(level, strategy)"),
+                )
                 .throw());
         }
 
-        let level = validators::validate_int32(global, arguments[0], "level", None, None)?;
-        let strategy = validators::validate_int32(global, arguments[1], "strategy", None, None)?;
+        let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
+        let strategy = validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
 
         let err = self.stream.set_params(level, strategy);
         if err.is_error() {

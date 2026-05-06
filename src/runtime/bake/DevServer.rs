@@ -5254,7 +5254,7 @@ impl<'a> HTMLRouter<'a> {
 impl DevServer<'_> {
     pub fn put_or_overwrite_asset(
         &mut self,
-        path: &bun_bundler::bun_fs::Path,
+        path: &bun_bundler::bun_fs::Path<'_>,
         contents: &crate::webcore::blob::Any,
         content_hash: u64,
     ) -> Result<(), bun_core::Error> {

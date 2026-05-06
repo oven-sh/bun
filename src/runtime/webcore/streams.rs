@@ -1152,9 +1152,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
         debug_assert!(!self.done);
 
-        let Some(res) = self.res else {
+        let Some(res) = self.any_res() else {
             bun_core::scoped_log!(
-                HTTPServerWritable,
+                HTTPServerWritableLog,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
                 self.has_backpressure
@@ -1163,27 +1163,29 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         };
         // PORT NOTE: Zig holds `res` across `handleFirstWriteIfNecessary`, whose
         // callback (RequestContext.renderMetadata) writes status/headers through
-        // the same uWS response. Keep the raw pointer and form a fresh temporary
-        // `&mut` per FFI call so no `&mut uws::Response` is live across the
-        // re-entrant `on_first_write` invocation.
-        let res = res as *mut uws::Response;
-        // TODO(port): UwsResponse type erasure — casting to placeholder uws::Response
+        // the same uWS response. `AnyResponse` is `Copy` and dispatches to
+        // zero-sized opaque handles, so reusing `res` across the re-entrant
+        // `on_first_write` invocation cannot alias any Rust-visible memory.
 
-        // SAFETY: res is a live uWS response handle (FFI); sole `&mut` for this call.
-        if self.requested_end && !unsafe { &mut *res }.state().is_http_write_called() {
+        if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
-            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
-            let success = unsafe { &mut *res }.try_end(buf, self.end_len, false);
+            let success = res.try_end(buf, self.end_len, false);
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
-                // SAFETY: res is a live uWS handle; sole `&mut` for this call.
-                unsafe { &mut *res }.on_writable::<Self>(Self::on_writable, self);
+                res.on_writable::<Self, _>(
+                    |this: *mut Self, off, _r| {
+                        // SAFETY: `this` was registered as live `*mut Self` and uWS invokes
+                        // the callback while the sink is still alive.
+                        unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
+                    },
+                    self as *mut Self,
+                );
             }
             bun_core::scoped_log!(
-                HTTPServerWritable,
+                HTTPServerWritableLog,
                 "send: {} bytes (backpressure: {})",
                 buf.len(),
                 self.has_backpressure
@@ -1193,8 +1195,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // clean this so we know when its relevant or not
         self.end_len = 0;
         // we clear the onWritable handler so uWS can handle the backpressure for us
-        // SAFETY: res is a live uWS handle; sole `&mut` for this call.
-        unsafe { &mut *res }.clear_on_writable();
+        res.clear_on_writable();
         self.handle_first_write_if_necessary();
         // uWebSockets lacks a tryWrite() function
         // This means that backpressure will be handled by appending to an "infinite" memory buffer
@@ -1202,12 +1203,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // so in this scenario, we just append to the buffer
         // and report success
         if self.requested_end {
-            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
-            unsafe { &mut *res }.end(buf, false);
+            res.end(buf, false);
             self.has_backpressure = false;
         } else {
-            // SAFETY: res is a live uWS handle; sole `&mut` for this call.
-            self.has_backpressure = unsafe { &mut *res }.write(buf) == uws::WriteResult::Backpressure;
+            self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
         }
         self.handle_wrote(buf.len());
         bun_core::scoped_log!(

@@ -625,7 +625,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
     // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
     let kid = unsafe { ffi::EVP_PKEY_id(raw_key) };
     // SAFETY: raw_key is a non-null *mut EVP_PKEY (null-checked above).
-    let bits = unsafe { boringssl::EVP_PKEY_bits(raw_key) };
+    let bits = unsafe { ffi::EVP_PKEY_bits(raw_key) };
 
     match kid {
         ffi::EVP_PKEY_DH => {
@@ -636,7 +636,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
             let curve_name: &[u8];
             if kid == ffi::EVP_PKEY_EC {
                 // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).
-                let ec = unsafe { boringssl::EVP_PKEY_get1_EC_KEY(raw_key) };
+                let ec = unsafe { ffi::EVP_PKEY_get1_EC_KEY(raw_key) };
                 // SAFETY: ec is the EC_KEY returned for an EC pkey; EC_KEY_get0_group on it is valid.
                 let nid = unsafe { boringssl::EC_GROUP_get_curve_name(boringssl::EC_KEY_get0_group(ec)) };
                 // SAFETY: OBJ_nid2sn is safe to call with any nid; returns null if unknown.

@@ -337,7 +337,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn env(self) -> &'a bun_core::DotEnv::Loader {
+    pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
         &self.global_this.bun_vm().transpiler.env
     }
 
@@ -366,7 +366,7 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn env(self) -> &'a bun_core::DotEnv::Loader {
+    pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
         self.mini.env.as_ref().unwrap()
     }
 

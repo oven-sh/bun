@@ -180,42 +180,41 @@ impl UTF8Fallback {
 
         if Self::STACK_SIZE >= str_.len() * 2 {
             let mut buf = [0u8; Self::STACK_SIZE];
-            let copied = strings::copy_utf16_into_utf8_impl(&mut buf, str_, true);
-            debug_assert!(copied.written <= Self::STACK_SIZE);
-            debug_assert!(copied.read <= Self::STACK_SIZE);
+            let copied = strings::copy_utf16_into_utf8_impl::<true>(&mut buf, str_);
+            debug_assert!(copied.written as usize <= Self::STACK_SIZE);
+            debug_assert!(copied.read as usize <= Self::STACK_SIZE);
+            // SAFETY: borrowed view is consumed by `write_fn` before `buf` drops.
+            let borrowed = ManuallyDrop::into_inner(unsafe {
+                ByteList::from_borrowed_slice_dangerous(&buf[..copied.written as usize])
+            });
             if input.is_done() {
-                let result = write_fn(
-                    ctx,
-                    streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(
-                        &buf[..copied.written],
-                    )),
-                );
+                let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
                 return result;
             } else {
-                let result = write_fn(
-                    ctx,
-                    streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(
-                        &buf[..copied.written],
-                    )),
-                );
+                let result = write_fn(ctx, streams::Result::Temporary(borrowed));
                 return result;
             }
         }
 
         {
-            let allocated = match strings::to_utf8_alloc(str_) {
-                Ok(v) => v,
-                Err(_) => return streams::result::Writable::Err(SysError::oom()),
-            };
+            // TODO(port): allocation-failure handling — `bun_string::strings::to_utf8_alloc`
+            // re-exports the bun_core variant which aborts on OOM (returns Vec<u8>, not
+            // Result). Phase B should route through a fallible allocator to preserve
+            // `.err = oom`.
+            let allocated = strings::to_utf8_alloc(str_);
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(allocated)),
+                    streams::Result::OwnedAndDone(ByteList::from_owned_slice(
+                        allocated.into_boxed_slice(),
+                    )),
                 )
             } else {
                 write_fn(
                     ctx,
-                    streams::Result::Owned(ByteList::from_owned_slice(allocated)),
+                    streams::Result::Owned(ByteList::from_owned_slice(
+                        allocated.into_boxed_slice(),
+                    )),
                 )
             }
         }

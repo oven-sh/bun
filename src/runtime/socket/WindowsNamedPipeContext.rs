@@ -220,11 +220,11 @@ impl WindowsNamedPipeContext {
         let socket = core::mem::replace(&mut this_ref.socket, SocketType::None);
         match socket {
             SocketType::Tls(tls) => {
-                let _ = tls.on_close(TLSSocket::Socket::from_named_pipe(&mut this_ref.named_pipe), 0, None);
+                let _ = tls.on_close(socket_from_named_pipe::<true>(&mut this_ref.named_pipe), 0, None);
                 drop(tls); // deref
             }
             SocketType::Tcp(tcp) => {
-                let _ = tcp.on_close(TCPSocket::Socket::from_named_pipe(&mut this_ref.named_pipe), 0, None);
+                let _ = tcp.on_close(socket_from_named_pipe::<false>(&mut this_ref.named_pipe), 0, None);
                 drop(tcp); // deref
             }
             SocketType::None => {}

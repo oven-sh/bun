@@ -385,7 +385,9 @@ impl JSValkeyClient {
     }
 
     // Factory function to create a new Valkey client from JS
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
+    // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
+    // wires the constructor via `#[bun_jsc::JsClass]` instead.
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -585,7 +587,10 @@ impl JSValkeyClient {
             0
         };
 
-        bun_core::analytics::Features::valkey_inc(1);
+        // TODO(port): bun_core::analytics::Features has no VALKEY counter yet
+        // (Zig: `bun.Analytics.Features.valkey += 1`). Add to the `feat!` bag
+        // in src/bun_core/Global.rs when that file is touched.
+        // bun_core::analytics::Features::valkey_inc(1);
 
         // SAFETY: _subscription_ctx is initialized later by `create()`.
         let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };

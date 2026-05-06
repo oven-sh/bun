@@ -1,13 +1,27 @@
 use core::fmt::Write as _;
 use std::sync::Arc;
 
-use bun_core::Output;
+use bun_core::output;
 use bun_http::Method;
 use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError, JsResult};
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::{self, Blob};
-use bun_s3 as s3;
+use crate::webcore::s3::client as s3;
 use bun_str::strings;
+
+// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
+// generic bool. The proc-macro only matches `true`/`false` literals, so
+// monomorphized callers (`<const C: bool>`) branch here. Both arms yield
+// `&'static str`.
+macro_rules! pfmt {
+    ($fmt:expr, $colors:expr) => {
+        if $colors {
+            ::bun_core::pretty_fmt!($fmt, true)
+        } else {
+            ::bun_core::pretty_fmt!($fmt, false)
+        }
+    };
+}
 
 use super::s3_client;
 use super::s3_stat::S3Stat;

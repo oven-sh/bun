@@ -51,7 +51,7 @@ const FIX_S = {
   required: ["file"],
 };
 
-const HARD = `**HARD RULES:** Edit ONLY your file (and at most 1 upstream type-def if signature change unavoidable — note it). Never git reset/checkout/restore/stash/rebase/pull. Never .zig. **DO NOT run cargo.** Commit only: \`git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d(${CRATE}): <what>"\`. NO push.`;
+const HARD = `**HARD RULES:** Edit ONLY files under **${SRCDIR}/**. **NEVER edit any other crate** (src/jsc, src/install, src/ptr, etc.) — if a missing method/type exists upstream, adapt YOUR call site (cast/wrap/shim locally) or \`todo!("blocked_on: <crate>::<symbol>")\`. Upstream edits break the dep cascade and waste 10M+ tokens. Never git reset/checkout/restore/stash/rebase/pull. Never .zig. **DO NOT run cargo.** Commit only: \`git -c core.hooksPath=/dev/null add -A '${SRCDIR}/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d(${CRATE}): <what>"\`. NO push.`;
 
 let history = [];
 for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -112,7 +112,7 @@ Return {units:[{file, lo?, hi?, n, errfile}], total, dep_broken:[]}. units = ALL
 **Process:**
 1. Read errfile. Read ${u.file}${u.lo != null ? ` (focus lines ${u.lo}-${u.hi})` : ""}. Read .zig spec at same path.
 2. **Mechanical:** wrap newly-\`unsafe fn\` calls in \`unsafe { }\`, \`r#ref\`→\`ref_\`, BabyList \`.push\`→\`.append\`/\`.len()\`→\`.len\`, module-vs-type imports (\`crate::X\` is a module — use \`crate::x::X\`), Option<&T>↔Option<*mut T>, \`&Vec<T>\`→\`&[T]\`/\`&mut [T]\`.
-3. **Missing method/field on shared type** → ADD it in the type's file. **Missing import** → add \`use\`.
+3. **Missing method/field on type defined in ${SRCDIR}/** → ADD it there. **Missing on UPSTREAM type (other crate)** → write a local extension trait / free fn shim in YOUR file, OR \`todo!("blocked_on: <crate>::<method>")\`. **Missing import** → add \`use\`.
 4. **Type mismatch** → adapt YOUR side per .zig spec. **#[cfg(any())]/todo!()** → remove, port REAL body.
 5. Genuinely blocked → \`todo!("blocked_on: <symbol>")\` (rare; prefer adding the symbol).
 6. Commit (multiple OK).

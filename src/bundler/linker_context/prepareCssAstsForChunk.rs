@@ -73,10 +73,18 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     // Remove duplicate rules across files. This must be done in serial, not
     // in parallel, and must be done from the last rule to the first rule.
     {
-        let mut i: usize = chunk.content.css.imports_in_chunk_in_order.len();
+        // PORT NOTE: Zig accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
+        // through the union field at each use site while also holding `entry` as a raw
+        // pointer into `imports_in_chunk_in_order`. In Rust, every `chunk.content.css.*`
+        // re-enters the `Content` enum and re-borrows `chunk.content` as a whole, which
+        // would alias the live `&mut entry`. Destructure the variant once so borrowck
+        // can split the disjoint `CssChunk` struct fields (`imports_in_chunk_in_order`
+        // vs `asts`) without raw pointers.
+        let Chunk::Content::Css(css) = &mut chunk.content else { unreachable!() };
+        let mut i: usize = css.imports_in_chunk_in_order.len();
         while i != 0 {
             i -= 1;
-            let entry = chunk.content.css.imports_in_chunk_in_order.get_mut(i);
+            let entry = css.imports_in_chunk_in_order.get_mut(i);
             // PORT NOTE: reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {

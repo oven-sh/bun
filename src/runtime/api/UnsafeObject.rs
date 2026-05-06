@@ -82,14 +82,9 @@ fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValu
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(port): GCAggressionLevel enum lives on VirtualMachine (src/jsc/VirtualMachine.zig);
-// import path will be fixed in Phase B once bun_jsc::VirtualMachine is ported.
-use bun_jsc::vm::GCAggressionLevel;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/UnsafeObject.zig (76 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      host_fn macro must expose raw fn ptr type (HostFnZig) for JSFunction::create; GCAggressionLevel import path is a guess
+//   todos:      1
 // ──────────────────────────────────────────────────────────────────────────

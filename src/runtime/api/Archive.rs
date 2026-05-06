@@ -1400,11 +1400,6 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     // Zig: realloc(output, written) catch output[0..written] — truncate is the moral equivalent.
     Ok(output)
 }
-#[cfg(any())]
-fn compress_gzip(_data: &[u8], _level: u8) -> Result<Vec<u8>, CompressError> {
-    // TODO(b2-blocked): bun_libdeflate_sys dep — see gated body above.
-    Err(CompressError::GzipInitFailed)
-}
 
 /// Check if a path is safe (no absolute paths or path traversal)
 fn is_safe_path(pathname: &[u8]) -> bool {

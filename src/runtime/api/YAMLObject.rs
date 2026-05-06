@@ -1099,7 +1099,7 @@ impl<'a> ParserCtx<'a> {
             return Err(ToJsError::StackOverflow);
         }
         match &expr.data {
-            ast::ExprData::ENull => Ok(JSValue::NULL),
+            ast::ExprData::ENull(_) => Ok(JSValue::NULL),
             ast::ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ast::ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
             ast::ExprData::EString(str) => {

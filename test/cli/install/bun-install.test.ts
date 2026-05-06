@@ -6716,6 +6716,14 @@ cache = false
         const err = await stderr.text();
         expect(err).not.toContain("lockfile is frozen");
         expect(await exited).toBe(0);
+
+        // package.json must now list bar as a dependency and bar must be installed
+        const pkg = await file(join(ctx.package_dir, "package.json")).json();
+        expect(pkg.dependencies).toEqual({ baz: "0.0.3", bar: "0.0.2" });
+        expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toMatchObject({
+          name: "bar",
+          version: "0.0.2",
+        });
       });
     });
 
@@ -6734,6 +6742,15 @@ cache = false
         const err = await stderr.text();
         expect(err).not.toContain("lockfile is frozen");
         expect(await exited).toBe(0);
+
+        // `bun install <pkg>` behaves like `bun add` — package.json and
+        // node_modules must reflect the mutation.
+        const pkg = await file(join(ctx.package_dir, "package.json")).json();
+        expect(pkg.dependencies).toEqual({ baz: "0.0.3", bar: "0.0.2" });
+        expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toMatchObject({
+          name: "bar",
+          version: "0.0.2",
+        });
       });
     });
 
@@ -6752,6 +6769,11 @@ cache = false
         const err = await stderr.text();
         expect(err).not.toContain("lockfile is frozen");
         expect(await exited).toBe(0);
+
+        // baz must be gone from package.json and node_modules
+        const pkg = await file(join(ctx.package_dir, "package.json")).json();
+        expect(pkg.dependencies ?? {}).toEqual({});
+        expect(await exists(join(ctx.package_dir, "node_modules", "baz"))).toBe(false);
       });
     });
 
@@ -6772,6 +6794,14 @@ cache = false
         const err = await stderr.text();
         expect(err).not.toContain("lockfile is frozen");
         expect(await exited).toBe(0);
+
+        // baz must now be pinned to the latest version in both places
+        const pkg = await file(join(ctx.package_dir, "package.json")).json();
+        expect(pkg.dependencies).toEqual({ baz: "0.0.5" });
+        expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+          name: "baz",
+          version: "0.0.5",
+        });
       });
     });
 

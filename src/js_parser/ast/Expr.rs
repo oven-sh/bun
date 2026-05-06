@@ -308,6 +308,17 @@ impl Expr {
         }
     }
 
+    #[inline]
+    pub fn as_string_z<'b>(
+        &self,
+        bump: &'b Bump,
+    ) -> Result<Option<&'b ZStr>, AllocError> {
+        match &self.data {
+            Data::EString(str) => Ok(Some(str.string_z(bump)?)),
+            _ => Ok(None),
+        }
+    }
+
     pub fn as_bool(&self) -> Option<bool> {
         match self.data {
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(b.value),
@@ -1529,6 +1540,11 @@ impl Expr {
     #[inline]
     pub fn has_value_for_this_in_call(&self) -> bool {
         matches!(self.data, Data::EDot(_) | Data::EIndex(_))
+    }
+
+    #[inline]
+    pub fn is_property_access(&self) -> bool {
+        self.has_value_for_this_in_call()
     }
 
     /// The given "expr" argument should be the operand of a "!" prefix operator
@@ -3029,8 +3045,9 @@ crate::new_store!(
     expr_store,
     [
         E::Array, E::Unary, E::Binary, E::Class, E::New, E::Function, E::Call, E::Dot, E::Index,
-        E::Arrow, E::JSXElement, E::Object, E::Spread, E::Template, E::RegExp, E::Await, E::Yield,
-        E::If, E::Import, E::BigInt, E::EString, E::InlinedEnum, E::NameOfSymbol,
+        E::Arrow, E::JSXElement, E::Number, E::Object, E::Spread, E::TemplatePart, E::Template,
+        E::RegExp, E::Await, E::Yield, E::If, E::Import, E::PrivateIdentifier, E::BigInt,
+        E::EString, E::InlinedEnum, E::NameOfSymbol,
     ],
     512
 );

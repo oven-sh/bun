@@ -783,7 +783,13 @@ impl Process {
 pub enum Status {
     Running,
     Exited(Exited),
-    Signaled(bun_core::SignalCode),
+    /// Raw signal byte. Zig: `.signaled: bun.SignalCode` where `SignalCode` is a
+    /// *non-exhaustive* `enum(u8) { …, _ }`, so any `u8` (incl. Linux RT signals
+    /// 32..=64) is a valid payload. `bun_core::SignalCode` is exhaustive 1..=31,
+    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
+    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
+    /// byte and range-check in `signal_code()` instead.
+    Signaled(u8),
     Err(bun_sys::Error),
 }
 

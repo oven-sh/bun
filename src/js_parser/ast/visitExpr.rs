@@ -168,17 +168,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // Round-H r2: e_* accessors on `expr::Data` are real (Option<StoreRef<T>>
-    // / Option<T>); P::value_for_this + P::find_symbol are real. The ten
-    // "structural" visitors below are un-gated from `_draft`; remaining
-    // JSX/template/import/arrow/function/class bodies still depend on
-    // `P::{jsx_import, visit_fn, visit_class}` and stay todo!()-gated with
-    // their drafts preserved in `mod _draft`. Inside the un-gated bodies,
+    // / Option<T>); P::value_for_this + P::find_symbol are real. All 24
+    // visitor bodies are now un-gated from `_draft`. Inside the bodies,
     // `todo!()` markers remain only at call-sites for P helpers still gated
     // under `#[cfg(any())]` (P.rs:5380 impl block + individually-gated fns):
     // value_for_define, is_dot_define_match, transpose_require,
     // transpose_require_resolve_known_string, check_dynamic_specifier,
     // handle_import_meta_hot_accept_call, handle_react_refresh_hook_call,
-    // MacroContext::call.
+    // get_react_refresh_hook_signal_{decl,init}, E::Template::fold,
+    // MacroContext::call, jsx_strings_to_member_expression Pragma shape.
 
     fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         // TODO: delete import.meta might not work
@@ -638,9 +636,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .expect("oom");
                     }
 
+                    let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);
                     return p.new_expr(
                         E::Call {
-                            target: p.jsx_import_automatic(expr.loc, is_static_jsx),
+                            target: jsx_target,
                             args,
                             // Enable tree shaking
                             can_be_unwrapped_if_unused: if !p.options.ignore_dce_annotations

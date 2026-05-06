@@ -2390,28 +2390,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Substitution::Failure(expr)
     }
 
-    #[cfg(any())] // blocked_on: ScopeOrder Default, BabyList/ArrayHashMap allocator-arg surface,
-    //   options::JSX::Pragma raw-ptr text deref, ServerComponents variant set, hoist_symbols ungate.
-    //   DO NOT un-gate without fixing the body — concurrent wfs keep ripping this gate off and
-    //   re-breaking bun_js_parser → blocks bun_bin link. Fix the body instead.
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
-            let mut i: usize = 0;
-            let buf = self.allocator.alloc_slice_fill_default::<ScopeOrder>(self.scopes_in_order.len());
+            // Compact `scopes_in_order` (parse pass leaves None holes from
+            // popAndDiscardScope) into a dense bump-slice for the visit pass.
+            let mut buf = BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.allocator);
             for item in self.scopes_in_order.iter() {
                 if let Some(item_) = item {
-                    buf[i] = *item_;
-                    i += 1;
+                    buf.push(*item_);
                 }
             }
-            self.scope_order_to_visit = &mut buf[..i];
+            // bumpalo's `into_bump_slice()` returns `&'a [T]`; the storage is
+            // freshly allocated and uniquely owned by `scope_order_to_visit`,
+            // so reborrowing it `&'a mut` is sound.
+            let slice = buf.into_bump_slice();
+            // SAFETY: see above — exclusive ownership of fresh bump allocation.
+            self.scope_order_to_visit =
+                unsafe { core::slice::from_raw_parts_mut(slice.as_ptr() as *mut ScopeOrder<'a>, slice.len()) };
         }
 
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
             || !self.esm_export_keyword.is_empty()
             || self.options.module_type == options::ModuleType::Esm;
 
-        self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope())?;
+        self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
         self.module_scope = self.current_scope;
         self.has_es_module_syntax = self.has_es_module_syntax
@@ -2420,25 +2422,39 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             || self.top_level_await_keyword.len > 0;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
-            self.options.jsx.factory =
-                options::JSX::Pragma::member_list_to_components_if_different(self.allocator, self.options.jsx.factory, factory.text)
-                    .expect("unreachable");
+            // SAFETY: Span.text is `ArenaStr` (`*const [u8]`) into lexer-owned source; valid for 'a.
+            let text = unsafe { &*factory.text };
+            self.options.jsx.factory = options::JSX::Pragma::member_list_to_components_if_different(
+                self.allocator,
+                core::mem::take(&mut self.options.jsx.factory),
+                text,
+            )
+            .expect("unreachable");
         }
 
         if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
-            self.options.jsx.fragment =
-                options::JSX::Pragma::member_list_to_components_if_different(self.allocator, self.options.jsx.fragment, fragment.text)
-                    .expect("unreachable");
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = unsafe { &*fragment.text };
+            self.options.jsx.fragment = options::JSX::Pragma::member_list_to_components_if_different(
+                self.allocator,
+                core::mem::take(&mut self.options.jsx.fragment),
+                text,
+            )
+            .expect("unreachable");
         }
 
         if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
-            self.options.jsx.classic_import_source = import_source.text;
-            self.options.jsx.package_name = self.options.jsx.classic_import_source;
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = unsafe { &*import_source.text };
+            self.options.jsx.classic_import_source = Box::from(text);
+            self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
             self.options.jsx.set_import_source(self.allocator);
         }
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
-            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(runtime.text) {
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = unsafe { &*runtime.text };
+            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
                 self.options.jsx.runtime = jsx_runtime.runtime;
                 if let Some(dev) = jsx_runtime.development {
                     self.options.jsx.development = dev;
@@ -2446,10 +2462,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             } else {
                 // make this a warning instead of an error because we don't support "preserve" right now
                 self.log.add_range_warning_fmt(
-                    self.source,
+                    Some(self.source),
                     runtime.range,
-                    self.allocator,
-                    format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(runtime.text)),
+                    format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(text)),
                 )?;
             }
         }
@@ -2483,9 +2498,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let module_scope = unsafe { &mut *self.module_scope };
-        module_scope.generated.ensure_unused_capacity(self.allocator, generated_symbols_count as usize * 3)?;
+        module_scope.generated.ensure_unused_capacity(generated_symbols_count as usize * 3)?;
         module_scope.members.ensure_unused_capacity(
-            self.allocator,
             generated_symbols_count as usize * 3 + module_scope.members.count(),
         )?;
 
@@ -2518,6 +2532,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.react_refresh.register_ref = self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshReg$")?;
         }
 
+        // blocked_on: `options::ServerComponents` is a Phase-A stub struct
+        // (parser.rs:195) — Zig has a 5-variant enum (None / ClientSide /
+        // WrapExportsForClientReference / WrapAnonServerFunctions /
+        // WrapExportsForServerReference). The two switches below un-gate once
+        // that enum is ported into options::JSX or bundler::options.
+        #[cfg(any())]
+        {
         match self.options.features.server_components {
             options::ServerComponents::None | options::ServerComponents::ClientSide => {}
             options::ServerComponents::WrapExportsForClientReference => {
@@ -2539,11 +2560,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
                 symbol.namespace_alias = Some(js_ast::NamespaceAlias {
                     namespace_ref: self.bun_app_namespace_ref,
-                    alias: b"Response",
+                    alias: b"Response" as &[u8] as *const [u8],
+                    was_originally_property_access: false,
                     import_record_index: u32::MAX,
                 });
             }
         }
+        } // end #[cfg(any())]
 
         if self.options.features.hot_module_reloading {
             self.hmr_api_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"hmr")?;

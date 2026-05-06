@@ -404,8 +404,12 @@ impl<'a> WorkerCommands<'a> {
     pub fn send(&mut self, frame_bytes: &[u8]) {
         self.channel.send(frame_bytes);
     }
+}
 
-    pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader) {
+impl<'a> ChannelOwner for WorkerCommands<'a> {
+    const CHANNEL_OFFSET: usize = core::mem::offset_of!(WorkerCommands<'a>, channel);
+
+    fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         match kind {
             frame::Kind::Run => {
                 self.pending_idx = Some(rd.u32_());
@@ -417,7 +421,7 @@ impl<'a> WorkerCommands<'a> {
         }
     }
 
-    pub fn on_channel_done(&mut self) {
+    fn on_channel_done(&mut self) {
         self.done = true;
     }
 }

@@ -4,12 +4,11 @@ use bun_alloc::AllocError;
 use bun_bundler::options::BundleOptions;
 use bun_bundler::Transpiler;
 use bun_core::err;
-use bun_fs::FileSystem;
-use bun_fs::real_fs::EntriesOption;
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, PathBuffer, PathString, SEP_STR};
+use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_resolver::fs::{EntriesOption, FileSystem};
 use bun_str::strings::{self, StringOrTinyString};
-use bun_str::ZStr;
+use bun_str::{PathString, ZStr};
 use bun_sys::{self, Fd};
 
 declare_scope!(jest, hidden);
@@ -32,7 +31,7 @@ pub struct Scanner<'a> {
     pub fs: &'a FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,
-    pub options: &'a BundleOptions,
+    pub options: &'a BundleOptions<'a>,
     pub has_iterated: bool,
     pub search_count: usize,
 }

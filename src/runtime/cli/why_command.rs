@@ -6,8 +6,7 @@ use bstr::BStr;
 
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
-use bun_install::install::PackageID;
-use bun_install::PackageManager;
+use bun_install::{PackageID, PackageManager};
 use bun_semver as semver;
 use bun_str::strings;
 

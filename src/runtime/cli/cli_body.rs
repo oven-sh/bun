@@ -92,9 +92,11 @@ pub mod debug_flags {
 // Zig: `else @compileError("Do not access this namespace in a release build")`
 // In Rust the module simply does not exist when the cfg is off; any reference is a compile error.
 
-pub type LoaderColonList = colon_list_type::ColonListType<api::Loader, { arguments::LOADER_RESOLVER }>;
-pub type DefineColonList = colon_list_type::ColonListType<&'static [u8], { arguments::NOOP_RESOLVER }>;
-// TODO(port): ColonListType takes a fn pointer as second generic in Zig; Rust const-generic fn ptrs are unstable. Phase B may switch to a trait param.
+// PORT NOTE: Zig's `ColonListType(T, resolver_fn)` is collapsed into a single
+// generic — the resolver is provided via the `ColonListValue` trait impl on `T`
+// (see src/runtime/cli/mod.rs). Const-generic fn ptrs are unstable in Rust.
+pub type LoaderColonList = colon_list_type::ColonListType<api::Loader>;
+pub type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 #[cold]
 pub fn invalid_target(diag: &mut clap::Diagnostic, target: &[u8]) -> ! {

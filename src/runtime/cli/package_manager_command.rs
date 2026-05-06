@@ -12,14 +12,14 @@ use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File};
 
 use crate::cli::Command;
-use crate::pm_pkg_command::PmPkgCommand;
-use crate::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
-use crate::pm_version_command::PmVersionCommand;
-use crate::pm_view_command as PmViewCommand;
-use crate::pm_why_command::PmWhyCommand;
+use crate::cli::pm_pkg_command::PmPkgCommand;
+use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
+use crate::cli::pm_version_command::PmVersionCommand;
+use crate::cli::pm_view_command as PmViewCommand;
+use crate::cli::pm_why_command::PmWhyCommand;
 
-pub use crate::pack_command::PackCommand;
-pub use crate::scan_command::ScanCommand;
+pub use crate::cli::pack_command::PackCommand;
+pub use crate::cli::scan_command::ScanCommand;
 
 // TODO(port): `Lockfile.Tree.Iterator(.node_modules).Next` — exact module path may differ in bun_install
 type NodeModulesFolder = lockfile::tree::NodeModulesIteratorNext;
@@ -97,7 +97,7 @@ impl PackageManagerCommand {
         Global::exit(0);
     }
 
-    fn get_subcommand(args_ptr: &mut &[&[u8]]) -> &[u8] {
+    fn get_subcommand<'a>(args_ptr: &mut &'a [&'a [u8]]) -> &'a [u8] {
         // PORT NOTE: reshaped for borrowck — Zig copied *args_ptr to a local, mutated it,
         // and `defer`-wrote it back. We mutate through args_ptr directly.
         let mut subcommand: &[u8] = if !args_ptr.is_empty() { args_ptr[0] } else { b"" };

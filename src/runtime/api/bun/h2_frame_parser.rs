@@ -2717,7 +2717,7 @@ impl H2FrameParser {
 // `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
 // moment the caller touches `self` again. Carrying a raw pointer keeps the Zig aliasing intent
 // without materialising overlapping `&mut` borrows.
-struct Payload {
+pub struct Payload {
     data_ptr: *const u8,
     data_len: usize,
     end: usize,

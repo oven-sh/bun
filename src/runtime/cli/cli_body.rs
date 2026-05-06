@@ -39,10 +39,10 @@ pub mod cli {
         // SAFETY: single-threaded process startup; no other reader yet
         unsafe { START_TIME = bun_core::time::nano_timestamp() };
         // SAFETY: single-threaded process startup
-        unsafe { LOG_.write(logger::Log::init()) };
+        unsafe { (*(&raw mut LOG_)).write(logger::Log::init()) };
 
         // SAFETY: just initialized above
-        let log = unsafe { LOG_.assume_init_mut() };
+        let log = unsafe { (*(&raw mut LOG_)).assume_init_mut() };
 
         // var panicker = MainPanicHandler.init(log);
         // MainPanicHandler.Singleton = &panicker;

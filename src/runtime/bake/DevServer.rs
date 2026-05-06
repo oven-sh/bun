@@ -810,10 +810,14 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         let mut h = Wyhash::init(128);
 
         if cfg!(debug_assertions) {
-            let stat = sys::stat(
+            // PORT NOTE: `sys::stat` returns `Maybe<Stat>` (no `unwrap_or_else`);
+            // go through `Result` for the panic-on-error path.
+            let stat = match ::core::result::Result::from(sys::stat(
                 bun_core::self_exe_path().unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),
-            )
-            .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e)));
+            )) {
+                Ok(s) => s,
+                Err(e) => Output::panic(format_args!("unhandled {}", e)),
+            };
             // PORT NOTE: `sys::Stat` is `libc::stat` (no `.mtime()` accessor);
             // hash the raw `st_mtime` field directly — this is a debug-only
             // configuration cache-bust key.

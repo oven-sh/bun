@@ -383,8 +383,8 @@ impl FileSystemRouter {
         };
 
         let router = Router::Router::init(
-            // SAFETY: `vm.transpiler.fs` is the process-global FileSystem singleton.
-            unsafe { &*vm.transpiler.fs },
+            // PORT NOTE: see constructor — `bun_router` takes the opaque `bun_sys::fs` handle.
+            bun_sys::fs::FileSystem::instance(),
             RouteConfig {
                 dir: this.router.config.dir.clone(),
                 extensions: this.router.config.extensions.clone(),

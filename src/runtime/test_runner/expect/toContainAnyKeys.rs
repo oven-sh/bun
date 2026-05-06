@@ -59,35 +59,44 @@ pub fn to_contain_any_keys(
     }
 
     // handle failure
+    // PORT NOTE: Zig held two `to_fmt(&formatter)` results live at once; in Rust each
+    // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned adapter, so allocate
+    // a second formatter for the other value.
     let mut formatter = super::make_formatter(global);
-    let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let mut formatter2 = super::make_formatter(global);
     if not {
-        let received_fmt = value.to_fmt(&mut formatter);
-        const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
-        // TODO(port): get_signature should be a const fn / macro to match Zig `comptime`
+        let expected_fmt = expected.to_fmt(&mut formatter);
+        let received_fmt = value.to_fmt(&mut formatter2);
         let signature = Expect::get_signature("toContainAnyKeys", "<green>expected<r>", true);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n"),
-            format_args!("{}{}", expected_fmt, received_fmt),
+            format_args!(
+                concat!(
+                    "\n\n",
+                    "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
+                ),
+                expected_fmt,
+                received_fmt,
+            ),
         );
-        // PORT NOTE: Zig passes a tuple .{expected_fmt, received_fmt} threaded into the fmt string;
-        // Rust side of `throw` will need to accept fmt::Arguments built against the template above.
-        let _ = EXPECTED_LINE;
     }
 
-    const EXPECTED_LINE: &str = "Expected to contain: <green>{}<r>\n";
-    const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-    let _ = (EXPECTED_LINE, RECEIVED_LINE);
-    // TODO(port): get_signature should be a const fn / macro to match Zig `comptime`
+    let expected_fmt = expected.to_fmt(&mut formatter);
+    let value_fmt = value.to_fmt(&mut formatter2);
     let signature = Expect::get_signature("toContainAnyKeys", "<green>expected<r>", false);
-    this.throw_fmt(
+    this.throw(
         global,
         signature,
-        concat!("\n\n", "Expected to contain: <green>{}<r>\n", "Received: <red>{}<r>\n"),
-        format_args!("{}{}", expected_fmt, value_fmt),
+        format_args!(
+            concat!(
+                "\n\n",
+                "Expected to contain: <green>{}<r>\n",
+                "Received: <red>{}<r>\n",
+            ),
+            expected_fmt,
+            value_fmt,
+        ),
     )
 }
 

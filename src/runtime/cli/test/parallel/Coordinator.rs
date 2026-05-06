@@ -716,13 +716,23 @@ pub mod abort_handler {
         {
             // SAFETY: signal handler installation; PREV_* are written before
             // any read in uninstall(), single-threaded coordinator setup.
+            // PORT NOTE: `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
+            // avoids creating &mut to a `static mut` (Rust 2024 hard error).
             unsafe {
                 let mut act: libc::sigaction = core::mem::zeroed();
-                act.sa_sigaction = posix_handler as usize;
+                act.sa_sigaction = posix_handler as *const () as usize;
                 libc::sigemptyset(&mut act.sa_mask);
                 act.sa_flags = libc::SA_SIGINFO;
-                libc::sigaction(libc::SIGINT, &act, PREV_INT.as_mut_ptr());
-                libc::sigaction(libc::SIGTERM, &act, PREV_TERM.as_mut_ptr());
+                libc::sigaction(
+                    libc::SIGINT,
+                    &act,
+                    (&raw mut PREV_INT).cast::<libc::sigaction>(),
+                );
+                libc::sigaction(
+                    libc::SIGTERM,
+                    &act,
+                    (&raw mut PREV_TERM).cast::<libc::sigaction>(),
+                );
             }
         }
         #[cfg(windows)]

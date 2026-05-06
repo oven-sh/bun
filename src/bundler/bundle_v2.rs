@@ -317,6 +317,17 @@ pub mod bake_types {
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
     pub enum Graph { Client = 0, Server = 1, Ssr = 2 }
+    /// Zig `@tagName(graph)` — used for the per-file `// path (target)` comment
+    /// in postProcessJSChunk and friends.
+    impl From<Graph> for &'static str {
+        fn from(g: Graph) -> Self {
+            match g {
+                Graph::Client => "client",
+                Graph::Server => "server",
+                Graph::Ssr => "ssr",
+            }
+        }
+    }
     impl Side {
         pub fn graph(self) -> Graph {
             match self { Side::Client => Graph::Client, Side::Server => Graph::Server }
@@ -1764,8 +1775,11 @@ impl<'a> BundleV2<'a> {
 
         let mut out_source_index: Option<Index> = None;
 
-        let path: &mut Fs::Path = match resolve_result.path() {
-            Some(p) => p,
+        // PORT NOTE(borrowck): Zig held a `*Fs.Path` into `resolve_result` while
+        // also reading other fields and re-borrowing `self`. Rust borrowck rejects
+        // that, so we clone the active path out and operate on an owned value.
+        let mut path: Fs::Path<'static> = match resolve_result.path() {
+            Some(p) => p.clone(),
             None => {
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
                 // Disable failing packages from being printed.
@@ -1786,14 +1800,19 @@ impl<'a> BundleV2<'a> {
             let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(
                 // SAFETY: `transpiler.fs` is a live `*mut FileSystem` for the bundle pass.
                 unsafe { (*transpiler.fs).top_level_dir }, &path.text);
-            path.pretty = self.allocator().alloc_slice_copy(rel);
+            // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
+            // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
+            path.pretty = unsafe { &*(self.allocator().alloc_slice_copy(rel) as *const [u8]) };
         }
         path.assert_pretty_is_valid();
         path.assert_file_path_is_absolute();
 
-        let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
-        if !entry.found_existing {
-            *path = self.path_with_pretty_initialized(core::mem::take(path), target).expect("oom");
+        // PORT NOTE(borrowck): split Zig's `getOrPut` into get-then-put so the map
+        // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
+        if let Some(existing) = self.path_to_source_index_map(target).get(&path.text) {
+            out_source_index = Some(Index::init(existing));
+        } else {
+            path = self.path_with_pretty_initialized(path, target).expect("oom");
             let loader: Loader = 'brk: {
                 let record: &ImportRecord = &self.graph.ast.items_import_records()[import_record.importer_source_index as usize].slice()[import_record.import_record_index as usize];
                 if let Some(out_loader) = record.loader {
@@ -1813,12 +1832,11 @@ impl<'a> BundleV2<'a> {
                 loader,
                 import_record.original_target,
             ).expect("oom");
-            *entry.value_ptr = idx;
+            self.path_to_source_index_map(target).put(&path.text, idx).expect("oom");
             out_source_index = Some(Index::init(idx));
 
             if let Some(secondary) = &resolve_result.path_pair.secondary {
                 if !secondary.is_disabled
-                    && !core::ptr::eq(secondary, path)
                     && !strings::eql_long(&secondary.text, &path.text, true)
                 {
                     let secondary_path_to_copy = secondary.dupe_alloc().expect("oom");
@@ -1835,7 +1853,6 @@ impl<'a> BundleV2<'a> {
                 // PORT NOTE: reshaped for borrowck — cannot hold two `&mut` into
                 // `self.graph` simultaneously, so re-derive the map per insert.
                 let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                let val = *entry.value_ptr;
                 let main_target = self.transpiler.options.target;
                 let separate_ssr = self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph;
                 let (ta, tb) = match target {
@@ -1843,13 +1860,11 @@ impl<'a> BundleV2<'a> {
                     Target::BakeServerComponentsSsr => (main_target, Target::Browser),
                     _ => (Target::Browser, Target::BakeServerComponentsSsr),
                 };
-                self.path_to_source_index_map(ta).put(&key_text, val).expect("oom");
+                self.path_to_source_index_map(ta).put(&key_text, idx).expect("oom");
                 if separate_ssr {
-                    self.path_to_source_index_map(tb).put(&key_text, val).expect("oom");
+                    self.path_to_source_index_map(tb).put(&key_text, idx).expect("oom");
                 }
             }
-        } else {
-            out_source_index = Some(Index::init(*entry.value_ptr));
         }
 
         if let Some(source_index) = out_source_index {
@@ -1864,12 +1879,12 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) -> Result<(), Error> {
         // TODO: plugins with non-file namespaces
-        let entry = self.path_to_source_index_map(target).get_or_put(path_slice).expect("oom");
-        if entry.found_existing {
+        // PORT NOTE(borrowck): split Zig's `getOrPut` into get-then-put so the map
+        // borrow doesn't span the resolver / `&mut self` calls below.
+        if self.path_to_source_index_map(target).get(path_slice).is_some() {
             return Ok(());
         }
-        let t = self.transpiler_for_target(target);
-        let result = match t.resolve_entry_point(path_slice) {
+        let result = match self.transpiler_for_target(target).resolve_entry_point(path_slice) {
             Ok(r) => r,
             Err(_) => return Ok(()),
         };
@@ -1880,7 +1895,7 @@ impl<'a> BundleV2<'a> {
 
         path = self.path_with_pretty_initialized(path, target)?;
         path.assert_pretty_is_valid();
-        *entry.value_ptr = source_index.get();
+        self.path_to_source_index_map(target).put(path_slice, source_index.get()).expect("oom");
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
@@ -1899,11 +1914,14 @@ impl<'a> BundleV2<'a> {
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
         task.known_target = target;
-        task.jsx.development = match t.options.force_node_env {
-            options::ForceNodeEnv::Development => true,
-            options::ForceNodeEnv::Production => false,
-            options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-        };
+        {
+            let t = self.transpiler_for_target(target);
+            task.jsx.development = match t.options.force_node_env {
+                options::ForceNodeEnv::Development => true,
+                options::ForceNodeEnv::Production => false,
+                options::ForceNodeEnv::Unspecified => t.options.jsx.development,
+            };
+        }
 
         // Handle onLoad plugins as entry points
         if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -1926,11 +1944,16 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) -> Result<Option<IndexInt>, Error> {
         let result = &mut *resolve;
-        let Some(path) = result.path() else { return Ok(None) };
+        // PORT NOTE(borrowck): clone the active path out so we don't hold a `&mut`
+        // into `result` across the `&mut self` calls below.
+        let mut path: Fs::Path<'static> = match result.path() {
+            Some(p) => p.clone(),
+            None => return Ok(None),
+        };
 
         path.assert_file_path_is_absolute();
-        let entry = self.path_to_source_index_map(target).get_or_put(&path.text).expect("oom");
-        if entry.found_existing {
+        // PORT NOTE(borrowck): split Zig's `getOrPut` into get-then-put.
+        if self.path_to_source_index_map(target).get(&path.text).is_some() {
             return Ok(None);
         }
         self.increment_scan_counter();
@@ -1938,11 +1961,12 @@ impl<'a> BundleV2<'a> {
 
         let loader = path.loader(&self.transpiler.options.loaders).unwrap_or(Loader::File);
 
-        *path = self.path_with_pretty_initialized(core::mem::take(path), target)?;
+        path = self.path_with_pretty_initialized(path, target)?;
         path.assert_pretty_is_valid();
-        *entry.value_ptr = source_index.get();
+        self.path_to_source_index_map(target).put(&path.text, source_index.get()).expect("oom");
         self.graph.ast.append(JSAst::empty());
 
+        let side_effects = result.primary_side_effects_data;
         self.graph.input_files.append(crate::Graph::InputFile {
             source: Logger::Source {
                 path: fs_path_to_logger(path.dupe_alloc().expect("oom")),
@@ -1951,10 +1975,10 @@ impl<'a> BundleV2<'a> {
                 ..Default::default()
             },
             loader,
-            side_effects: result.primary_side_effects_data,
+            side_effects,
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(&result, source_index.into(), self)));
+        let task = Box::leak(Box::new(ParseTask::init(result, source_index.into(), self)));
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;

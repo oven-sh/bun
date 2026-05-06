@@ -1744,19 +1744,22 @@ pub fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
-            let file_copier = copy_file::CopyFile::create(
-                destination_store,
-                source_store,
+            let _ = (
+                &destination_store,
+                &source_store,
                 destination_blob.offset,
                 destination_blob.size,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
             );
-            file_copier.schedule();
-            return Ok(file_copier.promise.value());
+            // `CopyFile::create` currently takes `Arc<Store>` and returns a
+            // gated `Box<ConcurrentPromiseTask>`; both diverge from the Zig
+            // shape (`*CopyFile` with `.schedule()` / `.promise`). Re-wire once
+            // copy_file.rs un-gates.
+            todo!("blocked_on: webcore::blob::copy_file::CopyFile::create (StoreRef + schedule/promise)");
         }
-    } else if destination_type == Store::DataTag::File && source_type == Store::DataTag::S3 {
+    } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();
         if let Some(stream) = ReadableStream::from_js(
             ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
@@ -1769,19 +1772,19 @@ pub fn write_file_with_source_destination(
                 ctx.create_error_instance("Failed to stream bytes from s3 bucket"),
             ));
         }
-    } else if destination_type == Store::DataTag::Bytes && source_type == Store::DataTag::Bytes {
+    } else if destination_type == store::DataTag::Bytes && source_type == store::DataTag::Bytes {
         // If this is bytes <> bytes, we can just duplicate it
         // this is an edgecase
         // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
         let cloned = Blob::new(source_blob.dupe());
         // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
         return Ok(JSPromise::resolved_promise_value(ctx, unsafe { (*cloned).to_js(ctx) }));
-    } else if destination_type == Store::DataTag::Bytes
-        && (source_type == Store::DataTag::File || source_type == Store::DataTag::S3)
+    } else if destination_type == store::DataTag::Bytes
+        && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {
         let blob_value = source_blob.get_slice_from(ctx, 0, 0, b"", false);
         return Ok(JSPromise::resolved_promise_value(ctx, blob_value));
-    } else if destination_type == Store::DataTag::S3 {
+    } else if destination_type == store::DataTag::S3 {
         let s3 = destination_store.data.as_s3();
         let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
             Ok(o) => o,
@@ -1792,10 +1795,13 @@ pub fn write_file_with_source_destination(
                 ));
             }
         };
-        let proxy = ctx.bun_vm().transpiler.env.get_http_proxy(true, None, None);
-        let proxy_url = proxy.map(|p| p.href);
+        // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
+        let proxy_url: Option<&str> = {
+            let _ = ctx;
+            todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
+        };
         match &source_store.data {
-            Store::Data::Bytes(bytes) => {
+            store::Data::Bytes(bytes) => {
                 if bytes.len > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
                     if let Some(stream) = ReadableStream::from_js(
                         ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
@@ -1816,7 +1822,7 @@ pub fn write_file_with_source_destination(
                             aws_options.request_payer,
                             None,
                             core::ptr::null_mut(),
-                        ));
+                        )?);
                     } else {
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             ctx,
@@ -1838,11 +1844,14 @@ pub fn write_file_with_source_destination(
                             let global = unsafe { &*this.global };
                             match result {
                                 S3UploadResult::Success => {
-                                    this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len))?;
+                                    this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len as f64))?;
                                 }
                                 S3UploadResult::Failure(err) => {
                                     // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                                    this.promise.reject(global, err.to_js_with_async_stack(global, this.store.get_path(), unsafe { this.promise.get() }))?;
+                                    let err_js = crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack(
+                                        &err, global, this.store.get_path(), unsafe { this.promise.get() },
+                                    );
+                                    this.promise.reject(global, Ok(err_js))?;
                                 }
                             }
                             Ok(())
@@ -1871,7 +1880,7 @@ pub fn write_file_with_source_destination(
                     return Ok(promise_value);
                 }
             }
-            Store::Data::File(_) | Store::Data::S3(_) => {
+            store::Data::File(_) | store::Data::S3(_) => {
                 // stream
                 if let Some(stream) = ReadableStream::from_js(
                     ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
@@ -1892,7 +1901,7 @@ pub fn write_file_with_source_destination(
                         aws_options.request_payer,
                         None,
                         core::ptr::null_mut(),
-                    ));
+                    )?);
                 } else {
                     return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
@@ -4052,6 +4061,79 @@ impl Blob {
 pub use crate::webcore::Lifetime as BlobLifetime;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Local FFI shims for `ZigString` JSC methods not yet on `bun_jsc::ZigStringJsc`.
+// Mirrors the `BunObject.rs` `ZigStringToJs` pattern.
+// TODO(port): hoist into `bun_jsc::ZigStringJsc` once that trait grows these.
+// ──────────────────────────────────────────────────────────────────────────
+mod zigstring_blob_ext {
+    use super::*;
+    unsafe extern "C" {
+        fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+        fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+        fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
+        fn ZigString__external(
+            this: *const ZigString,
+            global: *const JSGlobalObject,
+            ctx: *mut c_void,
+            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
+        ) -> JSValue;
+        fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    }
+    pub(super) trait ZigStringBlobExt {
+        fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+        fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+        fn external(
+            &self,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
+        ) -> JSValue;
+        fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+    }
+    impl ZigStringBlobExt for ZigString {
+        #[inline] fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+            unsafe { ZigString__toValueGC(self, global) }
+        }
+        #[inline] fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: see `to_js`.
+            unsafe { ZigString__toExternalValue(self, global) }
+        }
+        #[inline] fn external(
+            &self,
+            global: &JSGlobalObject,
+            ctx: *mut c_void,
+            cb: unsafe extern "C" fn(*mut c_void, *mut c_void, usize),
+        ) -> JSValue {
+            // SAFETY: see `to_js`; ownership of `ctx` transfers to JSC's finalizer.
+            unsafe { ZigString__external(self, global, ctx, cb) }
+        }
+        #[inline] fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: see `to_js`.
+            unsafe { ZigString__toJSONObject(self, global) }
+        }
+    }
+    #[inline]
+    pub(super) fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `ptr[..len]` is a leaked default-allocator `Box<[u16]>`;
+        // ownership transfers to JSC's external-string finalizer.
+        unsafe { ZigString__toExternalU16(ptr, len, global) }
+    }
+
+    /// Zig `JSValue.jsTypeLoose()` — like `js_type()` but returns `Cell` for non-cell values.
+    pub(super) trait JSValueBlobExt {
+        fn js_type_loose(self) -> jsc::JSType;
+    }
+    impl JSValueBlobExt for JSValue {
+        #[inline] fn js_type_loose(self) -> jsc::JSType {
+            if self.is_cell() { self.js_type() } else { jsc::JSType::Cell }
+        }
+    }
+}
+use zigstring_blob_ext::{ZigStringBlobExt as _, JSValueBlobExt as _, zig_string_to_external_u16};
+use bun_jsc::{StringJsc as _, ZigStringJsc as _};
+
+// ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -4090,17 +4172,17 @@ impl Blob {
             let out = BunString::clone_utf16(unsafe {
                 core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
             });
-            return Ok(out.to_js(global));
+            return out.to_js(global);
         }
 
         // null == unknown
         // false == can't be
-        let could_be_all_ascii = self.is_all_ascii().or_else(|| self.store.as_ref().unwrap().is_all_ascii);
+        let could_be_all_ascii = self.is_all_ascii().or(self.store.as_ref().and_then(|s| s.is_all_ascii));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             // if to_utf16_alloc returns None, it means there are no non-ASCII characters
             if let Some(external) = strings::to_utf16_alloc(buf, false, false)
-                .map_err(|_| global.throw_out_of_memory().unwrap_err())?
+                .map_err(|_| global.throw_out_of_memory())?
             {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
@@ -4111,7 +4193,7 @@ impl Blob {
                 if LIFETIME == Lifetime::Temporary {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
                 }
-                return Ok(ZigString::to_external_u16(external.as_ptr(), external.len(), global));
+                return Ok(zig_string_to_external_u16(external.as_ptr(), external.len(), global));
             }
 
             if LIFETIME != Lifetime::Temporary {
@@ -4129,7 +4211,7 @@ impl Blob {
             }
             Lifetime::Transfer => {
                 let store = self.store.as_ref().unwrap().clone();
-                debug_assert!(matches!(store.data, Store::Data::Bytes(_)));
+                debug_assert!(matches!(store.data, store::Data::Bytes(_)));
                 self.transfer();
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
@@ -4144,7 +4226,7 @@ impl Blob {
                     let out = BunString::clone_latin1(buf);
                     // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
                     unsafe { drop(Box::from_raw(raw_bytes)) };
-                    return Ok(out.to_js(global));
+                    return out.to_js(global);
                 }
                 Ok(ZigString::init(buf).to_external_value(global))
             }
@@ -4158,10 +4240,12 @@ impl Blob {
     pub fn to_string(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             // TODO(port): do_read_file is monomorphized over the WithBytes fn.
-            return Ok(self.do_read_file::<ToStringWithBytesFn>(global));
+            let _ = global;
+            todo!("blocked_on: do_read_file<toStringWithBytes>");
         }
         if self.is_s3() {
-            return self.do_read_from_s3::<ToStringWithBytesFn>(global);
+            let _ = global;
+            todo!("blocked_on: do_read_from_s3<toStringWithBytes>");
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
@@ -4189,10 +4273,12 @@ impl Blob {
 
     pub fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
-            return Ok(self.do_read_file::<ToJsonWithBytesFn>(global));
+            let _ = global;
+            todo!("blocked_on: do_read_file<toJSONWithBytes>");
         }
         if self.is_s3() {
-            return self.do_read_from_s3::<ToJsonWithBytesFn>(global);
+            let _ = global;
+            todo!("blocked_on: do_read_from_s3<toJSONWithBytes>");
         }
 
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
@@ -4217,7 +4303,7 @@ impl Blob {
             if LIFETIME == Lifetime::Temporary {
                 unsafe { drop(Box::from_raw(raw_bytes)) };
             }
-            return Ok(global.create_syntax_error_instance("Unexpected end of JSON input"));
+            return Ok(global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
@@ -4238,7 +4324,7 @@ impl Blob {
         }
         // null == unknown
         // false == can't be
-        let could_be_all_ascii = self.is_all_ascii().or_else(|| self.store.as_ref().unwrap().is_all_ascii);
+        let could_be_all_ascii = self.is_all_ascii().or(self.store.as_ref().and_then(|s| s.is_all_ascii));
         // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
         // free the original allocation, not the offset pointer.
         let _free = scopeguard::guard((), |_| {

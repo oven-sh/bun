@@ -1347,8 +1347,8 @@ impl<'a> Formatter<'a> {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_slice(self.global_this)?;
-                    self.add_for_new_line(str.len());
                     let slice = str.slice();
+                    self.add_for_new_line(slice.len());
                     self.write_with_formatting::<W, _, ENABLE_ANSI_COLORS>(
                         writer.ctx,
                         slice,
@@ -1492,10 +1492,9 @@ impl<'a> Formatter<'a> {
                             i = -i;
                         }
                         let digits = if i != 0 {
-                            bun_fmt::fast_digit_count(usize::try_from(i).unwrap())
-                                + (is_negative as usize)
+                            bun_fmt::fast_digit_count(i as u64) as usize + is_negative as usize
                         } else {
-                            1
+                            1usize
                         };
                         self.add_for_new_line(digits);
                     } else {

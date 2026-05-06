@@ -1734,12 +1734,13 @@ impl PipeReader {
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
-                    let poll = &mut self.reader.handle.poll;
-                    poll.flags.insert(bun_aio::file_poll::Flags::Socket);
-                    self.reader.flags.socket = true;
+                    if let bun_io::PollOrFd::Poll(poll) = &mut self.reader.handle {
+                        poll.flags.insert(bun_aio::file_poll::Flags::Socket);
+                    }
+                    self.reader.flags.insert(bun_io::PosixFlags::SOCKET);
                 }
 
-                bun_sys::Result::success()
+                Ok(())
             }
         }
     }

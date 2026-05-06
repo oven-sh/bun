@@ -1479,11 +1479,13 @@ impl UDPSocket {
     // call which fails to resolve inside an `impl` block. Re-attach once the
     // proc-macro grows a `static`/associated variant or codegen wires this.
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old(2);
+        let args = call_frame.arguments_old::<2>();
 
-        let Some(this) = call_frame.this().as_::<UDPSocket>() else {
+        let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
+        // SAFETY: from_js_direct yielded a live payload pointer.
+        let this = unsafe { &mut *this_ptr };
 
         if this.connect_info.is_some() {
             return Err(global_this.throw(format_args!("Socket is already connected")));
@@ -1498,7 +1500,7 @@ impl UDPSocket {
         }
 
         let str = args.ptr[0].to_bun_string(global_this)?;
-        let connect_host = str.to_owned_slice_z().expect("OOM");
+        let connect_host = str.to_owned_slice_z();
 
         let connect_port_js = args.ptr[1];
 
@@ -1517,7 +1519,7 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
         // SAFETY: socket valid (checked above).
-        if unsafe { (*socket).connect(&connect_host, port) } == -1 {
+        if unsafe { (*socket).connect(connect_host.as_ptr(), port as u32) } == -1 {
             return Err(global_this.throw(format_args!("Failed to connect socket")));
         }
         this.connect_info = Some(ConnectInfo { port });
@@ -1530,9 +1532,11 @@ impl UDPSocket {
 
     // TODO(port): see `js_connect` — #[bun_jsc::host_fn] removed pending macro support.
     pub fn js_disconnect(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let Some(this) = call_frame.this().as_::<UDPSocket>() else {
+        let Some(this_ptr) = call_frame.this().as_::<UDPSocket>() else {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'")));
         };
+        // SAFETY: from_js_direct yielded a live payload pointer.
+        let this = unsafe { &mut *this_ptr };
 
         if this.connect_info.is_none() {
             return Err(global_object.throw(format_args!("Socket is not connected")));

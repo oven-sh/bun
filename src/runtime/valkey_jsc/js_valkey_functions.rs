@@ -910,7 +910,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SPOP command"), err))
+                return send_err_to_js(global, "Failed to send SPOP command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -958,7 +958,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SADD command"), err))
+                return send_err_to_js(global, "Failed to send SADD command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1067,7 +1067,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HMGET command"), err))
+                return send_err_to_js(global, "Failed to send HMGET command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1102,7 +1102,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HINCRBY command"), err))
+                return send_err_to_js(global, "Failed to send HINCRBY command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1269,7 +1269,7 @@ impl JSValkeyClient {
                 } else {
                     "Failed to send HMSET command"
                 };
-                return Ok(protocol::valkey_error_to_js(global, Some(msg.as_bytes()), err));
+                return send_err_to_js(global, msg, err);
             }
         };
 
@@ -1335,7 +1335,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HSETNX command"), err))
+                return send_err_to_js(global, "Failed to send HSETNX command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1368,7 +1368,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HEXISTS command"), err))
+                return send_err_to_js(global, "Failed to send HEXISTS command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1403,7 +1403,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send PING command"), err))
+                return send_err_to_js(global, "Failed to send PING command", err)
             }
         };
         Ok(promise_to_js(promise))
@@ -1540,7 +1540,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SMOVE command"), err))
+                return send_err_to_js(global, "Failed to send SMOVE command", err)
             }
         };
         Ok(promise_to_js(promise))

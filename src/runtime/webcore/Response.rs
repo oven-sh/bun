@@ -1248,6 +1248,14 @@ impl Init {
     }
 }
 
+// PORT NOTE: local shim for `Method::from_js` — `bun_http_jsc::MethodJsc`
+// only provides `to_js`. The real binding is `Method.fromJS(global, value)`
+// in `bun_http_types::Method`; until that lands, this is `todo!`.
+#[allow(dead_code)]
+fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
+    todo!("blocked_on: bun_http_jsc::Method::from_js")
+}
+
 // PORT NOTE: Zig @"404"/@"200" — Rust idents cannot start with a digit
 pub fn status_404(global_this: &JSGlobalObject) -> *mut Response {
     empty_with_status(global_this, 404)

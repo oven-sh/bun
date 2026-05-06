@@ -963,7 +963,8 @@ impl FetchTasklet {
 
         // some times we don't have metadata so we also check http.url
         let path = if let Some(metadata) = &self.metadata {
-            BunString::clone_utf8(&metadata.url)
+            // SAFETY: metadata.url borrows owned_buf inside metadata; valid while &self.metadata.
+            BunString::clone_utf8(unsafe { &*metadata.url })
         } else if let Some(http_) = &self.http {
             BunString::clone_utf8(http_.url.href.as_ref())
         } else {
@@ -1057,11 +1058,17 @@ impl FetchTasklet {
             )),
         };
 
+        // PORT NOTE: `jsc::SystemError` has no `Default` impl upstream — spell out
+        // every field with its Zig default (SystemError.zig:1).
         let fetch_error = jsc::SystemError {
+            errno: 0,
             code,
             message,
             path,
-            ..Default::default()
+            syscall: BunString::EMPTY,
+            hostname: BunString::EMPTY,
+            fd: core::ffi::c_int::MIN,
+            dest: BunString::EMPTY,
         };
 
         BodyValueError::SystemError(fetch_error)
@@ -1102,12 +1109,12 @@ impl FetchTasklet {
 
             return DrainResult::Owned {
                 list: scheduled_response_buffer.list,
-                size_hint,
+                size_hint: size_hint as usize,
             };
         }
 
         this.mutex.unlock();
-        DrainResult::EstimatedSize(size_hint)
+        DrainResult::EstimatedSize(size_hint as usize)
     }
 
     fn get_size_hint(&self) -> BlobSizeType {

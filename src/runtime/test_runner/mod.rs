@@ -326,6 +326,9 @@ pub mod expect {
         fn throw_pretty(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
         fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
+        /// `JSGlobalObject::clear_exception` lives in the cfg-gated
+        /// `JSGlobalObject.rs`; until that file un-gates, expose the FFI here.
+        fn clear_exception_shim(&self);
     }
     impl JSGlobalObjectTestExt for JSGlobalObject {
         #[inline]
@@ -341,6 +344,14 @@ pub mod expect {
         #[inline]
         fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
             self.throw_invalid_arguments(args)
+        }
+        #[inline]
+        fn clear_exception_shim(&self) {
+            unsafe extern "C" {
+                fn JSGlobalObject__clearException(global: *const JSGlobalObject);
+            }
+            // SAFETY: FFI — &self is a valid JSGlobalObject*; no extra preconditions.
+            unsafe { JSGlobalObject__clearException(self) }
         }
     }
 

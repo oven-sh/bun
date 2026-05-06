@@ -553,25 +553,26 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    let mut lexer = js_lexer::Lexer::init_without_reading(&mut *log, &source);
+                    let mut lexer = js_lexer::Lexer::init_without_reading(&mut *log, &source, &arena);
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
                         lexer.step();
                     }
                     lexer.next()?;
-                    // TODO(port): TSXParser::init takes out-param in Zig; assuming `-> Result<Self>` reshape.
+                    // TODO(port): TSXParser::init takes out-param in Zig; reshaped `-> Result<Self>`.
                     let mut parser = js_parser::TSXParser::init(
+                        &arena,
                         &mut *log,
                         &source,
-                        vm.transpiler.options.define,
+                        &vm.transpiler.options.define,
                         lexer,
-                        opts,
+                        opts.clone(),
                     )?;
 
-                    parser.lexer.expect(js_lexer::T::OpenParen)?;
+                    parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;
-                    if parser.lexer.token == js_lexer::T::CloseParen {
+                    if parser.lexer.token == js_lexer::T::TCloseParen {
                         // zero args
                         if ils.has_matchers {
                             log.add_error_fmt(
@@ -582,7 +583,7 @@ impl<'a> Snapshots<'a> {
                             continue 'ils;
                         }
                         let close_paren_loc = parser.lexer.loc().start;
-                        parser.lexer.expect(js_lexer::T::CloseParen)?;
+                        parser.lexer.expect(js_lexer::T::TCloseParen)?;
                         break 'blk (after_open_paren_loc, close_paren_loc, false);
                     }
                     if parser.lexer.token == js_lexer::T::DotDotDot {
@@ -603,7 +604,7 @@ impl<'a> Snapshots<'a> {
                     let mut is_one_arg = false;
                     if parser.lexer.token == js_lexer::T::Comma {
                         parser.lexer.expect(js_lexer::T::Comma)?;
-                        if parser.lexer.token == js_lexer::T::CloseParen {
+                        if parser.lexer.token == js_lexer::T::TCloseParen {
                             is_one_arg = true;
                         }
                     } else {
@@ -612,7 +613,7 @@ impl<'a> Snapshots<'a> {
                     let after_comma_loc = parser.lexer.loc().start;
 
                     if is_one_arg {
-                        parser.lexer.expect(js_lexer::T::CloseParen)?;
+                        parser.lexer.expect(js_lexer::T::TCloseParen)?;
                         if ils.has_matchers {
                             break 'blk (after_expr_loc, after_comma_loc, true);
                         } else {
@@ -663,7 +664,7 @@ impl<'a> Snapshots<'a> {
                     if parser.lexer.token == js_lexer::T::Comma {
                         parser.lexer.expect(js_lexer::T::Comma)?;
                     }
-                    if parser.lexer.token != js_lexer::T::CloseParen {
+                    if parser.lexer.token != js_lexer::T::TCloseParen {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
@@ -671,7 +672,7 @@ impl<'a> Snapshots<'a> {
                         )?;
                         continue 'ils;
                     }
-                    parser.lexer.expect(js_lexer::T::CloseParen)?;
+                    parser.lexer.expect(js_lexer::T::TCloseParen)?;
 
                     break 'blk (before_expr_2_loc, after_expr_2_loc, false);
                 };

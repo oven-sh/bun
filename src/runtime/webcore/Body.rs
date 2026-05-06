@@ -820,7 +820,6 @@ impl Value {
                 //   reader.context.setup(); reader.toReadableStream(...);
                 // is not yet expressible against the current `readable_stream::NewSource` shape.
                 let _ = (&locked.on_stream_cancelled, &locked.task, &drain_result);
-                let _: &ByteStream;
                 todo!("blocked_on: webcore::byte_stream::Source / readable_stream::NewSource<ByteStream>");
                 #[allow(unreachable_code)]
                 {

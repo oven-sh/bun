@@ -955,7 +955,6 @@ impl FsReturn for Null {
 impl_fs_return_stub!(
     Stats, FD, ZigString, StringOrBuffer, ret::StringOrUndefined,
     ret::Read, ret::Write, node::StatFS, ret::Readdir, ret::StatOrNotFound,
-    ret::Watch, ret::Cp,
 );
 
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the

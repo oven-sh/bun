@@ -32,7 +32,7 @@ impl SavedFile {
         }
         blob.size = byte_size as BlobSizeType;
         // TODO(port): blob.allocator = bun.default_allocator — allocator field dropped in Rust
-        Box::new(blob).to_js(global_this)
+        blob.to_js(global_this)
     }
 }
 
@@ -81,9 +81,11 @@ mod output_file_jsc_impl {
                     let pathlike = if copy.fd.is_valid() {
                         PathOrFileDescriptor::Fd(copy.fd)
                     } else {
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            copy.pathname.as_ref(),
-                        )))
+                        // PORT NOTE: `globalObject.allocator().dupe(u8, copy.pathname)` —
+                        // Store takes ownership of the path slice; leak a heap copy.
+                        let owned: &'static [u8] =
+                            Box::leak(Box::<[u8]>::from(copy.pathname.as_ref()));
+                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(owned)))
                     };
                     let file_blob = match BlobStore::init_file(pathlike, Some(&mime)) {
                         Ok(b) => b,
@@ -115,10 +117,10 @@ mod output_file_jsc_impl {
                         Box::from(owned_pathname.unwrap_or(self.src_path.text.as_ref()));
                     let mime = self.loader.to_mime_type(&[owned_pathname.unwrap_or(b"")]);
 
+                    // PORT NOTE: `owned_pathname orelse allocator.dupe(u8, this.src_path.text)`.
+                    let owned: &'static [u8] = Box::leak(path_to_use.clone());
                     let file_blob = match BlobStore::init_file(
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            owned_pathname.unwrap_or(self.src_path.text.as_ref()),
-                        ))),
+                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(owned))),
                         Some(&mime),
                     ) {
                         Ok(b) => b,
@@ -197,9 +199,10 @@ mod output_file_jsc_impl {
                     let pathlike = if copy.fd.is_valid() {
                         PathOrFileDescriptor::Fd(copy.fd)
                     } else {
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            copy.pathname.as_ref(),
-                        )))
+                        // PORT NOTE: `allocator.dupe(u8, copy.pathname)`.
+                        let owned: &'static [u8] =
+                            Box::leak(Box::<[u8]>::from(copy.pathname.as_ref()));
+                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(owned)))
                     };
                     let file_blob = BlobStore::init_file(pathlike, Some(&mime))?;
 
@@ -213,10 +216,11 @@ mod output_file_jsc_impl {
                     let mime = self
                         .loader
                         .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+                    // PORT NOTE: `allocator.dupe(u8, this.src_path.text)`.
+                    let owned: &'static [u8] =
+                        Box::leak(Box::<[u8]>::from(self.src_path.text.as_ref()));
                     let file_blob = BlobStore::init_file(
-                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(
-                            self.src_path.text.as_ref(),
-                        ))),
+                        PathOrFileDescriptor::Path(PathLike::String(PathString::init(owned))),
                         Some(&mime),
                     )?;
 

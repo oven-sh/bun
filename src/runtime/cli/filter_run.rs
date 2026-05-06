@@ -1037,12 +1037,13 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             AbortHandler::uninstall();
             state.abort();
         }
-        event_loop.tick_once(&state);
+        // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
+        unsafe { (*event_loop).tick_once(&state as *const _ as *mut c_void) };
     }
 
     let status = state.finalize();
 
-    Global::exit(status);
+    Global::exit(status as u32);
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {

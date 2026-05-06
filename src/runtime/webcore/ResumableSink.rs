@@ -313,13 +313,13 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         if args.len() < 1 {
             return Err(global_this
-                .throw_invalid_arguments("ResumableSink.write requires at least 1 argument", &[]));
+                .throw_invalid_arguments("ResumableSink.write requires at least 1 argument"));
         }
 
         let buffer = args[0];
         let Some(sb) = StringOrBuffer::from_js(global_this, buffer)? else {
             return Err(global_this
-                .throw_invalid_arguments("ResumableSink.write requires a string or buffer", &[]));
+                .throw_invalid_arguments("ResumableSink.write requires a string or buffer"));
         };
 
         // PORT NOTE: `defer sb.deinit()` deleted — StringOrBuffer impls Drop.

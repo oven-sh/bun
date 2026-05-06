@@ -97,11 +97,9 @@ impl Default for TimeoutObject {
     fn default() -> Self {
         Self {
             ref_count: Cell::new(1),
-            event_loop_timer: EventLoopTimer {
-                next: super::Timespec::EPOCH,
-                tag: EventLoopTimerTag::TimeoutObject,
-                ..Default::default()
-            },
+            // Zig: `.{ .next = .epoch, .tag = .TimeoutObject }` — `init_paused`
+            // is exactly that (next=EPOCH, state=PENDING, heap zeroed).
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TimeoutObject),
             // TODO(port): in-place init — Zig used `undefined`; overwritten by `internals.init()`
             internals: TimerObjectInternals::default(),
         }
@@ -137,7 +135,8 @@ impl TimeoutObject {
             );
         }
 
-        if global.bun_vm().is_inspector_enabled() {
+        // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
+        if unsafe { (*global.bun_vm()).is_inspector_enabled() } {
             Debugger::did_schedule_async_call(
                 global,
                 Debugger::AsyncCallType::DOMTimer,

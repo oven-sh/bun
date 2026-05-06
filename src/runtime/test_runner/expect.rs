@@ -1823,11 +1823,65 @@ impl ExpectStatic {
 // TODO(port): trait stub for createAsymmetricMatcherWithFlags generic
 pub trait AsymmetricMatcherClass {
     fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
-    fn from_js(value: JSValue) -> Option<&'static mut Self>;
+    fn from_js_ptr(value: JSValue) -> Option<*mut Self>;
     fn flags_mut(&mut self) -> &mut Flags;
 }
 
-#[bun_jsc::JsClass]
+macro_rules! impl_asymmetric_matcher_class {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl AsymmetricMatcherClass for $t {
+                #[inline]
+                fn call(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+                    <$t>::call(g, f)
+                }
+                #[inline]
+                fn from_js_ptr(value: JSValue) -> Option<*mut Self> {
+                    <$t as bun_jsc::JsClass>::from_js(value)
+                }
+                #[inline]
+                fn flags_mut(&mut self) -> &mut Flags {
+                    &mut self.flags
+                }
+            }
+        )*
+    };
+}
+impl_asymmetric_matcher_class!(
+    ExpectAnything,
+    ExpectAny,
+    ExpectArrayContaining,
+    ExpectCloseTo,
+    ExpectObjectContaining,
+    ExpectStringContaining,
+    ExpectStringMatching,
+);
+
+// Codegen'd `cache: true` accessors (`.classes.ts`) — Rust has no associated
+// modules, so each lives as a sibling module instead of `Self::js::...`.
+pub mod expect_string_matching_js {
+    bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
+}
+pub mod expect_close_to_js {
+    bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
+}
+pub mod expect_object_containing_js {
+    bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
+}
+pub mod expect_string_containing_js {
+    bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
+}
+pub mod expect_any_js {
+    bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
+}
+pub mod expect_array_containing_js {
+    bun_jsc::codegen_cached_accessors!("ExpectArrayContaining"; arrayValue);
+}
+pub mod expect_custom_asymmetric_matcher_js {
+    bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; matcherFn, capturedArgs);
+}
+
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectAnything {
     pub flags: Flags,
 }

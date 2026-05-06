@@ -2378,7 +2378,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //   attributed while visiting this arrow's body. Emission preserved in `_draft::e_arrow`.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         // Zig: const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;
-        let prev_hook_ctx = p.react_refresh.hook_ctx_storage.take();
+        let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
+        p.react_refresh.hook_ctx_storage =
+            Some(core::ptr::NonNull::from(&mut react_hook_data));
 
         // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.allocator, dupe)` takes ownership of
         // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may

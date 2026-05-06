@@ -64,6 +64,18 @@ impl RGBA {
         SRGB { r: self.red_f32(), g: self.green_f32(), b: self.blue_f32(), alpha: self.alpha_f32() }
     }
 
+    /// Zig: `rgba.into(.HSL)` — routes RGBA → SRGB → HSL.
+    #[inline]
+    pub fn into_hsl(&self) -> HSL {
+        HSL::from_rgba(self)
+    }
+
+    /// Zig: `rgba.into(.LAB)` — routes RGBA → SRGB → LAB.
+    #[inline]
+    pub fn into_lab(&self) -> LAB {
+        LAB::from_rgba(self)
+    }
+
     /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
     /// Zig: `ColorspaceConversions(@This()).tryFromCssColor`.
     #[inline]

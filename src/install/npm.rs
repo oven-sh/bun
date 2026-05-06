@@ -142,13 +142,23 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut response_buf = MutableString::init(1024)?;
 
-    let url = URL::parse(&print_buf);
+    // PORT NOTE: Zig used `allocPrint` with `default_allocator` and never freed
+    // (Scope/AsyncHTTP store `URL<'static>`); leak to obtain `'static`.
+    let url_buf: &'static [u8] = Box::leak(core::mem::take(&mut print_buf).into_boxed_slice());
+    let url = URL::parse(url_buf);
+
+    // SAFETY: `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
+    // allocation owned for the rest of the process (never `deinit()`-ed in Zig).
+    let header_buf: &'static [u8] = match headers.content.ptr {
+        Some(p) => unsafe { core::slice::from_raw_parts(p.as_ptr(), headers.content.len) },
+        None => b"",
+    };
 
     let mut req = AsyncHTTP::init_sync(
         http::Method::GET,
         url,
         headers.entries,
-        &headers.content.allocated_slice()[..headers.content.len],
+        header_buf,
         &mut response_buf,
         b"",
         None,
@@ -319,16 +329,21 @@ pub mod registry {
             let mut registry = registry_;
 
             // Support $ENV_VAR for registry URLs
-            if strings::starts_with_char(&registry_.url, b'$') {
+            if strings::starts_with_char(&registry.url, b'$') {
                 // If it became "$ENV_VAR/", then we need to remove the trailing slash
-                if let Some(replaced_url) = env.get(strings::trim(&registry_.url[1..], b"/")) {
+                if let Some(replaced_url) = env.get(strings::trim(&registry.url[1..], b"/")) {
                     if replaced_url.len() > 1 {
                         registry.url = replaced_url.into();
                     }
                 }
             }
 
-            let mut url = URL::parse(&registry.url);
+            // PORT NOTE: Scope holds `URL<'static>`; Zig's `URL.parse(registry.url)`
+            // borrowed long-lived `[]const u8`. Leak the owned href to satisfy `'static`
+            // (TODO(b2): switch to `OwnedURL` once `bun_url` exposes the owned variant).
+            let registry_url: &'static [u8] =
+                Box::leak(core::mem::take(&mut registry.url));
+            let mut url = URL::parse(registry_url);
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
             let mut needs_normalize = false;

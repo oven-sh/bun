@@ -6,7 +6,12 @@ use bun_collections::{ArrayHashMap, AutoBitSet, BabyList};
 use bun_core::{FeatureFlags, Output};
 use bun_options_types::{ImportKind, ImportRecord};
 use bun_js_parser::{Ref, Stmt};
-use crate::Index;
+// PORT NOTE: `bun.ast.Index` is mirrored as both `crate::Index`
+// (`bun_options_types::Index`) and `bun_js_parser::Index` via a CYCLEBREAK
+// TYPE_ONLY split. `CssImportOrderKind::SourceIndex` carries the js_parser
+// flavor because its sole producer (`findImportedFilesInCSSOrder`) constructs
+// it from parser-side indices; all consumers only call `.get()`.
+use bun_js_parser::Index;
 use bun_sourcemap as source_map;
 use bun_string::{strings, string_joiner::StringJoiner};
 

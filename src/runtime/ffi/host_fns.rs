@@ -265,12 +265,14 @@ impl FFI {
                 }
                 Step::Compiled(compiled) => {
                     let str = ZigString::init(function_name.as_bytes());
-                    // SAFETY: `compiled.ptr` is a valid JSHostFn entry point
-                    // emitted by TCC; `Bun__CreateFFIFunctionValue` accepts
-                    // it as an opaque `*const c_void` and casts internally.
+                    // SAFETY: `global` is a live opaque JSC handle (ZST;
+                    // interior owned by C++). `compiled.ptr` is a valid
+                    // JSHostFn entry point emitted by TCC;
+                    // `Bun__CreateFFIFunctionValue` accepts it as an opaque
+                    // `*const c_void` and casts internally.
                     let cb = unsafe {
                         Bun__CreateFFIFunctionValue(
-                            global as *const _ as *mut _,
+                            global,
                             &str,
                             function.arg_types.len() as u32,
                             compiled.ptr as *const c_void,

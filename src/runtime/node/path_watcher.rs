@@ -854,15 +854,23 @@ impl Linux {
                 // caching `getPtr(wd)` across the loop.
                 let mut oi: usize = 0;
                 loop {
-                    let Some(owners) = plat_mut.wd_map.get(&wd) else { break };
-                    if oi >= owners.len() {
-                        break;
-                    }
-                    let owner_watcher = owners[oi].watcher as *const PathWatcher as *mut PathWatcher;
-                    let owner_subpath = owners[oi].subpath.as_bytes();
-                    // `owner.subpath` is heap-owned by the entry and stays valid across a
-                    // rehash (only the ArrayList header moves), so copying it out here is
-                    // not required.
+                    // SAFETY: holding manager.mutex. Re-project `wd_map` each iteration
+                    // (raw-ptr access, no long-lived `&mut`): the recursive branch below
+                    // calls `add_one`/`walk_and_add`, which take their own `&mut wd_map`
+                    // and may rehash. Extract the owner's watcher ptr and subpath bytes,
+                    // then drop the map borrow before any of that runs.
+                    let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = unsafe {
+                        let Some(owners) = (*plat).wd_map.get(&wd) else { break };
+                        if oi >= owners.len() {
+                            break;
+                        }
+                        let o = &owners[oi];
+                        // `o.subpath` is a `Box<ZStr>` — its heap bytes do not move when
+                        // `wd_map` rehashes (only the Vec header does). Launder the slice
+                        // through a raw ptr so its provenance is decoupled from the map
+                        // borrow that `add_one` will invalidate.
+                        (o.watcher, &*(o.subpath.as_bytes() as *const [u8]))
+                    };
                     // SAFETY: owner_watcher live under manager.mutex.
                     let watcher = unsafe { &mut *owner_watcher };
 

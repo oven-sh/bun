@@ -6435,8 +6435,16 @@ impl<'a> Resolver<'a> {
         let is_main = pm.lockfile.packages.len() == 0 && input_package_id == Install::INVALID_PACKAGE_ID;
         if is_main {
             if let Some(package_json) = package_json_ {
+                // SAFETY: BACKREF — `package_json` is an interned arena slot
+                // (see `intern_package_json`); no other live borrow here.
+                let package_json: &mut PackageJSON = unsafe { &mut *(package_json as *mut PackageJSON) };
+                // PORT NOTE: borrowck reshape — Zig passed both `&pm.lockfile` and
+                // `pm` (aliasing); split via raw to keep the call-shape.
+                let lockfile: *mut _ = &mut pm.lockfile;
                 package = match Package::from_package_json(
-                    &mut pm.lockfile,
+                    // SAFETY: `pm` is the unique owner of `lockfile`; no other
+                    // `&mut pm.lockfile` is formed across this call.
+                    unsafe { &mut *lockfile },
                     pm,
                     package_json,
                     Install::Features {

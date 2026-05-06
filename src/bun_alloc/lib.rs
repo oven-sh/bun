@@ -2060,16 +2060,28 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
 // that say `&dyn bun_alloc::Allocator` still parse. Do not implement it; do not
 // add methods. Callers should be rewritten to drop the param entirely.
 
-/// OBSOLETE marker. See module note. Kept so `&dyn Allocator` in gated Phase-A
-/// drafts parses; do not use in new code.
-pub trait Allocator {}
+/// Marker trait standing in for Zig `std.mem.Allocator`. See module note.
+///
+/// Provides a `type_id()` hook so `is_instance`-style checks (Zig:
+/// `allocator.vtable == &vtable`) can be expressed as concrete-type identity
+/// on the trait object — every implementor gets a default `type_id()` that
+/// returns its monomorphized `TypeId`.
+pub trait Allocator: 'static {
+    #[inline]
+    fn type_id(&self) -> core::any::TypeId {
+        core::any::TypeId::of::<Self>()
+    }
+}
 
-/// Checks whether `allocator` is the default allocator. With a global allocator
-/// this is vacuously true; the few Zig vtable-identity checks (WTFStringImpl,
-/// ExternalFreeFunctionAllocator) are now type-tag checks at the owner site.
+/// Checks whether `allocator` is the default allocator.
+///
+/// Zig: `return allocator.vtable == c_allocator.vtable;` — compare identity
+/// against the global mimalloc-backed allocator. With `#[global_allocator] =
+/// Mimalloc`, the Rust default is `DefaultAlloc`; vtable-identity becomes a
+/// `TypeId` comparison.
 #[inline]
-pub fn is_default(_allocator: &dyn Allocator) -> bool {
-    true
+pub fn is_default(allocator: &dyn Allocator) -> bool {
+    Allocator::type_id(allocator) == core::any::TypeId::of::<DefaultAlloc>()
 }
 
 /// Legacy ZST naming `bun.default_allocator`. With `#[global_allocator]` set,

@@ -137,6 +137,8 @@ impl Request {
             // pattern (i.e. zero bits) is a valid value.
             let cb: H = unsafe { core::mem::zeroed() };
             // SAFETY: ud is the `ctx` pointer we passed below; non-null by caller contract.
+            // The iteration is synchronous and uws holds no other reference into Ctx, so
+            // this is the unique live `&mut Ctx` for the duration of the callback.
             let ctx = unsafe { &mut *ud.cast::<Ctx>() };
             // SAFETY: uws passes (ptr,len) pairs valid for the duration of this callback.
             let name = unsafe { core::slice::from_raw_parts(n, nl) };
@@ -308,9 +310,11 @@ impl Response {
             }
             // SAFETY: H is a ZST (asserted at compile time above).
             let handler: H = unsafe { core::mem::zeroed() };
-            // SAFETY: `r` is a live H3 response for the duration of the callback.
+            // SAFETY: `r` is a live H3 response (opaque ZST handle) for the duration of the
+            // callback; uws hands it to exactly one callback at a time.
             let res = unsafe { &mut *r };
-            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above.
+            // SAFETY: `p` is the `ud` pointer we passed below; non-null checked above. The
+            // callback fires from the uws event loop with no other Rust `&mut UD` live.
             let ud = unsafe { &mut *p.cast::<UD>() };
             // PERF(port): was @call(.always_inline)
             handler(ud, off, res)

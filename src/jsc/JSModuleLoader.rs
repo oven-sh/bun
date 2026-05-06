@@ -108,12 +108,11 @@ impl JSModuleLoader {
         module_name: &BunString,
     ) -> JsResult<&'a JSInternalPromise> {
         // SAFETY: C++ side returns null iff an exception was thrown on the VM.
+        // `global_object` is an opaque ZST handle passed as `*const` per the FFI
+        // convention in `JSGlobalObject.rs`.
         unsafe {
-            JSModuleLoader__import(
-                global_object as *const _ as *mut _,
-                module_name as *const _,
-            )
-            .as_ref()
+            JSModuleLoader__import(global_object, module_name as *const _)
+                .as_ref()
         }
         .ok_or(JsError::Thrown)
     }

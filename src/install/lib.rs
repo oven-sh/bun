@@ -59,7 +59,7 @@ pub(crate) mod bun_json {
             // `asProperty(name).?.expr`. Route through the trait's own
             // `as_property` so the `EObject` payload-shape question stays in
             // one place.
-            self.as_property(key).map(|q| q.expr)
+            ExprAccessors::as_property(self, key).map(|q| q.expr)
         }
     }
 }
@@ -513,7 +513,10 @@ pub mod lockfile {
     #[derive(Default)] pub struct LoadResult;
     #[derive(Default)] pub struct LoadStep;
     pub mod package {
-        #[derive(Default, Clone, Copy)] pub struct Meta;
+        #[derive(Default, Clone, Copy)] pub struct Meta {
+            pub arch: crate::npm::Architecture,
+            pub os: crate::npm::OperatingSystem,
+        }
     }
     pub mod tree {
         pub type Id = u32;
@@ -531,7 +534,6 @@ pub mod package_manager {
 pub mod extract_tarball { pub use super::ExtractTarball; }
 pub mod network_task { pub use super::NetworkTask; }
 pub mod tarball_stream { pub use super::TarballStream; }
-pub mod package_manager_task { pub type Task = (); }
 pub mod lifecycle_script_runner { pub use super::LifecycleScriptSubprocess; }
 pub mod package_install { pub use super::PackageInstall; }
 pub mod package_installer {}

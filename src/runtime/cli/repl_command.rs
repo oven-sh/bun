@@ -157,7 +157,7 @@ impl ReplCommand {
 
 /// Runs the REPL within the VM's API lock
 struct ReplRunner<'a> {
-    repl: &'a mut Repl,
+    repl: &'a mut Repl<'a>,
     vm: &'a VirtualMachine,
     arena: Arena,
     entry_path: &'static [u8],

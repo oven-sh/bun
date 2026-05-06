@@ -1918,66 +1918,66 @@ pub fn serialize_json_source_map_for_standalone(
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> Result<(), BunError> {
-    // TODO(b2-blocked): bun_interchange::json::parse — currently returns opaque
-    //   stub `Expr(())` (json.rs draft gated on bun_js_parser::js_lexer cycle).
-    //   Un-gate once it returns `bun_js_parser::Expr`.
-    // TODO(b2-blocked): bun_js_parser::ast::e::EString::string_cloned (no-bump variant)
-    // (`InternalSourceMap::from_vlq` and `expr::data::Store::reset` are available;
-    //  only the JSON parse return type + EString utf8 helpers block.)
-    // PERF(port): was arena bulk-free (arena param dropped)
-    
-    {
-    let json_src = bun_logger::Source::init_path_string(b"sourcemap.json", json_source);
-    let mut log = bun_logger::Log::new();
+    use bun_logger::js_ast::{expr::Data as AstData, Expr as AstExpr, Stmt as AstStmt};
+
+    // PERF(port): Zig threaded an arena allocator through; here we own a local
+    // bump arena and drop it on return (matches `defer arena.free`).
+    let arena = bun_alloc::Arena::new();
+
+    let json_src = bun_logger::Source::init_path_string("sourcemap.json", json_source);
+    let mut log = bun_logger::Log::init();
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    bun_js_parser::Expr::Data::Store::reset();
-    bun_js_parser::Stmt::Data::Store::reset();
+    AstExpr::data_store_reset();
+    AstStmt::data_store_reset();
     let _reset_guard = scopeguard::guard((), |_| {
-        bun_js_parser::Expr::Data::Store::reset();
-        bun_js_parser::Stmt::Data::Store::reset();
+        AstExpr::data_store_reset();
+        AstStmt::data_store_reset();
     });
-    let mut json = bun_json::parse(&json_src, &mut log, false)
+
+    let json = bun_interchange::json::parse::<false>(&json_src, &mut log, &arena)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
     let mappings_str = json.get(b"mappings").ok_or(err!("InvalidSourceMap"))?;
-    if !matches!(mappings_str.data, bun_js_parser::ExprData::EString(_)) {
+    if !matches!(mappings_str.data, AstData::EString(_)) {
         return Err(err!("InvalidSourceMap"));
     }
     let sources_content = match json.get(b"sourcesContent").ok_or(err!("InvalidSourceMap"))?.data {
-        bun_js_parser::ExprData::EArray(arr) => arr,
+        AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
     let sources_paths = match json.get(b"sources").ok_or(err!("InvalidSourceMap"))?.data {
-        bun_js_parser::ExprData::EArray(arr) => arr,
+        AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
-    if sources_content.items.len() != sources_paths.items.len() {
+    if sources_content.items.len != sources_paths.items.len {
         return Err(err!("InvalidSourceMap"));
     }
 
-    let map_vlq: &[u8] = mappings_str.data.e_string().slice();
+    // SAFETY: matched `EString` above; `StoreRef` derefs `&mut` into the arena node.
+    let mut mappings_e_string = mappings_str.data.e_string().unwrap();
+    let map_vlq: &[u8] = mappings_e_string.slice(&arena);
     let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
-    header_list.extend_from_slice(&u32::try_from(sources_paths.items.len()).unwrap().to_le_bytes());
+    header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len));
     header_list.extend_from_slice(&u32::try_from(map_blob.len()).unwrap().to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
-        + size_of::<StringPointer>() * sources_content.items.len() * 2 // path + source
+        + size_of::<StringPointer>() * (sources_content.items.len as usize) * 2 // path + source
         + map_blob.len();
 
     for item in sources_paths.items.slice() {
-        if !matches!(item.data, bun_js_parser::ExprData::EString(_)) {
+        let AstData::EString(s) = item.data else {
             return Err(err!("InvalidSourceMap"));
-        }
+        };
 
-        let decoded = item.data.e_string().string_cloned()?;
+        let decoded = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
 
         let offset = string_payload.len();
-        string_payload.extend_from_slice(&decoded);
+        string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
             offset: u32::try_from(offset + string_payload_start_location).unwrap(),
@@ -1988,11 +1988,11 @@ pub fn serialize_json_source_map_for_standalone(
     }
 
     for item in sources_content.items.slice() {
-        if !matches!(item.data, bun_js_parser::ExprData::EString(_)) {
+        let AstData::EString(s) = item.data else {
             return Err(err!("InvalidSourceMap"));
-        }
+        };
 
-        let utf8 = item.data.e_string().string_cloned()?;
+        let utf8 = s.string_cloned(&arena).map_err(|_| err!("OutOfMemory"))?;
 
         let offset = string_payload.len();
 
@@ -2005,12 +2005,12 @@ pub fn serialize_json_source_map_for_standalone(
         let unused_slice = unsafe {
             core::slice::from_raw_parts_mut(unused.as_mut_ptr() as *mut u8, unused.len())
         };
-        let compressed_result = bun_zstd::compress(unused_slice, &utf8, 1);
+        let compressed_result = bun_zstd::compress(unused_slice, utf8, Some(1));
         match compressed_result {
             bun_zstd::Result::Err(err_msg) => {
                 Output::panic(format_args!(
                     "Unexpected error compressing sourcemap: {}",
-                    bstr::BStr::new(bun_str::span(err_msg))
+                    bstr::BStr::new(err_msg.as_bytes())
                 ));
             }
             bun_zstd::Result::Success(n) => {
@@ -2030,10 +2030,7 @@ pub fn serialize_json_source_map_for_standalone(
     header_list.extend_from_slice(&map_blob);
 
     debug_assert!(header_list.len() == string_payload_start_location);
-    return Ok(());
-    }
-    let _ = (header_list, string_payload, json_source);
-    todo!("b2-blocked: bun_interchange::json::parse → bun_js_parser::Expr")
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -462,6 +462,7 @@ unsafe fn get_fd_path_debug(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 //   notes:      Packed-struct Fd hoisted to bun_core (canonical T0). This file
 //               provides FdExt (close/make_lib_uv_owned/make_path/delete_tree),
 //               HashMapContext, MovableIfWindowsFd, and the Display path-hook.
-//               Windows close path stays todo!() until libuv_sys/windows_sys
-//               are real. std.fs interop intentionally dropped (banned).
+//               Windows close path routes through libuv (uv_fs_close) for Uv
+//               fds and ntdll NtClose for system handles. std.fs interop
+//               intentionally dropped (banned).
 // ──────────────────────────────────────────────────────────────────────────

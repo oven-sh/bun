@@ -2943,8 +2943,10 @@ where
         if let Some(cookies) = self.cookies.take() {
             // SAFETY: BACKREF
             let global_this = unsafe { (*self.server.unwrap()).global_this() };
-            let r = cookies.write(global_this, Self::RESP_KIND, self.resp.unwrap() as *mut c_void);
-            drop(cookies); // deref
+            // SAFETY: opaque FFI handle held with a ref; valid until deref below.
+            let r = unsafe { (*cookies).write(global_this, Self::RESP_KIND, self.resp.unwrap() as *mut c_void) };
+            // SAFETY: release the ref we took in set_cookies.
+            unsafe { (*cookies).deref() };
             if r.is_err() {
                 return;
             } // TODO: properly propagate exception upwards

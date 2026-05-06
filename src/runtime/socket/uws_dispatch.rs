@@ -9,7 +9,7 @@
 
 use core::ffi::{c_int, c_void};
 
-use bun_uws::{self as uws, NewSocketHandler};
+use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
 // what `us_socket_t::kind()` and the `VTable` callback signatures use. The
 // `bun_uws` crate defines its own (distinct) mirrors of both; mixing them is a

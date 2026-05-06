@@ -2828,7 +2828,7 @@ unsafe fn transpile_virtual_module(
     // going through `bun_vm() -> &VirtualMachine -> *const -> *mut` would
     // launder provenance through a shared ref and the `&mut *jsc_vm` /
     // transpiler writes below would be UB under Stacked Borrows.
-    let jsc_vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
+    let jsc_vm: *mut VirtualMachine = global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
     // PORT NOTE: spec asserted `jsc_vm.plugin_runner != null` then dropped the
     // assert ("not required for build.module()") — keep parity (no assert).
 
@@ -3345,7 +3345,7 @@ unsafe fn resolve_hook(
     // same raw-ptr-per-field style as `load_preloads`/`transpile_source_code`).
     // Going through `bun_vm() -> &VirtualMachine -> *mut` would be UB to write
     // through under Stacked Borrows.
-    let vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
+    let vm: *mut VirtualMachine = global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
 
     // Spec :1883-1904 — overlong specifier guard. `MAX_PATH_BYTES * 1.5`,
     // truncated. PORT NOTE: Zig used `@intFromFloat(@trunc(f64(..) * 1.5))`;

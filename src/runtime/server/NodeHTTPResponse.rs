@@ -423,10 +423,13 @@ impl NodeHTTPResponse {
         if upgrade_ctx.is_null() {
             return false;
         }
-        // SAFETY: JS-thread only; sole `&mut Handler` borrow in this scope.
-        let Some(ws_handler) = (unsafe { self.server.web_socket_handler() }) else {
+        let Some(ws_handler) = self.server.web_socket_handler() else {
             return false;
         };
+        // PORT NOTE: reshaped for borrowck — extend handler lifetime past &mut self method calls.
+        // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
+        let ws_handler: &mut crate::server::WebSocketServerHandler =
+            unsafe { &mut *(ws_handler as *mut _) };
         let socket_value = self.get_server_socket_value();
         if socket_value.is_empty() {
             return false;

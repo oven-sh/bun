@@ -1,5 +1,6 @@
 use crate as css;
-use crate::css_parser::CssResult as Result;
+use crate::css_parser::{CssResult as Result, ImportKind};
+use crate::dependencies::UrlDependency;
 use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
@@ -399,7 +400,7 @@ impl ImageSetOption {
             .try_parse(css::Parser::expect_url_or_string)
             .ok()
         {
-            let record_idx = input.add_import_record(url, start_position, css::ImportKind::Url)?;
+            let record_idx = input.add_import_record(url, start_position, ImportKind::Url)?;
             Image::Url(Url {
                 import_record_idx: record_idx,
                 loc: css::dependencies::Location::from_source_location(loc),
@@ -426,12 +427,6 @@ impl ImageSetOption {
             resolution,
             file_type,
         })
-    }
-    #[cfg(any())]
-    pub fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
-        let _ = input;
-        // blocked_on: Parser::add_import_record un-gate (css_parser.rs:3095)
-        todo!("ImageSetOption::parse — blocked on Parser::add_import_record")
     }
 
     // blocked_on: `dependencies::UrlDependency::new` taking the now-real

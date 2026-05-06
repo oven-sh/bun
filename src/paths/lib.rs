@@ -45,6 +45,9 @@ pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
 }
 #[inline]
 pub fn is_absolute_windows(p: &[u8]) -> bool { is_absolute_windows_t::<u8>(p) }
+/// `std.fs.path.isAbsoluteWindowsWTF16` — UTF-16 sibling.
+#[inline]
+pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool { is_absolute_windows_t::<u16>(p) }
 
 /// Port of `std.fs.path.diskDesignatorWindows` — returns the leading drive
 /// designator (e.g. `C:` or `\\server\share`) or empty.

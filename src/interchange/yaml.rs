@@ -106,11 +106,16 @@ pub fn print<Enc: Encoding, W: fmt::Write>(
     stream: Stream<Enc>,
     writer: &mut W,
 ) -> fmt::Result {
-    // TODO(port): Printer is commented-out in Zig source; this fn references
-    // Parser(encoding).Printer which does not exist. Any caller in Zig would
-    // hit a compile error — fail loudly here instead of silently no-op'ing.
+    // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
+    // and calls `printer.print()`. The `Printer` type is commented out in the spec
+    // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
+    // call to `print()` is a compile error on instantiation. Rust eagerly checks
+    // generics, so we cannot mirror that; instead this is a hard panic on the
+    // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
-    todo!("Printer is commented out in yaml.zig spec")
+    panic!(
+        "yaml::print: Printer is commented out in yaml.zig (dead-by-spec; uses removed Node type)"
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -7,8 +7,12 @@ use crate::parser::{
 };
 use crate::ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 use crate::ast::stmt::Data as StmtData;
+use crate::ast::expr::Data as ExprData;
+use crate::ast::expr::PrimitiveType;
 use crate::ast::G::Decl;
-use crate::ast::p::{P, ReactRefreshExportKind};
+use crate::ast::p::{P, ReactRefreshExportKind, null_expr_data};
+use crate::ast::scope::Kind as ScopeKind;
+use crate::ast::ts;
 use crate::lexer as js_lexer;
 use crate::flags;
 use bun_string::strings;

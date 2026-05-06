@@ -964,7 +964,7 @@ pub fn braces(
 #[bun_jsc::host_fn]
 pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments_ = callframe.arguments_old::<2>();
-    let path_buf = bun_paths::path_buffer_pool::get();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
     // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
     let vm = unsafe { &*global_this.bun_vm() };
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
@@ -1421,7 +1421,7 @@ pub fn get_public_path_with_asset_prefix(
     dir: &[u8],
     origin: URL,
     asset_prefix: &[u8],
-    writer: &mut impl bun_io::Write,
+    writer: &mut (impl bun_io::Write + ?Sized),
     platform: path::Platform,
 ) {
     // TODO(port): `comptime platform` was a const-generic in Zig; demoted to runtime arg.
@@ -1589,7 +1589,8 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // SAFETY: success → `value` arm of the #[repr(C)] union is active.
         let value = unsafe { errorable.result.value };
-        write!(&mut arraylist, "{}{}", value, query_string)?;
+        // Vec<u8> writes are infallible.
+        let _ = write!(&mut arraylist, "{}{}", value, query_string);
 
         return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
     }
@@ -2030,7 +2031,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             if let Some(path) = args.next_eat() {
                 if path.is_string() {
                     let path_str = path.to_slice(global_this)?;
-                    if path_str.len() > MAX_PATH_BYTES {
+                    if path_str.slice().len() > MAX_PATH_BYTES {
                         return Err(global_this
                             .throw_invalid_arguments("Path too long"));
                     }

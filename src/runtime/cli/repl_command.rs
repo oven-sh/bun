@@ -44,7 +44,7 @@ impl ReplCommand {
         Self::boot_repl_vm(ctx, &mut repl)
     }
 
-    fn boot_repl_vm<'a>(ctx: Command::Context<'_>, repl: &'a mut Repl<'a>) -> Result<(), bun_core::Error> {
+    fn boot_repl_vm<'r>(ctx: Command::Context<'_>, repl: &mut Repl<'r>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
@@ -173,7 +173,7 @@ impl ReplCommand {
         // the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
-            let runner = unsafe { &mut *(ctx as *mut ReplRunner<'_>) };
+            let runner = unsafe { &mut *(ctx as *mut ReplRunner<'_, '_>) };
             ReplRunner::start(runner);
         }
         // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
@@ -181,7 +181,7 @@ impl ReplCommand {
         unsafe {
             (&*(*vm).global)
                 .vm()
-                .hold_api_lock((&mut runner) as *mut ReplRunner<'_> as *mut c_void, repl_runner_thunk);
+                .hold_api_lock((&mut runner) as *mut ReplRunner<'_, '_> as *mut c_void, repl_runner_thunk);
         }
         Ok(())
     }

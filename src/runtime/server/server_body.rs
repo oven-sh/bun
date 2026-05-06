@@ -1221,9 +1221,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
     pub pending_requests: usize,
-    pub request_pool_allocator: &'static RequestContextStackAllocator<SSL, DEBUG, false>,
+    pub request_pool_allocator: *mut RequestContextStackAllocator<SSL, DEBUG, false>,
     // TODO(port): conditional field
-    pub h3_request_pool_allocator: &'static RequestContextStackAllocator<SSL, DEBUG, true>,
+    pub h3_request_pool_allocator: *mut RequestContextStackAllocator<SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
     pub listen_callback: jsc::AnyTask::AnyTask,
@@ -3310,9 +3310,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
         let ctx: &mut Ctx = unsafe {
             let raw: *mut Ctx = if Ctx::IS_H3 {
-                bun_core::handle_oom(self.h3_request_pool_allocator.try_get()).cast()
+                bun_core::handle_oom((*self.h3_request_pool_allocator).try_get()).cast()
             } else {
-                bun_core::handle_oom(self.request_pool_allocator.try_get()).cast()
+                bun_core::handle_oom((*self.request_pool_allocator).try_get()).cast()
             };
             &mut *raw
         }; // bun.handleOom — aborts on OOM

@@ -315,18 +315,13 @@ mod shim {
         todo!("blocked_on: bun_jsc::AbortSignal::pending_activity_unref")
     }
     #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
-        // Two identical `impl InternalJSEventCallback` blocks in
-        // webcore/Request.rs make method dispatch ambiguous (E0034); shim
-        // until the duplicate impl is collapsed.
-        let _ = (cb, ev, g);
-        todo!("blocked_on: webcore::request::InternalJSEventCallback::trigger (duplicate impl)")
+        cb.trigger(ev, g)
     }
     #[inline] pub fn iec_deinit(cb: &mut request::InternalJSEventCallback) {
         cb.deinit()
     }
     #[inline] pub fn iec_has_callback(cb: &request::InternalJSEventCallback) -> bool {
-        let _ = cb;
-        todo!("blocked_on: webcore::request::InternalJSEventCallback::has_callback (duplicate impl)")
+        cb.has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.

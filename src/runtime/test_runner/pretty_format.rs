@@ -2878,7 +2878,7 @@ impl JestPrettyFormat {
             // SAFETY: `as_` returned non-null; GC keeps the cell alive while `value` is on stack.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"NotAnything".len());
                 writer.write_all(b"NotAnything");
             } else {
@@ -2894,7 +2894,7 @@ impl JestPrettyFormat {
             // SAFETY: see ExpectAnything branch.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"NotAny<".len());
                 writer.write_all(b"NotAny<");
             } else {
@@ -2929,7 +2929,7 @@ impl JestPrettyFormat {
             // SAFETY: see ExpectAnything branch.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"NumberNotCloseTo".len());
                 writer.write_all(b"NumberNotCloseTo");
             } else {
@@ -2952,7 +2952,7 @@ impl JestPrettyFormat {
             // SAFETY: see ExpectAnything branch.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"ObjectNotContaining ".len());
                 writer.write_all(b"ObjectNotContaining ");
             } else {
@@ -2972,7 +2972,7 @@ impl JestPrettyFormat {
             // SAFETY: see ExpectAnything branch.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"StringNotContaining ".len());
                 writer.write_all(b"StringNotContaining ");
             } else {
@@ -2991,7 +2991,7 @@ impl JestPrettyFormat {
             // SAFETY: see ExpectAnything branch.
             let flags = unsafe { (*matcher).flags };
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-            if flags.not {
+            if flags.not() {
                 this.add_for_new_line(b"StringNotMatching ".len());
                 writer.write_all(b"StringNotMatching ");
             } else {
@@ -3009,9 +3009,10 @@ impl JestPrettyFormat {
             this.quote_strings = original_quote_strings;
         } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
             // SAFETY: `as_` returns the live m_ctx payload owned by `value`.
-            let printed = unsafe { &*instance }
-                .custom_print(value, this.global_this, writer.ctx, true)
-                .expect("unreachable");
+            let printed = expect::ExpectCustomAsymmetricMatcher::custom_print::<true>(
+                unsafe { &*instance }, value, this.global_this, writer.ctx,
+            )
+            .expect("unreachable");
             if !printed {
                 // default print (non-overridden by user)
                 // SAFETY: see above.
@@ -3029,7 +3030,7 @@ impl JestPrettyFormat {
                 let matcher_name = matcher_fn.get_name(this.global_this)?;
 
                 Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
-                if flags.not {
+                if flags.not() {
                     this.add_for_new_line(b"not ".len());
                     writer.write_all(b"not ");
                 }

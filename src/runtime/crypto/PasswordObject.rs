@@ -340,26 +340,23 @@ impl PasswordObject {
             }
             AlgorithmValue::Bcrypt(cost) => {
                 let mut outbuf = [0u8; 4096];
-                let mut outbuf_slice: &mut [u8] = &mut outbuf[..];
-                let mut password_to_use = password;
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliases `outbuf` for both the
-                // SHA digest and the remaining output slice; here we split the buffer.
-                let (digest_buf, rest_buf) = outbuf.split_at_mut(SHA512::DIGEST);
+                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
+                // SHA digest and the remaining output slice; here the digest gets its own
+                // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
+                let mut digest = [0u8; SHA512::DIGEST];
+                let mut password_to_use = password;
+                let outbuf_slice: &mut [u8];
                 if password.len() > 72 {
                     let mut sha_512 = SHA512::init();
                     sha_512.update(password);
-                    sha_512.r#final(digest_buf);
+                    sha_512.r#final(&mut digest);
                     // sha_512 dropped here (Zig: defer sha_512.deinit())
-                    password_to_use = &*digest_buf;
-                    outbuf_slice = rest_buf;
+                    password_to_use = &digest;
+                    outbuf_slice = &mut outbuf[SHA512::DIGEST..];
                 } else {
-                    // re-join for the common case
                     outbuf_slice = &mut outbuf[..];
-                    // TODO(port): borrowck — the split above means we can't easily
-                    // re-borrow `&mut outbuf[..]` while digest_buf/rest_buf are live.
-                    // Phase B: restructure with an inner scope.
                 }
 
                 let hash_options = pwhash::bcrypt::HashOptions {
@@ -472,40 +469,48 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
 #[unsafe(no_mangle)]
 pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, 4);
+    // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
+    // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.
     object.put(
         global_object,
-        ZigString::static_("hash"),
-        JSFunction::create(global_object, "hash", js_password_object_hash, 2, Default::default()),
+        b"hash",
+        JSFunction::create(
+            global_object,
+            "hash",
+            __jsc_host_js_password_object_hash,
+            2,
+            Default::default(),
+        ),
     );
     object.put(
         global_object,
-        ZigString::static_("hashSync"),
+        b"hashSync",
         JSFunction::create(
             global_object,
             "hashSync",
-            js_password_object_hash_sync,
+            __jsc_host_js_password_object_hash_sync,
             2,
             Default::default(),
         ),
     );
     object.put(
         global_object,
-        ZigString::static_("verify"),
+        b"verify",
         JSFunction::create(
             global_object,
             "verify",
-            js_password_object_verify,
+            __jsc_host_js_password_object_verify,
             2,
             Default::default(),
         ),
     );
     object.put(
         global_object,
-        ZigString::static_("verifySync"),
+        b"verifySync",
         JSFunction::create(
             global_object,
             "verifySync",
-            js_password_object_verify_sync,
+            __jsc_host_js_password_object_verify_sync,
             2,
             Default::default(),
         ),

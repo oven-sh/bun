@@ -24,7 +24,7 @@ use phf::phf_map;
 // here as an extension trait until that file is enabled upstream.
 // Port of `JSGlobalObject.gregorianDateTimeToMSUTC` (JSGlobalObject.zig:30).
 // ──────────────────────────────────────────────────────────────────────────────
-extern "C" {
+unsafe extern "C" {
     fn Bun__gregorianDateTimeToMS(
         global: *const JSGlobalObject,
         year: core::ffi::c_int,

@@ -513,7 +513,7 @@ impl<'a> CopyFile<'a> {
                     //
                     // bun test bun-write.test | xargs echo
                     //
-                    bun_sys::E::BADF => {
+                    bun_sys::E::EBADF => {
                         let mut total_written: u64 = 0;
 
                         // TODO: this should use non-blocking I/O.
@@ -527,14 +527,14 @@ impl<'a> CopyFile<'a> {
                         ) {
                             bun_sys::Result::Err(err) => {
                                 self.system_error = Some(err.to_system_error());
-                                return Err(bun_sys::errno_to_error(err.errno));
+                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
                             }
                             bun_sys::Result::Ok(()) => {}
                         }
                     }
                     _ => {
                         self.system_error = Some(errno.to_system_error());
-                        return Err(bun_sys::errno_to_error(errno.errno));
+                        return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                     }
                 }
             }
@@ -566,7 +566,7 @@ impl<'a> CopyFile<'a> {
                         Retry::No => {}
                     }
                     self.system_error = Some(errno.to_system_error());
-                    return Err(bun_sys::errno_to_error(errno.errno));
+                    return Err(bun_core::errno_to_zig_err(errno.errno as i32));
                 }
                 bun_sys::Result::Ok(()) => {}
             }
@@ -621,12 +621,12 @@ impl<'a> CopyFile<'a> {
                                 bun_sys::Result::Ok(result) => {
                                     stat_ = Some(result);
 
-                                    if bun_sys::S::ISDIR(result.mode) {
+                                    if bun_sys::S::ISDIR(result.st_mode) {
                                         self.system_error = Some(unsupported_directory_error());
                                         return;
                                     }
 
-                                    if !bun_sys::S::ISREG(result.mode) {
+                                    if !bun_sys::S::ISREG(result.st_mode) {
                                         break 'do_clonefile;
                                     }
                                 }
@@ -639,7 +639,7 @@ impl<'a> CopyFile<'a> {
 
                             match self.do_clonefile() {
                                 Ok(()) => {
-                                    let stat_size = stat_.unwrap().size;
+                                    let stat_size = stat_.unwrap().st_size;
                                     if self.max_length != MAX_SIZE
                                         && self.max_length
                                             < SizeType::try_from(stat_size).unwrap()
@@ -816,8 +816,8 @@ impl<'a> CopyFile<'a> {
                     self.do_close();
                     return;
                 }
-                if stat.size != 0
-                    && SizeType::try_from(stat.size).unwrap() > self.max_length
+                if stat.st_size != 0
+                    && SizeType::try_from(stat.st_size).unwrap() > self.max_length
                 {
                     let _ = bun_sys::darwin::ftruncate(
                         self.destination_fd.native(),
@@ -847,8 +847,8 @@ impl<'a> CopyFile<'a> {
                     }
                     bun_sys::Result::Ok(()) => {}
                 }
-                if stat.size != 0
-                    && SizeType::try_from(stat.size).unwrap() > self.max_length
+                if stat.st_size != 0
+                    && SizeType::try_from(stat.st_size).unwrap() > self.max_length
                 {
                     let _ = bun_sys::ftruncate(
                         self.destination_fd,
@@ -922,8 +922,8 @@ impl TryWith {
 
 #[cfg(windows)]
 pub struct CopyFileWindows<'a> {
-    pub destination_file_store: Arc<Store>,
-    pub source_file_store: Arc<Store>,
+    pub destination_file_store: StoreRef,
+    pub source_file_store: StoreRef,
 
     pub io_request: libuv::fs_t,
     pub promise: jsc::JSPromiseStrong,
@@ -988,7 +988,7 @@ impl ReadWriteLoop {
             Some(on_read),
         );
 
-        if let Some(err) = rc.to_error(bun_sys::Tag::Read) {
+        if let Some(err) = rc.to_error(bun_sys::Tag::read) {
             return bun_sys::Result::Err(err);
         }
 
@@ -1048,7 +1048,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     let rc = unsafe { (*req).result };
 
     bun_sys::syslog!("uv_fs_read({}, {}) = {}", source_fd, read_buf.len(), rc.int());
-    if let Some(err) = rc.to_error(bun_sys::Tag::Read) {
+    if let Some(err) = rc.to_error(bun_sys::Tag::read) {
         this.err = Some(err);
         this.on_read_write_loop_complete();
         return;
@@ -1079,7 +1079,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     );
     this.io_request.data = this as *mut _ as *mut c_void;
 
-    if let Some(err) = rc2.to_error(bun_sys::Tag::Write) {
+    if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
         this.err = Some(err);
         this.on_read_write_loop_complete();
         return;
@@ -1105,7 +1105,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 
     bun_sys::syslog!("uv_fs_write({}, {}) = {}", destination_fd, buf_len, rc.int());
 
-    if let Some(err) = rc.to_error(bun_sys::Tag::Write) {
+    if let Some(err) = rc.to_error(bun_sys::Tag::write) {
         this.err = Some(err);
         this.on_read_write_loop_complete();
         return;
@@ -1139,7 +1139,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
             Some(on_write),
         );
 
-        if let Some(err) = rc2.to_error(bun_sys::Tag::Write) {
+        if let Some(err) = rc2.to_error(bun_sys::Tag::write) {
             this.err = Some(err);
             this.on_read_write_loop_complete();
             return;
@@ -1181,8 +1181,8 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub fn init(
-        destination_file_store: Arc<Store>,
-        source_file_store: Arc<Store>,
+        destination_file_store: StoreRef,
+        source_file_store: StoreRef,
         event_loop: &'a jsc::EventLoop,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
@@ -1236,7 +1236,7 @@ impl<'a> CopyFileWindows<'a> {
                         result.close();
                         return bun_sys::Result::Err(bun_sys::Error {
                             errno: bun_sys::SystemErrno::EMFILE as c_int,
-                            syscall: bun_sys::Tag::Open,
+                            syscall: bun_sys::Tag::open,
                             path: Some(path.slice().into()),
                             ..Default::default()
                         });
@@ -1265,7 +1265,7 @@ impl<'a> CopyFileWindows<'a> {
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
-                if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::NOENT {
+                if self.mkdirp_if_not_exists && err.get_errno() == bun_sys::E::ENOENT {
                     self.mkdirp();
                     return;
                 }
@@ -1328,8 +1328,8 @@ impl<'a> CopyFileWindows<'a> {
                         bun_sys::Result::Ok(kind) => match kind {
                             bun_sys::FileKind::Directory => {
                                 self.throw(bun_sys::Error::from_code(
-                                    bun_sys::E::ISDIR,
-                                    bun_sys::Tag::Open,
+                                    bun_sys::E::EISDIR,
+                                    bun_sys::Tag::open,
                                 ));
                                 return;
                             }
@@ -1375,8 +1375,8 @@ impl<'a> CopyFileWindows<'a> {
                         bun_sys::Result::Ok(kind) => match kind {
                             bun_sys::FileKind::Directory => {
                                 self.throw(bun_sys::Error::from_code(
-                                    bun_sys::E::ISDIR,
-                                    bun_sys::Tag::Open,
+                                    bun_sys::E::EISDIR,
+                                    bun_sys::Tag::open,
                                 ));
                                 return;
                             }
@@ -1427,7 +1427,7 @@ impl<'a> CopyFileWindows<'a> {
                 } else {
                     errno
                 },
-                syscall: bun_sys::Tag::Copyfile,
+                syscall: bun_sys::Tag::copyfile,
                 path: Some(old_path.as_bytes().into()),
                 ..Default::default()
             });
@@ -1490,7 +1490,7 @@ impl<'a> CopyFileWindows<'a> {
                     let mut err = bun_sys::Error::from_code(
                         // SAFETY: errno is a valid SystemErrno discriminant
                         unsafe { core::mem::transmute::<c_int, bun_sys::SystemErrno>(errno) },
-                        bun_sys::Tag::Chmod,
+                        bun_sys::Tag::chmod,
                     );
                     let destination = &self.destination_file_store.data.file;
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
@@ -1554,7 +1554,7 @@ impl<'a> CopyFileWindows<'a> {
         ) {
             self.throw(bun_sys::Error {
                 errno: bun_sys::SystemErrno::EINVAL as c_int,
-                syscall: bun_sys::Tag::Mkdir,
+                syscall: bun_sys::Tag::mkdir,
                 ..Default::default()
             });
             return;
@@ -1605,7 +1605,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
     if let Some(errno) = rc.err_enum() {
-        if this.mkdirp_if_not_exists && errno == bun_sys::E::NOENT {
+        if this.mkdirp_if_not_exists && errno == bun_sys::E::ENOENT {
             // SAFETY: req points to a live CopyFileWindows.io_request; deinit (uv_fs_req_cleanup) is safe to call once per completed request.
             unsafe { (*req).deinit() };
             this.mkdirp();
@@ -1613,12 +1613,12 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         } else {
             let mut err = bun_sys::Error::from_code(
                 // #6336
-                if errno == bun_sys::E::PERM {
-                    bun_sys::E::NOENT
+                if errno == bun_sys::E::EPERM {
+                    bun_sys::E::ENOENT
                 } else {
                     errno
                 },
-                bun_sys::Tag::Copyfile,
+                bun_sys::Tag::copyfile,
             );
             let destination = &this.destination_file_store.data.file;
 
@@ -1659,7 +1659,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: req points to a live CopyFileWindows.io_request; libuv populated `result` before invoking this callback.
     let rc = unsafe { (*req).result };
     if let Some(errno) = rc.err_enum() {
-        let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::Chmod);
+        let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
         let destination = &this.destination_file_store.data.file;
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());

@@ -779,13 +779,29 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        LengthValue::try_op(self, rhs, |a, b| f(ctx, a, b))
+        // PORT NOTE: `LengthValue::try_op` takes a 2-arg closure (ctx folded
+        // in by caller); inline the same-unit + px-convert dispatch here so
+        // the 3-arg `Fn(C, f32, f32)` shape (which `DimensionPercentage`
+        // forwards) is satisfied without `C: Copy`.
+        if let Some(v) = self.try_same_unit_op(rhs, |a, b| f(ctx, a, b)) {
+            return Some(v);
+        }
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
+            return Some(LengthValue::Px(f(ctx, a, b)));
+        }
+        None
     }
 }
 impl<R> protocol::TryOpTo<R> for LengthValue {
     #[inline]
     fn try_op_to<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        LengthValue::try_op_to(self, rhs, |a, b| f(ctx, a, b))
+        if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
+            return Some(f(ctx, self.value(), rhs.value()));
+        }
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
+            return Some(f(ctx, a, b));
+        }
+        None
     }
 }
 impl protocol::PartialCmp for LengthValue {

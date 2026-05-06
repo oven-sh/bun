@@ -776,8 +776,11 @@ impl StreamResult {
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if VirtualMachine::get().is_shutting_down() {
-            // TODO(port): Zig copies *self to `that` and deinits the copy; ownership unclear — calling deinit on a clone-ish
-            // Leaving as no-op deinit on self would be wrong (self is &). Phase B: revisit.
+            // Zig copies `*this` to `that` and calls `that.deinit()` — a bitwise move of
+            // ownership out of `*this` followed by free. `release()` is the port of `deinit`;
+            // call it on `self` so `.owned`/`.owned_and_done` ByteLists are freed and
+            // `.err.JSValue` is unprotected instead of leaking on the shutdown path.
+            self.release();
             return Ok(JSValue::ZERO);
         }
 

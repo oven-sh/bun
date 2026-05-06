@@ -151,11 +151,21 @@ impl Touch {
     pub fn on_io_writer_chunk(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _: usize,
-        _e: Option<bun_sys::SystemError>,
+        written: usize,
+        e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
+        }
+        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_queue.pop_front()
+        } else {
+            None
+        };
+        if let Some(task) = pending {
+            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // pushed by `write_err`/`write_out`; not yet freed.
+            return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -199,18 +209,23 @@ impl OutputTaskVTable for Touch {
     fn write_err(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            // Stash so on_io_writer_chunk can route to the OutputTask state
+            // machine and reclaim the box (stopgap for missing WriterTag).
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stderr
-                    .enqueue(child, errbuf, safeguard),
+                    .enqueue(childptr, errbuf, safeguard),
             );
         }
         Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);

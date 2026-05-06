@@ -370,7 +370,7 @@ impl<'a> Loader<'a> {
             if has_port {
                 // Entry has a port, do exact match against host:port
                 if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii::<true>(h, no_proxy_entry) {
+                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
                         return true;
                     }
                 }
@@ -378,14 +378,15 @@ impl<'a> Loader<'a> {
                 // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
                 let entry_len = no_proxy_entry.len();
                 if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii::<true>(hn, no_proxy_entry) {
+                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
                         return true;
                     }
                 } else if hn.len() > entry_len
                     && hn[hn.len() - entry_len - 1] == b'.'
-                    && strings::eql_case_insensitive_ascii::<true>(
+                    && strings::eql_case_insensitive_ascii(
                         &hn[hn.len() - entry_len..],
                         no_proxy_entry,
+                        true,
                     )
                 {
                     return true;

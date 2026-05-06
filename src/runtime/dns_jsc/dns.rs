@@ -1227,7 +1227,8 @@ impl GetAddrInfoRequest {
                 get_addr_info_request::Backend::Libc(l) => l.run(),
                 _ => unreachable!(),
             }
-            (*task).on_finish();
+            let _ = task;
+            todo!("blocked_on: bun_jsc::WorkTask::on_finish");
         }
     }
 

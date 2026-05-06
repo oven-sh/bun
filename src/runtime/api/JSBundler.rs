@@ -1326,15 +1326,13 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(define) = config.get_own_object(global_this, "define")? {
-                let mut define_iter = jsc::JSPropertyIterator::init(
-                    global_this,
-                    define,
-                    jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: true,
-                        include_value: true,
-                    },
-                )?;
+            if let Some(define) = get_own_object(config, global_this, "define")? {
+                const DEFINE_OPTS: jsc::JSPropertyIteratorOptions =
+                    jsc::JSPropertyIteratorOptions::new(true, true);
+                // SAFETY: `get_own_object` only returns non-null live JSObject*.
+                let define_ref = unsafe { &*define };
+                let mut define_iter =
+                    jsc::JSPropertyIterator::<DEFINE_OPTS>::init(global_this, define_ref)?;
 
                 while let Some(prop) = define_iter.next()? {
                     let property_value = define_iter.value;

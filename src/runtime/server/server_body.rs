@@ -868,6 +868,51 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+/// Local shim for `JSValue.asPromisePtr` (gated upstream): decode a pointer
+/// smuggled through `JSValue::from_ptr_address` as the trailing `.then` arg.
+#[inline]
+fn as_promise_ptr<T>(value: JSValue) -> *mut T {
+    // PORT NOTE: Zig `asPromisePtr` does `@ptrFromInt(@intFromFloat(asNumber()))`.
+    value.as_number() as usize as *mut T
+}
+
+/// Local shim for `JSGlobalObject::throw_not_enough_arguments` (gated in
+/// `bun_jsc::js_global_object`).
+#[inline]
+fn throw_not_enough_arguments(
+    global: &JSGlobalObject,
+    name_: &str,
+    expected: usize,
+    got: usize,
+) -> JsError {
+    global.throw(format_args!(
+        "Not enough arguments to '{}'. Expected {}, got {}.",
+        name_, expected, got
+    ))
+}
+
+// ─── Local JsClass shims (codegen `*__fromJS` not yet emitted) ───────────────
+unsafe extern "C" {
+    fn Request__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut Request;
+    fn NodeHTTPResponse__fromJS(value: JSValue, global: *const JSGlobalObject) -> *mut NodeHTTPResponse;
+}
+#[inline]
+fn request_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut Request> {
+    // SAFETY: FFI call into generated class binding
+    let p = unsafe { Request__fromJS(value, global) };
+    if p.is_null() { None } else { Some(p) }
+}
+#[inline]
+fn node_http_response_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut NodeHTTPResponse> {
+    // SAFETY: FFI call into generated class binding
+    let p = unsafe { NodeHTTPResponse__fromJS(value, global) };
+    if p.is_null() { None } else { Some(p) }
+}
+#[inline]
+fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
+    FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
+}
+
 // Exported as BunServe__onResolvePlugins / BunServe__onRejectPlugins
 // TODO(port): @export — the #[bun_jsc::host_fn] macro emits the C-ABI shim; export under these names
 #[unsafe(no_mangle)]

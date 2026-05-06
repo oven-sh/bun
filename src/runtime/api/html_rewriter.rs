@@ -455,8 +455,8 @@ impl HTMLRewriterLoader {
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
         context: Rc<RefCell<LOLHTMLContext>>,
         size_hint: Option<usize>,
-        output: webcore::Sink<'static>,
-    ) -> Option<&'static [u8]> {
+        mut output: webcore::Sink<'static>,
+    ) -> Option<lolhtml::HTMLString> {
         let chunk_size = size_hint.unwrap_or(16384).max(1024);
         // SAFETY: builder valid; `self` outlives the rewriter (deinit'd in finalize()).
         let built = unsafe {

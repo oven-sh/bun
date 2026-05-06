@@ -823,24 +823,18 @@ impl CompileC {
 
             #[cfg(target_arch = "aarch64")]
             {
-                if Fd::cwd()
-                    .directory_exists_at(b"/opt/homebrew/include")
-                    .is_true()
-                {
+                if dir_exists(b"/opt/homebrew/include") {
                     if state
-                        .add_sys_include_path(ZStr::from_static(b"/opt/homebrew/include\0"))
+                        .add_sys_include_path(zstr!(b"/opt/homebrew/include"))
                         .is_err()
                     {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
                     }
                 }
 
-                if Fd::cwd()
-                    .directory_exists_at(b"/opt/homebrew/lib")
-                    .is_true()
-                {
+                if dir_exists(b"/opt/homebrew/lib") {
                     if state
-                        .add_library_path(ZStr::from_static(b"/opt/homebrew/lib\0"))
+                        .add_library_path(zstr!(b"/opt/homebrew/lib"))
                         .is_err()
                     {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");

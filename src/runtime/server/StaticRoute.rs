@@ -420,7 +420,8 @@ impl StaticRoute {
                 let mut cursor: &mut [u8] = &mut b[..];
                 write!(cursor, "{}", status).expect("unreachable");
                 let written = 16 - cursor.len();
-                r.write_status(&b[..written]);
+                // SAFETY: `r` is a live `*mut h3::Response` held by `AnyResponse`.
+                unsafe { (*r).write_status(&b[..written]) };
             }
         }
     }

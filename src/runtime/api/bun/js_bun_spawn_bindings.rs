@@ -723,7 +723,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             extra_fds.push(opt);
                         }
                         stdio::ResultT::Err(e) => {
-                            return e.throw_js(global_this);
+                            return Err(e.throw_js(global_this));
                         }
                     }
                     break 'brk fd;

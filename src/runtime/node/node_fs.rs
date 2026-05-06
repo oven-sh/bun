@@ -1768,9 +1768,9 @@ impl AsyncReaddirRecursiveTask {
         // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
         let promise = unsafe { self.promise.get() };
         let result = if let Some(err) = &mut self.pending_err {
-            match err.to_js_with_async_stack(global_object, promise) {
+            match SysErrorAsyncJsc::to_js_with_async_stack(&*err, global_object, promise) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             }
         } else {
             let res = match core::mem::replace(&mut self.result_list, ResultListEntryValue::Files(Vec::new())) {
@@ -1780,7 +1780,7 @@ impl AsyncReaddirRecursiveTask {
             };
             match res.to_js(global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             }
         };
         promise_value.ensure_still_alive();

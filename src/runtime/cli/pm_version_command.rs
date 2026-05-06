@@ -455,7 +455,7 @@ impl PmVersionCommand {
     }
 
     fn show_help(
-        ctx: &command::Context,
+        ctx: &command::ContextData,
         pm: &PackageManager,
         cwd: &[u8],
     ) -> Result<(), AllocError> {

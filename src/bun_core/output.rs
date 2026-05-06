@@ -1784,12 +1784,39 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     out
 }
 
+#[doc(hidden)]
 #[inline]
-fn enable_color_for(dest: Destination) -> bool {
+pub fn enable_color_for(dest: Destination) -> bool {
     match dest {
         Destination::Stdout => ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed),
         Destination::Stderr => ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed),
     }
+}
+
+/// Returns `"\n"` if `fmt` does not already end in a newline, else `""`.
+/// Mirrors Zig's `if (fmt.len == 0 or fmt[fmt.len - 1] != '\n')` guard so the
+/// `*ln!` macros never emit a double newline when the caller's template already
+/// ends in one.
+#[doc(hidden)]
+#[inline]
+pub const fn _needs_nl(fmt: &str) -> &'static str {
+    let b = fmt.as_bytes();
+    if b.is_empty() || b[b.len() - 1] != b'\n' { "\n" } else { "" }
+}
+
+/// Exposed for the `scoped_log!` macro so it can pick the colored / plain
+/// branch *before* building `format_args!` (single arg evaluation).
+#[doc(hidden)]
+#[inline]
+pub fn _scoped_use_ansi() -> bool {
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && SOURCE_SET.get()
+        && {
+            // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
+            // init; `QuietWriter` is Copy POD so reading it is always sound.
+            let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER };
+            sw.context_handle() == raw_writer().handle()
+        }
 }
 
 #[inline]

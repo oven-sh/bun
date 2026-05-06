@@ -120,6 +120,15 @@ impl<T: Node> Default for UnboundedQueue<T> {
 impl<T: Node> UnboundedQueue<T> {
     pub const QUEUE_PADDING_LENGTH: usize = CACHE_LINE_LENGTH / 2;
 
+    /// Const constructor — `Default` is not usable in `static` initializers.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            back: AtomicPtr::new(ptr::null_mut()),
+            front: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
     pub fn push(&self, item: *mut T) {
         self.push_batch(item, item);
     }

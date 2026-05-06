@@ -23,6 +23,135 @@ macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(Fs, $($arg)*) };
 }
 
+// ── BOM ──────────────────────────────────────────────────────────────────────
+// Port of `bun.strings.BOM` from `src/string/immutable.zig`. The Rust port
+// lives in `bun_string::immutable::unicode_draft` but that module is private
+// (`mod unicode_draft` — no `pub use` of `BOM` yet); the resolver needs it for
+// `read_file_with_handle_and_allocator` so the enum is re-ported here. The
+// UTF-16→UTF-8 transcode goes through `strings::to_utf8_alloc` (re-exported
+// from `bun_core::strings`, simdutf-backed) — no C++ is reimplemented.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BOM {
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+    Utf32Le,
+    Utf32Be,
+}
+
+impl BOM {
+    pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
+    pub const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
+    pub const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
+    pub const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
+    pub const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
+
+    pub fn detect(bytes: &[u8]) -> Option<BOM> {
+        if bytes.len() < 3 {
+            return None;
+        }
+        if bytes.starts_with(&Self::UTF8_BYTES) {
+            return Some(BOM::Utf8);
+        }
+        if bytes.starts_with(&Self::UTF16_LE_BYTES) {
+            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
+            //   return .utf32_le;
+            return Some(BOM::Utf16Le);
+        }
+        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
+        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
+        None
+    }
+
+    pub fn header(self) -> &'static [u8] {
+        match self {
+            BOM::Utf8 => &Self::UTF8_BYTES,
+            BOM::Utf16Le => &Self::UTF16_LE_BYTES,
+            BOM::Utf16Be => &Self::UTF16_BE_BYTES,
+            BOM::Utf32Le => &Self::UTF32_LE_BYTES,
+            BOM::Utf32Be => &Self::UTF32_BE_BYTES,
+        }
+    }
+
+    pub fn tag_name(self) -> &'static str {
+        match self {
+            BOM::Utf8 => "utf8",
+            BOM::Utf16Le => "utf16_le",
+            BOM::Utf16Be => "utf16_be",
+            BOM::Utf32Le => "utf32_le",
+            BOM::Utf32Be => "utf32_be",
+        }
+    }
+
+    /// `removeAndConvertToUTF8AndFree` — if a re-encode is needed, free the input
+    /// and the caller replaces it with the new return.
+    pub fn remove_and_convert_to_utf8_and_free(self, mut bytes: Vec<u8>) -> Vec<u8> {
+        match self {
+            BOM::Utf8 => {
+                let n = Self::UTF8_BYTES.len();
+                bytes.copy_within(n.., 0);
+                bytes.truncate(bytes.len() - n);
+                bytes
+            }
+            BOM::Utf16Le => {
+                let trimmed = &bytes[Self::UTF16_LE_BYTES.len()..];
+                // SAFETY: `trimmed` reinterprets [u8] as [u16] LE; alignment may be 1 — Zig used
+                // `@alignCast`. simdutf reads byte-aligned on every supported target.
+                let trimmed_u16: &[u16] = unsafe {
+                    core::slice::from_raw_parts(trimmed.as_ptr() as *const u16, trimmed.len() / 2)
+                };
+                let out = strings::to_utf8_alloc(trimmed_u16);
+                drop(bytes);
+                out
+            }
+            _ => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                let n = self.header().len();
+                bytes.copy_within(n.., 0);
+                bytes.truncate(bytes.len() - n);
+                bytes
+            }
+        }
+    }
+
+    /// `removeAndConvertToUTF8WithoutDealloc` — required for `use_shared_buffer`.
+    /// We cannot free `list`'s pointer; the returned slice always points to
+    /// `list.as_ptr()`. `list` may be grown.
+    pub fn remove_and_convert_to_utf8_without_dealloc<'a>(self, list: &'a mut Vec<u8>) -> &'a [u8] {
+        match self {
+            BOM::Utf8 => {
+                let n = Self::UTF8_BYTES.len();
+                let len = list.len();
+                list.copy_within(n.., 0);
+                // PORT NOTE: Zig returned a subslice without truncating; mirror by slicing.
+                &list[..len - n]
+            }
+            BOM::Utf16Le => {
+                let trimmed = &list[Self::UTF16_LE_BYTES.len()..];
+                // SAFETY: see `remove_and_convert_to_utf8_and_free`.
+                let trimmed_u16: &[u16] = unsafe {
+                    core::slice::from_raw_parts(trimmed.as_ptr() as *const u16, trimmed.len() / 2)
+                };
+                let out = strings::to_utf8_alloc(trimmed_u16);
+                if list.capacity() < out.len() {
+                    list.reserve(out.len() - list.len());
+                }
+                // SAFETY: capacity ensured; bytes overwritten immediately below.
+                unsafe { list.set_len(out.len()) };
+                list.copy_from_slice(&out);
+                &list[..]
+            }
+            _ => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                let n = self.header().len();
+                let len = list.len();
+                list.copy_within(n.., 0);
+                &list[..len - n]
+            }
+        }
+    }
+}
+
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
 
 pub mod preallocate {
@@ -1777,9 +1906,19 @@ impl RealFS {
                 }
             }
 
-            // TODO(b2-blocked): `strings::BOM::detect` + `remove_and_convert_to_utf8_without_dealloc`
-            // live in the gated `immutable/unicode.rs` draft (simdutf wiring). Until then,
-            // serve the bytes verbatim — BOM-stripping only affects HTTP-serve hot path.
+            // SAFETY: see PORT NOTE above — `file_contents_ptr` borrows `shared_buffer.list`.
+            let file_contents: &[u8] =
+                unsafe { core::slice::from_raw_parts(file_contents_ptr, file_contents_len) };
+            if let Some(bom) = BOM::detect(file_contents) {
+                debug!("Convert {} BOM", bom.tag_name());
+                // PORT NOTE: Zig passed `&shared_buffer.list` and the returned slice aliases it.
+                // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
+                // correct logical size (the read loop above truncated to `file_contents_len`).
+                shared_buffer.list.truncate(file_contents_len);
+                let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
+                file_contents_ptr = converted.as_ptr();
+                file_contents_len = converted.len();
+            }
         } else {
             let mut initial_buf = [0u8; 16384];
 
@@ -1805,8 +1944,10 @@ impl RealFS {
                     allocation[read_count] = 0;
                     allocation.truncate(read_count);
 
-                    // TODO(b2-blocked): `strings::BOM` (gated in `immutable/unicode.rs`) —
-                    // BOM strip + UTF-16→UTF-8 transcode. Serve bytes verbatim until then.
+                    if let Some(bom) = BOM::detect(&allocation) {
+                        debug!("Convert {} BOM", bom.tag_name());
+                        allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
+                    }
 
                     return Ok(PathContentsPair {
                         path: Path::init(path),

@@ -374,7 +374,7 @@ impl PropertyIdTag {
 
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
     BackgroundImage,
@@ -625,6 +625,22 @@ pub enum PropertyId {
     All,
     Unparsed,
     Custom(CustomPropertyName),
+}
+
+// PORT NOTE: Zig `PropertyId.eql()` (properties_generated.zig:9195) compares the
+// tag, then *only* compares the payload when its type is `VendorPrefix` — for
+// `.custom` (whose payload is `CustomPropertyName`) and all unit/void variants
+// it returns `true` on tag match alone. A derived `PartialEq` would compare the
+// `CustomPropertyName` bytes, diverging from the spec (observable in
+// `rules/style.zig:isDuplicate`). `prefix()` already returns the `VendorPrefix`
+// payload for the 65 prefixed variants and `VendorPrefix::empty()` for every
+// other variant (including `Custom`/`All`/`Unparsed`), so `tag` + `prefix`
+// equality is exactly the Zig semantics.
+impl PartialEq for PropertyId {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.tag() == other.tag() && self.prefix() == other.prefix()
+    }
 }
 
 impl PropertyId {
@@ -1435,1232 +1451,1232 @@ impl PropertyId {
         // a placeholder — replace with a phf / match-on-len when un-gated.
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-image") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundImage); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundImage); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-position-x") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundPositionX); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundPositionX); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-position-y") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundPositionY); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundPositionY); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-position") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundPosition); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundPosition); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-repeat") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundRepeat); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundRepeat); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-attachment") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundAttachment); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundAttachment); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-clip") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundClip(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundClip(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-origin") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BackgroundOrigin); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackgroundOrigin); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"background") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Background); }
+            if allowed.intersects(pre) { return Some(PropertyId::Background); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-shadow") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxShadow(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxShadow(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"opacity") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Opacity); }
+            if allowed.intersects(pre) { return Some(PropertyId::Opacity); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Color); }
+            if allowed.intersects(pre) { return Some(PropertyId::Color); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"display") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Display); }
+            if allowed.intersects(pre) { return Some(PropertyId::Display); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"visibility") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Visibility); }
+            if allowed.intersects(pre) { return Some(PropertyId::Visibility); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Width); }
+            if allowed.intersects(pre) { return Some(PropertyId::Width); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"height") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Height); }
+            if allowed.intersects(pre) { return Some(PropertyId::Height); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"min-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MinWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::MinWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"min-height") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MinHeight); }
+            if allowed.intersects(pre) { return Some(PropertyId::MinHeight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"max-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaxWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaxWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"max-height") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaxHeight); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaxHeight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"block-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BlockSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::BlockSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inline-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InlineSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::InlineSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"min-block-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MinBlockSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::MinBlockSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"min-inline-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MinInlineSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::MinInlineSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"max-block-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaxBlockSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaxBlockSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"max-inline-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaxInlineSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaxInlineSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-sizing") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxSizing(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxSizing(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"aspect-ratio") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::AspectRatio); }
+            if allowed.intersects(pre) { return Some(PropertyId::AspectRatio); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"overflow") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Overflow); }
+            if allowed.intersects(pre) { return Some(PropertyId::Overflow); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"overflow-x") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::OverflowX); }
+            if allowed.intersects(pre) { return Some(PropertyId::OverflowX); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"overflow-y") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::OverflowY); }
+            if allowed.intersects(pre) { return Some(PropertyId::OverflowY); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"text-overflow") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::O;
-            if allowed.contains(pre) { return Some(PropertyId::TextOverflow(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TextOverflow(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"position") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Position); }
+            if allowed.intersects(pre) { return Some(PropertyId::Position); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Top); }
+            if allowed.intersects(pre) { return Some(PropertyId::Top); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Bottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::Bottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Left); }
+            if allowed.intersects(pre) { return Some(PropertyId::Left); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Right); }
+            if allowed.intersects(pre) { return Some(PropertyId::Right); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::InsetInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::InsetInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"inset") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Inset); }
+            if allowed.intersects(pre) { return Some(PropertyId::Inset); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-spacing") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderSpacing); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderSpacing); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTopColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTopColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottomColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottomColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderLeftColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderLeftColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderRightColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderRightColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockStartColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockStartColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockEndColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockEndColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineStartColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineStartColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineEndColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineEndColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTopStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTopStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottomStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottomStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderLeftStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderLeftStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderRightStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderRightStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockStartStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockStartStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockEndStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockEndStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineStartStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineStartStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineEndStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineEndStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTopWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTopWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottomWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottomWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderLeftWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderLeftWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderRightWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderRightWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockStartWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockStartWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockEndWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockEndWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineStartWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineStartWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineEndWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineEndWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-left-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTopLeftRadius(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTopLeftRadius(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-right-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTopRightRadius(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTopRightRadius(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-left-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottomLeftRadius(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottomLeftRadius(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-right-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottomRightRadius(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottomRightRadius(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-start-start-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderStartStartRadius); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderStartStartRadius); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-start-end-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderStartEndRadius); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderStartEndRadius); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-end-start-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderEndStartRadius); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderEndStartRadius); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-end-end-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderEndEndRadius); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderEndEndRadius); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-radius") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BorderRadius(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderRadius(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-source") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImageSource); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImageSource); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-outset") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImageOutset); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImageOutset); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-repeat") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImageRepeat); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImageRepeat); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImageWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImageWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-slice") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImageSlice); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImageSlice); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-image") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::O;
-            if allowed.contains(pre) { return Some(PropertyId::BorderImage(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderImage(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Border); }
+            if allowed.intersects(pre) { return Some(PropertyId::Border); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderTop); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderTop); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderLeft); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderLeft); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderRight); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderRight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::BorderInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::BorderInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"outline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Outline); }
+            if allowed.intersects(pre) { return Some(PropertyId::Outline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"outline-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::OutlineColor); }
+            if allowed.intersects(pre) { return Some(PropertyId::OutlineColor); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"outline-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::OutlineStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::OutlineStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"outline-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::OutlineWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::OutlineWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-direction") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexDirection(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexDirection(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-wrap") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexWrap(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexWrap(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-flow") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexFlow(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexFlow(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-grow") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::FlexGrow(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexGrow(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-shrink") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::FlexShrink(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexShrink(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-basis") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::FlexBasis(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexBasis(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::Flex(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Flex(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"order") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::Order(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Order(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"align-content") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::AlignContent(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::AlignContent(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"justify-content") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::JustifyContent(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::JustifyContent(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"place-content") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PlaceContent); }
+            if allowed.intersects(pre) { return Some(PropertyId::PlaceContent); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"align-self") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::AlignSelf(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::AlignSelf(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"justify-self") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::JustifySelf); }
+            if allowed.intersects(pre) { return Some(PropertyId::JustifySelf); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"place-self") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PlaceSelf); }
+            if allowed.intersects(pre) { return Some(PropertyId::PlaceSelf); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"align-items") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::AlignItems(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::AlignItems(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"justify-items") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::JustifyItems); }
+            if allowed.intersects(pre) { return Some(PropertyId::JustifyItems); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"place-items") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PlaceItems); }
+            if allowed.intersects(pre) { return Some(PropertyId::PlaceItems); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"row-gap") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::RowGap); }
+            if allowed.intersects(pre) { return Some(PropertyId::RowGap); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"column-gap") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ColumnGap); }
+            if allowed.intersects(pre) { return Some(PropertyId::ColumnGap); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"gap") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Gap); }
+            if allowed.intersects(pre) { return Some(PropertyId::Gap); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-orient") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxOrient(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxOrient(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-direction") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxDirection(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxDirection(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-ordinal-group") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxOrdinalGroup(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxOrdinalGroup(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-align") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxAlign(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxFlex(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxFlex(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex-group") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::BoxFlexGroup(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxFlexGroup(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-pack") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxPack(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxPack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-lines") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BoxLines(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BoxLines(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-pack") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexPack(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexPack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-order") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexOrder(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexOrder(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-align") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexAlign(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-item-align") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexItemAlign(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexItemAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-line-pack") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexLinePack(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexLinePack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-positive") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexPositive(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexPositive(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-negative") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexNegative(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexNegative(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-preferred-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::FlexPreferredSize(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::FlexPreferredSize(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginTop); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginTop); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginBottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginBottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginLeft); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginLeft); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginRight); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginRight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MarginInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::MarginInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"margin") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Margin); }
+            if allowed.intersects(pre) { return Some(PropertyId::Margin); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingTop); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingTop); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingBottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingBottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingLeft); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingLeft); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingRight); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingRight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::PaddingInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::PaddingInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"padding") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Padding); }
+            if allowed.intersects(pre) { return Some(PropertyId::Padding); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginTop); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginTop); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginBottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginBottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginLeft); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginLeft); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginRight); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginRight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMarginInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMarginInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollMargin); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollMargin); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-top") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingTop); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingTop); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-bottom") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingBottom); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingBottom); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-left") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingLeft); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingLeft); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-right") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingRight); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingRight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingBlockStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingBlockStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingBlockEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingBlockEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline-start") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingInlineStart); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingInlineStart); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline-end") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingInlineEnd); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingInlineEnd); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingBlock); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingBlock); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPaddingInline); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPaddingInline); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ScrollPadding); }
+            if allowed.intersects(pre) { return Some(PropertyId::ScrollPadding); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-weight") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontWeight); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontWeight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontSize); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontSize); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-stretch") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontStretch); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontStretch); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-family") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontFamily); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontFamily); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontStyle); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontStyle); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font-variant-caps") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::FontVariantCaps); }
+            if allowed.intersects(pre) { return Some(PropertyId::FontVariantCaps); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"line-height") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::LineHeight); }
+            if allowed.intersects(pre) { return Some(PropertyId::LineHeight); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"font") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Font); }
+            if allowed.intersects(pre) { return Some(PropertyId::Font); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transition-property") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::TransitionProperty(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransitionProperty(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transition-duration") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::TransitionDuration(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransitionDuration(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transition-delay") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::TransitionDelay(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransitionDelay(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transition-timing-function") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::TransitionTimingFunction(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransitionTimingFunction(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transition") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.contains(pre) { return Some(PropertyId::Transition(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Transition(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS | VendorPrefix::O;
-            if allowed.contains(pre) { return Some(PropertyId::Transform(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Transform(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform-origin") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS | VendorPrefix::O;
-            if allowed.contains(pre) { return Some(PropertyId::TransformOrigin(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransformOrigin(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform-style") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::TransformStyle(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransformStyle(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"transform-box") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::TransformBox); }
+            if allowed.intersects(pre) { return Some(PropertyId::TransformBox); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"backface-visibility") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::BackfaceVisibility(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::BackfaceVisibility(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"perspective") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::Perspective(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Perspective(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"perspective-origin") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::PerspectiveOrigin(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::PerspectiveOrigin(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"translate") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Translate); }
+            if allowed.intersects(pre) { return Some(PropertyId::Translate); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"rotate") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Rotate); }
+            if allowed.intersects(pre) { return Some(PropertyId::Rotate); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"scale") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Scale); }
+            if allowed.intersects(pre) { return Some(PropertyId::Scale); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"text-decoration-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.contains(pre) { return Some(PropertyId::TextDecorationColor(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TextDecorationColor(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"text-emphasis-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::TextEmphasisColor(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::TextEmphasisColor(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"text-shadow") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::TextShadow); }
+            if allowed.intersects(pre) { return Some(PropertyId::TextShadow); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"direction") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Direction); }
+            if allowed.intersects(pre) { return Some(PropertyId::Direction); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"composes") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::Composes); }
+            if allowed.intersects(pre) { return Some(PropertyId::Composes); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-image") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskImage(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskImage(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-mode") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskMode); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskMode); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-repeat") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskRepeat(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskRepeat(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position-x") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskPositionX); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskPositionX); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position-y") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskPositionY); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskPositionY); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskPosition(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskPosition(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-clip") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskClip(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskClip(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-origin") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskOrigin(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskOrigin(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-size") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskSize(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskSize(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-composite") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskComposite); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskComposite); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-type") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskType); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskType); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::Mask(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::Mask(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-source") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderSource); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderSource); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-mode") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderMode); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderMode); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-slice") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderSlice); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderSlice); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderWidth); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderWidth); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-outset") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderOutset); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderOutset); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-repeat") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorderRepeat); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorderRepeat); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBorder); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBorder); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"-webkit-mask-composite") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::WebKitMaskComposite); }
+            if allowed.intersects(pre) { return Some(PropertyId::WebKitMaskComposite); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-source-type") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskSourceType(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskSourceType(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImage(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImage(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-source") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageSource(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImageSource(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-slice") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageSlice(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImageSlice(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-width") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageWidth(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImageWidth(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-outset") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageOutset(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImageOutset(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-repeat") {
             let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageRepeat(pre)); }
+            if allowed.intersects(pre) { return Some(PropertyId::MaskBoxImageRepeat(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"color-scheme") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.contains(pre) { return Some(PropertyId::ColorScheme); }
+            if allowed.intersects(pre) { return Some(PropertyId::ColorScheme); }
             return None;
         }
         None
@@ -3462,7 +3478,7 @@ impl Property {
         // TODO(port): per-variant `generic::to_css(&v, dest)` dispatch — gated
         // until every value type implements the ToCss protocol.
         let _ = dest;
-        unimplemented!("Property::value_to_css codegen pending values/ un-gate")
+        todo!("Property::value_to_css codegen pending values/ un-gate")
     }
 
     /// Parses a CSS property by name.
@@ -3474,7 +3490,7 @@ impl Property {
         // TODO(port): per-variant `T::parse(input)` dispatch + UnparsedProperty
         // fallback — gated until every value type implements Parse.
         let _ = (property_id, input, options);
-        unimplemented!("Property::parse codegen pending values/ un-gate")
+        todo!("Property::parse codegen pending values/ un-gate")
     }
 
     pub fn to_css(&self, dest: &mut css::Printer, important: bool) -> Result<(), css::PrintErr> {

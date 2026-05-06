@@ -29,7 +29,8 @@ use bun_event_loop::ManagedTask::ManagedTask;
 use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag, ON_POLL_DISPATCH};
 
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec, FIRE_TIMER, JS_TIMER_EPOCH,
+    EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec, FIRE_TIMER,
+    JS_TIMER_EPOCH,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -389,17 +390,10 @@ unsafe fn run_wtf_timer_hook(
     // forward-decl; the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();
-    // TODO(b2-blocked): `crate::timer::WTFTimer::run` — body lives in the
-    // gated `timer/WTFTimer.rs` Phase-A draft (the struct-only stub in
-    // `timer/mod.rs` is a unit `WTFTimer(())` with no methods). Un-gate the
-    // call below once the draft is wired into `timer/mod.rs`.
-    #[cfg(any())]
-    {
-        // SAFETY: per fn contract.
-        return unsafe { crate::timer::WTFTimer::run(real, vm) };
-    }
-    let _ = (real, vm);
-    todo!("dispatch: WTFTimer::run")
+    // SAFETY: per fn contract — `real` is live until consumed; `vm` is the
+    // per-thread VM. `run` may re-enter `(*runtime_state()).timer.remove()`;
+    // no `&mut` held here.
+    unsafe { crate::timer::WTFTimer::run(real, vm) }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -425,23 +419,65 @@ unsafe fn run_wtf_timer_hook(
 /// `*mut VirtualMachine`. The handler may free the container — do not touch
 /// `t` after the per-arm call returns.
 unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()) {
+    use core::mem::offset_of;
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
+
+    /// `@fieldParentPtr("$field", t)` — recover the embedding container.
+    macro_rules! container_of {
+        ($ty:ty, $field:ident) => {{
+            // SAFETY: §Dispatch — `t.tag` was set together with the container
+            // at construction; tag uniquely identifies the embedding type and
+            // `$field` is the `EventLoopTimer` slot `t` points into.
+            (t as *mut u8).sub(offset_of!($ty, $field)).cast::<$ty>()
+        }};
+    }
+
     // SAFETY: per fn contract — `t` is live for the dispatch read.
     let tag = unsafe { (*t).tag };
-    let _ = (now, vm);
+    let vm = vm.cast::<crate::jsc::virtual_machine::VirtualMachine>();
+    let _ = now;
     match tag {
         // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
-        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-            // TODO(b2-blocked): `crate::timer::TimerObjectInternals::fire` is
-            // in the gated `TimerObjectInternals.rs` Phase-A draft.
+        EventLoopTimerTag::TimeoutObject => {
+            let container = container_of!(TimeoutObject, event_loop_timer);
+            // SAFETY: container derived from a live `TimeoutObject`; do NOT
+            // form `&mut *container` — `internals.fire` may `deref()` and free.
+            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
+            // TODO(b2-blocked): `TimerObjectInternals::fire` body lives in the
+            // gated `TimerObjectInternals.rs` Phase-A draft (the un-gated
+            // `timer_object_internals.rs` only carries `run_immediate_task`).
+            // Un-gate the call below once `fire()` is moved over.
+            #[cfg(any())]
+            // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
+            // per-thread VM. `fire` may free the container; `t` is dead after.
+            return unsafe { (*internals).fire(&*now, vm) };
+            let _ = (internals, vm);
+            todo!("dispatch: TimerObjectInternals::fire")
+        }
+        EventLoopTimerTag::ImmediateObject => {
+            let container = container_of!(ImmediateObject, event_loop_timer);
+            // SAFETY: see TimeoutObject arm.
+            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
+            // TODO(b2-blocked): `TimerObjectInternals::fire` — gated draft.
+            #[cfg(any())]
+            // SAFETY: see TimeoutObject arm.
+            return unsafe { (*internals).fire(&*now, vm) };
+            let _ = (internals, vm);
             todo!("dispatch: TimerObjectInternals::fire")
         }
         EventLoopTimerTag::TimerCallback => {
-            // TODO(b2-blocked): `bun_event_loop::TimerCallback` — `container.callback(container)`.
-            todo!("dispatch: TimerCallback")
+            let container = container_of!(TimerCallback, event_loop_timer);
+            // SAFETY: container derived from a live `TimerCallback`; the
+            // callback fn-ptr was set together with the tag at construction.
+            // Spec `inline else` fallthrough: `container.callback(container)`.
+            unsafe { ((*container).callback)(container) };
         }
         EventLoopTimerTag::WTFTimer => {
-            // TODO(b2-blocked): `crate::timer::WTFTimer::fire` — gated draft.
-            todo!("dispatch: WTFTimer::fire")
+            let container = container_of!(WTFTimer, event_loop_timer);
+            // SAFETY: container derived from a live `WTFTimer`; `now` is the
+            // snapshot from `All::next`; `vm` is the per-thread VM. `fire` may
+            // re-enter `(*runtime_state()).timer` — no `&mut` held here.
+            unsafe { WTFTimer::fire(container, &*now, vm) };
         }
         EventLoopTimerTag::AbortSignalTimeout => {
             // TODO(b2-blocked): `bun_jsc::abort_signal::Timeout::run` — gated module.

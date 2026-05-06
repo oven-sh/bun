@@ -13,16 +13,15 @@
 // bun_http) are FORWARD_DECL'd; the auto-install path is re-gated.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) remains gated; the
-// inline `pub mod fs` below carries the real type surface (FileSystem, RealFS,
-// Path, PathName, Entry, DirEntry, EntryLookup, EntriesOption, Implementation)
-// plus the bundler-cycle-broken `Path::loader`/`package_name`.
+// Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is now un-gated as
+// `fs_full`; the inline `pub mod fs` below remains the canonical type surface
+// (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
+// EntriesOption, Implementation) until the body switches to `fs_full::*`
+// wholesale. `fs_full` compiles to validate the port and is link-dead until
+// re-exported.
 pub mod data_url;
 pub mod dir_info;
-// reconciler-3: fs.rs references `bun_str`/`bun_output`/`MutableString`/
-// `PathString` (not yet ported); the inline `pub mod fs` below remains the
-// real type surface. Un-gate alongside those crate roots.
-#[cfg(any())] #[path = "fs.rs"] mod fs_full;
+#[path = "fs.rs"] mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;

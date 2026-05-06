@@ -5648,6 +5648,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
+    #[cfg(any())] // blocked_on: G::Property kind/flags surface; E::Function StoreRef deref; lower_standard_decorators_stmt; ExprNodeList::init API divergence
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
@@ -5954,6 +5955,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // Helper extracted from lower_class to keep that fn readable.
     // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
     // Phase B should diff against Zig to verify exact arg ordering for get/set.
+    #[cfg(any())] // blocked_on: lower_class (only caller); G::Property kind enum + flags::Property::init; E::Function StoreRef field shape
     fn emit_decorator_metadata_for_prop(
         &mut self,
         prop: &G::Property,
@@ -6049,6 +6051,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
+    #[cfg(any())] // blocked_on: TypeScript::Metadata variant set (currently a stub enum lacking Void/Unknown/Symbol/...); only caller is lower_class
     fn serialize_metadata(&mut self, ts_metadata: TypeScript::Metadata) -> Result<Expr, bun_core::Error> {
         use TypeScript::Metadata as M;
         Ok(match ts_metadata {
@@ -7358,15 +7361,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+
+            // Moved-in last so the field expressions above can still read `opts.*`.
+            options: opts,
         };
-        this.lexer.track_comments = opts.features.minify_identifiers;
+        this.lexer.track_comments = this.options.features.minify_identifiers;
 
         this.unwrap_all_requires = 'brk: {
-            if opts.bundle && opts.output_format != options::OutputFormat::Cjs {
-                if let Some(pkg) = source.path.package_name() {
-                    if opts.features.should_unwrap_require(pkg) {
+            if this.options.bundle && this.options.output_format != options::Format::Cjs {
+                // Zig: `source.path.packageName()` — the resolver `Path` method
+                // is not available from this crate, so use the local free fn
+                // `path_package_name` (mirrors `src/resolver/fs.rs::Path::packageName`).
+                if let Some(pkg) = path_package_name(&source.path) {
+                    if this.options.features.should_unwrap_require(pkg) {
                         if pkg == b"react" || pkg == b"react-dom" {
-                            let version = opts.package_version;
+                            let version = this.options.package_version;
                             if version.len() > 2
                                 && (version[0] == b'0' || (version[0] == b'1' && version[1] < b'8'))
                             {
@@ -7390,15 +7399,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // TODO(port): Binding2ExprWrapper / ExpressionTransposer .init(this) — these wrap
         // a back-pointer to `this`; in Rust they need either a lifetime or a raw *mut Self.
-        // Phase B wires the actual transposer state machines.
-        this.to_expr_wrapper_namespace = Binding2ExprWrapperNamespace::init(&mut this);
-        this.to_expr_wrapper_hoisted = Binding2ExprWrapperHoisted::init(&mut this);
-        this.import_transposer = ImportTransposer::init(&mut this);
-        this.require_transposer = RequireTransposer::init(&mut this);
-        this.require_resolve_transposer = RequireResolveTransposer::init(&mut this);
+        // The struct-literal above already seeded the Phase-B placeholder values
+        // (unit context + identity visitor); nothing further to wire here.
 
-        if opts.features.top_level_await || SCAN_ONLY {
-            this.fn_or_arrow_data_parse.allow_await = FnOrArrowDataParse::AllowAwait::AllowExpr;
+        if this.options.features.top_level_await || SCAN_ONLY {
+            this.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
             this.fn_or_arrow_data_parse.is_top_level = true;
         }
 

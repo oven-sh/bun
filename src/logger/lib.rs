@@ -2694,7 +2694,12 @@ pub struct Source {
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
-    pub identifier_name: Str,
+    ///
+    /// PORT NOTE: `Cow` because the cached value is produced by
+    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); the Zig
+    /// freed it in `deinit`, so per PORTING.md §Forbidden this cannot be
+    /// `&'static [u8]` + `Box::leak`.
+    pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,
 }
@@ -2705,7 +2710,7 @@ impl Default for Source {
             path: fs::Path::default(),
             contents: b"",
             contents_is_recycled: false,
-            identifier_name: b"",
+            identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
     }
@@ -2740,26 +2745,18 @@ impl Source {
         self.path.name.fmt_identifier()
     }
 
-    pub fn identifier_name(&mut self) -> Result<Str, bun_core::Error> {
+    pub fn identifier_name(&mut self) -> Result<&[u8], bun_core::Error> {
         // TODO(port): narrow error set
         if !self.identifier_name.is_empty() {
-            return Ok(self.identifier_name);
+            return Ok(&self.identifier_name);
         }
 
         debug_assert!(!self.path.text.is_empty());
-        // TODO(port): lifetime — `MutableString::ensure_valid_identifier` returns
-        // `Box<[u8]>`, but `self.identifier_name: Str` is `&'static [u8]`. Un-gating
-        // requires the Phase-B `Str` ownership rework (PORTING.md §Forbidden bans
-        // Box::leak here). Not a lower-tier symbol blocker.
-        #[cfg(any())]
-        {
         let name = bun_string::MutableString::ensure_valid_identifier(
             self.path.name.non_unique_name_string_base(),
         )?;
-        self.identifier_name = name;
-        Ok(name)
-        }
-        todo!("Source::identifier_name — gated on Str ownership rework")
+        self.identifier_name = Cow::Owned(name.into_vec());
+        Ok(&self.identifier_name)
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {

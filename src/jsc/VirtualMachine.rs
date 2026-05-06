@@ -3795,145 +3795,52 @@ impl VirtualMachine {
 
         let _ = writer.write_all(b"\n");
         let _ = writer.flush();
+        } // end #[cfg(any())]
     }
 
     /// Spec VirtualMachine.zig:3864 `resolveSourceMapping`.
     pub fn resolve_source_mapping(
         &mut self,
         path: &[u8],
-        line: bun_sourcemap::Ordinal,
-        column: bun_sourcemap::Ordinal,
+        line: bun_core::Ordinal,
+        column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
-    ) -> Option<bun_sourcemap::Mapping::Lookup> {
+    ) -> Option<bun_sourcemap::mapping::Lookup<'_>> {
         if let Some(lookup) =
             self.source_mappings
                 .resolve_mapping(path, line, column, source_handling)
         {
             return Some(lookup);
         }
-        let graph = self.standalone_module_graph?;
-        // SAFETY: `graph` outlives the VM (owned by the embedded binary).
-        let graph = unsafe { &*(graph.as_ptr() as *const bun_standalone::StandaloneModuleGraph) };
-        let file = graph.find(path)?;
-        let map = file.sourcemap.load()?;
-        map.ref_();
-        let _ = self
-            .source_mappings
-            .put_value(path, crate::saved_source_map::Value::init(map));
-        let mapping = map.find_mapping(line, column)?;
-        Some(bun_sourcemap::Mapping::Lookup {
-            mapping,
-            source_map: map,
-            prefetched_source_code: None,
-        })
+        // TODO(port): blocked_on `bun_standalone::StandaloneModuleGraph` —
+        // crate not surfaced at this tier yet. Fall back to `None` (matches
+        // the non-standalone runtime path).
+        let _ = self.standalone_module_graph;
+        None
     }
 
     /// Spec VirtualMachine.zig:3989 `initIPCInstance`.
     pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
-        crate::ipc::log!("initIPCInstance {}", fd);
         // TODO(b2-cycle): `self.ipc` is `Option<()>` until the field type
-        // widens to `Option<IPCInstanceUnion>`; stash on `RareData` instead so
-        // `get_ipc_instance` can recover it.
-        self.rare_data().pending_ipc = Some((fd, mode));
+        // widens to `Option<IPCInstanceUnion>`; the `Waiting { fd, mode }`
+        // state can't be stashed yet.
+        let _ = (fd, mode);
         self.ipc = Some(());
     }
 
     /// Spec VirtualMachine.zig:3994 `getIPCInstance`.
     pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
         self.ipc?;
-        // PORT NOTE: `self.ipc` is `Option<()>` (placeholder); the real
-        // `Waiting`/`Initialized` state lives on `RareData` until the field
-        // type widens. If already initialized, return it.
-        if let Some(inst) = self.rare_data().ipc_instance {
-            return Some(inst);
-        }
-        let (fd, mode) = self.rare_data().pending_ipc.take()?;
-        crate::ipc::log!("getIPCInstance {}", fd);
-        // SAFETY: `event_loop` is a self-pointer into this VM.
-        unsafe { (*self.event_loop()).ensure_waker() };
-
-        #[cfg(unix)]
-        let instance = {
-            // PORT NOTE: reshaped for borrowck — `spawn_ipc_group` borrows
-            // `rare_data`, which we need to release before re-borrowing for
-            // the `ipc_instance` write below; capture the raw group ptr.
-            let group: *mut uws::SocketGroup = {
-                let vm_ptr = self as *mut VirtualMachine;
-                // SAFETY: `vm_ptr` is `self`; disjoint from `rare_data` borrow.
-                self.rare_data().spawn_ipc_group(unsafe { &mut *vm_ptr })
-                    as *mut uws::SocketGroup
-            };
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                group,
-                data: crate::ipc::SendQueue::uninitialized(),
-                has_disconnect_called: false,
-            });
-            self.rare_data().ipc_instance = Some(instance);
-            // SAFETY: `instance` was just boxed.
-            unsafe {
-                (*instance).data = crate::ipc::SendQueue::init(
-                    mode,
-                    crate::ipc::Owner::VirtualMachine(instance),
-                    crate::ipc::SocketState::Uninitialized,
-                );
-            }
-            let socket = crate::ipc::Socket::from_fd(
-                group,
-                crate::ipc::SocketKind::SpawnIpc,
-                fd,
-                // SAFETY: `instance` is live.
-                unsafe { &mut (*instance).data },
-                None,
-                true,
-            );
-            match socket {
-                Some(socket) => {
-                    socket.set_timeout(0);
-                    // SAFETY: `instance` is live.
-                    unsafe { (*instance).data.socket = crate::ipc::SocketState::Open(socket) };
-                    instance
-                }
-                None => {
-                    IPCInstance::deinit(instance);
-                    self.rare_data().ipc_instance = None;
-                    self.ipc = None;
-                    bun_core::warn!("Unable to start IPC socket");
-                    return None;
-                }
-            }
-        };
-        #[cfg(windows)]
-        let instance = {
-            let instance = IPCInstance::new(IPCInstance {
-                global_this: self.global,
-                group: (),
-                data: crate::ipc::SendQueue::uninitialized(),
-                has_disconnect_called: false,
-            });
-            // SAFETY: `instance` was just boxed.
-            unsafe {
-                (*instance).data = crate::ipc::SendQueue::init(
-                    mode,
-                    crate::ipc::Owner::VirtualMachine(instance),
-                    crate::ipc::SocketState::Uninitialized,
-                );
-            }
-            self.rare_data().ipc_instance = Some(instance);
-            // SAFETY: `instance` is live.
-            if unsafe { (*instance).data.windows_configure_client(fd) }.is_err() {
-                IPCInstance::deinit(instance);
-                self.rare_data().ipc_instance = None;
-                self.ipc = None;
-                bun_core::warn!("Unable to start IPC pipe '{}'", fd);
-                return None;
-            }
-            instance
-        };
-
-        // SAFETY: `instance` is live; `global` valid for VM lifetime.
-        unsafe { (*instance).data.write_version_packet(&*self.global) };
-        Some(instance)
+        // TODO(b2-cycle): blocked_on `IPCInstanceUnion` field +
+        // `ipc::SendQueueOwner` vtable wiring + `ipc::Socket::from_fd`. The
+        // Unix path opens the SpawnIpc socket on the per-VM
+        // `RareData.spawn_ipc_group`, boxes an `IPCInstance`, seats
+        // `data.socket = SocketUnion::Open(socket)`, and writes the version
+        // packet; the Windows path goes through
+        // `SendQueue::windows_configure_client`. Preserve as `todo!` until the
+        // `self.ipc` field widens to `Option<IPCInstanceUnion>` and the IPC
+        // owner vtable for `VirtualMachine` lands.
+        todo!("blocked_on: IPCInstanceUnion / ipc::SendQueueOwner vtable / ipc::Socket::from_fd")
     }
 
     /// To satisfy the interface from NewHotReloader().
@@ -3960,7 +3867,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     reason: JSValue,
 ) -> JSValue {
     let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
-        global_object.clear_exception();
+        // SAFETY: extern "C" FFI; `global_object` is the live VM global.
+        unsafe { JSGlobalObject__clearException(global_object.as_ptr()) };
         false
     });
     if like {
@@ -3975,21 +3883,36 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
             global_object.as_ptr(),
             reason,
         );
-        global_object.clear_exception();
+        JSGlobalObject__clearException(global_object.as_ptr());
         s
     };
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
     if reason_str.is_string() {
-        let view = reason_str.as_string().view(global_object);
+        // SAFETY: `as_string()` returns a non-null `*mut JSString` when
+        // `is_string()` is true; `view()` borrows it for the `write!` below.
+        let view = unsafe { (*reason_str.as_string()).view(global_object) };
         return global_object
-            .err_unhandled_rejection(format_args!("{MSG_1}{view}\"."))
+            .err(
+                crate::ErrorCode::ERR_UNHANDLED_REJECTION,
+                format_args!("{MSG_1}{view}\"."),
+            )
             .to_js();
     }
     global_object
-        .err_unhandled_rejection(format_args!("{MSG_1}undefined\"."))
+        .err(
+            crate::ErrorCode::ERR_UNHANDLED_REJECTION,
+            format_args!("{MSG_1}undefined\"."),
+        )
         .to_js()
+}
+
+// Local FFI bridge — `JSGlobalObject::clear_exception` lives in the gated
+// `JSGlobalObject.rs`; declare the extern here so the un-gated callers above
+// can clear the pending VM exception without depending on the gated module.
+unsafe extern "C" {
+    fn JSGlobalObject__clearException(this: *const JSGlobalObject);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

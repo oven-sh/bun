@@ -886,6 +886,7 @@ where
                                 // SAFETY: ctx outlives reloader (BACKREF).
                                 let loader = unsafe { (*self.ctx).get_loaders() }
                                     .get(PathName::find_extname(changed_name))
+                                    .copied()
                                     .unwrap_or(bun_bundler::options::Loader::File);
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_bundler::options::Loader::File {
@@ -894,12 +895,16 @@ where
                                     let mut file_hash: bun_watcher::HashType = last_file_hash;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) =
-                                            dir_ent.entries.get(changed_name)
+                                            dir_ent.entries().get(changed_name)
                                         {
                                             // reset the file descriptor
-                                            file_ent.entry.cache.fd = Fd::invalid();
-                                            file_ent.entry.need_stat = true;
-                                            path_string = file_ent.entry.abs_path;
+                                            // SAFETY: hot-reload runs on the JS thread holding
+                                            // the entries mutex; no other live &Entry alias.
+                                            unsafe {
+                                                (*(*file_ent.entry).cache.get()).fd = Fd::INVALID;
+                                                (*file_ent.entry).need_stat.set(true);
+                                                path_string = (*file_ent.entry).abs_path;
+                                            }
                                             file_hash =
                                                 Watcher::get_hash(path_string.slice());
                                             for (entry_id, hash) in
@@ -922,10 +927,10 @@ where
                                                                 ));
                                                             }
                                                             ctx.remove_at_index(
+                                                                bun_watcher::Kind::File,
                                                                 entry_id as u16,
                                                                 0,
                                                                 &[],
-                                                                bun_watcher::Kind::File,
                                                             );
                                                         }
                                                     }
@@ -976,7 +981,10 @@ where
                                     if self.verbose {
                                         Self::debug(format_args!(
                                             "File change: {}",
-                                            bstr::BStr::new(fs.relative_to(abs_path))
+                                            bstr::BStr::new(bun_paths::relative(
+                                                fs.top_level_dir,
+                                                abs_path,
+                                            ))
                                         ));
                                     }
                                 }
@@ -986,7 +994,7 @@ where
                         if self.verbose {
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
-                                bstr::BStr::new(fs.relative_to(file_path)),
+                                bstr::BStr::new(bun_paths::relative(fs.top_level_dir, file_path)),
                                 affected_len
                             ));
                         }
@@ -998,8 +1006,6 @@ where
         // `defer current_task.enqueue();`
         current_task.enqueue();
         // _flush guard handles `Output::flush()` then `ctx.flush_evictions()` on drop (LIFO).
-        } // end 
-        let _ = (events, changed_files, watchlist);
     }
 }
 
@@ -1018,14 +1024,10 @@ where
         changed_files: &[bun_watcher::ChangedFilePath],
         watchlist: &bun_watcher::WatchList,
     ) {
-        // TODO(port): the inherent `on_file_update` was drafted with
-        // `(&[WatchEvent], &mut [Option<&mut ZStr>], WatchList)`; the watcher
-        // crate has since fixed its callback shape to this signature. Phase B
-        // should retype the inherent fn to match and drop this trampoline.
         Self::on_file_update(self, events, changed_files, watchlist);
     }
 
-    fn on_error(&mut self, err: bun_sys::Error) {
+    fn on_watch_error(&mut self, err: bun_sys::Error) {
         Self::on_error(self, err);
     }
 }

@@ -961,6 +961,18 @@ struct SerializedScriptValueExternal {
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
+/// Callback signature for [`JSValue::for_each_property`] /
+/// [`JSValue::for_each_property_non_indexed`]
+/// (Zig: `*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void`).
+pub type ForEachPropertyCallback = extern "C" fn(
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    key: *mut bun_string::ZigString,
+    value: JSValue,
+    is_symbol: bool,
+    is_private_symbol: bool,
+);
+
 /// `JSValue.StringFormatter` (JSValue.zig:2019) — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
 pub struct StringFormatter<'a> {
@@ -1162,6 +1174,85 @@ impl JSValue {
         callback: ForEachCallback,
     ) -> JsResult<()> {
         self.for_each(global, ctx, callback)
+    }
+    /// `JSValue.forEachProperty` (JSValue.zig:96) — enumerate own props,
+    /// invoking `callback` per (key, value, is_symbol, is_private_symbol).
+    pub fn for_each_property(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        extern "C" {
+            fn JSC__JSValue__forEachProperty(
+                this: JSValue,
+                global: *const JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        // SAFETY: `global` is live; `callback` has C ABI.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEachProperty(self, global, ctx, callback)
+        })
+    }
+    /// `JSValue.forEachPropertyNonIndexed` (JSValue.zig:87) — like
+    /// [`for_each_property`](Self::for_each_property) but skips array-index
+    /// keys.
+    pub fn for_each_property_non_indexed(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        extern "C" {
+            fn JSC__JSValue__forEachPropertyNonIndexed(
+                this: JSValue,
+                global: *const JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        // SAFETY: `global` is live; `callback` has C ABI.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback)
+        })
+    }
+    /// `JSValue.getDirectIndex` (JSValue.zig:65) — read the `i`th indexed
+    /// own-property slot directly (no prototype walk, no getters). Returns
+    /// the empty value for holes.
+    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
+        extern "C" {
+            fn JSC__JSValue__getDirectIndex(
+                this: JSValue,
+                global: *const JSGlobalObject,
+                i: u32,
+            ) -> JSValue;
+        }
+        // SAFETY: `global` is live; FFI is infallible (no exception).
+        unsafe { JSC__JSValue__getDirectIndex(self, global, i) }
+    }
+    /// `JSValue.getNameProperty` (JSValue.zig:1119) — write the value's
+    /// `.name` (function/class name) into `ret`. No-op for `undefined`/`null`.
+    pub fn get_name_property(
+        self,
+        global: &JSGlobalObject,
+        ret: &mut bun_string::ZigString,
+    ) -> JsResult<()> {
+        if self.is_undefined_or_null() {
+            return Ok(());
+        }
+        extern "C" {
+            fn JSC__JSValue__getNameProperty(
+                this: JSValue,
+                global: *const JSGlobalObject,
+                ret: *mut bun_string::ZigString,
+            );
+        }
+        // SAFETY: `global` is live; `ret` valid out-param.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__getNameProperty(self, global, ret)
+        })
     }
 
     // ── Proxy internals (JSValue.zig:2326). ───────────────────────────────

@@ -4102,27 +4102,30 @@ pub mod formatter {
                 self.depth = self.depth.saturating_add(1);
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
+                let global_this = self.global_this;
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, true, true> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         MapIteratorCtx::<C, true, true>::for_each)?;
-                    if self.failed { return Ok(()); }
+                    let count = iter.count;
+                    if iter.formatter.failed { return Ok(()); }
                     // Spec divergence: Zig's `.SetIterator` arm writes NOTHING in
                     // single-line mode (`if (count > 0 and !single_line) writeAll("\n")`),
                     // only `.MapIterator` writes a trailing space.
-                    if iter.count > 0 && label == "MapIterator" {
+                    if count > 0 && label == "MapIterator" {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
                     let mut iter = MapIteratorCtx::<C, true, false> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
                         MapIteratorCtx::<C, true, false>::for_each)?;
-                    if self.failed { return Ok(()); }
-                    if iter.count > 0 {
+                    let count = iter.count;
+                    if iter.formatter.failed { return Ok(()); }
+                    if count > 0 {
                         let _ = writer_.write_all(b"\n");
                     }
                 }

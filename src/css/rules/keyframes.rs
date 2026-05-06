@@ -381,17 +381,20 @@ const _: () = {
     impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
 
-        fn parse_value(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
-            Err(input.new_error(BasicParseErrorKind::UnexpectedToken(css::Token::Ident(name))))
+        fn parse_value(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Declaration> {
+            // SAFETY: `name` is a sub-slice of the parser input arena; see `src_str`.
+            Err(input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(unsafe {
+                css::css_parser::src_str(name)
+            }))))
         }
     }
 
     impl RuleBodyItemParser for KeyframesListParser {
-        fn parse_qualified(&self) -> bool {
+        fn parse_qualified(_this: &Self) -> bool {
             true
         }
 
-        fn parse_declarations(&self) -> bool {
+        fn parse_declarations(_this: &Self) -> bool {
             false
         }
     }
@@ -400,21 +403,21 @@ const _: () = {
         type Prelude = ();
         type AtRule = Keyframe;
 
-        fn parse_prelude(&mut self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleInvalid(name)))
+        fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut Parser) -> Result<Self::Prelude> {
+            Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name as *const [u8])))
         }
 
         fn parse_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::AtRuleBodyInvalid))
+            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
         }
 
         fn rule_without_block(
-            &mut self,
+            _this: &mut Self,
             _prelude: Self::Prelude,
             _start: &ParserState,
         ) -> Maybe<Self::AtRule, ()> {
@@ -426,18 +429,18 @@ const _: () = {
         type Prelude = ArrayList<KeyframeSelector>;
         type QualifiedRule = Keyframe;
 
-        fn parse_prelude(&mut self, input: &mut Parser) -> Result<Self::Prelude> {
+        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
             input.parse_comma_separated(KeyframeSelector::parse)
         }
 
         fn parse_block(
-            &mut self,
+            _this: &mut Self,
             prelude: Self::Prelude,
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
             // For now there are no options that apply within @keyframes
-            let options = ParserOptions::default(input.allocator(), None);
+            let options = ParserOptions::default(None);
             let declarations = match DeclarationBlock::parse(input, &options) {
                 Ok(vv) => vv,
                 Err(e) => return Err(e),

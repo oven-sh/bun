@@ -474,6 +474,290 @@ mod inherent_bridge {
     bridge_eql!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
     bridge_hash!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
     bridge_deep_clone_copy!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via
+    // `css::generic::deep_clone`/`eql` (trait bounds), but most leaf types
+    // only carry inherent methods or `derive(Clone, PartialEq)`. Bridge them.
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// Forward `CssEql` to `PartialEq`.
+    macro_rules! bridge_eql_partialeq {
+        ($($t:ty),* $(,)?) => {$(
+            impl CssEql for $t {
+                #[inline]
+                fn eql(&self, other: &Self) -> bool { PartialEq::eq(self, other) }
+            }
+        )*};
+    }
+    /// Forward `IsCompatible` to inherent `is_compatible`.
+    macro_rules! bridge_is_compatible {
+        ($($t:ty),* $(,)?) => {$(
+            impl super::IsCompatible for $t {
+                #[inline]
+                fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+                    <$t>::is_compatible(self, browsers)
+                }
+            }
+        )*};
+    }
+    /// Types whose inherent `deep_clone` takes no arena (`fn deep_clone(&self) -> Self`).
+    macro_rules! bridge_deep_clone_noarg {
+        ($($t:ty),* $(,)?) => {$(
+            impl<'bump> DeepClone<'bump> for $t {
+                #[inline]
+                fn deep_clone(&self, _bump: &'bump Arena) -> Self { <$t>::deep_clone(self) }
+            }
+        )*};
+    }
+    /// Combo: `Clone` → `DeepClone`, `PartialEq` → `CssEql`.
+    macro_rules! bridge_clone_partialeq {
+        ($($t:ty),* $(,)?) => {
+            bridge_deep_clone_copy!($($t),*);
+            bridge_eql_partialeq!($($t),*);
+        };
+    }
+
+    // ── values/ ──
+    use crate::values::length::{Length, LengthOrNumber, LengthPercentageOrAuto};
+    bridge_clone_partialeq!(LengthPercentageOrAuto, LengthOrNumber, Length);
+    bridge_is_compatible!(LengthPercentageOrAuto, LengthOrNumber, Length);
+
+    use crate::values::easing::EasingFunction;
+    bridge_clone_partialeq!(EasingFunction);
+
+    use crate::values::alpha::AlphaValue;
+    bridge_clone_partialeq!(AlphaValue);
+
+    use crate::values::image::Image;
+    bridge_eql!(Image);
+    bridge_deep_clone!(Image);
+    bridge_is_compatible!(Image);
+
+    use crate::values::position::{
+        HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
+    };
+    bridge_eql!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
+    bridge_deep_clone!(Position, HorizontalPositionKeyword, VerticalPositionKeyword);
+    impl<S: Clone + PartialEq> CssEql for PositionComponent<S> {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool { PositionComponent::<S>::eql(self, other) }
+    }
+    impl<'bump, S: Clone + PartialEq> DeepClone<'bump> for PositionComponent<S> {
+        #[inline]
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            PositionComponent::<S>::deep_clone(self, bump)
+        }
+    }
+
+    use crate::values::rect::Rect;
+    impl<T: PartialEq> CssEql for Rect<T> {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool { Rect::<T>::eql(self, other) }
+    }
+    impl<'bump, T: Clone> DeepClone<'bump> for Rect<T> {
+        #[inline]
+        fn deep_clone(&self, bump: &'bump Arena) -> Self { Rect::<T>::deep_clone(self, bump) }
+    }
+
+    use crate::values::size::Size2D;
+    impl<T: Clone + PartialEq> CssEql for Size2D<T> {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool { Size2D::<T>::eql(self, other) }
+    }
+    impl<'bump, T: Clone + PartialEq> DeepClone<'bump> for Size2D<T> {
+        #[inline]
+        fn deep_clone(&self, bump: &'bump Arena) -> Self { Size2D::<T>::deep_clone(self, bump) }
+    }
+
+    bridge_is_compatible!(CssColor);
+
+    // ── properties/border ──
+    use crate::properties::border::{
+        BorderBlockColor, BorderBlockStyle, BorderBlockWidth, BorderColor, BorderInlineColor,
+        BorderInlineStyle, BorderInlineWidth, BorderShorthand, BorderSideWidth, BorderStyle,
+        BorderWidth, GenericBorder, LineStyle,
+    };
+    bridge_eql!(BorderSideWidth, BorderShorthand);
+    bridge_eql_partialeq!(LineStyle);
+    bridge_deep_clone!(BorderSideWidth);
+    bridge_deep_clone_copy!(LineStyle);
+    bridge_is_compatible!(BorderSideWidth, LineStyle);
+    bridge_eql!(
+        BorderColor, BorderStyle, BorderWidth,
+        BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
+        BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
+    );
+    bridge_deep_clone!(
+        BorderColor, BorderStyle, BorderWidth,
+        BorderBlockColor, BorderBlockStyle, BorderBlockWidth,
+        BorderInlineColor, BorderInlineStyle, BorderInlineWidth,
+    );
+    impl<S: CssEql, const P: u8> CssEql for GenericBorder<S, P> {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            self.width.eql(&other.width) && self.style.eql(&other.style) && self.color.eql(&other.color)
+        }
+    }
+    impl<'bump, S: DeepClone<'bump>, const P: u8> DeepClone<'bump> for GenericBorder<S, P> {
+        #[inline]
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            GenericBorder {
+                width: self.width.deep_clone(bump),
+                style: self.style.deep_clone(bump),
+                color: self.color.deep_clone(bump),
+            }
+        }
+    }
+
+    use crate::properties::outline::OutlineStyle;
+    bridge_clone_partialeq!(OutlineStyle);
+
+    use crate::properties::border_image::{
+        BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+    };
+    bridge_clone_partialeq!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
+    bridge_deep_clone!(BorderImage);
+    bridge_eql!(BorderImage);
+
+    use crate::properties::border_radius::BorderRadius;
+    bridge_clone_partialeq!(BorderRadius);
+
+    // ── properties/background ──
+    use crate::properties::background::{
+        Background, BackgroundAttachment, BackgroundClip, BackgroundOrigin, BackgroundPosition,
+        BackgroundRepeat, BackgroundSize,
+    };
+    bridge_eql!(Background, BackgroundSize, BackgroundPosition, BackgroundRepeat);
+    bridge_deep_clone!(Background, BackgroundSize, BackgroundPosition, BackgroundRepeat);
+    bridge_clone_partialeq!(BackgroundAttachment, BackgroundClip, BackgroundOrigin);
+
+    // ── properties/align ──
+    use crate::properties::align::{
+        AlignContent, AlignItems, AlignSelf, Gap, GapValue, JustifyContent, JustifyItems,
+        JustifySelf, PlaceContent, PlaceItems, PlaceSelf,
+    };
+    bridge_clone_partialeq!(
+        AlignContent, AlignItems, AlignSelf, JustifyContent, JustifyItems, JustifySelf,
+        PlaceContent, PlaceItems, PlaceSelf, Gap, GapValue,
+    );
+
+    // ── properties/flex ──
+    use crate::properties::flex::{
+        BoxAlign, BoxDirection, BoxLines, BoxOrient, BoxPack, Flex, FlexDirection, FlexFlow,
+        FlexItemAlign, FlexLinePack, FlexPack, FlexWrap,
+    };
+    bridge_clone_partialeq!(
+        FlexDirection, FlexWrap, FlexFlow, Flex, BoxOrient, BoxDirection, BoxAlign, BoxPack,
+        BoxLines, FlexPack, FlexItemAlign, FlexLinePack,
+    );
+
+    // ── properties/font ──
+    use crate::properties::font::{
+        Font, FontFamily, FontSize, FontStretch, FontStyle, FontVariantCaps, FontWeight,
+        LineHeight,
+    };
+    bridge_clone_partialeq!(
+        FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight,
+    );
+    bridge_is_compatible!(
+        FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight, FontFamily,
+    );
+    bridge_deep_clone!(FontFamily);
+    bridge_eql!(FontFamily);
+    bridge_deep_clone!(Font);
+    bridge_eql!(Font);
+
+    // ── properties/size ──
+    use crate::properties::size::{AspectRatio, BoxSizing, MaxSize, Size};
+    bridge_eql!(Size, MaxSize, AspectRatio);
+    bridge_deep_clone!(Size, MaxSize, AspectRatio);
+    bridge_clone_partialeq!(BoxSizing);
+
+    // ── properties/display ──
+    use crate::properties::display::{Display, Visibility};
+    bridge_deep_clone!(Display);
+    bridge_eql_partialeq!(Display);
+    bridge_clone_partialeq!(Visibility);
+
+    // ── properties/overflow ──
+    use crate::properties::overflow::{Overflow, OverflowKeyword, TextOverflow};
+    bridge_eql!(Overflow);
+    bridge_deep_clone!(Overflow);
+    bridge_clone_partialeq!(OverflowKeyword, TextOverflow);
+
+    // ── properties/position ──
+    use crate::properties::position::Position as PositionProp;
+    bridge_clone_partialeq!(PositionProp);
+
+    // ── properties/text ──
+    use crate::properties::text::{Direction as TextDirection, TextShadow};
+    bridge_clone_partialeq!(TextDirection);
+    bridge_deep_clone!(TextShadow);
+    bridge_eql_partialeq!(TextShadow);
+
+    // ── properties/transform ──
+    use crate::properties::transform::{
+        BackfaceVisibility, Perspective, Rotate, Scale, TransformBox, TransformList,
+        TransformStyle, Translate,
+    };
+    bridge_deep_clone!(
+        TransformList, Translate, Rotate, Scale, Perspective, TransformStyle, TransformBox,
+        BackfaceVisibility,
+    );
+    bridge_eql!(
+        TransformList, Translate, Rotate, Scale, Perspective, TransformStyle, TransformBox,
+        BackfaceVisibility,
+    );
+
+    // ── properties/transition ──
+    use crate::properties::transition::Transition;
+    bridge_deep_clone!(Transition);
+    bridge_eql!(Transition);
+
+    // ── properties/masking ──
+    use crate::properties::masking::{
+        GeometryBox, Mask, MaskBorder, MaskBorderMode, MaskClip, MaskComposite, MaskMode,
+        MaskType, WebKitMaskComposite, WebKitMaskSourceType,
+    };
+    bridge_clone_partialeq!(
+        GeometryBox, MaskMode, MaskClip, MaskComposite, MaskType, MaskBorderMode,
+        WebKitMaskComposite, WebKitMaskSourceType,
+    );
+    bridge_deep_clone!(Mask, MaskBorder);
+    bridge_eql!(Mask, MaskBorder);
+
+    // ── properties/ui ──
+    use crate::properties::ui::ColorScheme;
+    bridge_deep_clone!(ColorScheme);
+    bridge_eql_partialeq!(ColorScheme);
+
+    // ── properties/css_modules ──
+    use crate::properties::css_modules::Composes;
+    bridge_deep_clone!(Composes);
+    bridge_eql!(Composes);
+
+    // ── properties/margin_padding ──
+    use crate::properties::margin_padding::{
+        Inset, InsetBlock, InsetInline, Margin, MarginBlock, MarginInline, Padding, PaddingBlock,
+        PaddingInline, ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding,
+        ScrollPaddingBlock, ScrollPaddingInline,
+    };
+    bridge_deep_clone_noarg!(
+        Margin, MarginBlock, MarginInline, Padding, PaddingBlock, PaddingInline,
+        ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding, ScrollPaddingBlock,
+        ScrollPaddingInline, Inset, InsetBlock, InsetInline,
+    );
+    bridge_eql!(
+        Margin, MarginBlock, MarginInline, Padding, PaddingBlock, PaddingInline,
+        ScrollMargin, ScrollMarginBlock, ScrollMarginInline, ScrollPadding, ScrollPaddingBlock,
+        ScrollPaddingInline, Inset, InsetBlock, InsetInline,
+    );
+
+    // ── properties/properties_generated ──
+    use crate::properties::properties_generated::PropertyId;
+    bridge_deep_clone_copy!(PropertyId);
+    bridge_eql!(PropertyId);
 }
 
 // TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →

@@ -165,14 +165,13 @@ impl<R> StyleRule<R> {
                             // contract and skip the declaration.
                             
                             if let Some(css_module) = &mut dest.css_module {
-                                if let Some(error_kind) = css_module
+                                if let Err(error_kind) = css_module
                                     .handle_composes(
                                         dest,
                                         &self.selectors,
                                         _composes,
                                         self.loc.source_index,
                                     )
-                                    .as_err()
                                 {
                                     return dest.new_error(error_kind, Some(_composes.cssparser_loc));
                                 }

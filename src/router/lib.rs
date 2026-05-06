@@ -949,7 +949,10 @@ impl<'a> RouteLoader<'a> {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
-            let mut iter = entries.iter();
+            // SAFETY: single iterator over `entries` for this scan; no other
+            // `&mut Entry` into this directory is live (serialized via
+            // `RealFS.entries_mutex`). See `DirEntry::iter` `# Safety`.
+            let mut iter = unsafe { entries.iter() };
             'outer: while let Some(entry) = iter.next() {
                 let entry: &mut Fs::Entry = entry;
                 if entry.base()[0] == b'.' {

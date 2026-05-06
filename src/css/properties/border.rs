@@ -722,49 +722,15 @@ pub struct BorderHandler {
     has_any: bool,
 }
 
-impl BorderHandler {
-    // PORT NOTE: the full Zig `handleProperty` body (40+ border-* arms +
-    // `flush`) lives in `border_handler_body` below, gated on the
-    // BorderShorthand/flush macro web. Until that un-gates, the Zig spec's
-    // fallthrough still requires delegating to the sub-handlers for
-    // border-image-* / border-radius-* properties — those handlers are real
-    // (border_image.rs / border_radius.rs un-gated). A blanket `false` here
-    // would silently drop their shorthand merging + fallback emission.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        property: &Property,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        // Zig: `_ => return self.border_image_handler.handleProperty(...) or
-        //             self.border_radius_handler.handleProperty(...)`
-        self.border_image_handler.handle_property(property, dest, context)
-            || self.border_radius_handler.handle_property(property, dest, context)
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
-    ) {
-        // Zig `finalize` flushes self + both sub-handlers; the self-flush stays
-        // gated, but the sub-handler finalize calls are independent and must run.
-        self.border_image_handler.finalize(dest, context);
-        self.border_radius_handler.finalize(dest, context);
-    }
-}
-
- // blocked_on: Property variant payloads + BorderShorthand methods + flush_category!/fc_prop! macro web
+// Real `handle_property`/`finalize` bodies live in `border_handler_body` below.
 mod border_handler_body {
 use super::*;
 // ──────────────────────────────────────────────────────────────────────────
 // FlushContext + flush_category! (Zig: nested struct with inline fns and
 // extensive comptime string-dispatch)
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): macro ordering — hoist FlushContext + fc_* + flush_category! above
-// `impl BorderHandler` in Phase B; macro_rules! is order-sensitive and the
-// flush_category!() callsites in `flush()` currently precede these definitions.
+// PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
+// sensitive and the flush_category!() callsites in `flush()` need these.
 
 struct FlushContext<'a, 'bump, 'ctx> {
     // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
@@ -1510,12 +1476,11 @@ impl BorderHandler {
         macro_rules! logical_prop {
             ($ltr:ident, $rtl:ident) => {{
                 context.add_logical_rule(
-                    context.allocator,
                     Property::Unparsed(
-                        unparsed.with_property_id(context.allocator, PropertyId::$ltr),
+                        unparsed.with_property_id(allocator, PropertyId::$ltr),
                     ),
                     Property::Unparsed(
-                        unparsed.with_property_id(context.allocator, PropertyId::$rtl),
+                        unparsed.with_property_id(allocator, PropertyId::$rtl),
                     ),
                 );
             }};
@@ -1539,11 +1504,11 @@ impl BorderHandler {
             PropertyIdTag::BorderBlockEndColor => prop!(BorderBottomColor),
             PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
             _ => {
-                let mut up = unparsed.deep_clone(context.allocator);
+                let mut up = unparsed.deep_clone(allocator);
                 context.add_unparsed_fallbacks(&mut up);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
-                dest.append(context.allocator, Property::Unparsed(up));
+                dest.push(Property::Unparsed(up));
             }
         }
     }

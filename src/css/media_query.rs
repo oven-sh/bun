@@ -1205,6 +1205,23 @@ impl MediaList {
     pub fn clone_in(&self, bump: &bun_alloc::Arena) -> Self {
         self.deep_clone(bump)
     }
+
+    /// Zig: `MediaList.cloneWithImportRecords` — `MediaList` carries no
+    /// `ImportRecord` indices so this is just `deep_clone`.
+    #[inline]
+    pub fn clone_with_import_records(
+        &self,
+        bump: &bun_alloc::Arena,
+        _import_records: &mut bun_collections::BabyList<bun_options_types::ImportRecord>,
+    ) -> Self {
+        self.deep_clone(bump)
+    }
+
+    /// Zig: `pub const eql = css.implementEql(@This())` — structural eq.
+    #[inline]
+    pub fn eql(&self, other: &Self) -> bool {
+        self == other
+    }
 }
 
 impl MediaQuery {

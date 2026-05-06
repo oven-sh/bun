@@ -1,6 +1,7 @@
 use crate::values::ident::{DashedIdent, DashedIdentFns};
 use crate::media_query::MediaList;
-use crate::{Location, PrintErr, Printer};
+use crate::css_rules::Location;
+use crate::{PrintErr, Printer};
 use bun_alloc::Arena;
 
 /// A [@custom-media](https://drafts.csswg.org/mediaqueries-5/#custom-mq) rule.
@@ -27,9 +28,9 @@ impl CustomMediaRule {
         // dest.add_mapping(self.loc);
         dest.write_str("@custom-media ")?;
         DashedIdentFns::to_css(&self.name, dest)?;
-        dest.write_char(' ')?;
+        dest.write_char(b' ')?;
         self.query.to_css(dest)?;
-        dest.write_char(';')?;
+        dest.write_char(b';')?;
         Ok(())
     }
 }

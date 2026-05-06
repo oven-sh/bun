@@ -4944,7 +4944,21 @@ pub mod fs {
         }
         /// Zig: `dir_entry.data.iterator()`. Yields `&mut Entry` for each file
         /// in the cached directory listing.
-        #[inline] pub fn iter(&self) -> DirEntryIter<'_> {
+        ///
+        /// # Safety
+        /// Caller must ensure no other `DirEntryIter` (or any other live
+        /// `&mut Entry` into this directory's backing store) overlaps the
+        /// returned iterator's lifetime. `next()` hands out `&'a mut Entry`
+        /// derived from a shared `&'a DirEntry`, so two concurrent `iter()`
+        /// calls on the same `&DirEntry` would alias `&mut` (UB). Zig's
+        /// `data.iterator()` had no such constraint because Zig pointers don't
+        /// carry exclusivity; the sole caller (`bun_router::Router::load`)
+        /// upholds the single-iterator invariant under
+        /// `RealFS.entries_mutex`.
+        // PORT NOTE: would be `iter(&mut self)` to encode the invariant in the
+        // type, but `DirInfoRef::get_entries_const` (router) currently exposes
+        // only `&DirEntry`; tightening requires reshaping that vtable seam.
+        #[inline] pub unsafe fn iter(&self) -> DirEntryIter<'_> {
             let mut buf = Vec::new();
             // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`; `buf`
             // is a fresh local the vtable fills with EntryStore-owned pointers.
@@ -4969,9 +4983,9 @@ pub mod fs {
             let p = *self.buf.get(self.i)?;
             self.i += 1;
             // SAFETY: `p` is an EntryStore-owned `*mut bun_resolver::fs::Entry`
-            // valid for the process lifetime; the router holds at most one live
-            // `&mut` per element. The `'a` ties the borrow to the `DirEntry`
-            // scan, matching Zig's `data.iterator()` lifetime.
+            // valid for the process lifetime. The single-iterator invariant is
+            // upheld by `DirEntry::iter`'s caller contract (see its `# Safety`
+            // doc) — at most one live `&mut` per element.
             Some(unsafe { &mut *p })
         }
     }
@@ -4995,10 +5009,19 @@ pub mod fs {
             (vtable().dirname_store_append_lower_case)(value)
         }
     }
-    /// `bun.fs.EntriesOption` — `Ok(DirEntry)` / `Err(err)`.
+    /// `bun.fs.DirEntry.Err` (fs.zig:239) — preserves both the original errno
+    /// from the failing syscall and the canonicalized error the resolver
+    /// reports separately.
+    #[derive(Clone, Copy)]
+    pub struct DirEntryErr {
+        pub original_err: bun_core::Error,
+        pub canonical_error: bun_core::Error,
+    }
+    /// `bun.fs.EntriesOption` (fs.zig:929) — `entries: *DirEntry` / `err:
+    /// DirEntry.Err`.
     pub enum EntriesOption {
         Entries(*const DirEntry),
-        Err(bun_core::Error),
+        Err(DirEntryErr),
     }
 }
 /// Top-level alias (Zig: `bun.FileSystem`).

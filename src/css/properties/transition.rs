@@ -164,29 +164,10 @@ macro_rules! handler_property {
     }};
 }
 
-impl TransitionHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-    }
-}
-
- // blocked_on: Property variant payloads + SmallList::eql/deep_clone + masking::get_webkit_mask_property + VendorPrefix::FIELDS
+// Real `handle_property`/`finalize` bodies live in `transition_handler_body` below.
 mod transition_handler_body {
 use super::*;
+use crate::generics::DeepClone;
 impl TransitionHandler {
     pub fn handle_property(
         &mut self,

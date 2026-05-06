@@ -515,7 +515,7 @@ pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
 /// A selector is considered unused if it contains a class or id component that exists in the set of unused symbols.
 pub fn is_unused(
     selectors: &[parser::Selector],
-    unused_symbols: &ArrayHashMap<&[u8], ()>, // TODO(port): Zig `std.StringArrayHashMapUnmanaged(void)`
+    unused_symbols: &ArrayHashMap<Box<[u8]>, ()>, // Zig `std.StringArrayHashMapUnmanaged(void)`
     symbols: &SymbolList,
     parent_is_unused: bool,
 ) -> bool {
@@ -534,7 +534,7 @@ pub fn is_unused(
 
 fn is_selector_unused(
     selector: &parser::Selector,
-    unused_symbols: &ArrayHashMap<&[u8], ()>,
+    unused_symbols: &ArrayHashMap<Box<[u8]>, ()>,
     symbols: &SymbolList,
     parent_is_unused: bool,
 ) -> bool {
@@ -555,7 +555,24 @@ fn is_selector_unused(
                         continue; // blocked_on: as_original_string ref arm
                     }
                 };
-                if unused_symbols.contains_key(&actual_ident) {
+                // PORT NOTE: Zig `unused_symbols.contains(actual_ident)` —
+                // adapted lookup to compare the borrowed `&[u8]` against
+                // owned `Box<[u8]>` keys without allocating.
+                struct SliceAdapter;
+                impl bun_collections::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
+                    #[inline]
+                    fn hash(&self, key: &[u8]) -> u32 {
+                        use core::hash::{Hash, Hasher};
+                        let mut h = bun_wyhash::Wyhash11::init(0);
+                        key.hash(&mut h);
+                        h.finish() as u32
+                    }
+                    #[inline]
+                    fn eql(&self, a: &[u8], b: &Box<[u8]>, _: usize) -> bool {
+                        a == &**b
+                    }
+                }
+                if unused_symbols.contains_adapted(actual_ident, SliceAdapter) {
                     return true;
                 }
             }

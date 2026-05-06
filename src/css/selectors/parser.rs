@@ -1638,6 +1638,15 @@ impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
     }
 }
 
+impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
+    fn default() -> Self {
+        Self {
+            specificity_and_flags: SpecificityAndFlags::default(),
+            components: Vec::new(),
+        }
+    }
+}
+
 impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
     /// Consume `self.v` and return a heap slice — used by `:is()`/`:where()`/
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to

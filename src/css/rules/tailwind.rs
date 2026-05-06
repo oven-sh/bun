@@ -19,7 +19,7 @@ impl TailwindAtRule {
         dest.write_str("@tailwind")?;
         dest.whitespace()?;
         self.style_name.to_css(dest)?;
-        dest.write_char(';')?;
+        dest.write_char(b';')?;
         Ok(())
     }
 
@@ -47,8 +47,32 @@ pub enum TailwindStyleName {
     Variants,
 }
 
+impl From<TailwindStyleName> for &'static str {
+    fn from(v: TailwindStyleName) -> &'static str {
+        match v {
+            TailwindStyleName::Base => "base",
+            TailwindStyleName::Components => "components",
+            TailwindStyleName::Utilities => "utilities",
+            TailwindStyleName::Variants => "variants",
+        }
+    }
+}
+
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` — hand-rolled until
+// `#[derive(DefineEnumProperty)]` covers `&[u8]` lookup.
+impl css::EnumProperty for TailwindStyleName {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        use bun_string::strings::eql_case_insensitive_ascii_check_length as eq;
+        if eq(ident, b"base") { return Some(Self::Base); }
+        if eq(ident, b"components") { return Some(Self::Components); }
+        if eq(ident, b"utilities") { return Some(Self::Utilities); }
+        if eq(ident, b"variants") { return Some(Self::Variants); }
+        None
+    }
+}
+
 impl TailwindStyleName {
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         enum_property_util::as_str::<Self>(self)
     }
 

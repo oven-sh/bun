@@ -920,7 +920,7 @@ pub static TEST_ONLY_PARAMS: &[ParamType] = &[
     clap::parse_param!("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."),
     clap::parse_param!("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."),
 ];
-pub static TEST_PARAMS: &[ParamType] = clap::concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_);
+pub static TEST_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_));
 
 fn load_global_bunfig<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<(), bun_core::Error> {
     if ctx.has_loaded_global_config {

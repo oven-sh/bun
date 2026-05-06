@@ -210,7 +210,7 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: ZStr<'static>, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
+    shell_bin: &'static ZStr, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
     aborted: bool,
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a`), but Zig field is
     // `*bun.DotEnv.Loader` and ProcessHandle::start mutates `env.map` (PATH swap). Needs `&mut`;

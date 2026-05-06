@@ -185,7 +185,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub fn receive_chunk(
         &mut self,
         _ctx: &mut crate::bake::dev_server_body::HotUpdateContext<'_>,
-        _index: bun_js_parser::ast::Index,
+        // Callers pass either `bun_js_parser::ast::Index` or the
+        // `bun_options_types::Index` newtype (same `u32` source-index space);
+        // accept both via `Into` until the two are unified upstream.
+        _index: impl Into<bun_js_parser::ast::Index>,
         _content: ReceiveChunkContent,
         _is_ssr_graph: bool,
     ) -> Result<(), bun_core::Error> {
@@ -197,7 +200,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         _ctx: &mut crate::bake::dev_server_body::HotUpdateContext<'_>,
         _mode: ProcessMode,
-        _index: bun_js_parser::ast::Index,
+        // See `receive_chunk` — callers mix `ast::Index` and `SrcIndex`.
+        _index: impl Into<bun_js_parser::ast::Index>,
     ) -> Result<(), bun_core::Error> {
         todo!("blocked_on: dev_server::IncrementalGraph::process_chunk_dependencies body un-gate")
     }
@@ -252,7 +256,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `IncrementalGraph(side).takeSourceMap` — full body in gated draft.
     pub fn take_source_map(
         &mut self,
-        _entry: &mut super::source_map_store::Entry,
+        _entry: &mut super::source_map_store_body::Entry,
     ) -> Result<(), bun_core::Error> {
         todo!("blocked_on: dev_server::IncrementalGraph::take_source_map body un-gate")
     }

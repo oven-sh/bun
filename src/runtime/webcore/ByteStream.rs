@@ -2,9 +2,10 @@ use core::mem::offset_of;
 
 use bun_collections::BabyList;
 use bun_core::Output;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong};
+use bun_jsc::strong::Optional as StrongOptional;
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromiseStrong, JSValue};
 
-use crate::webcore::streams::{self, BufferAction};
+use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::Pipe;
 use crate::webcore::{blob, readable_stream};
 
@@ -21,7 +22,7 @@ pub struct ByteStream {
     // TODO(port): lifetime — raw fat slice ptr because the backing store is JS-heap-owned and
     // rooted via `pending_value: Strong`. Never freed by Rust.
     pub pending_buffer: *mut [u8],
-    pub pending_value: Strong, // jsc.Strong.Optional
+    pub pending_value: StrongOptional, // jsc.Strong.Optional
     pub offset: usize,
     pub high_water_mark: blob::SizeType,
     pub pipe: Pipe,

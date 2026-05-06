@@ -5678,7 +5678,7 @@ impl NodeFS {
                     }
                     StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc.into()) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
             });
         }
 
@@ -5724,7 +5724,7 @@ impl NodeFS {
                     }
                     StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: BunString::clone_utf8(buf) })
                 }
-                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc.into()) }),
+                enc => StringOrBuffer::String(node::SliceWithUnderlyingString { utf8: Default::default(), underlying: webcore::encoding::to_bun_string(buf, enc) }),
             })
         }
     }

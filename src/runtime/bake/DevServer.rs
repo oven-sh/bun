@@ -245,8 +245,8 @@ pub struct DevServer<'a> {
     /// only a debug assertion as contention to this is always a bug; If a bundle is
     /// active and a file is changed, that change is placed into the next bundle.
     pub graph_safety_lock: ThreadLock,
-    pub client_graph: IncrementalGraph,
-    pub server_graph: IncrementalGraph,
+    pub client_graph: IncrementalGraph<{ bake::Side::Client }>,
+    pub server_graph: IncrementalGraph<{ bake::Side::Server }>,
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.

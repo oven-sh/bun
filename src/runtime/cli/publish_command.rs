@@ -27,6 +27,8 @@ use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_bu
 // locally (no stub upstream — see PackageManagerOptions.zig `Access`).
 use bun_install::{AuthType, LogLevel};
 use bun_install::dependency;
+use bun_sys::FdExt as _;
+use bun_js_parser::ast::expr::Data as ExprData;
 
 // ── Upstream-stub shims ────────────────────────────────────────────────────
 // `PublishConfigStub` / `PackageManagerOptionsStub` in `bun_install` are
@@ -50,6 +52,26 @@ trait PackageManagerOptionsShim {
 }
 impl PackageManagerOptionsShim for install::PackageManagerOptionsStub {
     fn dry_run(&self) -> bool { todo!("blocked_on: bun_install::PackageManagerOptionsStub::dry_run") }
+}
+trait PackageManagerShim {
+    fn log_mut(&mut self) -> &mut logger::Log;
+    fn original_package_json_path(&self) -> &[u8];
+}
+impl PackageManagerShim for PackageManager {
+    fn log_mut(&mut self) -> &mut logger::Log { todo!("blocked_on: bun_install::PackageManager::log") }
+    fn original_package_json_path(&self) -> &[u8] { todo!("blocked_on: bun_install::PackageManager::original_package_json_path") }
+}
+
+// Local hex-lower Display shim — `bun_fmt::bytes_to_hex_lower` writes into a
+// caller buf; the Zig spec used it as a formatter (`{x}`).
+struct HexLower<'a>(&'a [u8]);
+impl core::fmt::Display for HexLower<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for b in self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
 }
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Access {

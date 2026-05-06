@@ -3275,9 +3275,8 @@ impl Blob {
         blob.content_type_allocated = content_type_was_allocated;
         blob.content_type_was_set = self.content_type_was_set || content_type_was_allocated;
 
-        let blob_ = Blob::new(blob);
-        // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
-        unsafe { (*blob_).to_js(global_this) }
+        // PORT NOTE: `JsClass::to_js` heap-promotes via `Blob::new` internally.
+        blob.to_js(global_this)
     }
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo

@@ -139,7 +139,12 @@ pub mod js {
 // payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
 // marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
 // the TSV row is for plain `*T` fields, not intrusive mixins.)
-#[bun_jsc::JsClass]
+//
+// `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
+// constructor) and intrusive refcounting (finalize → deref, not Box::from_raw),
+// neither of which the macro's default hooks support. The C-ABI shims live in
+// `mod js` above and `extern "C" fn finalize` below.
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 

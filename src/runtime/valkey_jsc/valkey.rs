@@ -908,7 +908,7 @@ impl ValkeyClient {
                                 req_pair
                                     .promise
                                     .promise
-                                    .resolve(global_this, JSValue::js_number(sub_count))?;
+                                    .resolve(global_this, JSValue::js_number(f64::from(sub_count)))?;
                             }
                             Ok(SubscribeHandled::Handled)
                         }
@@ -1557,7 +1557,7 @@ impl bun_io::Write for ValkeyClient {
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         self.write_buffer
             .write(buf)
-            .map_err(|_| bun_core::Error::OutOfMemory)
+            .map_err(|_| bun_core::Error::OUT_OF_MEMORY)
     }
 }
 

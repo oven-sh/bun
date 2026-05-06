@@ -996,13 +996,17 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct MapIterator<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
-    pub formatter: &'a mut Formatter<'a>,
+// PORT NOTE: split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
+// the borrow of `self` at the call site to outlive `'a`, cascading into bogus
+// borrowck errors throughout `print_as`. Using a distinct `'f` for the
+// Formatter's own lifetime keeps the iter borrow local.
+pub struct MapIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+    pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
 }
 
-impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
-    MapIterator<'a, W, ENABLE_ANSI_COLORS>
+impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+    MapIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub extern "C" fn for_each(
         _: *mut VM,
@@ -1047,13 +1051,13 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
-pub struct SetIterator<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
-    pub formatter: &'a mut Formatter<'a>,
+pub struct SetIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+    pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
 }
 
-impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
-    SetIterator<'a, W, ENABLE_ANSI_COLORS>
+impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+    SetIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub extern "C" fn for_each(
         _: *mut VM,
@@ -1089,16 +1093,16 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
-pub struct PropertyIterator<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
-    pub formatter: &'a mut Formatter<'a>,
+pub struct PropertyIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+    pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
     pub i: usize,
     pub always_newline: bool,
     pub parent: JSValue,
 }
 
-impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
-    PropertyIterator<'a, W, ENABLE_ANSI_COLORS>
+impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+    PropertyIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub fn handle_first_property(
         &mut self,
@@ -2022,16 +2026,20 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("\n{} {{\n", map_name));
                     {
                         self.indent += 1;
+                        // PORT NOTE: hoist global_this (Copy &ref) before iter mutably
+                        // borrows `self`/`writer.ctx`; NLL releases both once `iter`
+                        // is dead after `for_each` returns.
+                        let global = self.global_this;
                         let mut iter = MapIterator::<W, ENABLE_ANSI_COLORS> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        // TODO(port): borrowck conflict — iter borrows self & writer.ctx mutably.
                         let result = value.for_each(
-                            self.global_this,
+                            global,
                             &mut iter as *mut _ as *mut c_void,
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
+                        drop(iter);
                         self.indent = self.indent.saturating_sub(1);
                         result?;
                     }

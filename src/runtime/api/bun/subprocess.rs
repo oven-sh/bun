@@ -524,7 +524,9 @@ impl Subprocess<'_> {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    pipe.signal.clear();
+                    // SAFETY: Writable::Pipe holds a live `*FileSink` for the
+                    // subprocess lifetime; we're on the mutator thread.
+                    unsafe { pipe.as_mut() }.signal.clear();
                     // PORT NOTE: Zig's `pipe.deref()` is the Arc<FileSink> drop that
                     // happens when the Writable::Pipe payload is overwritten below.
                     // Calling an explicit deref here would double-decrement.

@@ -327,10 +327,11 @@ impl ReadableStream {
     
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
-        bytes: Vec<u8>,
+        // Zig: `bytes: []u8` — owned slice; accept Vec<u8> / Box<[u8]> alike.
+        bytes: impl Into<Vec<u8>>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let blob = Blob::init(bytes, global_this);
+        let blob = Blob::init(bytes.into(), global_this);
         // defer blob.deinit() → handled by Drop
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }

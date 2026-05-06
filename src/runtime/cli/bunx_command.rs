@@ -42,6 +42,18 @@ fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer {
     unsafe { &mut *((buf as *mut PathBuffer).cast::<bun_core::PathBuffer>()) }
 }
 
+/// Port of `Stat.mtime().sec` for `libc::stat` — `bun_sys::Stat` is a bare
+/// `libc::stat` alias with no `.mtime()` accessor, so shim the seconds field
+/// here per-platform (mirrors `stat_mtime` in `src/sys/PosixStat.rs`).
+#[cfg(not(windows))]
+#[inline]
+fn stat_mtime_sec(s: &bun_sys::Stat) -> i64 {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    { s.st_mtime as i64 }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
+    { s.st_mtimespec.tv_sec as i64 }
+}
+
 /// Process-lifetime bump arena for the package.json parser. Matches the
 /// `dummy_bump()` shim in `pm_pkg_command.rs`. `bumpalo::Bump` is `!Sync`,
 /// so a `static OnceLock` is out; the CLI is single-threaded one-shot, so we
@@ -450,7 +462,7 @@ impl BunxCommand {
                         Ok(s) => s,
                         Err(_) => break 'is_stale true,
                     };
-                    break 'is_stale bun_core::time::timestamp() - stat.mtime().sec > Self::SECONDS_CACHE_VALID;
+                    break 'is_stale bun_core::time::timestamp() - stat_mtime_sec(&stat) > Self::SECONDS_CACHE_VALID;
                 }
             };
 
@@ -932,7 +944,7 @@ impl BunxCommand {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
-                                break 'is_stale bun_core::time::timestamp() - stat.mtime().sec > Self::SECONDS_CACHE_VALID;
+                                break 'is_stale bun_core::time::timestamp() - stat_mtime_sec(&stat) > Self::SECONDS_CACHE_VALID;
                             }
                         };
 
@@ -951,7 +963,7 @@ impl BunxCommand {
                     }
 
                     bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(destination.as_bytes()));
-                    let _stored = fs.dirname_store.append(out)?;
+                    let _stored = fs.dirname_store.append_slice(out)?;
                     let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
                     // TODO(port): `run_binary` lives only in run_command's
                     // `phase_a_draft` impl. Once promoted:
@@ -1012,7 +1024,7 @@ impl BunxCommand {
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
-                                    let _stored = fs.dirname_store.append(out)?;
+                                    let _stored = fs.dirname_store.append_slice(out)?;
                                     let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
                                     // TODO(port): see note above re: `run_binary`.
                                     //   Run::run_binary(ctx, _stored, destination,
@@ -1224,7 +1236,7 @@ impl BunxCommand {
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
-            let _stored = fs.dirname_store.append(out)?;
+            let _stored = fs.dirname_store.append_slice(out)?;
             let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
             // TODO(port): see note above re: `run_binary`.
             //   Run::run_binary(ctx, _stored, destination, top_level_dir,
@@ -1261,7 +1273,7 @@ impl BunxCommand {
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();
-                        let _stored = fs.dirname_store.append(out)?;
+                        let _stored = fs.dirname_store.append_slice(out)?;
                         let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
                         // TODO(port): see note above re: `run_binary`.
                         //   Run::run_binary(ctx, _stored, destination,

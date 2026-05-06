@@ -403,7 +403,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // SAFETY: `global_this` is the JSC_BORROW backref stored at construct
         // time; the global outlives this m_ctx payload.
         let global_this: &JSGlobalObject = unsafe { &*this.global_this() };
-        let vm = global_this.bun_vm_concurrently();
+        // TODO(port): blocked_on: bun_jsc::JSGlobalObject::bun_vm_concurrently —
+        // Zig calls `bunVMConcurrently()` (thread-safe accessor); fall back to
+        // `bun_vm()` here since the result is only consumed by the todo!-gated
+        // enqueue below.
+        let vm = global_this.bun_vm();
 
         this.stream_mut().do_work();
 
@@ -682,13 +686,26 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // runs doWork().
         *this.write_in_progress_mut() = false;
 
-        let mut msg_str = BunString::create_format(format_args!("{}", err_.msg.unwrap_or("")));
+        // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
+        // SAFETY: when non-null, `msg`/`code` point at NUL-terminated bytes
+        // (static literals or zlib/zstd-owned buffers valid for this call).
+        let msg_bytes: &[u8] = if err_.msg.is_null() {
+            b""
+        } else {
+            unsafe { core::ffi::CStr::from_ptr(err_.msg) }.to_bytes()
+        };
+        let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
         let msg_value = match msg_str.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => return,
         };
         let err_value: JSValue = JSValue::js_number(f64::from(err_.err));
-        let mut code_str = BunString::create_format(format_args!("{}", err_.code.unwrap_or("")));
+        let code_bytes: &[u8] = if err_.code.is_null() {
+            b""
+        } else {
+            unsafe { core::ffi::CStr::from_ptr(err_.code) }.to_bytes()
+        };
+        let mut code_str = BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
         let code_value = match code_str.transfer_to_js(global_this) {
             Ok(v) => v,
             Err(_) => return,

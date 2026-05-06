@@ -38,21 +38,29 @@ thread_local! {
     }) };
 }
 
-fn tl_bufs() -> &'static mut TlBufs {
+fn tl_bufs() -> *mut TlBufs {
     // SAFETY (audited phase-d):
     // - `TL_BUFS` is thread-local `UnsafeCell<TlBufs>`: no cross-thread sharing, and
     //   `UnsafeCell::get()` is the sanctioned way to obtain `*mut` for interior mut.
-    // - Zig's `bun.ThreadlocalBuffers(T).get()` returns `*T` (freely-aliasing raw ptr);
-    //   here we materialize `&mut` instead, so callers MUST uphold uniqueness manually.
-    // - All call sites in this module — `try_ssh`, `try_https`, `download`,
-    //   `find_commit`, `checkout` — invoke `tl_bufs()` exactly once per call, never
-    //   re-enter while the borrow is live, and never call each other while holding it,
-    //   so no two `&mut TlBufs` overlap at runtime (single-owner per access).
-    // - The `'static` lifetime is an over-approximation (thread-local outlives all
-    //   in-thread borrows; `TlBufs` has no `Drop`). It is a deliberate escape hatch so
+    // - Zig's `bun.ThreadlocalBuffers(T).get()` returns `*T` (a freely-aliasing raw
+    //   ptr), and `&tl_bufs.get().folder_name_buf` in Zig is raw-ptr field projection
+    //   that never asserts uniqueness over sibling buffers. We mirror that exactly:
+    //   this function returns `*mut TlBufs`, and call sites project a SINGLE field via
+    //   raw-ptr place expr `unsafe { &mut (*tl_bufs()).<field> }` so only that one
+    //   field is retagged Unique under Stacked Borrows.
+    // - This is load-bearing: per the .zig spec callers (PackageManagerTask.zig:179,206),
+    //   `try_https`/`try_ssh` return a slice into `final_path_buf`/`ssh_path_buf` which
+    //   is then passed straight into `download(..., url, ...)`. `download` itself
+    //   borrows `folder_name_buf`. Materializing `&mut TlBufs` over the WHOLE struct
+    //   here would create a fresh Unique tag that invalidates the live `url` slice — UB.
+    //   The invariant is therefore disjoint-FIELD access, not whole-struct uniqueness.
+    // - The raw pointer is valid for the lifetime of the current thread (thread-local
+    //   outlives all in-thread borrows; `TlBufs` has no `Drop`). Callers reborrow into
+    //   `&'static mut PathBuffer` per field as a deliberate escape hatch so
     //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
-    //   Callers must not retain such slices across a subsequent `tl_bufs()` call.
-    TL_BUFS.with(|b| unsafe { &mut *b.get() })
+    //   Callers must not retain a slice into a given field across a subsequent reborrow
+    //   of that SAME field.
+    TL_BUFS.with(|b| b.get())
 }
 
 #[derive(Clone, Copy, Default)]

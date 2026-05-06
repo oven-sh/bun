@@ -209,7 +209,7 @@ impl SpawnSyncEventLoop {
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         // SAFETY: vtable contract.
         unsafe { (vt().event_loop_set_vm)(self.event_loop, vm) };
-        self.did_timeout = false;
+        self.did_timeout.set(false);
         self.vm = vm;
 
         // SAFETY: vtable contract.

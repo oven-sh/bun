@@ -1,12 +1,24 @@
-//! Stub surface for `.classes.ts` / bindgen-generated option structs and
-//! per-class cached-accessor modules.
+//! Hand-written Rust surface for the `.bindv2.ts` / `.classes.ts` codegen.
 //!
-//! The real code is emitted by `src/codegen/generate-classes.ts` (Zig output:
-//! `ZigGeneratedClasses.zig`). Until that script grows a `.rs` backend, this
-//! file hand-stubs the handful of shapes that downstream crates name directly
+//! Two distinct generators feed this file:
+//!
+//!   1. **bindgen option-structs** (`src/codegen/bindgen.ts` →
+//!      `build/*/codegen/bindgen_generated/*.zig`). Each emits a
+//!      `bindgenConvertJSTo<Name>` C++ shim that fills a `#[repr(C)]` extern
+//!      struct, plus a `convertFromExtern` that reshapes it into the public
+//!      Zig/Rust type. `from_js` glues the two.
+//!
+//!   2. **per-class accessor modules** (`src/codegen/generate-classes.ts` →
+//!      `ZigGeneratedClasses.zig`). Each `JS${Type}` exposes
+//!      `from_js` / `from_js_direct` / `to_js` / `get_constructor` thin-wrapping
+//!      the `${Type}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`
+//!      C++ exports, plus one `${name}_get_cached` / `${name}_set_cached` pair
+//!      per `cache: true` property.
+//!
+//! Until both generators grow a `.rs` backend, this file ports their output by
+//! hand for the handful of shapes downstream crates name directly
 //! (`bun_jsc::generated::{SocketConfig*, SSLConfig*, JSTimeout, JSImmediate,
-//! JSBlob, JSResponse, JSRequest}`). All bodies `todo!()` — these exist purely
-//! so dependents type-check during the port.
+//! JSBlob, JSResponse, JSRequest}`).
 //!
 //! Symbol-naming contract (kept in sync with generate-classes.ts):
 //!   `${T}Prototype__${name}GetCachedValue(JSValue) -> JSValue`
@@ -15,7 +27,10 @@
 
 #![allow(dead_code, unused_variables, non_snake_case)]
 
-use crate::{JSGlobalObject, JSValue, JsResult};
+use core::ffi::c_uint;
+use core::mem::MaybeUninit;
+
+use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Generic accessor wrappers.
@@ -64,16 +79,92 @@ impl<T> GenList<T> {
 // already provides.
 pub type GenString = bun_string::String;
 
+/// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
+/// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
+// TODO(port): wrap in `bun_ptr::ExternalShared<JSCArrayBuffer>` once that crate
+// exposes `adopt(*mut T)`. Raw ptr for now (Phase A — leak on drop).
+pub type GenArrayBuffer = *mut JSCArrayBuffer;
+
+/// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
+/// payload, layout-identical to `bun_runtime::webcore::Blob`).
+// TODO(port): wrap in `bun_ptr::ExternalShared<Blob>` (Phase A — leak on drop).
+pub type GenBlob = *mut crate::WebCore::Blob;
+
 // ──────────────────────────────────────────────────────────────────────────
-// SocketConfig (src/runtime/socket/socket.classes.ts → bindgen)
+// Extern-ABI helper layouts (mirror `src/jsc/bindgen.zig`).
+//
+// `ExternTaggedUnion(&.{T0, T1, ...})` in Zig is `extern struct { data:
+// extern union { @"0": T0, ... }, tag: u8 }`. Rust has no variadic
+// `#[repr(C)] union`, so we hand-roll the few arities the bindgen actually
+// emits for the structs below. All extern types are `Copy` POD; the
+// `convert_from_extern` step takes ownership of any embedded heap refs.
 // ──────────────────────────────────────────────────────────────────────────
 
+type RawWTFStringImpl = *mut bun_string::WTFStringImplStruct;
+
+/// `BindgenOptional(BindgenTrivial<T>).ExternType` — `T` has no custom
+/// `OptionalExternType`, so the C++ side wraps it in a 2-arm tagged union
+/// `{ data: union { _0: u8 /* unused */, _1: T }, tag: u8 }`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternOptional<T: Copy> {
+    data: ExternOptionalData<T>,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternOptionalData<T: Copy> {
+    _0: u8,
+    _1: T,
+}
+
+impl<T: Copy> ExternOptional<T> {
+    #[inline]
+    fn get(self) -> Option<T> {
+        if self.tag == 0 {
+            return None;
+        }
+        debug_assert_eq!(self.tag, 1);
+        // SAFETY: tag == 1 ⇒ C++ initialized the `_1` arm.
+        Some(unsafe { self.data._1 })
+    }
+}
+
+/// `bindgen.ExternArrayList(T)` — `extern struct { data: ?[*]T, length: c_uint,
+/// capacity: c_uint }`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternArrayList<T> {
+    data: *mut T, // null = empty
+    length: c_uint,
+    capacity: c_uint,
+}
+
+#[inline]
+fn adopt_string(ptr: RawWTFStringImpl) -> GenString {
+    // C++ hands back a +1 ref; `adopt_wtf_impl` takes ownership (no inc).
+    bun_string::String::adopt_wtf_impl(ptr)
+}
+
+#[inline]
+fn adopt_opt_string(ptr: RawWTFStringImpl) -> GenOpt<GenString> {
+    // `BindgenOptional(BindgenString).ExternType` is `?WTFStringImpl` — single-word
+    // nullable ptr (custom `OptionalExternType`), NOT an `ExternTaggedUnion`.
+    GenOpt(if ptr.is_null() { None } else { Some(adopt_string(ptr)) })
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SocketConfigHandlers (build/*/codegen/bindgen_generated/socket_config_handlers.zig)
+// ──────────────────────────────────────────────────────────────────────────
+
+#[repr(u32)]
 #[derive(Debug, Default, Clone, Copy)]
 pub enum SocketConfigHandlersBinaryType {
-    Arraybuffer,
+    Arraybuffer = 0,
     #[default]
-    Buffer,
-    Uint8array,
+    Buffer = 1,
+    Uint8array = 2,
 }
 
 pub struct SocketConfigHandlers {
@@ -89,63 +180,92 @@ pub struct SocketConfigHandlers {
     pub binary_type: SocketConfigHandlersBinaryType,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSocketConfigHandlers {
+    onOpen: JSValue,
+    onClose: JSValue,
+    onError: JSValue,
+    onData: JSValue,
+    onWritable: JSValue,
+    onHandshake: JSValue,
+    onEnd: JSValue,
+    onConnectError: JSValue,
+    onTimeout: JSValue,
+    binary_type: SocketConfigHandlersBinaryType,
+}
+
+unsafe extern "C" {
+    fn bindgenConvertJSToSocketConfigHandlers(
+        global: *mut JSGlobalObject,
+        value: JSValue,
+        result: *mut ExternSocketConfigHandlers,
+    ) -> bool;
+}
+
 impl SocketConfigHandlers {
-    pub fn from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Self> {
-        // TODO(port): codegen — re-run generate-classes.ts with .rs output.
-        todo!("generated::SocketConfigHandlers::from_js")
+    fn convert_from_extern(ext: ExternSocketConfigHandlers) -> Self {
+        Self {
+            on_open: ext.onOpen,
+            on_close: ext.onClose,
+            on_error: ext.onError,
+            on_data: ext.onData,
+            on_writable: ext.onWritable,
+            on_handshake: ext.onHandshake,
+            on_end: ext.onEnd,
+            on_connect_error: ext.onConnectError,
+            on_timeout: ext.onTimeout,
+            binary_type: ext.binary_type,
+        }
     }
-}
 
-pub enum SocketConfigTls {
-    None,
-    Boolean(bool),
-    Object(SSLConfig),
-}
-
-pub struct SocketConfig {
-    pub tls: SocketConfigTls,
-    pub fd: Option<i32>,
-    pub handlers: SocketConfigHandlers,
-    pub data: JSValue,
-    pub unix_: GenOpt<GenString>,
-    pub hostname: GenOpt<GenString>,
-    pub port: Option<u16>,
-    pub exclusive: bool,
-    pub allow_half_open: bool,
-    pub reuse_port: bool,
-    pub ipv6_only: bool,
-}
-
-impl SocketConfig {
-    pub fn from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Self> {
-        // TODO(port): codegen — re-run generate-classes.ts with .rs output.
-        todo!("generated::SocketConfig::from_js")
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        // PORT NOTE: Zig wraps this in an `ExceptionValidationScope` purely for
+        // the `assertExceptionPresenceMatches(!success)` debug check; that
+        // scope is a no-op outside `ci_assert` builds. The `success` bool is
+        // the actual error signal (C++ left an exception pending iff !success).
+        let mut ext = MaybeUninit::<ExternSocketConfigHandlers>::uninit();
+        // SAFETY: `global` is live; `ext` is a valid out-param; C++ fully
+        // initializes `*result` iff it returns true.
+        let success = unsafe {
+            bindgenConvertJSToSocketConfigHandlers(
+                global as *const _ as *mut _,
+                value,
+                ext.as_mut_ptr(),
+            )
+        };
+        if success {
+            // SAFETY: success ⇒ C++ initialized `ext`.
+            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        } else {
+            Err(JsError::Thrown)
+        }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// SSLConfig (shared by SocketConfig.tls and Bun.serve TLS options)
+// SSLConfig (build/*/codegen/bindgen_generated/ssl_config.zig + friends)
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum SSLConfigAlpnProtocols {
     None,
     String(GenVal<GenString>),
-    Buffer(GenVal<JSValue>),
+    Buffer(GenVal<GenArrayBuffer>),
 }
 
 /// `string | Buffer | BunFile` element of an SSL file-ish option.
 pub enum SSLConfigSingleFile {
     String(GenVal<GenString>),
-    Buffer(GenVal<JSValue>),
-    File(GenVal<JSValue>),
+    Buffer(GenVal<GenArrayBuffer>),
+    File(GenVal<GenBlob>),
 }
 
 /// `string | Buffer | BunFile | Array<...>` — the full file-ish option.
 pub enum SSLConfigFile {
     None,
     String(GenVal<GenString>),
-    Buffer(GenVal<JSValue>),
-    File(GenVal<JSValue>),
+    Buffer(GenVal<GenArrayBuffer>),
+    File(GenVal<GenBlob>),
     Array(GenList<SSLConfigSingleFile>),
 }
 
@@ -169,10 +289,305 @@ pub struct SSLConfig {
     pub client_renegotiation_window: u32,
 }
 
+// ── extern layouts ────────────────────────────────────────────────────────
+
+/// `BindgenSSLConfigSingleFile.ExternType` =
+/// `ExternTaggedUnion(&.{ ?WTFStringImpl, ?*JSCArrayBuffer, ?*Blob })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSSLConfigSingleFile {
+    data: ExternSSLConfigSingleFileData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternSSLConfigSingleFileData {
+    _0: RawWTFStringImpl,
+    _1: GenArrayBuffer,
+    _2: GenBlob,
+}
+
+impl SSLConfigSingleFile {
+    fn convert_from_extern(ext: ExternSSLConfigSingleFile) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`, which C++
+        // guarantees is the initialized one.
+        match ext.tag {
+            0 => Self::String(GenVal(adopt_string(unsafe { ext.data._0 }))),
+            1 => Self::Buffer(GenVal(unsafe { ext.data._1 })),
+            2 => Self::File(GenVal(unsafe { ext.data._2 })),
+            // SAFETY: tag space is 0..=2 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
+/// `BindgenSSLConfigFile.ExternType` = `ExternTaggedUnion(&.{ u8, ?WTFStringImpl,
+/// ?*JSCArrayBuffer, ?*Blob, ExternArrayList<ExternSSLConfigSingleFile> })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSSLConfigFile {
+    data: ExternSSLConfigFileData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternSSLConfigFileData {
+    _0: u8, // BindgenNull
+    _1: RawWTFStringImpl,
+    _2: GenArrayBuffer,
+    _3: GenBlob,
+    _4: ExternArrayList<ExternSSLConfigSingleFile>,
+}
+
+impl SSLConfigFile {
+    fn convert_from_extern(ext: ExternSSLConfigFile) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`.
+        match ext.tag {
+            0 => Self::None,
+            1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
+            2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
+            3 => Self::File(GenVal(unsafe { ext.data._3 })),
+            4 => {
+                // SAFETY: tag == 4 ⇒ `_4` is the initialized arm.
+                let arr = unsafe { ext.data._4 };
+                let len = arr.length as usize;
+                let mut out = Vec::with_capacity(len);
+                if !arr.data.is_null() {
+                    for i in 0..len {
+                        // SAFETY: `arr.data` points to `length` initialized elements
+                        // (mimalloc-backed; C++ transferred ownership).
+                        let elem = unsafe { *arr.data.add(i) };
+                        out.push(SSLConfigSingleFile::convert_from_extern(elem));
+                    }
+                    // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
+                    // when `ZigType == ExternType`. Phase A frees the source buffer
+                    // via mimalloc to match the alloc-side; in-place reuse deferred.
+                    // PERF(port): was BindgenArray in-place convert — profile in Phase B
+                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // (per crate prereq); freeing via the global allocator matches.
+                    unsafe {
+                        bun_alloc::free_raw(
+                            arr.data.cast(),
+                            arr.capacity as usize
+                                * core::mem::size_of::<ExternSSLConfigSingleFile>(),
+                        )
+                    };
+                }
+                Self::Array(GenList(out))
+            }
+            // SAFETY: tag space is 0..=4 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
+/// `BindgenALPNProtocols.ExternType` =
+/// `ExternTaggedUnion(&.{ u8, ?WTFStringImpl, ?*JSCArrayBuffer })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternALPNProtocols {
+    data: ExternALPNProtocolsData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternALPNProtocolsData {
+    _0: u8,
+    _1: RawWTFStringImpl,
+    _2: GenArrayBuffer,
+}
+
+impl SSLConfigAlpnProtocols {
+    fn convert_from_extern(ext: ExternALPNProtocols) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`.
+        match ext.tag {
+            0 => Self::None,
+            1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
+            2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
+            // SAFETY: tag space is 0..=2 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSSLConfig {
+    passphrase: RawWTFStringImpl,
+    dh_params_file: RawWTFStringImpl,
+    server_name: RawWTFStringImpl,
+    low_memory_mode: bool,
+    reject_unauthorized: ExternOptional<bool>,
+    request_cert: bool,
+    ca: ExternSSLConfigFile,
+    cert: ExternSSLConfigFile,
+    key: ExternSSLConfigFile,
+    secure_options: u32,
+    key_file: RawWTFStringImpl,
+    cert_file: RawWTFStringImpl,
+    ca_file: RawWTFStringImpl,
+    alpn_protocols: ExternALPNProtocols,
+    ciphers: RawWTFStringImpl,
+    client_renegotiation_limit: u32,
+    client_renegotiation_window: u32,
+}
+
+unsafe extern "C" {
+    fn bindgenConvertJSToSSLConfig(
+        global: *mut JSGlobalObject,
+        value: JSValue,
+        result: *mut ExternSSLConfig,
+    ) -> bool;
+}
+
 impl SSLConfig {
-    pub fn from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Self> {
-        // TODO(port): codegen — re-run generate-classes.ts with .rs output.
-        todo!("generated::SSLConfig::from_js")
+    fn convert_from_extern(ext: ExternSSLConfig) -> Self {
+        Self {
+            passphrase: adopt_opt_string(ext.passphrase),
+            dh_params_file: adopt_opt_string(ext.dh_params_file),
+            server_name: adopt_opt_string(ext.server_name),
+            low_memory_mode: ext.low_memory_mode,
+            reject_unauthorized: ext.reject_unauthorized.get(),
+            request_cert: ext.request_cert,
+            ca: SSLConfigFile::convert_from_extern(ext.ca),
+            cert: SSLConfigFile::convert_from_extern(ext.cert),
+            key: SSLConfigFile::convert_from_extern(ext.key),
+            secure_options: ext.secure_options,
+            key_file: adopt_opt_string(ext.key_file),
+            cert_file: adopt_opt_string(ext.cert_file),
+            ca_file: adopt_opt_string(ext.ca_file),
+            alpn_protocols: SSLConfigAlpnProtocols::convert_from_extern(ext.alpn_protocols),
+            ciphers: adopt_opt_string(ext.ciphers),
+            client_renegotiation_limit: ext.client_renegotiation_limit,
+            client_renegotiation_window: ext.client_renegotiation_window,
+        }
+    }
+
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        let mut ext = MaybeUninit::<ExternSSLConfig>::uninit();
+        // SAFETY: `global` is live; C++ fully initializes `*result` iff true.
+        let success = unsafe {
+            bindgenConvertJSToSSLConfig(global as *const _ as *mut _, value, ext.as_mut_ptr())
+        };
+        if success {
+            // SAFETY: success ⇒ C++ initialized `ext`.
+            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        } else {
+            Err(JsError::Thrown)
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SocketConfig (build/*/codegen/bindgen_generated/socket_config.zig)
+// ──────────────────────────────────────────────────────────────────────────
+
+pub enum SocketConfigTls {
+    None,
+    Boolean(bool),
+    Object(SSLConfig),
+}
+
+pub struct SocketConfig {
+    pub tls: SocketConfigTls,
+    pub fd: Option<i32>,
+    pub handlers: SocketConfigHandlers,
+    pub data: JSValue,
+    pub unix_: GenOpt<GenString>,
+    pub hostname: GenOpt<GenString>,
+    pub port: Option<u16>,
+    pub exclusive: bool,
+    pub allow_half_open: bool,
+    pub reuse_port: bool,
+    pub ipv6_only: bool,
+}
+
+/// `BindgenSocketConfigTLS.ExternType` =
+/// `ExternTaggedUnion(&.{ u8, bool, ExternSSLConfig })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSocketConfigTLS {
+    data: ExternSocketConfigTLSData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternSocketConfigTLSData {
+    _0: u8,
+    _1: bool,
+    _2: ExternSSLConfig,
+}
+
+impl SocketConfigTls {
+    fn convert_from_extern(ext: ExternSocketConfigTLS) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`.
+        match ext.tag {
+            0 => Self::None,
+            1 => Self::Boolean(unsafe { ext.data._1 }),
+            2 => Self::Object(SSLConfig::convert_from_extern(unsafe { ext.data._2 })),
+            // SAFETY: tag space is 0..=2 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternSocketConfig {
+    handlers: ExternSocketConfigHandlers,
+    data: JSValue,
+    allow_half_open: bool,
+    hostname: RawWTFStringImpl,
+    port: ExternOptional<u16>,
+    tls: ExternSocketConfigTLS,
+    exclusive: bool,
+    reuse_port: bool,
+    ipv6_only: bool,
+    unix_: RawWTFStringImpl,
+    fd: ExternOptional<i32>,
+}
+
+unsafe extern "C" {
+    fn bindgenConvertJSToSocketConfig(
+        global: *mut JSGlobalObject,
+        value: JSValue,
+        result: *mut ExternSocketConfig,
+    ) -> bool;
+}
+
+impl SocketConfig {
+    fn convert_from_extern(ext: ExternSocketConfig) -> Self {
+        Self {
+            handlers: SocketConfigHandlers::convert_from_extern(ext.handlers),
+            data: ext.data,
+            allow_half_open: ext.allow_half_open,
+            hostname: adopt_opt_string(ext.hostname),
+            port: ext.port.get(),
+            tls: SocketConfigTls::convert_from_extern(ext.tls),
+            exclusive: ext.exclusive,
+            reuse_port: ext.reuse_port,
+            ipv6_only: ext.ipv6_only,
+            unix_: adopt_opt_string(ext.unix_),
+            fd: ext.fd.get(),
+        }
+    }
+
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        let mut ext = MaybeUninit::<ExternSocketConfig>::uninit();
+        // SAFETY: `global` is live; C++ fully initializes `*result` iff true.
+        let success = unsafe {
+            bindgenConvertJSToSocketConfig(global as *const _ as *mut _, value, ext.as_mut_ptr())
+        };
+        if success {
+            // SAFETY: success ⇒ C++ initialized `ext`.
+            Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        } else {
+            Err(JsError::Thrown)
+        }
     }
 }
 
@@ -200,20 +615,69 @@ macro_rules! js_class_module {
             use $crate::{JSGlobalObject, JSValue};
             $crate::codegen_cached_accessors!($TypeName; $( $prop ),*);
 
-            pub fn from_js(_value: JSValue) -> ::core::option::Option<*mut ()> {
-                // TODO(port): codegen — re-run generate-classes.ts with .rs output.
-                // Must NOT silently return `None` (PORTING.md §Forbidden patterns):
-                // a valid wrapper would be misreported as a type mismatch.
-                todo!(concat!("generated::", stringify!($mod_name), "::from_js"))
+            // `${TypeName}__fromJS` / `__fromJSDirect` / `__create` /
+            // `__getConstructor` — implemented in C++ by
+            // `src/codegen/generate-classes.ts` (`symbolName(typeName, name)`
+            // ⇒ `${typeName}__${name}`). All use `JSC_CALLCONV` (= sysv64 on
+            // win-x64, C otherwise).
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            unsafe extern "sysv64" {
+                #[link_name = concat!($TypeName, "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut ();
+                #[link_name = concat!($TypeName, "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut ();
+                #[link_name = concat!($TypeName, "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
+                #[link_name = concat!($TypeName, "__getConstructor")]
+                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
             }
-            pub fn from_js_direct(_value: JSValue) -> ::core::option::Option<*mut ()> {
-                todo!(concat!("generated::", stringify!($mod_name), "::from_js_direct"))
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            unsafe extern "C" {
+                #[link_name = concat!($TypeName, "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut ();
+                #[link_name = concat!($TypeName, "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut ();
+                #[link_name = concat!($TypeName, "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
+                #[link_name = concat!($TypeName, "__getConstructor")]
+                fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
             }
-            pub fn to_js(_ptr: *mut (), _global: &JSGlobalObject) -> JSValue {
-                todo!(concat!("generated::", stringify!($mod_name), "::to_js"))
+
+            /// Return the wrapped native pointer if `value` is (a subclass of)
+            /// the JS wrapper type; `None` on type mismatch.
+            #[inline]
+            pub fn from_js(value: JSValue) -> ::core::option::Option<*mut ()> {
+                // SAFETY: `value` is a valid encoded JSValue; the C++ side
+                // type-checks and returns the `m_ctx` pointer or null.
+                let ptr = unsafe { __from_js(value) };
+                if ptr.is_null() { None } else { Some(ptr) }
             }
-            pub fn get_constructor(_global: &JSGlobalObject) -> JSValue {
-                todo!(concat!("generated::", stringify!($mod_name), "::get_constructor"))
+
+            /// As `from_js`, but only matches *direct* instances with the
+            /// canonical structure (no subclass / no expando properties).
+            #[inline]
+            pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut ()> {
+                // SAFETY: see `from_js`.
+                let ptr = unsafe { __from_js_direct(value) };
+                if ptr.is_null() { None } else { Some(ptr) }
+            }
+
+            /// Create a new JS wrapper instance owning `ptr`. The C++ side
+            /// allocates the JSCell with the cached structure and stores `ptr`
+            /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
+            #[inline]
+            pub fn to_js(ptr: *mut (), global: &JSGlobalObject) -> JSValue {
+                // SAFETY: `global` is live; `ptr` is a freshly boxed native
+                // payload (not yet owned by any wrapper).
+                unsafe { __create(global as *const _ as *mut _, ptr) }
+            }
+
+            /// Lazily fetch the constructor `JSFunction` from `globalObject`.
+            #[inline]
+            pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+                // SAFETY: `global` is live; the C++ side reads the cached
+                // structure/constructor from `Zig::GlobalObject`.
+                unsafe { __get_constructor(global as *const _ as *mut _) }
             }
         }
     };
@@ -227,7 +691,11 @@ js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream 
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     ZigGeneratedClasses.zig (generated; not checked in)
-//   confidence: low (hand-stubbed)
-//   todos:      replace with `.rs` backend in src/codegen/generate-classes.ts
+//   source:     build/*/codegen/bindgen_generated/{socket_config*,ssl_config*}.zig
+//               + ZigGeneratedClasses.zig (`JS${T}` modules)
+//   confidence: medium (hand-ported codegen output; ABI matched against
+//               `src/jsc/bindgen.zig` extern-type rules)
+//   todos:      `Gen{ArrayBuffer,Blob}` need `ExternalShared` Drop;
+//               replace this file with a `.rs` backend in
+//               `src/codegen/{bindgen.ts,generate-classes.ts}`
 // ──────────────────────────────────────────────────────────────────────────

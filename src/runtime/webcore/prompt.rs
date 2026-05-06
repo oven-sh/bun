@@ -369,7 +369,7 @@ pub mod prompt {
         // size to 4096. If that is too small, then just dynamically allocate
         // the rest.
         if let Err(e) =
-            read_until_delimiter_array_list_append_assume_capacity(&mut reader, &mut input, b'\n', 2048)
+            read_until_delimiter_array_list_append_assume_capacity(&mut *reader, &mut input, b'\n', 2048)
         {
             if !matches!(e, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string

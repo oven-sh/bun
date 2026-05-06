@@ -604,13 +604,13 @@ fn get_description(
 
     if description.is_number() || description.is_string() {
         let slice = description.to_slice(global)?;
-        return Ok(slice.into_owned_slice());
+        return Ok(slice.into_vec());
     }
 
-    global.throw(format_args!(
+    Err(global.throw(format_args!(
         "{}() expects first argument to be a named class, named function, number, or string",
         signature
-    ))
+    )))
 }
 
 pub fn parse_arguments(

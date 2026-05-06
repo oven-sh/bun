@@ -727,10 +727,12 @@ impl Writable {
     pub fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                pipe.update_ref(true);
+                // SAFETY: single-thread; raw mut access mirrors Zig.
+                unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).update_ref(true) };
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(true);
+                // SAFETY: RefPtr data is live.
+                unsafe { (*buffer.data.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -739,10 +741,12 @@ impl Writable {
     pub fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                pipe.update_ref(false);
+                // SAFETY: single-thread; raw mut access mirrors Zig.
+                unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).update_ref(false) };
             }
             Writable::Buffer(buffer) => {
-                buffer.update_ref(false);
+                // SAFETY: RefPtr data is live.
+                unsafe { (*buffer.data.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -759,7 +763,7 @@ impl Writable {
         }
         *self = Writable::Ignore;
     }
-    pub fn on_ready(&mut self, _: Option<Blob::SizeType>, _: Option<Blob::SizeType>) {}
+    pub fn on_ready(&mut self, _: Option<blob::SizeType>, _: Option<blob::SizeType>) {}
     pub fn on_start(&mut self) {}
 
     pub fn init(

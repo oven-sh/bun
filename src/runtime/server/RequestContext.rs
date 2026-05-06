@@ -1828,7 +1828,9 @@ where
         // populated url+headers (the lazy getRequest() path is H1-only),
         // so the guards below short-circuit and `req` is never read.
         if !HTTP3 {
-            request_object.request_context.set_request(req);
+            // `Req<SSL,H3>` is erased to `c_void`; for !HTTP3 the concrete
+            // type is `uws::Request`, so the cast is nominal.
+            request_object.request_context.set_request(req.cast::<uws::Request>());
         }
 
         if request_object.ensure_url().is_err() {

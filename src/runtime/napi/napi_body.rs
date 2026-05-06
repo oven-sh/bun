@@ -1431,8 +1431,9 @@ pub extern "C" fn napi_reject_deferred(
     // SAFETY: deferred was created by Box::into_raw in napi_create_promise.
     let deferred_box = unsafe { Box::from_raw(deferred) };
     let rejection = rejection_.get();
-    let prom = deferred_box.get();
-    if prom.reject(env.to_js(), rejection).is_err() {
+    // SAFETY: `deferred_box` holds a live JSPromise strong ref.
+    let prom = unsafe { deferred_box.get() };
+    if prom.reject(env.to_js(), Ok(rejection)).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
     env.ok()

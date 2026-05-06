@@ -443,11 +443,11 @@ impl NodeHTTPResponse {
 
         let ws = ServerWebSocket::init(ws_handler, data_value, None);
 
-        let mut sec_websocket_protocol_str: Option<ZigString::Slice> = None;
-        let mut sec_websocket_extensions_str: Option<ZigString::Slice> = None;
+        let mut sec_websocket_protocol_str: Option<ZigStringSlice> = None;
+        let mut sec_websocket_extensions_str: Option<ZigStringSlice> = None;
 
         let sec_websocket_protocol_value: &[u8] = 'brk: {
-            if sec_websocket_protocol.is_empty() {
+            if sec_websocket_protocol.len == 0 {
                 if !self.upgrade_context.request.is_null() {
                     // SAFETY: request pointer is live until preserve_web_socket_headers_if_needed nulls it.
                     let request = unsafe { &*self.upgrade_context.request };

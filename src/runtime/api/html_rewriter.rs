@@ -1403,9 +1403,12 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     if let Some(err) = global.try_take_exception() {
         // it's a synchronous error
         return err;
-    } else if let Some(err_ptr) = global.bun_vm().unhandled_pending_rejection_to_capture {
+    }
+    // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this call.
+    let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+    if let Some(err_ptr) = vm.unhandled_pending_rejection_to_capture {
         // SAFETY: VM-owned pointer; valid while VM lives.
-        let slot = unsafe { &mut *err_ptr.as_ptr() };
+        let slot = unsafe { &mut *err_ptr };
         if !slot.is_empty() {
             // it's a promise rejection
             let result = *slot;
@@ -1415,7 +1418,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     }
 
     let err = create_lolhtml_string_error();
-    let value = err.to_error_instance(global);
+    let value = bun_string_jsc::to_error_instance(&err, global);
     value.put(global, "name", ZigString::init(b"HTMLRewriterError").to_js(global));
     value
 }

@@ -3011,7 +3011,9 @@ unsafe fn resolve_embedded_node_file_hook(
         };
 
         // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+        // SAFETY: `FileSystem::instance()` returns the process-global singleton
+        // pointer (initialized at startup).
+        let Ok(tmpdir) = (unsafe { &mut *Fs::FileSystem::instance() }).tmpdir() else {
             return false;
         };
         let tmpdir_fd: bun_sys::Fd = tmpdir.fd;

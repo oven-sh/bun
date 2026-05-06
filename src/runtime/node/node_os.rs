@@ -666,8 +666,8 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         if ret != 0 {
             return Err(global.throw_value(
                 bun_sys::Error::from_code(
-                    // SAFETY: ret is a valid errno value
-                    unsafe { core::mem::transmute::<c_int, bun_sys::E>(ret) },
+                    // SAFETY: ret is a valid errno value; bun_sys::E is #[repr(u16)]
+                    unsafe { core::mem::transmute::<u16, bun_sys::E>(ret as u16) },
                     bun_sys::Tag::uv_os_homedir,
                 )
                 .to_js(global),

@@ -295,7 +295,7 @@ impl CreateCommand {
         example_tag: ExampleTag,
         template: &[u8],
     ) -> Result<(), bun_core::Error> {
-        Global::configure_allocator(bun_core::AllocatorConfig { long_running: false });
+        Global::configure_allocator(Global::AllocatorConfiguration { long_running: false, ..Default::default() });
         HTTP::HTTPThread::init(&Default::default());
 
         let mut create_options = CreateOptions::parse(ctx)?;
@@ -321,7 +321,7 @@ impl CreateCommand {
 
         let destination = filesystem
             .dirname_store
-            .append(resolve_path::join_abs(filesystem.top_level_dir, resolve_path::Style::Loose, dirname))?;
+            .append(bun_paths::resolve_path::join_abs::<bun_paths::platform::Loose>(filesystem.top_level_dir, dirname))?;
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();

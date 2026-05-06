@@ -1132,27 +1132,27 @@ impl BunxCommand {
         };
 
         match spawn_result.status {
-            bun_core::SpawnStatus::Exited(exit) => {
-                if exit.signal.valid() {
-                    if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+            SpawnStatus::Exited { code, signal } => {
+                if signal.valid() {
+                    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                         bun_crash_handler::suppress_reporting();
                     }
 
-                    Global::raise_ignoring_panic_handler(exit.signal);
+                    Global::raise_ignoring_panic_handler(signal);
                 }
 
-                if exit.code != 0 {
-                    Global::exit(exit.code);
+                if code != 0 {
+                    Global::exit(code as i32);
                 }
             }
-            bun_core::SpawnStatus::Signaled(signal) => {
-                if bun_core::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
+            SpawnStatus::Signaled(signal) => {
+                if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get() {
                     bun_crash_handler::suppress_reporting();
                 }
 
                 Global::raise_ignoring_panic_handler(signal);
             }
-            bun_core::SpawnStatus::Err(err) => {
+            SpawnStatus::Err(err) => {
                 Output::pretty_errorln(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
                     format_args!("{} {}", BStr::new(&install_param), err),

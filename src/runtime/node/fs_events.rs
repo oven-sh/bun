@@ -812,7 +812,7 @@ impl FSEventsLoop {
         {
             let _guard = self.mutex.lock();
             // PORT NOTE: reshaped for borrowck — capture len before mutable iteration
-            let len = self.watchers.len() as usize;
+            let len = self.watchers.len as usize;
             let watchers = self.watchers.slice_mut();
             for i in 0..len {
                 if let Some(item) = watchers[i] {
@@ -820,7 +820,7 @@ impl FSEventsLoop {
                         watchers[i] = None;
                         // if is the last one just pop
                         if i == len - 1 {
-                            self.watchers.set_len(self.watchers.len() - 1);
+                            self.watchers.len -= 1;
                         }
                         self.watcher_count -= 1;
                         break;

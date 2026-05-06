@@ -51,8 +51,8 @@ pub struct NativeZstd {
 // here as a reviewer breadcrumb — that's not valid Rust path syntax, so it's dropped to a comment.
 
 impl NativeZstd {
-    // TODO(port): exact constructor host-fn attribute form
-    #[bun_jsc::host_fn]
+    // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
+    // no `#[host_fn]` here — that macro's free-fn arm would emit a bare `constructor(...)` call.
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
         let arguments = frame.arguments_as_array::<1>();
 
@@ -164,8 +164,8 @@ impl NativeZstd {
             let err_ = this.stream.set_params(c_uint::try_from(i).unwrap(), x);
             if err_.is_error() {
                 this.stream.close();
-                // SAFETY: err_.msg is Some when is_error() is true; it is a NUL-terminated C string.
-                let msg = unsafe { CStr::from_ptr(err_.msg.unwrap()) }.to_bytes();
+                // SAFETY: err_.msg is non-null when is_error() is true; it is a NUL-terminated C string.
+                let msg = unsafe { CStr::from_ptr(err_.msg) }.to_bytes();
                 return global
                     .err(
                         jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,

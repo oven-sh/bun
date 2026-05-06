@@ -4,7 +4,7 @@ use bun_valkey::valkey_protocol as protocol;
 
 use crate::node;
 
-type Slice = bun_str::ZigString_Slice; // TODO(port): exact path for jsc.ZigString.Slice
+type Slice = bun_str::ZigStringSlice;
 
 // PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
 // borrow caller-owned data for the duration of serialization.
@@ -45,8 +45,9 @@ impl<'a> Command<'a> {
         match &self.args {
             Args::Slices(args) => {
                 for arg in args.iter() {
-                    write!(writer, "${}\r\n", arg.byte_length())?;
-                    writer.write_all(arg.slice())?;
+                    let bytes = arg.slice();
+                    write!(writer, "${}\r\n", bytes.len())?;
+                    writer.write_all(bytes)?;
                     writer.write_all(b"\r\n")?;
                 }
             }

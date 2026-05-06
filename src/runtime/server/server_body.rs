@@ -4253,7 +4253,7 @@ impl AnyServer {
         any_server_dispatch!(self, |s| unsafe { &*s.app.unwrap() }.num_subscribers(topic))
     }
 
-    pub fn dev_server(&self) -> Option<&DevServer> {
+    pub fn dev_server(&self) -> Option<&bake::dev_server::DevServer> {
         any_server_dispatch!(self, |s| s.dev_server.as_deref())
     }
 }

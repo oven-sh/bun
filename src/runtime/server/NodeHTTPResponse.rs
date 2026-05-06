@@ -590,10 +590,11 @@ impl NodeHTTPResponse {
                 break 'brk global_object.validate_integer_range(
                     status_code_value,
                     200i32,
-                    jsc::IntegerRangeOptions {
+                    jsc::IntegerRange {
                         min: 100,
                         max: 999,
-                        field_name: "statusCode",
+                        field_name: b"statusCode",
+                        ..Default::default()
                     },
                 )?;
             }
@@ -1058,7 +1059,7 @@ impl NodeHTTPResponse {
             }
 
             if !chunk.is_empty() {
-                break 'brk match ArrayBuffer::create_buffer(global_this, chunk) {
+                break 'brk match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
                     Ok(b) => b,
                     Err(err) => {
                         global_this.report_uncaught_exception_from_error(err);

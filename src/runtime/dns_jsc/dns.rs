@@ -4262,7 +4262,7 @@ impl Resolver {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[host_fn]
+    // FFI shim emitted by `export_host_fn!` below.
     pub fn set_global_servers(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::set_channel_servers(Self::get_channel_from_vm(global_this)?, global_this, callframe)
     }

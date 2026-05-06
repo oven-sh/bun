@@ -162,7 +162,11 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
     // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.
-    bun_core::default_panic(msg, first_trace_addr);
+    let _ = first_trace_addr;
+    bun_core::Output::panic(format_args!(
+        "{}",
+        core::str::from_utf8(msg).unwrap_or("<invalid utf-8 in panic message>")
+    ));
 }
 
 #[cfg(windows)]

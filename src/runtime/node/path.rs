@@ -2831,9 +2831,9 @@ pub fn relative(
     // SAFETY: args_ptr points to args_len JSValues from CallFrame.
     let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len as usize) };
     let from_ptr: JSValue = if args_len > 0 { args[0] } else { JSValue::UNDEFINED };
-    validate_string(global_object, from_ptr, format_args!("from"))?;
+    crate::node::validators_impl::validate_string(global_object, from_ptr, format_args!("from"))?;
     let to_ptr: JSValue = if args_len > 1 { args[1] } else { JSValue::UNDEFINED };
-    validate_string(global_object, to_ptr, format_args!("to"))?;
+    crate::node::validators_impl::validate_string(global_object, to_ptr, format_args!("to"))?;
 
     let from_zig_str = from_ptr.get_zig_string(global_object)?;
     let to_zig_str = to_ptr.get_zig_string(global_object)?;
@@ -2881,7 +2881,7 @@ pub fn resolve_posix_t<'a, T: PathChar>(
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); max_path_size::<u8>()];
-            match posix_cwd_t(&mut tmp_buf) {
+            match super::_cwd::posix_cwd_t(&mut tmp_buf) {
                 Ok(r) => &*r,
                 Err(e) => return Err(e),
             }

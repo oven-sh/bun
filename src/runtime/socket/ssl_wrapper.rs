@@ -451,8 +451,14 @@ impl<T: Copy> SSLWrapper<T> {
             return us_bun_verify_error_t::default();
         }
         let Some(ssl) = self.ssl else { return us_bun_verify_error_t::default() };
-        // TODO(port): ssl.getVerifyError() — Zig method on *BoringSSL.SSL; map to bun_boringssl helper in Phase B
-        bun_boringssl::get_verify_error(ssl.as_ptr())
+        // Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
+        // `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
+        unsafe extern "C" {
+            fn us_ssl_socket_verify_error_from_ssl(
+                ssl: *mut boring_sys::SSL,
+            ) -> us_bun_verify_error_t;
+        }
+        unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
     }
 
     /// Update the handshake state

@@ -133,6 +133,13 @@ pub fn post_process_js_chunk(
         let source = c.get_source(chunk.entry_point.source_index() as usize);
         let target = unsafe { &(*c.resolver).opts }.target;
 
+        // Hoist `*mut [Stmt]` extraction so the two `&mut chunk` borrows below
+        // (content vs renamer) don't overlap inside a single expression.
+        let prefix_stmts: *mut [Stmt] =
+            chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut() as *mut [Stmt];
+        let suffix_stmts: *mut [Stmt] =
+            chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut() as *mut [Stmt];
+
         cross_chunk_prefix = js_printer::print::<false>(
             worker_allocator,
             target,
@@ -141,7 +148,7 @@ pub fn post_process_js_chunk(
             make_print_options(module_info.as_deref_mut()),
             cross_chunk_import_records.as_slice(),
             &[Part {
-                stmts: chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut() as *mut [Stmt],
+                stmts: prefix_stmts,
                 ..Default::default()
             }],
             chunk.renamer.as_renamer(),
@@ -154,7 +161,7 @@ pub fn post_process_js_chunk(
             make_print_options(module_info.as_deref_mut()),
             &[],
             &[Part {
-                stmts: chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut() as *mut [Stmt],
+                stmts: suffix_stmts,
                 ..Default::default()
             }],
             chunk.renamer.as_renamer(),
@@ -1173,7 +1180,8 @@ pub fn generate_entry_point_tail_js(
     // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
     // PORT NOTE: reshaped for borrowck — reborrow via as_deref_mut so module_info
     // remains usable for print_options below.
-    if let Some(mi) = module_info.as_deref_mut() {
+    if let Some(mi) = module_info.as_mut() {
+        let mi: &mut ModuleInfo = &mut **mi;
         for stmt in stmts.iter() {
             match &stmt.data {
                 StmtData::SLocal(s) => {

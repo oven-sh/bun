@@ -788,7 +788,7 @@ impl Value {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => unsafe { (***s).utf8_byte_length() } as blob::SizeType,
+            Value::WTFStringImpl(s) => (unsafe { (***s).utf8_byte_length() }) as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,

@@ -4808,6 +4808,9 @@ impl Blob {
 pub use _jsc_gated::{WriteFileOptions, write_file_internal};
 // Re-export the mkdirp helper + types for blob/copy_file.rs (CopyFile open path).
 pub use _jsc_gated::{MkdirpTarget, Retry, mkdir_if_not_exists};
+// Re-export the size formatter so Body.rs can render `size: N KB` for buffered
+// InternalBlob / WTFStringImpl bodies without going through a Blob instance.
+pub use _jsc_gated::write_format_for_size;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Un-gated core constructors / JS bridging (B-2 round: init_with_store / to_js

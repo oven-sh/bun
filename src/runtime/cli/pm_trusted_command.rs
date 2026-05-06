@@ -3,9 +3,16 @@ use core::sync::atomic::Ordering;
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output, Progress};
 use bun_install::{
-    self as install, lockfile, lockfile_real, DependencyID, LifecycleScriptSubprocess, Lockfile,
+    self as install, lockfile, DependencyID, LifecycleScriptSubprocess, Lockfile,
     PackageID, PackageManager, Resolution,
 };
+
+// Local shim: bun_install::lockfile_real is `#![cfg(any())]`-gated (reconciler-6).
+// Swap back to `bun_install::lockfile_real` once un-gated upstream.
+mod lockfile_real {
+    // blocked_on: bun_install::lockfile_real::DEFAULT_TRUSTED_DEPENDENCIES_LIST
+    pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: &[&[u8]] = &[];
+}
 use bun_logger as logger;
 use bun_semver::String as SemverString;
 use bun_str::strings;

@@ -949,17 +949,18 @@ impl PmPkgCommand {
                 ..Default::default()
             },
         ) {
-            Output::err_generic(format_args!(
-                "Failed to serialize package.json: {}",
-                e.name()
-            ));
+            Output::err_generic("Failed to serialize package.json: {s}", (e.name(),));
             Global::exit(1);
         }
 
         let content = writer.ctx.written_without_trailing_zero();
         // TODO(port): Zig used std.fs.cwd().writeFile; using bun_sys per porting rules (no std::fs).
-        if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path, content) {
-            Output::err_generic(format_args!("Failed to write package.json: {}", e.name()));
+        let path_z = bun_core::ZBox::from_bytes(path);
+        if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
+            Output::err_generic(
+                "Failed to write package.json: {s}",
+                (bstr::BStr::new(e.name()),),
+            );
             Global::exit(1);
         }
         Ok(())

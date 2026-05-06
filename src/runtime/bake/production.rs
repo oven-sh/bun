@@ -157,8 +157,9 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
-        b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        // PORT NOTE: `bun_resolver::options::BundleOptions` has no
+        // `minify_identifiers`/`minify_whitespace` fields; the Zig mirror onto
+        // resolver.opts is dropped (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
     }
     // SAFETY: event_loop is a self-ptr into vm; unique access here.

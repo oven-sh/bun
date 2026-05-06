@@ -291,12 +291,15 @@ impl Glob {
         let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
         let only_files = match_opts.only_files;
 
-        let mut glob_walker = Box::new(GlobWalker::default());
-        // errdefer alloc.destroy(globWalker) — handled by Box drop on `?` paths.
+        // PORT NOTE: Zig stack-inits `GlobWalker = .{}` then calls `.init()` /
+        // `.initWithCwd()` as out-param mutators. The Rust `GlobWalker` reshaped
+        // those into associated constructors returning `Result<Maybe<Self>>`, so
+        // there is no `Default` and no separate allocation step.
+        // `errdefer alloc.destroy(globWalker)` is handled by Box drop on `?` paths.
+        let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
         if let Some(cwd) = cwd {
-            match glob_walker.init_with_cwd(
-                arena,
+            let glob_walker = match GlobWalker::init_with_cwd(
                 &self.pattern,
                 &cwd,
                 dot,
@@ -304,29 +307,30 @@ impl Glob {
                 follow_symlinks,
                 error_on_broken_symlinks,
                 only_files,
+                None,
             )? {
                 bun_sys::Result::Err(err) => {
-                    return global_this.throw_value(err.to_js(global_this)?);
+                    return Err(global_this.throw_value(err.to_js(global_this)));
                 }
-                _ => {}
-            }
+                bun_sys::Result::Ok(gw) => Box::new(gw),
+            };
             return Ok(Some(glob_walker));
         }
 
-        match glob_walker.init(
-            arena,
+        let glob_walker = match GlobWalker::init(
             &self.pattern,
             dot,
             absolute,
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            None,
         )? {
             bun_sys::Result::Err(err) => {
-                return global_this.throw_value(err.to_js(global_this)?);
+                return Err(global_this.throw_value(err.to_js(global_this)));
             }
-            _ => {}
-        }
+            bun_sys::Result::Ok(gw) => Box::new(gw),
+        };
         Ok(Some(glob_walker))
     }
 

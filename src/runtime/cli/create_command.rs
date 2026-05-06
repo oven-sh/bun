@@ -2,7 +2,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
+use bun_sys::FdDirExt as _;
 use bun_core::Progress::{Progress, Node as ProgressNode};
 use bun_threading::Futex;
 use crate::api::bun_process::sync as spawn_sync;

@@ -132,12 +132,12 @@ pub fn render_to_ansi(
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     };
 
     let input = buffer.slice();
@@ -170,10 +170,10 @@ pub fn render_to_ansi(
             // The parser can only return null via JSError / JSTerminated
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return global_this.throw_out_of_memory();
+            return Err(global_this.throw_out_of_memory());
         }
         Err(ParserError::OutOfMemory) => return global_this.throw_out_of_memory(),
-        Err(ParserError::StackOverflow) => return global_this.throw_stack_overflow(),
+        Err(ParserError::StackOverflow) => return Err(global_this.throw_stack_overflow()),
         Err(_) => return global_this.throw_out_of_memory(),
     };
 
@@ -188,12 +188,12 @@ pub fn render_to_html(
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     };
 
     let input = buffer.slice();
@@ -287,12 +287,12 @@ pub fn render(
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     };
 
     let input = buffer.slice();
@@ -383,12 +383,12 @@ fn render_ast(
     let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
+        return Err(global_this.throw_invalid_arguments("Expected a string or buffer to render"));
     };
 
     let input = buffer.slice();
@@ -666,7 +666,7 @@ impl<'a> ParseRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
@@ -692,7 +692,7 @@ impl<'a> ParseRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
@@ -812,7 +812,7 @@ impl<'a> ParseRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
 
         // SAFETY: `detail.href`/`.title` borrow from `self_.src_text`, which
@@ -836,7 +836,7 @@ impl<'a> ParseRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
 
         if self_.stack.len() <= 1 {
@@ -940,7 +940,7 @@ impl<'a> ParseRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut ParseRenderer = unsafe { &mut *ptr.cast::<ParseRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
 
         let g = self_.global_object;
@@ -1162,7 +1162,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         if !self.stack_check.is_safe_to_recurse() {
-            return self.global_object.throw_stack_overflow();
+            return Err(self.global_object.throw_stack_overflow());
         }
 
         // Convert children to JS string
@@ -1198,7 +1198,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
@@ -1230,7 +1230,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
         if block_type == md::BlockType::Doc {
             return Ok(());
@@ -1263,7 +1263,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
         // SAFETY: `detail` borrows from `src_text`, which outlives every
         // `CallbackStackEntry` (the stack is fully drained before `src_text`
@@ -1283,7 +1283,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
 
         let callback = self_.get_span_callback(span_type);
@@ -1301,7 +1301,7 @@ impl<'a> JsCallbackRenderer<'a> {
         // SAFETY: ptr was set from `&mut Self` in renderer().
         let self_: &mut JsCallbackRenderer = unsafe { &mut *ptr.cast::<JsCallbackRenderer>() };
         if !self_.stack_check.is_safe_to_recurse() {
-            return self_.global_object.throw_stack_overflow();
+            return Err(self_.global_object.throw_stack_overflow());
         }
 
         // Track plain text for slug generation when inside a heading
@@ -1329,7 +1329,7 @@ impl<'a> JsCallbackRenderer<'a> {
 
     fn call_text_callback(&mut self, content: &[u8]) -> JsResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
-            return self.global_object.throw_stack_overflow();
+            return Err(self.global_object.throw_stack_overflow());
         }
         let text_js = create_utf8_for_js(self.global_object, content)?;
         let result = self.callbacks.text.call(self.global_object, JSValue::UNDEFINED, &[text_js])?;

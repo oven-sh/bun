@@ -712,22 +712,23 @@ impl InitCommand {
 
         if !minimal {
             if !fields.name.is_empty() {
-                object.put_string(b"name", &fields.name)?;
+                object.put_string(&bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
                 if object.has_property(b"module") {
-                    object.put_string(b"module", &fields.entry_point)?;
-                    object.put_string(b"type", b"module")?;
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
+                    object.put_string(&bump, b"type", b"module")?;
                 } else if object.has_property(b"main") {
-                    object.put_string(b"main", &fields.entry_point)?;
+                    object.put_string(&bump, b"main", &fields.entry_point)?;
                 } else {
-                    object.put_string(b"module", &fields.entry_point)?;
-                    object.put_string(b"type", b"module")?;
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
+                    object.put_string(&bump, b"type", b"module")?;
                 }
             }
 
             if fields.private {
                 object.put(
+                    &bump,
                     b"private",
                     js_ast::Expr::init(js_ast::E::Boolean { value: true }, logger::Loc::EMPTY),
                 )?;

@@ -1267,9 +1267,11 @@ impl Framework {
         out.options.source_map = source_map;
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
-            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"");
+            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
-        out.resolver.opts = out.options.clone();
+        // TODO(port): `BundleOptions` has no `Clone`; Zig copied by value.
+        // todo!("blocked_on: bun_bundler::BundleOptions::clone")
+        // out.resolver.opts = out.options.clone();
 
         out.configure_linker();
         out.configure_defines()?;
@@ -1277,8 +1279,7 @@ impl Framework {
         out.options.jsx.development = mode == Mode::Development;
 
         add_import_meta_defines(
-            arena,
-            out.options.define,
+            &mut out.options.define,
             mode,
             match renderer {
                 Graph::Client => Side::Client,
@@ -1300,7 +1301,7 @@ impl Framework {
             {
                 let parsed =
                     bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
-                out.options.define.insert(arena, k, parsed)?;
+                out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {

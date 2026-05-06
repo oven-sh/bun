@@ -219,7 +219,7 @@ impl PipeReader {
         if let Some(process) = self.process.take() {
             // SAFETY: `process` backref is valid while set; cleared before deref.
             let kind = self.kind(unsafe { process.as_ref() });
-            unsafe { process.as_ref().on_close_io(kind) };
+            unsafe { (*process.as_ptr()).on_close_io(kind) };
             // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
             // write provenance, and the caller (BufferedReader vtable) holds only a
             // raw parent pointer, so freeing here does not invalidate any live `&mut`.
@@ -228,12 +228,16 @@ impl PipeReader {
     }
 
     pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if process.stdout.is_pipe() && core::ptr::eq(process.stdout.pipe(), self) {
-            return StdioKind::Stdout;
+        if let Readable::Pipe(pipe) = &process.stdout {
+            if core::ptr::eq(pipe.data.as_ptr(), self) {
+                return StdioKind::Stdout;
+            }
         }
 
-        if process.stderr.is_pipe() && core::ptr::eq(process.stderr.pipe(), self) {
-            return StdioKind::Stderr;
+        if let Readable::Pipe(pipe) = &process.stderr {
+            if core::ptr::eq(pipe.data.as_ptr(), self) {
+                return StdioKind::Stderr;
+            }
         }
 
         unreachable!("We should be either stdout or stderr");

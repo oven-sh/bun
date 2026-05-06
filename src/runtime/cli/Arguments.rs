@@ -623,8 +623,19 @@ use bun_core::env::OperatingSystem;
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 use bun_js_parser as js_ast;
 use bun_jsc::RegularExpression;
+use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_alloc::AllocError;
 use bstr::BStr;
+use crate::cli::command;
+use crate::cli::colon_list_type::ColonListType;
+use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
+
+/// Local shim: clone borrowed argv slices into the owning `Vec<Box<[u8]>>`
+/// shape used by `api::TransformOptions` / `Context` fields.
+#[inline]
+fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
+    input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
+}
 
 // TODO(port): narrow error set
 pub fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {

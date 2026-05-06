@@ -1,16 +1,16 @@
-use bun_core::{Global, Output};
+use bun_core::{dirname, Global, Output};
 use bun_js_parser::Expr;
 use crate::bun_json as json;
 use bun_logger as logger;
-use bun_paths as path;
+use bun_paths::platform;
+use bun_paths::resolve_path::join_abs_string_z;
 use bun_semver::{ExternalString, String as SemverString};
 use bun_sys as sys;
 
 use crate::lockfile::{self, Lockfile, StringBuilder};
-use crate::package_manager::options::{self, LogLevel};
-use crate::package_manager::{
-    assign_root_resolution, fail_root_resolution, PackageManager, TaskCallbackList,
-};
+use crate::lockfile_real::package::{Package, Scripts};
+use crate::package_manager_real::options::LogLevel;
+use crate::package_manager_real::{PackageManager, TaskCallbackList};
 use crate::{
     initialize_store, DependencyID, ExtractData, Features, PackageID, Repository, Resolution,
     TaskCallbackContext, INVALID_PACKAGE_ID,
@@ -82,7 +82,7 @@ impl PackageManager {
         resolution: &Resolution,
         data: &ExtractData,
         log_level: LogLevel,
-    ) -> Option<lockfile::Package> {
+    ) -> Option<Package> {
         match resolution.tag {
             ResolutionTag::Git | ResolutionTag::Github => {
                 let mut package = 'package: {
@@ -93,7 +93,7 @@ impl PackageManager {
                         new_name: b"",
                     };
 
-                    let mut pkg = lockfile::Package::default();
+                    let mut pkg = Package::default();
                     if let Some(json) = &data.json {
                         let package_json_source =
                             &logger::Source::init_path_string(&json.path, &json.buf);
@@ -120,11 +120,10 @@ impl PackageManager {
                         }
 
                         let has_scripts = pkg.scripts.has_any() || 'brk: {
-                            let dir = path::dirname(&json.path).unwrap_or(b"");
-                            let binding_dot_gyp_path = path::join_abs_string_z(
+                            let dir = dirname(&json.path).unwrap_or(b"");
+                            let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
                                 dir,
                                 &[b"binding.gyp" as &[u8]],
-                                path::Style::Auto,
                             );
 
                             break 'brk sys::exists(binding_dot_gyp_path);
@@ -190,7 +189,7 @@ impl PackageManager {
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
                 let package_json_source = &logger::Source::init_path_string(&json.path, &json.buf);
-                let mut package = lockfile::Package::default();
+                let mut package = Package::default();
 
                 let mut resolver = TarballResolver {
                     url: &data.url,
@@ -217,11 +216,10 @@ impl PackageManager {
                 }
 
                 let has_scripts = package.scripts.has_any() || 'brk: {
-                    let dir = path::dirname(&json.path).unwrap_or(b"");
-                    let binding_dot_gyp_path = path::join_abs_string_z(
+                    let dir = dirname(&json.path).unwrap_or(b"");
+                    let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
                         dir,
                         &[b"binding.gyp" as &[u8]],
-                        path::Style::Auto,
                     );
 
                     break 'brk sys::exists(binding_dot_gyp_path);

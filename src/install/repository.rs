@@ -653,10 +653,9 @@ impl Repository {
                     return Err(not_found);
                 }
 
-                let target = Path::join_abs_string(
-                    PackageManager::get().cache_directory_path,
+                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                    &PackageManager::get().cache_directory_path,
                     &[folder_name.as_bytes()],
-                    Path::Style::Auto,
                 );
 
                 if let Err(err) = Self::exec(
@@ -694,7 +693,7 @@ impl Repository {
         repo_dir: bun_sys::Dir,
         name: &[u8],
         committish: &[u8],
-        task_id: Install::task::Id,
+        task_id: crate::package_manager_task::Id,
     ) -> Result<Vec<u8>, Error> {
         // SAFETY: raw-ptr field projection — retags only `folder_name_buf`. See tl_bufs().
         let folder_name_buf = unsafe { &mut (*tl_bufs()).folder_name_buf };
@@ -711,10 +710,9 @@ impl Repository {
             let written = folder_name_buf.len() - cursor.len();
             &folder_name_buf[..written]
         };
-        let path = Path::join_abs_string(
-            PackageManager::get().cache_directory_path,
+        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &PackageManager::get().cache_directory_path,
             &[folder_name],
-            Path::Style::Auto,
         );
 
         let _ = repo_dir;
@@ -763,7 +761,7 @@ impl Repository {
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
-        bun_analytics::Features::git_dependencies_inc();
+        bun_analytics::features::git_dependencies.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let bufs = tl_bufs();
         // SAFETY: raw-ptr field projection — retags only `folder_name_buf`. See tl_bufs().
         let folder_name =
@@ -776,10 +774,9 @@ impl Repository {
                     return Err(not_found);
                 }
 
-                let target = Path::join_abs_string(
-                    PackageManager::get().cache_directory_path,
+                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                    &PackageManager::get().cache_directory_path,
                     &[folder_name],
-                    Path::Style::Auto,
                 );
 
                 let repo_path = bun_sys::get_fd_path(
@@ -811,10 +808,9 @@ impl Repository {
                     return Err(err);
                 }
 
-                let folder = Path::join_abs_string(
-                    PackageManager::get().cache_directory_path,
+                let folder = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                    &PackageManager::get().cache_directory_path,
                     &[folder_name],
-                    Path::Style::Auto,
                 );
 
                 if let Err(err) = Self::exec(

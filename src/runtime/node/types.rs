@@ -3,6 +3,7 @@ use core::fmt;
 
 // TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::StringJsc as _;
 use bun_paths::{self as path_handler, PathBuffer, WPathBuffer, OSPathBuffer, OSPathSliceZ, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZStr, WStr, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;

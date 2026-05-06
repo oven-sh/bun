@@ -164,6 +164,13 @@ impl Default for DateHeaderTimer {
         Self { event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DateHeaderTimer) }
     }
 }
+impl DateHeaderTimer {
+    /// Spec DateHeaderTimer.zig `run` — refresh the cached `Date:` header and
+    /// reschedule. Body needs `vm.timer: All` (currently `()` in bun_jsc).
+    pub fn run(&mut self, _vm: &mut bun_jsc::VirtualMachine) {
+        todo!("blocked_on: bun_jsc::VirtualMachine::timer (DateHeaderTimer::run)")
+    }
+}
 
 pub struct EventLoopDelayMonitor {
     // TODO(port): bare JSValue heap field — see EventLoopDelayMonitor.rs PORT NOTE
@@ -182,6 +189,17 @@ impl Default for EventLoopDelayMonitor {
             last_fire_ns: 0,
             enabled: false,
         }
+    }
+}
+impl EventLoopDelayMonitor {
+    /// Spec EventLoopDelayMonitor.zig `onFire` — record `now - last_fire_ns`
+    /// into the JS histogram and reschedule. Body needs `vm.timer: All`.
+    pub fn on_fire(
+        &mut self,
+        _vm: &mut bun_jsc::VirtualMachine,
+        _now: &bun_event_loop::EventLoopTimer::Timespec,
+    ) {
+        todo!("blocked_on: bun_jsc::VirtualMachine::timer (EventLoopDelayMonitor::on_fire)")
     }
 }
 

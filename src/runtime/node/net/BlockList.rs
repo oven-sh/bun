@@ -191,26 +191,29 @@ impl BlockList {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
         let start = if let Some(sa) = start_js.as_::<SocketAddress>() {
-            sa._addr
+            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
+            unsafe { (*sa)._addr }
         } else {
-            validators::validate_string(global, start_js, "start")?;
-            validators::validate_string(global, family_js, "family")?;
+            validators::validate_string(global, start_js, format_args!("start"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, start_js, family_js)?._addr
         };
         let end = if let Some(sa) = end_js.as_::<SocketAddress>() {
-            sa._addr
+            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
+            unsafe { (*sa)._addr }
         } else {
-            validators::validate_string(global, end_js, "end")?;
-            validators::validate_string(global, family_js, "family")?;
+            validators::validate_string(global, end_js, format_args!("end"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
         };
         if let Some(ord) = _compare(&start, &end) {
             if ord == Ordering::Greater {
-                return global.throw_invalid_argument_value_custom(
-                    "start",
-                    start_js,
-                    "must come before end",
-                );
+                // TODO(port): `JSGlobalObject::throw_invalid_argument_value_custom`
+                // is not yet exposed in bun_jsc; use `throw_invalid_arguments` shim.
+                let _ = start_js;
+                return Err(global.throw_invalid_arguments(
+                    "The \"start\" argument is invalid. It must come before end",
+                ));
             }
         }
         let _guard = this.mutex.lock();
@@ -233,27 +236,26 @@ impl BlockList {
             family_js = BunString::static_str("ipv4").to_js(global)?;
         }
         let network = if let Some(sa) = network_js.as_::<SocketAddress>() {
-            sa._addr
+            // SAFETY: `as_` returns a live `*mut SocketAddress` (m_ctx payload).
+            unsafe { (*sa)._addr }
         } else {
-            validators::validate_string(global, network_js, "network")?;
-            validators::validate_string(global, family_js, "family")?;
+            validators::validate_string(global, network_js, format_args!("network"))?;
+            validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, network_js, family_js)?._addr
         };
         let mut prefix: u8 = 0;
-        match network.sin.family {
-            f if f == AF_INET => {
-                prefix = u8::try_from(validators::validate_int32(
-                    global, prefix_js, "prefix", 0, 32,
-                )?)
-                .unwrap();
-            }
-            f if f == AF_INET6 => {
-                prefix = u8::try_from(validators::validate_int32(
-                    global, prefix_js, "prefix", 0, 128,
-                )?)
-                .unwrap();
-            }
-            _ => {}
+        // SAFETY: `sin.family` is at the same offset for both union variants.
+        let fam = unsafe { network.sin.family };
+        if fam == AF_INET as inet::sa_family_t {
+            prefix = u8::try_from(validators::validate_int32(
+                global, prefix_js, format_args!("prefix"), Some(0), Some(32),
+            )?)
+            .unwrap();
+        } else if fam == AF_INET6 as inet::sa_family_t {
+            prefix = u8::try_from(validators::validate_int32(
+                global, prefix_js, format_args!("prefix"), Some(0), Some(128),
+            )?)
+            .unwrap();
         }
         let _guard = this.mutex.lock();
         this.da_rules.insert(0, Rule::Subnet { network, prefix });

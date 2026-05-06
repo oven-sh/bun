@@ -445,8 +445,8 @@ fn print_enhanced_audit_report(
         }
     };
 
-    if let bun_js_parser::ExprData::EObject(obj) = &expr.data {
-        if obj.properties.len() == 0 {
+    if let ExprData::EObject(obj) = &expr.data {
+        if obj.properties.len == 0 {
             Output::prettyln(format_args!("<green>No vulnerabilities found<r>"));
             return Ok(0);
         }
@@ -456,19 +456,19 @@ fn print_enhanced_audit_report(
 
     let mut vuln_counts = VulnCounts::default();
 
-    if let bun_js_parser::ExprData::EObject(obj) = &expr.data {
+    if let ExprData::EObject(obj) = &expr.data {
         let properties = obj.properties.slice();
 
         for prop in properties {
             if let Some(key) = &prop.key {
-                if let bun_js_parser::ExprData::EString(key_str) = &key.data {
-                    let package_name = &key_str.data;
+                if let ExprData::EString(key_str) = &key.data {
+                    let package_name: &[u8] = key_str.data;
 
                     if let Some(value) = &prop.value {
-                        if let bun_js_parser::ExprData::EArray(arr) = &value.data {
+                        if let ExprData::EArray(arr) = &value.data {
                             let vulns = arr.items.slice();
                             for vuln in vulns {
-                                if let bun_js_parser::ExprData::EObject(_) = &vuln.data {
+                                if let ExprData::EObject(_) = &vuln.data {
                                     let vulnerability = parse_vulnerability(package_name, vuln)?;
 
                                     if let Some(level) = audit_level {
@@ -544,10 +544,7 @@ fn print_enhanced_audit_report(
             });
         }
 
-        let mut package_iter = audit_result.vulnerable_packages.iterator();
-        while let Some(entry) = package_iter.next() {
-            let package_info = entry.value_ptr;
-
+        for (_, package_info) in audit_result.vulnerable_packages.iter() {
             if !package_info.vulnerabilities.is_empty() {
                 let main_vuln = &package_info.vulnerabilities[0];
 

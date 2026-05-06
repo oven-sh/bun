@@ -320,27 +320,31 @@ impl Job {
         // dropping the Box at any return point runs `impl Drop for Job` (Zig: `defer this.deinit()`).
         let mut this = unsafe { Box::from_raw(this) };
 
-        if this.vm.is_shutting_down() {
+        // SAFETY: `vm` is the live per-thread VirtualMachine pointer captured in `create()`.
+        let vm = unsafe { &*this.vm };
+        if vm.is_shutting_down() {
             return Ok(());
         }
 
-        let global_this = this.vm.global();
-        let promise = this.promise.swap();
+        let global_this = vm.global();
+        let mut promise = this.promise.swap();
         if let Some(err) = this.err {
-            promise.reject_with_async_stack(global_this, create_crypto_error(global_this, err))?;
+            promise
+                .reject_with_async_stack(global_this, Ok(create_crypto_error(global_this, err)))?;
             return Ok(());
         }
 
         let output_slice = core::mem::take(&mut this.output);
         debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).unwrap());
-        let buffer_value = JSValue::create_buffer(global_this, output_slice);
+        // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
+        let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
         // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
         promise.resolve(global_this, buffer_value)?;
         Ok(())
     }
 
     pub fn create(
-        vm: &'static VirtualMachine,
+        vm: *mut VirtualMachine,
         global_this: &JSGlobalObject,
         data: &PBKDF2,
     ) -> *mut Job {
@@ -349,6 +353,7 @@ impl Job {
             // TODO(port): `PBKDF2` may not be `Copy` (StringOrBuffer fields); Zig moved by value.
             output: Vec::new(),
             task: WorkPoolTask {
+                node: Default::default(),
                 callback: Job::run_task,
             },
             promise: JSPromiseStrong::default(),

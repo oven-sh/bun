@@ -1401,11 +1401,19 @@ impl CronJob {
     /// `.teardown`: worker exit — the event loop is dying, settle never
     /// happens, so release the pending ref here to avoid leaking the struct.
     pub fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
-        let Some(rare) = vm.rare_data.as_mut() else { return };
-        for &job in rare.cron_jobs.as_slice() {
+        // Drain the list first so `stop_internal` (which re-enters the VM)
+        // doesn't alias the `rare` borrow.
+        let jobs: Vec<*mut ()> = match vm.rare_data.as_mut() {
+            Some(rare) => core::mem::take(&mut rare.cron_jobs)
+                .into_iter()
+                .map(|j| j as *mut ())
+                .collect(),
+            None => return,
+        };
+        for job in jobs {
             // PORT NOTE: stored as opaque `rare_data::high_tier::CronJob`; the
             // concrete type is this `CronJob` (see `register` push site).
-            let job = job as *mut () as *mut CronJob;
+            let job = job as *mut CronJob;
             // SAFETY: list holds a ref for each entry.
             unsafe { (*job).stop_internal(vm) };
             if MODE == ClearMode::Teardown {
@@ -1413,7 +1421,6 @@ impl CronJob {
             }
             Self::deref(job);
         }
-        rare.cron_jobs.clear();
     }
 
     pub fn finalize(this: *mut Self) {
@@ -1456,7 +1463,7 @@ impl CronJob {
         let Some(next_time) = this_ref.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        vm.timer.update(&mut this_ref.event_loop_timer, &next_time);
+        timer_all().update(&mut this_ref.event_loop_timer, &next_time);
     }
 
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {

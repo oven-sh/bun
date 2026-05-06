@@ -676,11 +676,9 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
 
 fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
     let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
-    err.put(
-        global,
-        ZigString::static_(b"code"),
-        ZigString::init(code.as_bytes()).to_js(global),
-    );
+    let code_js = jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
+        .unwrap_or(JSValue::UNDEFINED);
+    err.put(global, b"code", code_js);
     err
 }
 
@@ -701,7 +699,7 @@ impl Image {
         // not into `self`. Phase B may need a different return type.
         match &self.source {
             Source::JsBuffer => Self::source_js_get_cached(this_value)
-                .and_then(|v| v.as_array_buffer(global))
+                .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| ab.byte_slice()),
             Source::Owned(b) => Some(b.as_slice()),
             Source::Path(_) | Source::Blob(_) => None,

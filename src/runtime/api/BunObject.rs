@@ -2190,45 +2190,17 @@ pub fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    let vm = global_this.bun_vm();
-    let Some(graph) = vm.standalone_module_graph else {
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let vm = unsafe { &*global_this.bun_vm() };
+    let Some(_graph) = vm.standalone_module_graph else {
         return JSValue::create_empty_array(global_this, 0);
     };
 
-    let unsorted_files = graph.files.values();
-    let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());
-    for index in 0..unsorted_files.len() {
-        // Some % of people using `bun build --compile` want to obscure the source code
-        // We don't really do that right now, but exposing the output source
-        // code here as an easily accessible Blob is even worse for them.
-        // So let's omit any source code files from the list.
-        if !unsorted_files[index].appears_in_embedded_files_array() {
-            continue;
-        }
-        sort_indices.push(u32::try_from(index).unwrap());
-        // PERF(port): was assume_capacity
-    }
-
-    let mut i: u32 = 0;
-    let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
-    sort_indices.sort_by(|a, b| {
-        if bun_standalone_graph::File::less_than_by_index(unsorted_files, *a, *b) {
-            core::cmp::Ordering::Less
-        } else {
-            core::cmp::Ordering::Greater
-        }
-    });
-    for index in &sort_indices {
-        let file = &unsorted_files[*index as usize];
-        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let input_blob = file.blob(global_this);
-        let blob = WebCore::Blob::new(input_blob.dupe_with_content_type(true));
-        blob.name = input_blob.name.dupe_ref();
-        array.put_index(global_this, i, blob.to_js(global_this))?;
-        i += 1;
-    }
-
-    Ok(array)
+    // `VirtualMachine.standalone_module_graph` is currently `Option<NonNull<c_void>>`
+    // (erased to break a crate cycle), and `bun_standalone_graph::File::blob()` /
+    // `WebCore::Blob::{new, dupe_with_content_type, name, to_js}` live behind the
+    // gated `bun_webcore` surface. Body deferred until both are typed.
+    todo!("blocked_on: bun_jsc::VirtualMachine.standalone_module_graph typed + bun_standalone_graph::File::blob + bun_jsc::WebCore::Blob::new")
 }
 
 pub fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2242,7 +2214,7 @@ pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn string_width(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    BunString::js_get_string_width(global_object, call_frame)
+    bun_jsc::bun_string_jsc::js_get_string_width(global_object, call_frame)
 }
 
 /// EnvironmentVariables is runtime defined.

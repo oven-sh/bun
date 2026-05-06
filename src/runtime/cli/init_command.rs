@@ -533,11 +533,7 @@ impl InitCommand {
                     break 'process_package_json;
                 }
 
-                fields.object = package_json_expr
-                    .data
-                    .e_object_mut()
-                    .map(|r| r as *mut _)
-                    .unwrap_or(core::ptr::null_mut());
+                fields.object = package_json_expr.data.e_object();
 
                 if let Some(name) = package_json_expr.get(b"name") {
                     if let Some(str) = name.as_string(&bump) {
@@ -549,9 +545,9 @@ impl InitCommand {
                     .get(b"module")
                     .or_else(|| package_json_expr.get(b"main"))
                 {
-                    if let Some(str) = name.as_string_z(&bump)? {
+                    if let Some(str_) = name.as_string(&bump) {
                         // TODO(port): asStringZ returns NUL-terminated; we store bytes only
-                        fields.entry_point = str.as_bytes().to_vec();
+                        fields.entry_point = str_.to_vec();
                     }
                 }
 
@@ -618,9 +614,7 @@ impl InitCommand {
                 logger::Loc::EMPTY,
             )
             .data
-            .e_object_mut()
-            .map(|r| r as *mut _)
-            .unwrap_or(core::ptr::null_mut());
+            .e_object();
         }
 
         if !auto_yes {
@@ -857,10 +851,7 @@ impl InitCommand {
             let print_result = js_printer::print_json(
                 &mut package_json_writer,
                 js_ast::Expr {
-                    // SAFETY: fields.object is non-null (set above from arena/store).
-                    data: js_ast::ExprData::EObject(unsafe {
-                        logger::js_ast::StoreRef::from_raw(fields.object)
-                    }),
+                    data: js_ast::ExprData::EObject(fields.object.unwrap()),
                     loc: logger::Loc::EMPTY,
                 },
                 &logger::Source::init_empty_file(b"package.json"),
@@ -1391,7 +1382,7 @@ impl Template {
         // TODO(port): Zig leaked `key` (alloc.create) — Box::leak matches that.
         let key = Box::leak(key);
         // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object };
+        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
         let mut scripts_json = object.get_or_put_object(key, bump)?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;

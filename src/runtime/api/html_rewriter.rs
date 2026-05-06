@@ -24,11 +24,15 @@ use std::rc::Rc;
 
 use bun_collections::{ByteList, LinearFifo};
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_string::{MutableString, ZigString};
+use bun_string::MutableString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, SystemError,
-    TopExceptionScope, VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, SystemError,
+    VirtualMachine, StringJsc as _, bun_string_jsc,
 };
+// PORT NOTE: `ZigString` is imported from `bun_jsc` (not `bun_string`) because
+// the JSC-side methods (`to_js`, `with_encoding`, `to_slice`) live on the
+// `bun_jsc::ZigString` newtype; the two are repr(C)-identical.
+use bun_jsc::ZigString;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. The Phase-A draft
 // referenced both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw
@@ -36,9 +40,65 @@ use bun_jsc::{
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
 use crate::webcore::{self, Blob, Body, Response};
+use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use bun_str::String as BunString;
 use bun_sys;
+
+// ───────────────────── local upstream-shim helpers ───────────────────────
+// These wrap symbols that exist in upstream crates with a slightly different
+// shape (free fn vs method, missing trait impl, etc.). Kept local so we don't
+// edit non-runtime crates.
+
+/// `HTMLString` → `JSValue`. Upstream `HTMLString::to_js` was deleted (lives in
+/// runtime per layering note in lol_html.rs); reimplemented here.
+fn html_string_to_js(s: lolhtml::HTMLString, global: &JSGlobalObject) -> JsResult<JSValue> {
+    let v = bun_string_jsc::create_utf8_for_js(global, s.slice());
+    s.deinit();
+    v
+}
+
+/// `HTMLString` → owned `bun.String` (clone + free original).
+fn html_string_to_bun_string(s: lolhtml::HTMLString) -> BunString {
+    let out = BunString::clone_utf8(s.slice());
+    s.deinit();
+    out
+}
+
+/// Shim for `JSValue::createObject2` (not yet ported to Rust JSValue).
+fn create_object2(
+    global: &JSGlobalObject,
+    key1: &ZigString,
+    key2: &ZigString,
+    value1: JSValue,
+    value2: JSValue,
+) -> JSValue {
+    unsafe extern "C" {
+        fn JSC__JSValue__createObject2(
+            global: *mut JSGlobalObject,
+            key1: *const ZigString,
+            key2: *const ZigString,
+            value1: JSValue,
+            value2: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: keys/values are valid; global is live.
+    unsafe { JSC__JSValue__createObject2(global.as_mut_ptr(), key1, key2, value1, value2) }
+}
+
+/// Construct a `SystemError` with code+message and remaining fields defaulted.
+fn system_error(code: &'static str, message: &'static str) -> SystemError {
+    SystemError {
+        errno: 0,
+        code: BunString::static_(code),
+        message: BunString::static_(message),
+        path: BunString::empty(),
+        syscall: BunString::empty(),
+        hostname: BunString::empty(),
+        fd: core::ffi::c_int::MIN,
+        dest: BunString::empty(),
+    }
+}
 
 type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 

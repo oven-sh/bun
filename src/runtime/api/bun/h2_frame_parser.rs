@@ -5079,14 +5079,14 @@ impl H2FrameParser {
                     if this.is_server {
                         if !VALID_RESPONSE_PSEUDO_HEADERS.contains_key(validated_name) {
                             if !global_object.has_exception() {
-                                return global_object.err_http2_invalid_pseudoheader(format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw();
+                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
                             return Ok(JSValue::ZERO);
                         }
                     } else {
                         if !VALID_REQUEST_PSEUDO_HEADERS.contains_key(validated_name) {
                             if !global_object.has_exception() {
-                                return global_object.err_http2_invalid_pseudoheader(format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw();
+                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
                             return Ok(JSValue::ZERO);
                         }
@@ -5119,7 +5119,7 @@ impl H2FrameParser {
                     while let Some(item) = value_iter.next()? {
                         if item.is_empty_or_undefined_or_null() {
                             if !global_object.has_exception() {
-                                return global_object.err_http2_invalid_header_value(format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw();
+                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw());
                             }
                             return Ok(JSValue::ZERO);
                         }
@@ -5128,7 +5128,7 @@ impl H2FrameParser {
                             Ok(s) => s,
                             Err(_) => {
                                 global_object.clear_exception();
-                                return global_object.err_http2_invalid_header_value(format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw();
+                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name))).throw());
                             }
                         };
 
@@ -5171,7 +5171,7 @@ impl H2FrameParser {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            return global_object.err_http2_invalid_header_value(format_args!("Invalid value for header \"{}\"", BStr::new(name))).throw();
+                            return Err(global_object.err(JscErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name))).throw());
                         }
                     };
 
@@ -5599,8 +5599,10 @@ impl H2FrameParser {
     pub fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<*mut H2FrameParser> {
+        // PORT NOTE: the JsClass codegen calls `constructor(global, frame)` (2 args);
+        // recover the wrapper JSValue from the callframe to seed the cached handlers.
+        let this_value = callframe.this();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return global_object.throw("Expected 1 argument");

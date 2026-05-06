@@ -389,7 +389,8 @@ impl<'a> State<'a> {
                 }
             }
             Status::Signaled(signal) => {
-                write!(writer, "Signaled: {}\n", <&'static str>::from(*signal))?;
+                let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
+                write!(writer, "Signaled: {}\n", name)?;
             }
             _ => {
                 writer.write_all(b"Error\n")?;
@@ -439,7 +440,7 @@ impl<'a> State<'a> {
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 if dependent.start().is_err() {
-                    Output::pretty_errorln("<r><red>error<r>: Failed to start process", ());
+                    Output::pretty_errorln("<r><red>error<r>: Failed to start process");
                     Global::exit(1);
                 }
             }

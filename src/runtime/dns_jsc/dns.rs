@@ -780,24 +780,30 @@ impl CAresNameInfo {
         result: Option<c_ares::struct_nameinfo>,
     ) {
         // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
+        let global_this = unsafe { &*(*this).global_this };
         if let Some(err) = err_ {
-            err.to_deferred("getnameinfo", Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
+            // SAFETY: see fn contract.
+            unsafe {
+                err.to_deferred("getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+            }
             return;
         }
         let Some(mut name_info) = result else {
-            c_ares::Error::ENOTFOUND
-                .to_deferred("getnameinfo", Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
+            // SAFETY: see fn contract.
+            unsafe {
+                c_ares::Error::ENOTFOUND
+                    .to_deferred("getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+            }
             return;
         };
-        let array = name_info
-            .to_js_response(global_this)
+        let array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, global_this)
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        Self::on_complete(this, array);
+        // SAFETY: see fn contract.
+        unsafe { Self::on_complete(this, array) };
     }
 
     /// SAFETY: see `process_resolve`.

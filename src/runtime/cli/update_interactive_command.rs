@@ -498,8 +498,9 @@ impl UpdateInteractiveCommand {
         result.into_boxed_slice()
     }
 
+    #[allow(dead_code)]
     fn prompt_for_updates<'a>(
-        packages: &'a mut [OutdatedPackage<'a>],
+        packages: &mut [OutdatedPackage<'a>],
     ) -> Result<Box<[bool]>, bun_core::Error> {
         if packages.is_empty() {
             Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
@@ -579,7 +580,7 @@ impl UpdateInteractiveCommand {
         Ok(Box::from(result))
     }
 
-    fn ensure_cursor_in_viewport(state: &mut MultiSelectState<'_>) {
+    fn ensure_cursor_in_viewport(state: &mut MultiSelectState<'_, '_>) {
         // If cursor is not in viewport, position it sensibly
         if state.cursor < state.viewport_start {
             // Cursor is above viewport - put it at the start of viewport
@@ -598,7 +599,7 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    fn update_viewport(state: &mut MultiSelectState<'_>) {
+    fn update_viewport(state: &mut MultiSelectState<'_, '_>) {
         // Ensure cursor is visible with context (2 packages below, 2 above if possible)
         let context_below: usize = 2;
         let context_above: usize = 1;
@@ -661,8 +662,8 @@ impl UpdateInteractiveCommand {
         }
     }
 
-    fn process_multi_select<'a, 'b>(
-        state: &'b mut MultiSelectState<'a>,
+    fn process_multi_select<'a, 's, 'b>(
+        state: &'b mut MultiSelectState<'a, 's>,
         initial_terminal_size: TerminalSize,
     ) -> Result<&'b [bool], bun_core::Error> {
         let colors = Output::enable_ansi_colors_stdout();

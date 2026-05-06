@@ -1675,7 +1675,7 @@ impl<'a> Repl<'a> {
         // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
-        let symbols_map = bun_js_parser::ast::symbol::Map::init_with_one_list(ast.symbols);
+        let symbols_map = bun_js_parser::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
 
         if bun_js_printer::print_ast::<_, /* ASCII_ONLY */ true, /* GENERATE_SOURCE_MAP */ false>(
             &mut buffer_printer,

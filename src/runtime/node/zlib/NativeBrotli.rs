@@ -408,7 +408,7 @@ impl Context {
                         .add((next_in as usize) - (self.next_in as usize))
                 };
                 // SAFETY: d was just written by the line above.
-                if unsafe { self.last_result.d } == c::BrotliDecoderResult::Error {
+                if unsafe { self.last_result.d } == c::BrotliDecoderResult::err {
                     // SAFETY: state is a live decoder.
                     self.error_ = unsafe { c::BrotliDecoderGetErrorCode(self.state_ptr().cast()) };
                 }
@@ -428,9 +428,9 @@ impl Context {
                 // SAFETY: e is the active field after an encode do_work().
                 if unsafe { self.last_result.e } == 0 {
                     return Error::init(
-                        "Compression failed",
+                        c"Compression failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_COMPRESSION_FAILED",
+                        c"ERR_BROTLI_COMPRESSION_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -438,18 +438,18 @@ impl Context {
             bun_zlib::NodeMode::BROTLI_DECODE => {
                 if self.error_ != c::BrotliDecoderErrorCode2::NO_ERROR {
                     return Error::init(
-                        "Decompression failed",
+                        c"Decompression failed".as_ptr(),
                         self.error_ as i32,
                         code_for_error(self.error_),
                     );
-                } else if self.flush == Op::Finish
+                } else if self.flush == Op::finish
                     // SAFETY: d is the active field after a decode do_work().
-                    && unsafe { self.last_result.d } == c::BrotliDecoderResult::NeedsMoreInput
+                    && unsafe { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
                 {
                     return Error::init(
-                        "unexpected end of file",
+                        c"unexpected end of file".as_ptr(),
                         bun_zlib::ReturnCode::BufError as i32,
-                        "Z_BUF_ERROR",
+                        c"Z_BUF_ERROR".as_ptr(),
                     );
                 }
                 Error::ok()

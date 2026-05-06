@@ -36,12 +36,13 @@ pub fn throw_err_invalid_arg_type_with_message(
 // comptime string concatenation (`"The \"" ++ name_fmt ++ "\" ..."`) plus tuple
 // concatenation (`name_args ++ .{expected_type, actual_type}`). Rust cannot
 // concat a caller-supplied format string at compile time, so callers pass the
-// already-formatted name as `fmt::Arguments` and we embed it via `{}`.
+// already-formatted name as anything `Display`-able (e.g. `&str` or
+// `format_args!(...)`) and we embed it via `{}`.
 #[cold]
 pub fn throw_err_invalid_arg_type(
     global_this: &JSGlobalObject,
-    name: fmt::Arguments<'_>,
-    expected_type: &'static str,
+    name: impl fmt::Display,
+    expected_type: &str,
     value: JSValue,
 ) -> JsError {
     let actual_type = get_type_name(global_this, value);

@@ -1131,7 +1131,7 @@ pub mod js_bundler {
             }
 
             {
-                let path: ZigString::Slice = 'brk: {
+                let path: ZigStringSlice = 'brk: {
                     if let Some(slice) =
                         get_optional_slice(config, global_this, b"root")?
                     {
@@ -1150,20 +1150,26 @@ pub mod js_bundler {
                             }
                         }
                         if all_in_filemap {
-                            break 'brk ZigString::Slice::from_utf8_never_free(b".");
+                            break 'brk ZigStringSlice::from_utf8_never_free(b".");
                         }
                     }
 
                     if entry_points.len() == 1 {
                         // TODO(port): std.fs.path.dirname → bun_paths::dirname
-                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(entry_points[0]);
-                        break 'brk ZigString::Slice::from_utf8_never_free(
+                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&entry_points[0]);
+                        break 'brk ZigStringSlice::from_utf8_never_free(
                             if d.is_empty() { b"." } else { d },
                         );
                     }
 
-                    break 'brk ZigString::Slice::from_utf8_never_free(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(entry_points).unwrap_or(b"."),
+                    // PORT NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
+                    // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
+                    // adapter on the stack.
+                    let borrowed: Vec<&[u8]> =
+                        entry_points.iter().map(|b| b.as_ref()).collect();
+                    break 'brk ZigStringSlice::from_utf8_never_free(
+                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
+                            .unwrap_or(b"."),
                     );
                 };
 
@@ -1171,24 +1177,24 @@ pub mod js_bundler {
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
-                        return global_this.throw_pretty(&format!(
+                        return Err(global_this.throw(&format!(
                             "{}: failed to open root directory: {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(path.slice())
-                        ));
+                        )));
                     }
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
                 let mut rootdir_buf = bun_paths::PathBuffer::uninit();
-                let rootdir = match (*_close).get_fd_path(&mut rootdir_buf) {
+                let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
-                        return global_this.throw_pretty(&format!(
+                        return Err(global_this.throw(&format!(
                             "{}: failed to get full root directory path: {}",
-                            err.name(),
+                            bstr::BStr::new(err.name()),
                             bstr::BStr::new(path.slice())
-                        ));
+                        )));
                     }
                 };
                 this.rootdir.append_slice_exact(rootdir)?;

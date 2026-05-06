@@ -404,13 +404,13 @@ impl UpgradeCommand {
 
             while let Some(asset) = assets.next() {
                 if let Some(content_type) = asset.as_property(b"content_type") {
-                    let Some(content_type_) = content_type.expr.as_string() else {
+                    let Some(content_type_) = content_type.expr.as_string(bump) else {
                         continue;
                     };
                     if cfg!(debug_assertions) {
                         Output::prettyln(format_args!(
                             "Content-type: {}",
-                            bstr::BStr::new(&content_type_)
+                            bstr::BStr::new(content_type_)
                         ));
                         Output::flush();
                     }
@@ -421,7 +421,7 @@ impl UpgradeCommand {
                 }
 
                 if let Some(name_) = asset.as_property(b"name") {
-                    if let Some(name) = name_.expr.as_string() {
+                    if let Some(name) = name_.expr.as_string(bump) {
                         if cfg!(debug_assertions) {
                             let filename = if !use_profile {
                                 Version::ZIP_FILENAME
@@ -430,7 +430,7 @@ impl UpgradeCommand {
                             };
                             Output::prettyln(format_args!(
                                 "Comparing {} vs {}",
-                                bstr::BStr::new(&name),
+                                bstr::BStr::new(name),
                                 filename
                             ));
                             Output::flush();
@@ -444,7 +444,7 @@ impl UpgradeCommand {
                         }
 
                         version.zip_url = match asset.as_property(b"browser_download_url") {
-                            Some(p) => match p.expr.as_string() {
+                            Some(p) => match p.expr.as_string(bump) {
                                 Some(s) => s.into(),
                                 None => break 'get_asset,
                             },
@@ -459,7 +459,7 @@ impl UpgradeCommand {
                         }
 
                         if let Some(size_) = asset.as_property(b"size") {
-                            if let js_ast::Expr::Data::ENumber(n) = &size_.expr.data {
+                            if let js_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size = u32::try_from(
                                     ((n.value.ceil()) as i32).max(0),
                                 )

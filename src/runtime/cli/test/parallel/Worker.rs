@@ -281,7 +281,7 @@ impl Worker {
         // SAFETY: coord backref valid for worker lifetime.
         unsafe { (*self.coord).vm.event_loop() }
     }
-    pub fn loop_(&self) -> &r#async::Loop {
+    pub fn loop_(&self) -> *mut r#async::Loop {
         // SAFETY: coord backref valid for worker lifetime.
         unsafe { (*self.coord).vm.uv_loop() }
     }
@@ -289,7 +289,7 @@ impl Worker {
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
         let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
-        f.begin(Frame::Kind::Run);
+        f.begin(frame::Kind::Run);
         f.u32_(file_idx);
         f.str(file);
         self.ipc.send(f.finish());

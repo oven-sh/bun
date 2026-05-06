@@ -265,6 +265,7 @@ pub struct GetOrPutFileResult {
     pub file_id: FileId,
 }
 
+#[derive(bun_collections::MultiArrayElement)]
 pub struct File {
     pub source: logger::Source,
     pub log: logger::Log,

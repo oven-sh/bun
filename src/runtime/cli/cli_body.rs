@@ -980,25 +980,25 @@ pub mod command {
                 return Ok(());
             }
             Tag::AutoCommand => {
-                let ctx = match init::<{ Tag::AutoCommand }>(log) {
+                let mut ctx = match init::<{ Tag::AutoCommand }>(log) {
                     Ok(c) => c,
                     Err(e) if e == bun_core::err!("MissingEntryPoint") => {
                         HelpCommand::exec_with_reason::<{ HelpCommand::Reason::Explicit }>();
                     }
                     Err(e) => return Err(e),
                 };
-                ctx.args.target = api::Target::Bun;
+                ctx.args.target = Some(api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
-                    if let Err(err) = multi_run::run(ctx) {
-                        Output::pretty_errorln("<r><red>error<r>: {}", format_args!("{}", err.name()));
+                    if let Err(err) = multi_run::run(&mut ctx) {
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
                         Global::exit(1);
                     }
                 }
 
                 if !ctx.filters.is_empty() || ctx.workspaces {
                     if let Err(err) = filter_run::run_scripts_with_filter(ctx) {
-                        Output::pretty_errorln("<r><red>error<r>: {}", format_args!("{}", err.name()));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
                         Global::exit(1);
                     }
                 }

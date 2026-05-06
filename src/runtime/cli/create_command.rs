@@ -1874,20 +1874,20 @@ fn run_on_entry_point(
         node,
     };
 
-    let mut fetcher = bun_bundler::BundleV2::DependenciesScanner {
-        ctx: &mut analyzer as *mut _ as *mut core::ffi::c_void,
-        entry_points: &[analyzer.entry_point],
-        // TODO(port): @ptrCast on fn pointer — verify ABI matches DependenciesScanner.onFetch
-        // SAFETY: Analyzer::on_analyze has the same in-memory fn-pointer layout as OnFetchFn
-        // (ctx is *mut c_void downcast); mirrors Zig @ptrCast.
+    let mut fetcher = bun_bundler::bundle_v2::__phase_a_draft::DependenciesScanner {
+        ctx: &mut analyzer as *mut _ as *mut (),
+        entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
+        // TODO(port): @ptrCast on fn pointer — verify ABI matches DependenciesScanner.on_fetch
+        // SAFETY: Analyzer::on_analyze has the same in-memory fn-pointer layout as on_fetch
+        // (ctx is *mut () downcast); mirrors Zig @ptrCast.
         on_fetch: unsafe {
             core::mem::transmute::<
-                fn(&mut Analyzer<'_>, &mut bun_bundler::BundleV2::DependenciesScanner::Result) -> Result<(), bun_core::Error>,
-                bun_bundler::BundleV2::DependenciesScanner::OnFetchFn,
+                fn(&mut Analyzer<'_>, &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult<'_, '_>) -> Result<(), bun_core::Error>,
+                fn(*mut (), &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult<'_, '_>) -> Result<(), bun_core::Error>,
             >(Analyzer::on_analyze)
         },
     };
-    crate::cli::build_command::BuildCommand::exec(crate::cli::cli_body::command::get(), &mut fetcher)
+    crate::cli::build_command::BuildCommand::exec(crate::cli::cli_body::command::get(), Some(&mut fetcher))
 }
 
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to
@@ -1959,20 +1959,18 @@ impl Example {
             });
 
             if !example.description.is_empty() {
-                Output::pretty(
+                Output::pretty(format_args!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
-                    format_args!(
-                        "{} {} {}",
-                        bstr::BStr::new(example.description),
-                        bstr::BStr::new(example.name),
-                        bstr::BStr::new(app_name)
-                    ),
-                );
+                    bstr::BStr::new(example.description),
+                    bstr::BStr::new(example.name),
+                    bstr::BStr::new(app_name),
+                ));
             } else {
-                Output::pretty(
+                Output::pretty(format_args!(
                     "  <r><b>bun create <cyan>{}<r><b> {}<r>\n\n",
-                    format_args!("{} {}", bstr::BStr::new(example.name), bstr::BStr::new(app_name)),
-                );
+                    bstr::BStr::new(example.name),
+                    bstr::BStr::new(app_name),
+                ));
             }
         }
     }

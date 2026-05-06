@@ -551,8 +551,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             i += 1;
                         }
                     } else {
-                        return global_this
-                            .throw_invalid_arguments("stdio must be an array", format_args!(""));
+                        return Err(global_this.throw_invalid_arguments("stdio must be an array"));
                     }
                 }
             } else {

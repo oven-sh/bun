@@ -287,7 +287,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `u8`.
         let value = unsafe { (addr as *const u64).read_unaligned() };
-        Ok(JSValue::from_uint64_no_truncate(global_object, value))
+        Ok(from_uint64_no_truncate(global_object, value))
     }
 
     // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────

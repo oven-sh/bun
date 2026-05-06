@@ -295,6 +295,6 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
 // PORT STATUS
 //   source:     src/runtime/image/codec_jpeg.zig (176 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      codecs::Encoded.bytes is a foreign-allocator slice with custom free fn — Phase B must settle its Rust shape (ptr+len vs ManuallyDrop); extern fns left inline pending *_sys crate.
+//   todos:      1
+//   notes:      extern fns left inline pending *_sys crate.
 // ──────────────────────────────────────────────────────────────────────────

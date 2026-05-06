@@ -338,11 +338,13 @@ fn read_i32_le(r: &mut &[u8]) -> Result<i32, bun_core::Error> {
     Ok(i32::from_le_bytes([head[0], head[1], head[2], head[3]]))
 }
 
+#[allow(dead_code)] // used by the stubbed `run_with_body` tail
 #[inline]
 fn write_u32_le(w: &mut Vec<u8>, v: u32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 
+#[allow(dead_code)] // used by the stubbed `run_with_body` tail
 #[inline]
 fn write_i32_le(w: &mut Vec<u8>, v: i32) {
     w.extend_from_slice(&v.to_le_bytes());

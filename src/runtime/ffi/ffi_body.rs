@@ -355,6 +355,12 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(_this: *mut FFI) {}
+
+    /// `.classes.ts` declares `noConstructor: true`; the `JsClass` macro still
+    /// requires the symbol to exist.
+    pub fn constructor(global: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<FFI>> {
+        Err(global.throw("FFI is not constructable"))
+    }
 }
 
 // ─── CompileC ───────────────────────────────────────────────────────────────

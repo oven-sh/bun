@@ -3,15 +3,49 @@ pub use _impl::{Context, NativeZstd};
 mod _impl {
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void, CStr};
-use core::ptr;
+use core::{mem, ptr};
 
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, WorkPoolTask};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, WorkPoolTask};
 use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;
 // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
 use bun_zlib::NodeMode;
+
+// Local extension: `JSValue::withAsyncContextIfNeeded` is not yet on the
+// upstream `bun_jsc::JSValue`; shim it via the C++ FFI symbol like cron.rs does.
+trait JSValueZstdExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueZstdExt for JSValue {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *mut JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        // SAFETY: FFI into JSC; `global` is live for the call.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+    }
+}
+
+// TODO(port): codegen — jsc.Codegen.JSNativeZstd cached-property setters are
+// emitted by generate-classes.ts. Stubbed here until the .classes.ts codegen
+// path is wired for the Rust port (mirrors NativeZlib.rs / NativeBrotli.rs).
+mod js {
+    use super::*;
+    pub(super) fn write_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _cb: JSValue) {
+        // generated: JSNativeZstd.writeCallbackSetCached
+    }
+}
+
+/// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
+/// before the task is ever scheduled (mirrors Zig `.{ .callback = undefined }`).
+unsafe fn unset_task_callback(_: *mut WorkPoolTask) {
+    unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
+}
 
 #[bun_jsc::JsClass]
 pub struct NativeZstd {

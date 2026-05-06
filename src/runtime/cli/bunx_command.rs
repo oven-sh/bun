@@ -862,31 +862,26 @@ impl BunxCommand {
                     // If the bin name is a guess derived from a scoped package name,
                     // exclude the original system $PATH so we don't match unrelated
                     // system binaries. Only search local node_modules/.bin directories.
-                    destination_ = PATH_BUF.with_borrow_mut(|path_buf| {
-                        bun_core::which(
-                            path_buf,
-                            if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
-                            if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                            initial_bin_name,
-                        )
-                    });
-                    // TODO(port): bun.which writes into path_buf and returns a slice borrowing it;
-                    // thread_local borrow scope makes this awkward. Phase B may move path_buf to a local.
+                    destination_ = bun_core::which(
+                        as_core_path_buf(&mut path_buf),
+                        if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
+                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                        initial_bin_name,
+                    );
                 }
 
                 // Similar to "npx":
                 //
                 //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-                let dest_or_cache = destination_.or_else(|| {
-                    PATH_BUF.with_borrow_mut(|path_buf| {
-                        bun_core::which(
-                            path_buf,
-                            bunx_cache_dir,
-                            if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                            absolute_in_cache_dir,
-                        )
-                    })
-                });
+                let dest_or_cache = match destination_ {
+                    Some(d) => Some(d),
+                    None => bun_core::which(
+                        as_core_path_buf(&mut path_buf),
+                        bunx_cache_dir,
+                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                        absolute_in_cache_dir,
+                    ),
+                };
                 if let Some(destination) = dest_or_cache {
                     let out: &[u8] = destination.as_bytes();
 

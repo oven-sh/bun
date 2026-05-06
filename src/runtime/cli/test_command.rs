@@ -99,7 +99,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::jest::{self, FileId, Summary, TestRunner};
+use crate::test_runner::jest::{self, FileId, FileListExt as _, Summary, TestRunner};
 use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
 use crate::test_runner::bun_test as bun_test_mod;
 

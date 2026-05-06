@@ -330,7 +330,7 @@ impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<&[u8], StringMapKey> 
     fn eql(&self, fetch_key: &&[u8], item_key: &StringMapKey, item_i: usize) -> bool {
         let start = item_key.0 as usize;
         let len = self.strings_lens[item_i] as usize;
-        strings::eql_long::<true>(fetch_key, &self.strings_buf[start..start + len])
+        strings::eql_long(fetch_key, &self.strings_buf[start..start + len], true)
     }
 }
 

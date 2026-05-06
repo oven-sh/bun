@@ -230,7 +230,7 @@ fn opt_strs_eq(first: &Option<CStringList>, second: &Option<CStringList>) -> boo
 fn strings_equal(a: &CString, b: &CString) -> bool {
     let lhs = a.as_bytes();
     let rhs = b.as_bytes();
-    bun_str::strings::eql_long::<true>(lhs, rhs)
+    bun_str::strings::eql_long(lhs, rhs, true)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

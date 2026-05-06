@@ -6239,10 +6239,10 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        let mut dir_cache_info_result = unsafe { &mut *self.dir_cache() }.get_or_put(dir_path);
+        let mut dir_cache_info_result = unsafe { &mut *self.dir_cache() }.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            return Ok(unsafe { &mut *self.dir_cache() }.at_index(dir_cache_info_result.index));
+            return Ok(unsafe { &mut *self.dir_cache() }.at_index(dir_cache_info_result.index).map(|d| d as *mut _));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -6250,7 +6250,7 @@ impl<'a> Resolver<'a> {
         let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
         // SAFETY: resolver mutex held; no aliased `EntriesMap` access in this scope.
-        let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) };
+        let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) }?;
 
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption;
         let mut needs_iter = true;
@@ -6336,7 +6336,10 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        let dir_info_ptr = unsafe { &mut *self.dir_cache() }.put(&dir_cache_info_result, DirInfo::DirInfo::default()).expect("unreachable");
+        // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
+        // `self.dir_cache` (and `*self`) are reborrowable for the call below.
+        let dir_info_ptr: *mut DirInfo::DirInfo =
+            unsafe { &mut *self.dir_cache() }.put(&mut dir_cache_info_result, DirInfo::DirInfo::default()).expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores

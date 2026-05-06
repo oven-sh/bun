@@ -182,25 +182,25 @@ impl Integrity {
                 const LEN: usize = SHA1_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
                 Crypto::SHA1::hash(bytes, ptr, None);
-                strings::eql_long::<true>(ptr, &sum[0..LEN])
+                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
                 Crypto::SHA512::hash(bytes, ptr, None);
-                strings::eql_long::<true>(ptr, &sum[0..LEN])
+                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
                 Crypto::SHA256::hash(bytes, ptr, None);
-                strings::eql_long::<true>(ptr, &sum[0..LEN])
+                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
                 Crypto::SHA384::hash(bytes, ptr, None);
-                strings::eql_long::<true>(ptr, &sum[0..LEN])
+                strings::eql_long(ptr, &sum[0..LEN], true)
             }
             _ => false,
         }
@@ -379,7 +379,7 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long::<true>(&computed.value[0..len], &self.expected.value[0..len])
+        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
     }
 }
 

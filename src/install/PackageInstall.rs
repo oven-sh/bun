@@ -668,9 +668,10 @@ impl<'a> PackageInstall<'a> {
         };
         // bun_tag_file.bytes dropped at scope exit
 
-        strings::eql_long::<true>(
+        strings::eql_long(
             repo.resolved.slice(&self.lockfile.buffers.string_bytes),
             &bun_tag_file.bytes,
+            true,
         )
     }
 

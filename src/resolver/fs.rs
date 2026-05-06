@@ -623,7 +623,7 @@ impl DirEntry {
         // SAFETY: EntryStore-owned pointer; valid for the lifetime of the store (process-static).
         let result = unsafe { &*result_ptr };
         let basename = result.base();
-        if !strings::eql_long::<true>(basename, query_) {
+        if !strings::eql_long(basename, query_, true) {
             return Some(EntryLookup {
                 entry: result_ptr,
                 diff_case: Some(DifferentCase {

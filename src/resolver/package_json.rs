@@ -840,7 +840,7 @@ impl PackageJSON {
                 if let Some(route_dir) = router.expr.as_property(b"dir") {
                     match &route_dir.expr.data {
                         js_ast::ExprData::EString(estr) => {
-                            let str = estr.string().expect("unreachable");
+                            let str = estr.string(bump).expect("unreachable");
                             if !str.is_empty() {
                                 pair.router.dir = str;
                                 pair.router.possible_dirs = Box::default();
@@ -857,7 +857,7 @@ impl PackageJSON {
                             match count {
                                 0 => {}
                                 1 => {
-                                    let str = items[0].data.e_string().string().expect("unreachable");
+                                    let str = items[0].data.e_string().unwrap().string(bump).expect("unreachable");
                                     if !str.is_empty() {
                                         pair.router.dir = str;
                                         pair.router.possible_dirs = Box::default();
@@ -871,7 +871,7 @@ impl PackageJSON {
                                     for item in items {
                                         if let js_ast::ExprData::EString(s) = &item.data {
                                             if !s.data.is_empty() {
-                                                list.push(s.string().expect("unreachable"));
+                                                list.push(Box::from(s.string(bump).expect("unreachable")));
                                             }
                                         }
                                     }
@@ -1510,7 +1510,7 @@ impl PackageJSON {
                         let mut array = array_const;
                         let mut arch = Architecture::none().negatable();
                         while let Some(item) = array.next() {
-                            if let Some(str) = item.as_string() {
+                            if let Some(str) = item.as_utf8_string_literal() {
                                 arch.apply(&str);
                             }
                         }
@@ -1524,7 +1524,7 @@ impl PackageJSON {
                     if let Some(mut array) = tmp {
                         let mut os = OperatingSystem::none().negatable();
                         while let Some(item) = array.next() {
-                            if let Some(str) = item.as_string() {
+                            if let Some(str) = item.as_utf8_string_literal() {
                                 os.apply(&str);
                             }
                         }
@@ -1578,11 +1578,11 @@ impl PackageJSON {
                             if let js_ast::ExprData::EObject(group_obj) = &group_json.data {
                                 for prop in group_obj.properties.slice() {
                                     let Some(name_prop) = prop.key.as_ref() else { continue };
-                                    let Some(name_str) = name_prop.as_string() else { continue };
+                                    let Some(name_str) = name_prop.as_utf8_string_literal() else { continue };
                                     let name_hash = SemverString::Builder::string_hash(&name_str);
                                     let name = SemverString::init(package_json.dependencies.source_buf, &name_str);
                                     let Some(version_value) = prop.value.as_ref() else { continue };
-                                    let Some(version_str) = version_value.as_string() else { continue };
+                                    let Some(version_str) = version_value.as_utf8_string_literal() else { continue };
                                     let sliced_str = Semver::SlicedString::init(&version_str, &version_str);
 
                                     if let Some(dependency_version) = Dependency::parse(

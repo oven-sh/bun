@@ -2249,7 +2249,7 @@ impl PackageManifest {
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
-                    && !strings::eql_long::<true>(expected_name, received_name)
+                    && !strings::eql_long(expected_name, received_name, true)
                 {
                     Output::warn(format_args!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
@@ -2682,7 +2682,7 @@ impl PackageManifest {
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first = cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item.slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long::<true>(first, second) {
+                                                    if !strings::eql_long(first, second, true) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),
@@ -2710,7 +2710,7 @@ impl PackageManifest {
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first = cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item.slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long::<true>(first, second) {
+                                                    if !strings::eql_long(first, second, true) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),

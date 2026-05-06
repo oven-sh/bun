@@ -24,10 +24,10 @@ impl URI {
     pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) => {
-                strings::eql_long::<true>(l.slice(lhs_buf), r.slice(rhs_buf))
+                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
             }
             (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long::<true>(l.slice(lhs_buf), r.slice(rhs_buf))
+                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
             }
             _ => false,
         }
@@ -578,9 +578,10 @@ impl Version {
                 // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
                 // semver ranges involve a ton of pointer chasing
                 Tag::Npm => {
-                    strings::eql_long::<true>(
+                    strings::eql_long(
                         self.literal.slice(lhs_buf),
                         rhs.literal.slice(rhs_buf),
+                        true,
                     ) || self.value.npm.eql(&rhs.value.npm, lhs_buf, rhs_buf)
                 }
                 Tag::Folder | Tag::DistTag => {

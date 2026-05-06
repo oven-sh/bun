@@ -208,7 +208,7 @@ impl ZigString {
         // PERF(port): was stack-fallback allocator (1024 bytes)
         let utf16_slice = self.to_slice_lowercase();
         let latin1_slice = other.to_slice_lowercase();
-        strings::eql_long::<true>(utf16_slice.slice(), latin1_slice.slice())
+        strings::eql_long(utf16_slice.slice(), latin1_slice.slice(), true)
     }
 
     pub fn to_slice_lowercase(&self) -> Slice {
@@ -252,12 +252,13 @@ impl ZigString {
         let right_utf16 = other.is_16bit();
 
         if left_utf16 == right_utf16 && left_utf16 {
-            return strings::eql_long::<true>(
+            return strings::eql_long(
                 bytemuck::cast_slice::<u16, u8>(self.utf16_slice_aligned()),
                 bytemuck::cast_slice::<u16, u8>(other.utf16_slice_aligned()),
+                true,
             );
         } else if left_utf16 == right_utf16 {
-            return strings::eql_long::<true>(self.slice(), other.slice());
+            return strings::eql_long(self.slice(), other.slice(), true);
         }
 
         let utf16: &ZigString = if left_utf16 { self } else { other };
@@ -270,7 +271,7 @@ impl ZigString {
         // slow path
         let utf16_slice = utf16.to_slice();
         let latin1_slice = latin1.to_slice();
-        strings::eql_long::<true>(utf16_slice.slice(), latin1_slice.slice())
+        strings::eql_long(utf16_slice.slice(), latin1_slice.slice(), true)
     }
 
     pub fn is_all_ascii(&self) -> bool {

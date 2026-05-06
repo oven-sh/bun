@@ -280,6 +280,13 @@ pub enum Loader {
     Md = 20,
 }
 
+impl Default for Loader {
+    /// Mirrors Zig's `Loader = .file` default field initializer.
+    fn default() -> Self {
+        Loader::File
+    }
+}
+
 /// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

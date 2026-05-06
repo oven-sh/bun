@@ -293,6 +293,9 @@ impl crate::Allocator for LinuxMemFdAllocator {
 mod allocator_interface {
     use super::*;
 
+    /// # Safety
+    /// No preconditions; marked `unsafe` only to match the allocator-vtable
+    /// fn-pointer signature.
     pub(super) unsafe fn alloc(
         _ptr: *mut c_void,
         _len: usize,

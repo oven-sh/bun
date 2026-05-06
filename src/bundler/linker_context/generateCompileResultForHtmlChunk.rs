@@ -458,14 +458,14 @@ unsafe fn generate_compile_result_for_html_chunk_impl(
     let records = import_records[source_index as usize].slice();
 
     let mut html_loader = HTMLLoader {
-        linker: &*c,
+        linker: c,
         source_index,
         import_records: records,
         log,
         current_import_record_index: 0,
         minify_whitespace,
         compile_to_standalone_html,
-        chunk: chunk as *const Chunk,
+        chunk,
         chunks,
         output: Vec::new(),
         end_tag_indices: EndTagIndices {

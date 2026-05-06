@@ -851,7 +851,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // blocked_on: ImportRecord.flags struct; e_string().string(bump) signature
     #[inline]
     pub fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
@@ -866,11 +865,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_record_index = self.add_import_record(
             ImportKind::RequireResolve,
             arg.loc,
-            arg.data.e_string().string(self.allocator).expect("unreachable"),
+            arg.data.e_string().unwrap().string(self.allocator).expect("unreachable"),
         );
-        self.import_records.items_mut()[import_record_index as usize]
-            .flags
-            .handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
+        self.import_records.items_mut()[import_record_index as usize].flags.set(
+            bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
+            self.fn_or_arrow_data_visit.try_body_count != 0,
+        );
         self.import_records_for_current_part.push(import_record_index);
 
         self.new_expr(
@@ -882,22 +882,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // blocked_on: fs::Path::package_name; ImportRecord.flags; check_dynamic_specifier
     pub fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         if !self.options.features.allow_runtime {
-            let args = self.allocator.alloc_slice_copy(&[arg]);
             return self.new_expr(
                 E::Call {
                     target: self.value_for_require(arg.loc),
-                    args: ExprNodeList::from_owned_slice(args),
+                    args: ExprNodeList::init_one(arg).expect("oom"),
                     ..Default::default()
                 },
                 arg.loc,
             );
         }
 
-        match &arg.data {
-            js_ast::ExprData::EString(str_) => {
+        match arg.data {
+            js_ast::ExprData::EString(mut str_) => {
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -915,8 +913,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // we must also unwrap requires into imports.
                 let should_unwrap_require = self.options.features.unwrap_commonjs_to_esm
                     && (self.unwrap_all_requires
-                        || path
-                            .package_name()
+                        || path_package_name(&path)
                             .map(|pkg| self.options.features.should_unwrap_require(pkg))
                             .unwrap_or(false))
                     // We cannot unwrap a require wrapped in a try/catch because
@@ -927,25 +924,38 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if should_unwrap_require {
                     let import_record_index =
                         self.add_import_record_by_range_and_path(ImportKind::Stmt, self.source.range_of_string(arg.loc), path);
-                    self.import_records.items_mut()[import_record_index as usize]
-                        .flags
-                        .handles_import_errors = handles_import_errors;
+                    self.import_records.items_mut()[import_record_index as usize].flags.set(
+                        bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
+                        handles_import_errors,
+                    );
 
                     // Note that this symbol may be completely removed later.
-                    let mut path_name = fs::PathName::init(path.text);
-                    let name = path_name.non_unique_name_string(self.allocator);
+                    let path_name = fs::PathName::init(pathname);
+                    // Zig: `path_name.nonUniqueNameString(allocator)` — render the
+                    // sanitized-identifier formatter into the bump arena.
+                    let name: &'a [u8] = {
+                        use std::io::Write as _;
+                        let mut buf = BumpVec::<u8>::new_in(self.allocator);
+                        write!(
+                            &mut buf,
+                            "{}",
+                            bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                        )
+                        .expect("unreachable");
+                        buf.into_bump_slice()
+                    };
                     let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name).expect("oom");
 
                     self.imports_to_convert_from_require.push(DeferredImportNamespace {
-                        namespace: LocRef { r#ref: Some(namespace_ref), loc: arg.loc },
+                        namespace: LocRef { ref_: Some(namespace_ref), loc: arg.loc },
                         import_record_id: import_record_index,
                     });
                     self.import_items_for_namespace
-                        .insert(namespace_ref, ImportItemForNamespaceMap::new_in(self.allocator));
+                        .insert(namespace_ref, ImportItemForNamespaceMap::default());
                     self.record_usage(namespace_ref);
 
                     if !state.is_require_immediately_assigned_to_decl {
-                        return self.new_expr(E::Identifier { r#ref: namespace_ref, ..Default::default() }, arg.loc);
+                        return self.new_expr(E::Identifier { ref_: namespace_ref, ..Default::default() }, arg.loc);
                     }
 
                     return self.new_expr(
@@ -959,9 +969,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                 let import_record_index =
                     self.add_import_record_by_range_and_path(ImportKind::Require, self.source.range_of_string(arg.loc), path);
-                self.import_records.items_mut()[import_record_index as usize]
-                    .flags
-                    .handles_import_errors = handles_import_errors;
+                self.import_records.items_mut()[import_record_index as usize].flags.set(
+                    bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
+                    handles_import_errors,
+                );
                 self.import_records_for_current_part.push(import_record_index);
 
                 self.new_expr(E::RequireString { import_record_index, ..Default::default() }, arg.loc)
@@ -969,11 +980,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             _ => {
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
-                let args = self.allocator.alloc_slice_copy(&[arg]);
                 self.new_expr(
                     E::Call {
                         target: self.value_for_require(arg.loc),
-                        args: ExprNodeList::from_owned_slice(args),
+                        args: ExprNodeList::init_one(arg).expect("oom"),
                         ..Default::default()
                     },
                     arg.loc,

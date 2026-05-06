@@ -3578,17 +3578,18 @@ impl HTTPClient {
             if let Some(old) = self.state.cloned_metadata.take() {
                 drop(old); // deinit
             }
-            // TODO(port): picohttp::Response::{count,clone} currently take a
-            // local `bun_picohttp::StringBuilder` stub whose body is `todo!()`,
-            // so the http.zig:2164-2194 deep-clone (StringBuilder count/allocate
-            // + headers_buf alloc + response.clone + builder.append(url.href))
-            // cannot be ported yet. Until those helpers land, hand back empty
-            // metadata instead of panicking — every successful response path
-            // reaches here, and a live `todo!()` is forbidden (PORTING.md
-            // §Forbidden).
+            // TODO(port): blocked on bun_picohttp::StringBuilder — its
+            // `count`/`append` are `todo!()` stubs, so the http.zig:2164-2194
+            // deep-clone (StringBuilder count/allocate + headers_buf alloc +
+            // response.clone + builder.append(url.href)) cannot be ported yet.
+            // PORTING.md §Forbidden permits `todo!()` here because a higher-tier
+            // dep blocks it; what it *forbids* is the previous silent
+            // `HTTPResponseMetadata::default()` — every successful response would
+            // observe status 0 / no headers / empty url. Fail loud instead.
             let _ = response;
-            self.state.pending_response = None;
-            self.state.cloned_metadata = Some(HTTPResponseMetadata::default());
+            todo!(
+                "clone_metadata: port http.zig:2164-2194 once bun_picohttp::StringBuilder is real"
+            );
         } else {
             // we should never clone metadata that dont exists
             // we added a empty metadata just in case but will hit the assert

@@ -16,7 +16,7 @@ use bun_wyhash::Wyhash11;
 
 use crate::{
     bun_hash_tag, lockfile::Lockfile, resolution::Resolution, DependencyID, PackageID,
-    PackageInstall, PackageManager, Task,
+    PackageInstall, PackageManager,
 };
 
 // Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).

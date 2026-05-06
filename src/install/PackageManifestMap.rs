@@ -13,12 +13,23 @@ pub struct PackageManifestMap {
     pub hash_map: ManifestHashMap,
 }
 
-enum Value {
+pub enum Value {
     Expired(npm::PackageManifest),
     Manifest(npm::PackageManifest),
 
     // Avoid checking the filesystem again.
     NotFound,
+}
+
+impl Value {
+    /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
+    #[inline]
+    pub fn manifest_mut(&mut self) -> &mut npm::PackageManifest {
+        match self {
+            Value::Manifest(m) => m,
+            _ => unreachable!("manifest_mut on non-Manifest value"),
+        }
+    }
 }
 
 // TODO(port): Zig used `IdentityContext(PackageNameHash)` (key is already a hash) with load factor 80.

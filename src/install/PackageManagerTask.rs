@@ -107,6 +107,15 @@ impl Id {
         Id(hasher.final_())
     }
 
+    /// PORT NOTE: bridge for `runTasks` callback unification — Zig passes
+    /// either a `Task.Id` or a raw `PackageID` to `onPackageDownloadError`
+    /// depending on the comptime `Ctx`. Rust models both call sites through
+    /// one trait method typed as `Task::Id`, so widen the `PackageID` here.
+    #[inline]
+    pub fn from_package_id(package_id: PackageID) -> Id {
+        Id(package_id as u64)
+    }
+
     pub fn for_bin_link(package_id: PackageID) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"bin-link:");

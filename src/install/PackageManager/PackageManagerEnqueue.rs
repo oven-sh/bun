@@ -5,26 +5,35 @@ use bun_logger as logger;
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_str::strings::{self, StringOrTinyString};
-use bun_threading::ThreadPool;
+use bun_threading::thread_pool as ThreadPool;
 use crate::bun_fs::FileSystem;
 use bun_sys::Fd;
 
 use bun_install::{
     self as install, invalid_package_id, Behavior, Dependency, DependencyID, ExtractTarball,
     Features, FolderResolution, Integrity, Npm, PackageID, PackageNameHash, PatchTask, Repository,
-    Resolution, Task, TaskCallbackContext,
+    Resolution, TaskCallbackContext,
 };
-use bun_install::lockfile::{self as Lockfile, Package};
+use crate::{dependency, ManifestLoad};
+use crate::lockfile_real as Lockfile;
+use crate::lockfile_real::package::Package;
 use bun_install::NetworkTask;
-use bun_install::package_manager::{
-    assign_resolution, assign_root_resolution, fail_root_resolution, FailFn, PackageManager,
-    SuccessFn, TaskCallbackList,
-};
+use crate::package_manager_real::{FailFn, PackageManager, SuccessFn, TaskCallbackList};
+use crate::package_manager_task as Task;
+
+// `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the
+// real bodies are inherent methods, so reference them via the type path.
+#[allow(non_upper_case_globals)]
+const assign_resolution: SuccessFn = PackageManager::assign_resolution;
+#[allow(non_upper_case_globals)]
+const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution;
+#[allow(non_upper_case_globals)]
+const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 
 bun_output::declare_scope!(PackageManager, hidden);
 
-pub type EnqueuePackageForDownloadError = bun_install::network_task::ForTarballError;
-pub type EnqueueTarballForDownloadError = bun_install::network_task::ForTarballError;
+pub type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
+pub type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;
 
 const MS_PER_S: u64 = 1000;
 
@@ -33,7 +42,7 @@ const MS_PER_S: u64 = 1000;
 pub fn enqueue_dependency_with_main(
     this: &mut PackageManager,
     id: DependencyID,
-    /// This must be a *const to prevent UB
+    // This must be a *const to prevent UB
     dependency: &Dependency,
     resolution: PackageID,
     install_peer: bool,
@@ -541,7 +550,7 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
 pub fn enqueue_dependency_with_main_and_success_fn(
     this: &mut PackageManager,
     id: DependencyID,
-    /// This must be a *const to prevent UB
+    // This must be a *const to prevent UB
     dependency: &Dependency,
     resolution: PackageID,
     install_peer: bool,
@@ -1513,7 +1522,7 @@ fn enqueue_git_clone(
     dep_id: DependencyID,
     dependency: &Dependency,
     res: &Resolution,
-    /// if patched then we need to do apply step after network task is done
+    // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();
@@ -1578,7 +1587,7 @@ pub fn enqueue_git_checkout(
     name: &[u8],
     resolution: Resolution,
     resolved: &[u8],
-    /// if patched then we need to do apply step after network task is done
+    // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
     let task = this.preallocated_resolve_tasks.get();

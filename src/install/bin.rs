@@ -646,8 +646,85 @@ impl<'a> PriorityQueueContext<'a> {
     }
 }
 
-// TODO(port): std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)
-pub type PriorityQueue<'a> = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext<'a>>;
+// Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
+// Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
+pub struct PriorityQueue<'a> {
+    items: Vec<DependencyID>,
+    context: PriorityQueueContext<'a>,
+}
+
+impl<'a> PriorityQueue<'a> {
+    pub type Context = PriorityQueueContext<'a>;
+
+    pub fn init(context: PriorityQueueContext<'a>) -> Self {
+        Self { items: Vec::new(), context }
+    }
+
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn add(&mut self, elem: DependencyID) -> Result<(), AllocError> {
+        self.items.try_reserve(1).map_err(|_| AllocError)?;
+        self.items.push(elem);
+        self.sift_up(self.items.len() - 1);
+        Ok(())
+    }
+
+    /// `removeOrNull` — pop the min element, or `None` if empty.
+    pub fn remove_or_null(&mut self) -> Option<DependencyID> {
+        if self.items.is_empty() {
+            return None;
+        }
+        let last = self.items.len() - 1;
+        self.items.swap(0, last);
+        let elem = self.items.pop().unwrap();
+        if !self.items.is_empty() {
+            self.sift_down(0);
+        }
+        Some(elem)
+    }
+
+    fn sift_up(&mut self, mut child: usize) {
+        while child > 0 {
+            let parent = (child - 1) / 2;
+            if self.context.less_than(self.items[child], self.items[parent])
+                != core::cmp::Ordering::Less
+            {
+                break;
+            }
+            self.items.swap(child, parent);
+            child = parent;
+        }
+    }
+
+    fn sift_down(&mut self, mut index: usize) {
+        let len = self.items.len();
+        loop {
+            let left = 2 * index + 1;
+            let right = 2 * index + 2;
+            let mut smallest = index;
+            if left < len
+                && self.context.less_than(self.items[left], self.items[smallest])
+                    == core::cmp::Ordering::Less
+            {
+                smallest = left;
+            }
+            if right < len
+                && self.context.less_than(self.items[right], self.items[smallest])
+                    == core::cmp::Ordering::Less
+            {
+                smallest = right;
+            }
+            if smallest == index {
+                break;
+            }
+            self.items.swap(index, smallest);
+            index = smallest;
+        }
+    }
+}
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
@@ -759,7 +836,7 @@ impl<'a> Linker<'a> {
             }
         }
 
-        bun_core::analytics::Features::binlinks_inc(1);
+        bun_core::analytics::Features::binlinks_inc();
 
         #[cfg(not(windows))]
         {

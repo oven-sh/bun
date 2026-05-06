@@ -4796,6 +4796,139 @@ pub fn open_file(path: &[u8], flags: OpenFlags) -> Maybe<File> {
 pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     open_dir_at(dir, path)
 }
+/// bun.zig:850 — `bun.openDir(dir, path)`. Opens a directory handle relative to
+/// `dir`. POSIX: `openat(.., O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0)`; Windows:
+/// `openDirAtWindowsA(.., .{ .iterable, .can_rename_or_delete, .read_only })`.
+#[inline]
+pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
+    open_dir_at(dir.fd, path).map(Dir::from_fd).map_err(Into::into)
+}
+/// bun.zig:1303 — `bun.getFdPathZ(fd, buf)`. Wraps [`get_fd_path`] then
+/// NUL-terminates in-place so callers receive a `&ZStr`.
+pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a ZStr> {
+    let len = get_fd_path(fd, out)?.len();
+    out.0[len] = 0;
+    // SAFETY: NUL written at out[len]; bytes [0..len] initialised by get_fd_path.
+    Ok(unsafe { ZStr::from_raw(out.0.as_ptr(), len) })
+}
+
+/// Options for [`renameat_concurrently`]. Port of the anonymous-struct
+/// `comptime opts` parameter on `bun.sys.renameatConcurrently` (sys.zig:2461).
+#[derive(Clone, Copy, Default)]
+pub struct RenameatConcurrentlyOptions {
+    /// On `EXDEV`, fall back to a slow open+copy via [`move_file_z_slow`].
+    pub move_fallback: bool,
+}
+
+/// sys.zig:2461 — `bun.sys.renameatConcurrently`. Attempts an atomic
+/// `RENAME_NOREPLACE` first, then `RENAME_EXCHANGE`, then a racy
+/// delete-tree + plain `renameat`. Optionally falls back to a slow
+/// cross-device copy on `EXDEV`.
+pub fn renameat_concurrently(
+    from_dir_fd: Fd,
+    from: &[u8],
+    to_dir_fd: Fd,
+    to: &[u8],
+    opts: RenameatConcurrentlyOptions,
+) -> Maybe<()> {
+    // Z-terminate both paths into stack buffers (Zig signature is `[:0]const u8`).
+    let mut from_buf = bun_paths::PathBuffer::default();
+    let from_len = from.len().min(from_buf.0.len() - 1);
+    from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
+    from_buf.0[from_len] = 0;
+    // SAFETY: NUL-terminated above.
+    let from_z = unsafe { ZStr::from_raw(from_buf.0.as_ptr(), from_len) };
+
+    let mut to_buf = bun_paths::PathBuffer::default();
+    let to_len = to.len().min(to_buf.0.len() - 1);
+    to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
+    to_buf.0[to_len] = 0;
+    // SAFETY: NUL-terminated above.
+    let to_z = unsafe { ZStr::from_raw(to_buf.0.as_ptr(), to_len) };
+
+    match renameat_concurrently_without_fallback(from_dir_fd, from_z, to_dir_fd, to_z) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if opts.move_fallback && e.get_errno() == E::EXDEV {
+                bun_core::Output::debug_warn(format_args!(
+                    "renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()",
+                ));
+                return move_file_z_slow(from_dir_fd, from_z, to_dir_fd, to_z);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// sys.zig:2480 — `renameatConcurrentlyWithoutFallback`.
+pub fn renameat_concurrently_without_fallback(
+    from_dir_fd: Fd,
+    from: &ZStr,
+    to_dir_fd: Fd,
+    to: &ZStr,
+) -> Maybe<()> {
+    let mut did_atomically_replace = false;
+    let _ = did_atomically_replace; // tracked for parity with Zig
+
+    'attempt: {
+        {
+            // Happy path: the folder doesn't exist in the cache dir, so we can
+            // just rename it. We don't need to delete anything.
+            let err = match renameat2(
+                from_dir_fd,
+                from,
+                to_dir_fd,
+                to,
+                Renameat2Flags { exclude: true, ..Default::default() },
+            ) {
+                // if ENOENT don't retry
+                Err(err) => {
+                    if err.get_errno() == E::NOENT {
+                        return Err(err);
+                    }
+                    err
+                }
+                Ok(()) => break 'attempt,
+            };
+
+            // Windows doesn't have any equivalent with renameat with swap
+            #[cfg(not(windows))]
+            {
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if matches!(err.get_errno(), E::EXIST | E::NOTEMPTY | E::OPNOTSUPP) {
+                    did_atomically_replace = true;
+                    match renameat2(
+                        from_dir_fd,
+                        from,
+                        to_dir_fd,
+                        to,
+                        Renameat2Flags { exchange: true, ..Default::default() },
+                    ) {
+                        Err(_) => {}
+                        Ok(()) => break 'attempt,
+                    }
+                    did_atomically_replace = false;
+                }
+            }
+            let _ = err;
+        }
+
+        //  sad path: let's try to delete the folder and then rename it
+        if to_dir_fd.is_valid() {
+            let _ = Dir::from_fd(to_dir_fd).delete_tree(to.as_bytes());
+        } else {
+            // TODO(port): std.fs.deleteTreeAbsolute — no Rust equivalent yet.
+            let _ = Dir::cwd().delete_tree(to.as_bytes());
+        }
+        match renameat(from_dir_fd, from, to_dir_fd, to) {
+            Err(err) => return Err(err),
+            Ok(()) => {}
+        }
+    }
+
+    Ok(())
+}
 /// `bun.iterateDir(dir)` — convenience wrapper around `dir_iterator::iterate`.
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {

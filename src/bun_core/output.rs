@@ -965,9 +965,7 @@ pub fn is_ai_agent() -> bool {
     VALUE.load(Ordering::Relaxed)
 }
 
-/// Zig: `pub var is_verbose = false;` — mutable global written by CLI argument
-/// parsers (`--verbose`). Read via [`is_verbose`], write via [`set_is_verbose`].
-static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
+// (IS_VERBOSE defined above at L887; ungate exposed a duplicate.)
 
 pub fn set_is_verbose(verbose: bool) {
     IS_VERBOSE.store(verbose, Ordering::Relaxed);

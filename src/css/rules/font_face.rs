@@ -38,25 +38,6 @@ pub enum FontFaceProperty {
     /// An unknown or unsupported property.
     Custom(crate::css_properties::custom::CustomProperty),
 }
-#[cfg(any())]
-/// Data-only stub: real variant payloads land when `properties::{font,custom}`
-/// un-gate.
-pub struct FontFaceProperty;
-
-#[cfg(any())]
-impl FontFaceProperty {
-    /// Unreachable in practice: while the enum body is gated, no parser path
-    /// constructs a `FontFaceProperty`, so `FontFaceRule.properties` is always
-    /// empty. Panic loudly if that invariant is violated (PORTING.md
-    /// §Forbidden: silent no-op).
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        todo!("blocked_on: properties::{{font,custom}} un-gate — FontFaceProperty enum body")
-    }
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        todo!("blocked_on: properties::{{font,custom}} un-gate — FontFaceProperty enum body")
-    }
-}
-
 
 impl FontFaceProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -498,11 +479,6 @@ pub enum Source {
     /// The `local()` function.
     Local(crate::css_properties::font::FontFamily),
 }
-#[cfg(any())]
-/// Data-only stub: real `Local(FontFamily)` payload lands when
-/// `properties::font` un-gates.
-pub struct Source;
-
 
 impl Source {
     pub fn parse(input: &mut css::Parser) -> css::Result<Source> {

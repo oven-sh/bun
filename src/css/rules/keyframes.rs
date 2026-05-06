@@ -59,14 +59,9 @@ impl Eq for KeyframesName {}
 impl KeyframesName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_string::strings;
-        // blocked_on: Printer::write_ident — css-module animation scoping path is
-        // gated on the css_modules Pattern::write borrowck reshape. Until then
-        // route through the unscoped `serialize_identifier` tail it shares.
         #[inline]
-        fn write_ident(dest: &mut Printer, v: &[u8], _handle_css_module: bool) -> core::result::Result<(), PrintErr> {
-            
-            return dest.write_ident(v, _handle_css_module);
-            css::serializer::serialize_identifier(v, dest).map_err(|_| dest.add_fmt_error())
+        fn write_ident(dest: &mut Printer, v: &[u8], handle_css_module: bool) -> core::result::Result<(), PrintErr> {
+            dest.write_ident(v, handle_css_module)
         }
 
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
@@ -335,8 +330,9 @@ impl KeyframesRule {
     
     pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
         let _ = self;
-        // Zig: `@compileError(css.todo_stuff.depth)` — intentionally unimplemented.
-        // TODO(port): implement keyframes fallbacks (was a compile-time stub in Zig).
+        // PORT NOTE: Zig spec is `@compileError(css.todo_stuff.depth)` — never instantiated,
+        // no caller exists. Kept as a runtime trap to mirror the compile-time guard until
+        // the upstream depth-level fallbacks land.
         unimplemented!("css.todo_stuff.depth")
     }
 

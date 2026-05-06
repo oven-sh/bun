@@ -2039,7 +2039,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn deinit_if_we_can(&mut self) {
-        if cfg!(feature = "debug_logs") {
+        if cfg!(debug_assertions) {
             httplog!(
                 "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
                 self.pending_requests,
@@ -2181,7 +2181,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            let task = Box::new(jsc::AnyTask::new::<ServerApp<SSL>>(ServerApp<SSL>::close, self.app.unwrap()));
+            let task = Box::new(jsc::AnyTask::new::<ServerApp<SSL>>(ServerApp::<SSL>::close, self.app.unwrap()));
             self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
         }
 
@@ -2221,7 +2221,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         if let Some(app) = this.app.take() {
             // SAFETY: FFI destroy; app is a live uws App handle owned by this server
-            unsafe { ServerApp<SSL>::destroy(app) };
+            unsafe { ServerApp::<SSL>::destroy(app) };
         }
 
         // SAFETY: this was Box::into_raw'd in init()
@@ -2931,10 +2931,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx = prepared.ctx;
 
         debug_assert!(!callback.is_empty());
-        // on-stack [JSValue; N+1] is fine — conservative scan covers it
-        let mut args = [JSValue::ZERO; ARG_COUNT + 1];
-        args[0] = prepared.js_request;
-        args[1..].copy_from_slice(&extra_args);
+        // PORT NOTE: Zig used `[1 + extra_args.len]jsc.JSValue` (comptime). Stable
+        // Rust forbids `ARG_COUNT + 1` in const generics; use a small Vec — the
+        // conservative GC scan covers the heap allocation as well as the stack.
+        let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
+        args.push(prepared.js_request);
+        args.extend_from_slice(&extra_args);
         let global = unsafe { &*self.global_this };
         let response_value = match callback.call(global, self.js_value_assert_alive(), &args) {
             Ok(v) => v,
@@ -3279,7 +3281,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
-        if cfg!(feature = "debug_logs") {
+        if cfg!(debug_assertions) {
             httplog!("{} - {}", BStr::new(req.method()), BStr::new(req.url()));
         }
 
@@ -3687,7 +3689,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
-        if cfg!(feature = "debug_logs") {
+        if cfg!(debug_assertions) {
             httplog!("{} - {} 404", BStr::new(req.method()), BStr::new(req.url()));
         }
 
@@ -3708,7 +3710,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let ssl_config = self.config.ssl_config.as_ref().expect("Assertion failure: ssl_config");
             let ssl_options = ssl_config.as_usockets();
 
-            app = match ServerApp<SSL>::create(ssl_options) {
+            app = match ServerApp::<SSL>::create(ssl_options) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {
@@ -3811,7 +3813,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
         } else {
-            app = match ServerApp<SSL>::create(Default::default()) {
+            app = match ServerApp::<SSL>::create(Default::default()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {

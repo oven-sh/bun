@@ -12,12 +12,14 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_uws::{us_bun_verify_error_t, ConnectingSocket, NewSocketHandler};
-use bun_uws_sys::us_socket_t;
+use bun_uws_sys::vtable::Handler as VHandler;
+use bun_uws_sys::{us_socket_t, CloseCode};
 
 use bun_http_jsc::websocket_client;
-use bun_http_jsc::websocket_client::web_socket_upgrade_client as websocket_upgrade_client;
+use bun_http_jsc::websocket_client::websocket_upgrade_client;
 use bun_jsc::ipc as IPC;
 use bun_sql_jsc::mysql;
+use bun_sql_jsc::postgres;
 use crate::api;
 use crate::valkey_jsc::js_valkey;
 
@@ -65,7 +67,7 @@ pub trait SocketEvents<const SSL: bool> {
     fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_data(&mut self, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_writable(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_close(&mut self, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<NonNull<c_void>>) -> bun_jsc::JsResult<()> { Ok(()) }
+    fn on_close(&mut self, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_long_timeout(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_end(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
@@ -82,53 +84,63 @@ pub trait SocketEvents<const SSL: bool> {
 /// type system can't see.
 pub struct PtrHandler<T, const SSL: bool>(core::marker::PhantomData<T>);
 
-impl<T, const SSL: bool> PtrHandler<T, SSL>
+#[inline(always)]
+fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
+    NewSocketHandler::<SSL>::from(s)
+}
+
+impl<T, const SSL: bool> VHandler for PtrHandler<T, SSL>
 where
-    T: SocketEvents<SSL>,
+    T: SocketEvents<SSL> + 'static,
 {
-    /// `*?*T` — raw because the slot lives in C-allocated (`calloc`) memory.
-    pub type Ext = *mut Option<NonNull<T>>;
+    /// `?*T` — the slot lives in C-allocated (`calloc`) memory; the trampoline
+    /// hands it to us by `&mut`.
+    type Ext = Option<NonNull<T>>;
 
-    #[inline]
-    fn wrap(s: &mut us_socket_t) -> NewSocketHandler<SSL> {
-        NewSocketHandler::<SSL>::from(s)
-    }
+    const HAS_ON_OPEN: bool = true;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
+    const HAS_ON_LONG_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+    const HAS_ON_CONNECT_ERROR: bool = true;
+    const HAS_ON_CONNECTING_ERROR: bool = true;
+    const HAS_ON_HANDSHAKE: bool = true;
+    const HAS_ON_FD: bool = true;
 
-    pub fn on_open(ext: Self::Ext, s: &mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        // SAFETY (applies to every `*ext` read in this impl): dispatcher
-        // guarantees `ext` points at this socket's calloc'd ext slot for the
-        // socket's lifetime.
-        let Some(this) = (unsafe { *ext }) else { return };
+    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         // SAFETY (applies to every `.as_mut()` in this impl): the ext slot
         // holds the unique heap owner; dispatch is single-threaded so no
         // aliasing `&mut` exists.
-        swallow(unsafe { this.as_mut() }.on_open(Self::wrap(s)));
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_open(wrap::<SSL>(s)));
     }
-    pub fn on_data(ext: Self::Ext, s: &mut us_socket_t, data: &[u8]) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_data(Self::wrap(s), data));
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_data(wrap::<SSL>(s), data));
     }
-    pub fn on_writable(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_writable(Self::wrap(s)));
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_writable(wrap::<SSL>(s)));
     }
-    pub fn on_close(ext: Self::Ext, s: &mut us_socket_t, code: i32, reason: Option<NonNull<c_void>>) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_close(Self::wrap(s), code, reason));
+    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_close(wrap::<SSL>(s), code, reason));
     }
-    pub fn on_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_timeout(Self::wrap(s)));
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_timeout(wrap::<SSL>(s)));
     }
-    pub fn on_long_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_long_timeout(Self::wrap(s)));
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_long_timeout(wrap::<SSL>(s)));
     }
-    pub fn on_end(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_end(Self::wrap(s)));
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_end(wrap::<SSL>(s)));
     }
-    pub fn on_connect_error(ext: Self::Ext, s: &mut us_socket_t, code: i32) {
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close FIRST, then notify — same order `main`'s `configure()`
         // trampoline used. The handler may re-enter `connectInner`
         // synchronously (node:net `autoSelectFamily` falls back to the
@@ -143,29 +155,30 @@ where
         // SEMI_SOCKET straight to `close_raw`, and `close_raw` skips
         // dispatch for SEMI_SOCKET, so no `on_handshake`/`on_close` lands
         // in JS before we read `ext`/`this`.
-        // SAFETY: see `on_open` — `ext` is this socket's live ext slot.
-        let this = unsafe { *ext };
-        s.close(bun_uws::CloseCode::Failure);
-        if let Some(t) = this {
+        let this = *ext;
+        // SAFETY: `s` is a live socket passed by the trampoline.
+        unsafe { (*s).close(CloseCode::failure) };
+        if let Some(mut t) = this {
             // SAFETY: see `on_open` — unique heap owner, single-threaded dispatch.
-            swallow(unsafe { t.as_mut() }.on_connect_error(Self::wrap(s), code));
+            swallow(unsafe { t.as_mut() }.on_connect_error(wrap::<SSL>(s), code));
         }
     }
-    pub fn on_connecting_error(c: &mut ConnectingSocket, code: i32) {
-        let Some(this) = *c.ext::<Option<NonNull<T>>>() else { return };
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+        // SAFETY: `c` is a live connecting socket passed by the trampoline.
+        let Some(mut this) = (unsafe { *(*c).ext::<Option<NonNull<T>>>() }) else { return };
         // SAFETY: see `on_open` — unique heap owner, single-threaded dispatch.
         swallow(
             unsafe { this.as_mut() }
                 .on_connect_error(NewSocketHandler::<SSL>::from_connecting(c), code),
         );
     }
-    pub fn on_handshake(ext: Self::Ext, s: &mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_handshake(Self::wrap(s), ok as i32, err));
+    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, err));
     }
-    pub fn on_fd(ext: Self::Ext, s: &mut us_socket_t, fd: c_int) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(unsafe { this.as_mut() }.on_fd(Self::wrap(s), fd));
+    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
+        let Some(mut this) = *ext else { return };
+        swallow(unsafe { this.as_mut() }.on_fd(wrap::<SSL>(s), fd));
     }
 }
 
@@ -179,54 +192,70 @@ pub type BunSocket<const SSL: bool> = PtrHandler<api::NewSocket<SSL>, SSL>;
 /// `BunSocket` above.
 pub struct BunListener<const SSL: bool>;
 
-impl<const SSL: bool> BunListener<SSL> {
+impl<const SSL: bool> VHandler for BunListener<SSL>
+where
+    api::NewSocket<SSL>: SocketEvents<SSL>,
+{
     // No `Ext` decl — owner comes from `s.group().owner(Listener)`.
+    type Ext = ();
+    const HAS_EXT: bool = false;
 
-    pub fn on_open(s: &mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        let listener = s.group().owner::<api::Listener>();
+    const HAS_ON_OPEN: bool = true;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+    const HAS_ON_HANDSHAKE: bool = true;
+
+    fn on_open_no_ext(s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+        // SAFETY: `s` is a live socket; `group()` is non-null for accepted
+        // sockets and `owner` was stashed at listen time.
+        let listener = unsafe { (*s).group().owner::<api::Listener>() };
         // on_create allocates the NewSocket, stashes it in ext, and
         // restamps kind → .bun_socket_*. Fire the user `open` handler
         // (markActive, ALPN, JS callback) before returning so the same
         // dispatch tick that accepted the fd sees an open socket — the
         // old `configure({onCreate, onOpen})` path did this in one
         // on_open call.
-        let ns = api::Listener::on_create::<SSL>(listener, NewSocketHandler::<SSL>::from(s));
-        swallow(ns.on_open(NewSocketHandler::<SSL>::from(s)));
+        let ns = api::Listener::on_create::<SSL>(unsafe { &mut *listener }, wrap::<SSL>(s));
+        // SAFETY: `on_create` returns a freshly-boxed `NewSocket`.
+        swallow(unsafe { (*ns).on_open(wrap::<SSL>(s)) });
     }
     // Accepted sockets reach the remaining events as `.bun_socket_*` once
     // on_create has restamped them; if anything fires before that, route to
     // the freshly stashed NewSocket.
-    pub fn on_close(s: &mut us_socket_t, code: i32, reason: Option<NonNull<c_void>>) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            // SAFETY (applies to every `.as_mut()` in this impl): the ext slot
-            // holds the unique heap `NewSocket` stashed by `on_create`; dispatch
-            // is single-threaded so no aliasing `&mut` exists.
-            swallow(unsafe { ns.as_mut() }.on_close(NewSocketHandler::<SSL>::from(s), code, reason));
+    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        // SAFETY (applies to every `(*s).ext` / `.as_mut()` in this impl): `s`
+        // is live; the ext slot holds the unique heap `NewSocket` stashed by
+        // `on_create`; dispatch is single-threaded so no aliasing `&mut`.
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_close(wrap::<SSL>(s), code, reason));
         }
     }
-    pub fn on_data(s: &mut us_socket_t, data: &[u8]) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            swallow(unsafe { ns.as_mut() }.on_data(NewSocketHandler::<SSL>::from(s), data));
+    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_data(wrap::<SSL>(s), data));
         }
     }
-    pub fn on_writable(s: &mut us_socket_t) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            swallow(unsafe { ns.as_mut() }.on_writable(NewSocketHandler::<SSL>::from(s)));
+    fn on_writable_no_ext(s: *mut us_socket_t) {
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_writable(wrap::<SSL>(s)));
         }
     }
-    pub fn on_end(s: &mut us_socket_t) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            swallow(unsafe { ns.as_mut() }.on_end(NewSocketHandler::<SSL>::from(s)));
+    fn on_end_no_ext(s: *mut us_socket_t) {
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_end(wrap::<SSL>(s)));
         }
     }
-    pub fn on_timeout(s: &mut us_socket_t) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            swallow(unsafe { ns.as_mut() }.on_timeout(NewSocketHandler::<SSL>::from(s)));
+    fn on_timeout_no_ext(s: *mut us_socket_t) {
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_timeout(wrap::<SSL>(s)));
         }
     }
-    pub fn on_handshake(s: &mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        if let Some(ns) = *s.ext::<Option<NonNull<api::NewSocket<SSL>>>>() {
-            swallow(unsafe { ns.as_mut() }.on_handshake(NewSocketHandler::<SSL>::from(s), ok as i32, err));
+    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+        if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
+            swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, err));
         }
     }
 }
@@ -243,7 +272,7 @@ pub trait NsSocketEvents<Owner, const SSL: bool> {
     fn on_open(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_data(_this: &mut Owner, _s: NewSocketHandler<SSL>, _data: &[u8]) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_writable(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
-    fn on_close(_this: &mut Owner, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<NonNull<c_void>>) -> bun_jsc::JsResult<()> { Ok(()) }
+    fn on_close(_this: &mut Owner, _s: NewSocketHandler<SSL>, _code: i32, _reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_long_timeout(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
     fn on_end(_this: &mut Owner, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> { Ok(()) }
@@ -256,63 +285,68 @@ pub trait NsSocketEvents<Owner, const SSL: bool> {
 
 pub struct NsHandler<Owner, H, const SSL: bool>(core::marker::PhantomData<(Owner, H)>);
 
-impl<Owner, H, const SSL: bool> NsHandler<Owner, H, SSL>
+impl<Owner, H, const SSL: bool> VHandler for NsHandler<Owner, H, SSL>
 where
-    H: NsSocketEvents<Owner, SSL>,
+    Owner: 'static,
+    H: NsSocketEvents<Owner, SSL> + 'static,
 {
-    pub type Ext = *mut Option<NonNull<Owner>>;
+    type Ext = Option<NonNull<Owner>>;
 
-    #[inline]
-    fn wrap(s: &mut us_socket_t) -> NewSocketHandler<SSL> {
-        NewSocketHandler::<SSL>::from(s)
-    }
+    const HAS_ON_OPEN: bool = true;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
+    const HAS_ON_LONG_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+    const HAS_ON_CONNECT_ERROR: bool = true;
+    const HAS_ON_CONNECTING_ERROR: bool = true;
+    const HAS_ON_HANDSHAKE: bool = true;
 
-    pub fn on_open(ext: Self::Ext, s: &mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        // SAFETY (applies to every `*ext` read in this impl): dispatcher
-        // guarantees `ext` points at this socket's calloc'd ext slot for the
-        // socket's lifetime.
-        let Some(this) = (unsafe { *ext }) else { return };
+    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         // SAFETY (applies to every `.as_mut()` in this impl): the ext slot
         // holds the unique heap owner; dispatch is single-threaded so no
         // aliasing `&mut` exists.
-        swallow(H::on_open(unsafe { this.as_mut() }, Self::wrap(s)));
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_open(unsafe { this.as_mut() }, wrap::<SSL>(s)));
     }
-    pub fn on_data(ext: Self::Ext, s: &mut us_socket_t, data: &[u8]) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_data(unsafe { this.as_mut() }, Self::wrap(s), data));
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_data(unsafe { this.as_mut() }, wrap::<SSL>(s), data));
     }
-    pub fn on_writable(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_writable(unsafe { this.as_mut() }, Self::wrap(s)));
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_writable(unsafe { this.as_mut() }, wrap::<SSL>(s)));
     }
-    pub fn on_close(ext: Self::Ext, s: &mut us_socket_t, code: i32, reason: Option<NonNull<c_void>>) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_close(unsafe { this.as_mut() }, Self::wrap(s), code, reason));
+    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_close(unsafe { this.as_mut() }, wrap::<SSL>(s), code, reason));
     }
-    pub fn on_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_timeout(unsafe { this.as_mut() }, Self::wrap(s)));
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_timeout(unsafe { this.as_mut() }, wrap::<SSL>(s)));
     }
-    pub fn on_long_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_long_timeout(unsafe { this.as_mut() }, Self::wrap(s)));
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_long_timeout(unsafe { this.as_mut() }, wrap::<SSL>(s)));
     }
-    pub fn on_end(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_end(unsafe { this.as_mut() }, Self::wrap(s)));
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_end(unsafe { this.as_mut() }, wrap::<SSL>(s)));
     }
-    pub fn on_connect_error(ext: Self::Ext, s: &mut us_socket_t, code: i32) {
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close before notify — see PtrHandler::on_connect_error.
-        // SAFETY: see `on_open` — `ext` is this socket's live ext slot.
-        let this = unsafe { *ext };
-        s.close(bun_uws::CloseCode::Failure);
-        if let Some(t) = this {
+        let this = *ext;
+        // SAFETY: `s` is a live socket passed by the trampoline.
+        unsafe { (*s).close(CloseCode::failure) };
+        if let Some(mut t) = this {
             // SAFETY: see `on_open` — unique heap owner, single-threaded dispatch.
-            swallow(H::on_connect_error(unsafe { t.as_mut() }, Self::wrap(s), code));
+            swallow(H::on_connect_error(unsafe { t.as_mut() }, wrap::<SSL>(s), code));
         }
     }
-    pub fn on_connecting_error(c: &mut ConnectingSocket, code: i32) {
-        let Some(this) = *c.ext::<Option<NonNull<Owner>>>() else { return };
+    fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
+        // SAFETY: `c` is a live connecting socket passed by the trampoline.
+        let Some(mut this) = (unsafe { *(*c).ext::<Option<NonNull<Owner>>>() }) else { return };
         swallow(H::on_connect_error(
             // SAFETY: see `on_open` — unique heap owner, single-threaded dispatch.
             unsafe { this.as_mut() },
@@ -320,9 +354,9 @@ where
             code,
         ));
     }
-    pub fn on_handshake(ext: Self::Ext, s: &mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        swallow(H::on_handshake(unsafe { this.as_mut() }, Self::wrap(s), ok as i32, err));
+    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+        let Some(mut this) = *ext else { return };
+        swallow(H::on_handshake(unsafe { this.as_mut() }, wrap::<SSL>(s), ok as i32, err));
     }
 }
 
@@ -337,93 +371,91 @@ where
 // type we forgot to name.
 pub struct HTTPClient<const SSL: bool>;
 
-impl<const SSL: bool> HTTPClient<SSL> {
-    pub type Ext = *mut Option<NonNull<c_void>>;
+// Zig's `fwd` helper used `@field` + `@call` to dispatch by name; Rust has no
+// field-by-string reflection, so each event is written out. The
+// `@TypeOf(@field(H, name)) != @TypeOf(null)` guard becomes simply not setting
+// `HAS_ON_*` for events the upstream `Handler<SSL>` doesn't define.
+type HttpH<const SSL: bool> = bun_http::http_context::Handler<SSL>;
 
-    #[inline]
-    fn wrap(s: &mut us_socket_t) -> NewSocketHandler<SSL> {
-        NewSocketHandler::<SSL>::from(s)
-    }
+impl<const SSL: bool> VHandler for HTTPClient<SSL> {
+    type Ext = Option<NonNull<c_void>>;
 
-    // Zig's `fwd` helper used `@field` + `@call` to dispatch by name; Rust has
-    // no field-by-string reflection, so each event is written out. The
-    // `@TypeOf(@field(H, name)) != @TypeOf(null)` guard becomes the trait's
-    // default no-op (see NsSocketEvents::on_handshake note).
-    // TODO(port): `bun_http::NewHTTPContext<SSL>::Handler` must impl a trait
-    // matching these free-fn signatures (first arg `*mut c_void` = packed
-    // ActiveSocket word). Phase B wires that.
-    type H = bun_http::NewHTTPContext<SSL>::Handler;
+    const HAS_ON_OPEN: bool = true;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_LONG_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+    const HAS_ON_CONNECT_ERROR: bool = true;
+    const HAS_ON_CONNECTING_ERROR: bool = true;
+    const HAS_ON_HANDSHAKE: bool = true;
 
-    pub fn on_open(ext: Self::Ext, s: &mut us_socket_t, _is_client: bool, _ip: &[u8]) {
-        // SAFETY (applies to every `*ext` read in this impl): dispatcher
-        // guarantees `ext` points at this socket's calloc'd ext slot for the
-        // socket's lifetime. The word read out is a packed `ActiveSocket`
-        // tagged-pointer value, not dereferenced here.
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_open(owner.as_ptr(), Self::wrap(s)));
+    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
+        // The word read out is a packed `ActiveSocket` tagged-pointer value,
+        // not dereferenced here.
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_open(owner.as_ptr(), wrap::<SSL>(s)));
     }
-    pub fn on_data(ext: Self::Ext, s: &mut us_socket_t, data: &[u8]) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_data(owner.as_ptr(), Self::wrap(s), data));
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_data(owner.as_ptr(), wrap::<SSL>(s), data));
     }
-    pub fn on_writable(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_writable(owner.as_ptr(), Self::wrap(s)));
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_writable(owner.as_ptr(), wrap::<SSL>(s)));
     }
-    pub fn on_close(ext: Self::Ext, s: &mut us_socket_t, code: i32, reason: Option<NonNull<c_void>>) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_close(owner.as_ptr(), Self::wrap(s), code, reason));
+    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_close(owner.as_ptr(), wrap::<SSL>(s), code, reason));
     }
-    pub fn on_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_timeout(owner.as_ptr(), Self::wrap(s)));
+    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_long_timeout(owner.as_ptr(), wrap::<SSL>(s)));
     }
-    pub fn on_long_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_long_timeout(owner.as_ptr(), Self::wrap(s)));
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_end(owner.as_ptr(), wrap::<SSL>(s)));
     }
-    pub fn on_end(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_end(owner.as_ptr(), Self::wrap(s)));
-    }
-    pub fn on_connect_error(ext: Self::Ext, s: &mut us_socket_t, code: i32) {
+    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
         // Close before notify — see PtrHandler::on_connect_error. SEMI_SOCKET
         // close skips dispatch, so the tagged owner survives the close.
-        // SAFETY: see `on_open` — `ext` is this socket's live ext slot.
-        let owner = unsafe { *ext };
-        s.close(bun_uws::CloseCode::Failure);
+        let owner = *ext;
+        // SAFETY: `s` is a live socket passed by the trampoline.
+        unsafe { (*s).close(CloseCode::failure) };
         let Some(owner) = owner else { return };
-        swallow(Self::H::on_connect_error(owner.as_ptr(), Self::wrap(s), code));
+        swallow(HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code));
     }
-    pub fn on_connecting_error(cs: &mut ConnectingSocket, code: i32) {
-        let Some(owner) = *cs.ext::<Option<NonNull<c_void>>>() else { return };
-        swallow(Self::H::on_connect_error(
+    fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
+        // SAFETY: `cs` is a live connecting socket passed by the trampoline.
+        let Some(owner) = (unsafe { *(*cs).ext::<Option<NonNull<c_void>>>() }) else { return };
+        swallow(HttpH::<SSL>::on_connect_error(
             owner.as_ptr(),
             NewSocketHandler::<SSL>::from_connecting(cs),
             code,
         ));
     }
-    pub fn on_handshake(ext: Self::Ext, s: &mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        let Some(owner) = (unsafe { *ext }) else { return };
-        swallow(Self::H::on_handshake(owner.as_ptr(), Self::wrap(s), ok as i32, err));
+    fn on_handshake(ext: &mut Self::Ext, s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+        let Some(owner) = *ext else { return };
+        swallow(HttpH::<SSL>::on_handshake(owner.as_ptr(), wrap::<SSL>(s), ok as i32, err));
     }
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
 pub type WSUpgrade<const SSL: bool> =
-    PtrHandler<websocket_upgrade_client::NewHTTPUpgradeClient<SSL>, SSL>;
-pub type WSClient<const SSL: bool> = PtrHandler<websocket_client::NewWebSocketClient<SSL>, SSL>;
+    PtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
+pub type WSClient<const SSL: bool> = PtrHandler<websocket_client::WebSocket<SSL>, SSL>;
 
 // ── SQL drivers ─────────────────────────────────────────────────────────────
-// TODO(port): `bun.api.Postgres` resolved via `bun.jsc.API` in Zig; confirm
-// crate path once `crate::api::postgres` is ported.
 pub type Postgres<const SSL: bool> = NsHandler<
-    crate::api::postgres::PostgresSQLConnection,
-    crate::api::postgres::PostgresSQLConnection::SocketHandler<SSL>,
+    postgres::PostgresSQLConnection,
+    postgres::postgres_sql_connection::SocketHandler<SSL>,
     SSL,
 >;
-pub type MySQL<const SSL: bool> =
-    NsHandler<mysql::MySQLConnection, mysql::MySQLConnection::SocketHandler<SSL>, SSL>;
+pub type MySQL<const SSL: bool> = NsHandler<
+    mysql::js_my_sql_connection::JSMySQLConnection,
+    mysql::js_my_sql_connection::SocketHandler<SSL>,
+    SSL,
+>;
 pub type Valkey<const SSL: bool> =
     NsHandler<js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>, SSL>;
 
@@ -433,41 +465,47 @@ pub type Valkey<const SSL: bool> =
 // methods on SendQueue, so we adapt manually instead of via PtrHandler.
 pub struct SpawnIPC;
 
-impl SpawnIPC {
-    type H = IPC::IPCHandlers::PosixSocket;
-    type S = NewSocketHandler<false>;
-    pub type Ext = *mut Option<NonNull<IPC::SendQueue>>;
+use IPC::IPCHandlers::PosixSocket as IpcH;
+type IpcS = NewSocketHandler<false>;
 
-    pub fn on_open(_ext: Self::Ext, _s: &mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
-    pub fn on_data(ext: Self::Ext, s: &mut us_socket_t, data: &[u8]) {
-        // SAFETY (applies to every `*ext` read in this impl): dispatcher
-        // guarantees `ext` points at this socket's calloc'd ext slot for the
-        // socket's lifetime.
-        let Some(this) = (unsafe { *ext }) else { return };
+impl VHandler for SpawnIPC {
+    type Ext = Option<NonNull<IPC::SendQueue>>;
+
+    const HAS_ON_OPEN: bool = true;
+    const HAS_ON_DATA: bool = true;
+    const HAS_ON_FD: bool = true;
+    const HAS_ON_WRITABLE: bool = true;
+    const HAS_ON_CLOSE: bool = true;
+    const HAS_ON_TIMEOUT: bool = true;
+    const HAS_ON_END: bool = true;
+
+    fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {}
+    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
         // SAFETY (applies to every `.as_mut()` in this impl): the ext slot
         // holds the unique heap `SendQueue`; dispatch is single-threaded so no
         // aliasing `&mut` exists.
-        Self::H::on_data(unsafe { this.as_mut() }, Self::S::from(s), data);
+        let Some(mut this) = *ext else { return };
+        IpcH::on_data(unsafe { this.as_mut() }, IpcS::from(s), data);
     }
-    pub fn on_fd(ext: Self::Ext, s: &mut us_socket_t, fd: c_int) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        Self::H::on_fd(unsafe { this.as_mut() }, Self::S::from(s), fd);
+    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
+        let Some(mut this) = *ext else { return };
+        IpcH::on_fd(unsafe { this.as_mut() }, IpcS::from(s), fd);
     }
-    pub fn on_writable(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        Self::H::on_writable(unsafe { this.as_mut() }, Self::S::from(s));
+    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        IpcH::on_writable(unsafe { this.as_mut() }, IpcS::from(s));
     }
-    pub fn on_close(ext: Self::Ext, s: &mut us_socket_t, code: i32, reason: Option<NonNull<c_void>>) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        Self::H::on_close(unsafe { this.as_mut() }, Self::S::from(s), code, reason);
+    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+        let Some(mut this) = *ext else { return };
+        IpcH::on_close(unsafe { this.as_mut() }, IpcS::from(s), code, reason);
     }
-    pub fn on_timeout(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        Self::H::on_timeout(unsafe { this.as_mut() }, Self::S::from(s));
+    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        IpcH::on_timeout(unsafe { this.as_mut() }, IpcS::from(s));
     }
-    pub fn on_end(ext: Self::Ext, s: &mut us_socket_t) {
-        let Some(this) = (unsafe { *ext }) else { return };
-        Self::H::on_end(unsafe { this.as_mut() }, Self::S::from(s));
+    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+        let Some(mut this) = *ext else { return };
+        IpcH::on_end(unsafe { this.as_mut() }, IpcS::from(s));
     }
 }
 
@@ -475,6 +513,6 @@ impl SpawnIPC {
 // PORT STATUS
 //   source:     src/runtime/socket/uws_handlers.zig (330 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      @hasDecl/@typeInfo reflection → SocketEvents/NsSocketEvents traits with default no-ops; inherent associated types (`type Ext = ...` in impl) need feature(inherent_associated_types) or hoisting in Phase B; cross-crate paths (api::, bun_http::NewHTTPContext::Handler) are best-guess; handler params take `&mut us_socket_t` per type-map — revert to raw `*mut` only if Phase B dispatcher must register them as `extern "C"` callbacks.
+//   todos:      1
+//   notes:      @hasDecl/@typeInfo reflection → SocketEvents/NsSocketEvents traits with default no-ops; inherent `pub type Ext = ...` hoisted into vtable::Handler trait impls (stable Rust); cross-crate paths resolved (http_context::Handler, postgres_sql_connection::SocketHandler, js_my_sql_connection::SocketHandler).
 // ──────────────────────────────────────────────────────────────────────────

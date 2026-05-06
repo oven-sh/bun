@@ -63,7 +63,7 @@ impl Default for Crypto {
 
 fn throw_invalid_parameter(global: &JSGlobalObject) -> JsError {
     global
-        .ERR(bun_jsc::ErrorCode::CRYPTO_SCRYPT_INVALID_PARAMETER, format_args!("Invalid scrypt parameters"))
+        .err(bun_jsc::ErrorCode::CRYPTO_SCRYPT_INVALID_PARAMETER, format_args!("Invalid scrypt parameters"))
         .throw()
 }
 
@@ -75,7 +75,7 @@ fn throw_invalid_params(global: &JSGlobalObject, args: core::fmt::Arguments<'_>)
     // SAFETY: ERR_clear_error has no preconditions.
     unsafe { bun_boringssl_sys::ERR_clear_error() };
     global
-        .ERR(bun_jsc::ErrorCode::CRYPTO_INVALID_SCRYPT_PARAMS, args)
+        .err(bun_jsc::ErrorCode::CRYPTO_INVALID_SCRYPT_PARAMS, args)
         .throw()
 }
 

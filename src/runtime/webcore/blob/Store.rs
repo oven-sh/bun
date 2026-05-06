@@ -463,6 +463,13 @@ pub enum Data {
     S3(S3),
 }
 
+impl Data {
+    /// Panics if not a `File` (Zig: `data.file` union access).
+    pub fn as_file(&self) -> &File {
+        match self { Self::File(f) => f, _ => unreachable!("Store.data is not .file") }
+    }
+}
+
 #[repr(u8)]
 pub enum SerializeTag {
     File = 0,
@@ -471,6 +478,7 @@ pub enum SerializeTag {
 }
 
 /// A blob store that references a file on disk.
+#[derive(Clone)]
 pub struct File {
     pub pathlike: PathOrFileDescriptor,
     pub mime_type: MimeType,

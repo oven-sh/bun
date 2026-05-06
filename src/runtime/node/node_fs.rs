@@ -4621,7 +4621,17 @@ impl NodeFS {
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
         let position = args.position.unwrap();
-        match Syscall::pwritev(args.fd, args.buffers.buffers.as_slice(), position as i64) {
+        // node_fs.zig:4511 — `@ptrCast(args.buffers.buffers.items)`: `PlatformIoVec`
+        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
+        // kernel never writes through `iov_base` for pwritev(2).
+        // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
+        let vecs: &[sys::PlatformIoVecConst] = unsafe {
+            core::slice::from_raw_parts(
+                args.buffers.buffers.as_ptr() as *const sys::PlatformIoVecConst,
+                args.buffers.buffers.len(),
+            )
+        };
+        match Syscall::pwritev(args.fd, vecs, position as i64) {
             Maybe::Err(err) => Maybe::Err(err),
             Maybe::Ok(amt) => Maybe::Ok(ret::Write { bytes_written: amt as u64 }),
         }

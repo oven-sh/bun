@@ -3306,15 +3306,24 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
-            vm.event_loop().enter();
-            let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
+            // SAFETY: event_loop() returns a live raw ptr.
+            let loop_ = vm.event_loop();
+            unsafe { (*loop_).enter() };
+            let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
 
+            // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
+            // wrapper; ownership of `chunk` stays with the caller.
+            let borrowed = core::mem::ManuallyDrop::into_inner(unsafe {
+                ByteList::from_borrowed_slice_dangerous(chunk)
+            });
             if !last {
-                let _ = readable.ptr.bytes().on_data(
-                    WebCore::streams::Result::Temporary(ByteList::from_borrowed_slice_dangerous(
-                        chunk,
-                    )),
-                ); // TODO: properly propagate exception upwards
+                let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
+                    return;
+                };
+                // SAFETY: Source::Bytes stores a live *mut ByteStream
+                let _ = unsafe { (*bytes_ptr).on_data(
+                    WebCore::streams::Result::Temporary(borrowed),
+                ) }; // TODO: properly propagate exception upwards
             } else {
                 let mut strong = core::mem::take(&mut this.request_body_readable_stream_ref);
                 let _strong_guard = scopeguard::guard((), |_| strong.deinit());
@@ -3325,11 +3334,13 @@ where
                 }
 
                 readable.value.ensure_still_alive();
-                let _ = readable.ptr.bytes().on_data(
-                    WebCore::streams::Result::TemporaryAndDone(
-                        ByteList::from_borrowed_slice_dangerous(chunk),
-                    ),
-                ); // TODO: properly propagate exception upwards
+                let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
+                    return;
+                };
+                // SAFETY: Source::Bytes stores a live *mut ByteStream
+                let _ = unsafe { (*bytes_ptr).on_data(
+                    WebCore::streams::Result::TemporaryAndDone(borrowed),
+                ) }; // TODO: properly propagate exception upwards
             }
 
             return;

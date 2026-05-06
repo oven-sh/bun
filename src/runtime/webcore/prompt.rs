@@ -381,7 +381,7 @@ pub mod prompt {
             // Note: Zig returned `.null` on OOM here; Rust `reserve` aborts on OOM.
 
             if let Err(e2) =
-                read_until_delimiter_array_list_append_assume_capacity(&mut reader, &mut input, b'\n', 4096)
+                read_until_delimiter_array_list_append_assume_capacity(&mut *reader, &mut input, b'\n', 4096)
             {
                 if !matches!(e2, ReadError::StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
@@ -389,7 +389,7 @@ pub mod prompt {
                     return Ok(JSValue::NULL);
                 }
 
-                if read_until_delimiter_array_list_infinity(&mut reader, &mut input, b'\n').is_err() {
+                if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n').is_err() {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
                     return Ok(JSValue::NULL);

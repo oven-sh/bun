@@ -1450,7 +1450,20 @@ impl ValkeyClient {
         self.write_buffer.write(data)?;
         Ok(data.len())
     }
+}
 
+// `Command::write` takes `&mut impl bun_io::Write`; route through the same
+// `write_buffer` that the Zig `GenericWriter` adaptor wrapped.
+impl bun_io::Write for ValkeyClient {
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.write_buffer
+            .write(buf)
+            .map_err(bun_core::Error::from)?;
+        Ok(())
+    }
+}
+
+impl ValkeyClient {
     /// Increment reference count
     pub fn ref_(&mut self) {
         self.parent().ref_();

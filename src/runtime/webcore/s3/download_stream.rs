@@ -40,6 +40,41 @@ pub struct S3HttpDownloadStreamingTask {
     pub proxy_url: Box<[u8]>,
 }
 
+// Hot-dispatch tag for `ConcurrentTask::from` (Zig: variant of `jsc.Task` TaggedPointerUnion).
+impl Taskable for S3HttpDownloadStreamingTask {
+    const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
+}
+
+impl Default for S3HttpDownloadStreamingTask {
+    fn default() -> Self {
+        // PORT NOTE: only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
+        // are observed via this path; the rest are placeholders that the caller (client.rs
+        // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
+        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
+        Self {
+            // SAFETY: never read — fully overwritten by `AsyncHTTP::init` before first use.
+            http: unsafe { core::mem::zeroed() },
+            vm: core::ptr::null_mut(),
+            sign_result: SignResult::default(),
+            headers: Headers::default(),
+            callback_context: NonNull::dangling(),
+            callback: |_, _, _, _| {},
+            range: None,
+            proxy_url: Box::default(),
+            // — Zig field defaults —
+            has_schedule_callback: AtomicBool::new(false),
+            signal_store: bun_http::signals::Store::default(),
+            signals: Signals::default(),
+            poll_ref: KeepAlive::default(),
+            response_buffer: MutableString::default(),
+            mutex: Mutex::default(),
+            reported_response_buffer: MutableString::default(),
+            state: AtomicU64::new(State::default().0),
+            concurrent_task: ConcurrentTask::default(),
+        }
+    }
+}
+
 impl S3HttpDownloadStreamingTask {
     // Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(init: Self) -> Box<Self> {

@@ -244,7 +244,7 @@ impl Resolver {
     pub fn check_timeouts(
         &mut self,
         _now: &bun_event_loop::EventLoopTimer::Timespec,
-        _vm: &bun_jsc::VirtualMachine,
+        _vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         todo!("blocked_on: crate::dns_jsc::dns_body::Resolver::check_timeouts")
     }

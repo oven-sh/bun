@@ -2204,7 +2204,7 @@ impl AttributeIterator {
             &done_label,
             &value_label,
             JSValue::FALSE,
-            bun_string_jsc::to_js_array(
+            bun_string_to_js_array(
                 global_object,
                 &[html_string_to_bun_string(name), html_string_to_bun_string(value)],
             )?,

@@ -737,9 +737,9 @@ pub fn js_assert_settings(global_object: &JSGlobalObject, callframe: &CallFrame)
 #[bun_jsc::host_fn]
 pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let mut settings = FullSettingsPayload::default();
-    let args_list = callframe.arguments_old(1);
+    let args_list = callframe.arguments_old::<1>();
 
-    if args_list.len() > 0 && !args_list.ptr[0].is_empty_or_undefined_or_null() {
+    if args_list.len > 0 && !args_list.ptr[0].is_empty_or_undefined_or_null() {
         let options = args_list.ptr[0];
 
         if !options.is_object() {

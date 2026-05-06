@@ -197,9 +197,10 @@ impl MimallocArena {
 
     pub fn borrow(&self) -> Borrowed<'_> {
         #[cfg(feature = "ci_assert")]
-        // SAFETY: Box guarantees a non-null, stable address for the DebugHeap for the
-        // lifetime of `self`.
-        { Borrowed { heap: unsafe { NonNull::new_unchecked(Box::as_ptr(&self.heap) as *mut DebugHeap) }, _lt: PhantomData } }
+        // Box guarantees a non-null, stable address for the DebugHeap for the lifetime of
+        // `self`. `Borrowed` only ever *reads* DebugHeap fields (`.inner`, `.thread_lock`),
+        // so shared-borrow provenance via `NonNull::from(&T)` is sound here.
+        { Borrowed { heap: NonNull::from(&*self.heap), _lt: PhantomData } }
         #[cfg(not(feature = "ci_assert"))]
         { Borrowed { heap: self.heap, _lt: PhantomData } }
     }

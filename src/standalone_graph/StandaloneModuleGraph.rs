@@ -438,7 +438,20 @@ impl StandaloneModuleGraph {
             });
         }
 
-        let modules_list_bytes = slice_to(raw_bytes, offsets.modules_ptr);
+        // Zig's `raw_bytes: []u8` aliases freely — this function hands out read-only subslices
+        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
+        // mutates in place) into the same allocation. In Rust we must not derive the writable
+        // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB).
+        // Decay the `&mut` to a raw pointer once and derive every view from it; the read-only
+        // and writable subranges are disjoint by construction in `to_bytes`.
+        let raw_len = raw_bytes.len();
+        let raw_ptr: *mut u8 = raw_bytes.as_mut_ptr();
+        // SAFETY: `raw_ptr`/`raw_len` cover a live 'static allocation; `raw_bytes` is not used
+        // again, so this shared view and the `*mut` subslices below all share the raw pointer's
+        // provenance.
+        let bytes: &'static [u8] = unsafe { core::slice::from_raw_parts(raw_ptr, raw_len) };
+
+        let modules_list_bytes = slice_to(bytes, offsets.modules_ptr);
         // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
         // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
@@ -460,33 +473,35 @@ impl StandaloneModuleGraph {
             let module = &module;
             // PERF(port): was putAssumeCapacity
             let _ = modules.put(
-                slice_to_z(raw_bytes, module.name).as_bytes(),
+                slice_to_z(bytes, module.name).as_bytes(),
                 File {
-                    name: slice_to_z(raw_bytes, module.name).as_bytes(),
+                    name: slice_to_z(bytes, module.name).as_bytes(),
                     loader: module.loader,
-                    contents: slice_to_z(raw_bytes, module.contents),
+                    contents: slice_to_z(bytes, module.contents),
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
                             // TODO(port): @alignCast — alignment of source map bytes
-                            bytes: slice_to(raw_bytes, module.sourcemap),
+                            bytes: slice_to(bytes, module.sourcemap),
                         })
                     } else {
                         LazySourceMap::None
                     },
                     bytecode: if module.bytecode.length > 0 {
-                        // SAFETY: @constCast — section bytes are writable at runtime; JSC mutates bytecode in place.
-                        slice_to(raw_bytes, module.bytecode) as *const [u8] as *mut [u8]
+                        // SAFETY: section bytes are a writable 'static allocation; JSC mutates
+                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
+                        // disjoint from every read-only subslice handed out above.
+                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
                     } else {
                         &mut [] as *mut [u8]
                     },
                     module_info: if module.module_info.length > 0 {
-                        // SAFETY: @constCast — see bytecode above.
-                        slice_to(raw_bytes, module.module_info) as *const [u8] as *mut [u8]
+                        // SAFETY: see bytecode above.
+                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
                     } else {
                         &mut [] as *mut [u8]
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
-                        slice_to_z(raw_bytes, module.bytecode_origin_path).as_bytes()
+                        slice_to_z(bytes, module.bytecode_origin_path).as_bytes()
                     } else {
                         b""
                     },

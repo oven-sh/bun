@@ -171,8 +171,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     }
 
     if let Some(notice) = res.headers.get_if_other_is_absent(b"npm-notice", b"x-local-cache") {
-        Output::print_error("\n", format_args!(""));
-        Output::note("{}", (bstr::BStr::new(notice),));
+        Output::print_error("\n");
+        Output::note(format_args!("{}", bstr::BStr::new(notice)));
         Output::flush();
     }
 
@@ -220,22 +220,21 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         Some(error.to_vec())
     };
 
-    Output::pretty_errorln(
+    Output::pretty_errorln(format_args!(
         "\n<red>{}<r>{}{}: {}\n",
-        (
-            res.status_code,
-            if !res.status.is_empty() { " " } else { "" },
-            bstr::BStr::new(&res.status),
-            bun_fmt::redacted_npm_url(&req.url.href),
-        ),
-    );
+        res.status_code,
+        if !res.status.is_empty() { " " } else { "" },
+        bstr::BStr::new(&res.status),
+        bun_fmt::redacted_npm_url(&req.url.href),
+    ));
 
     if res.status_code == 404 && pkg_id.is_some() {
         let (package_name, package_version) = pkg_id.unwrap();
-        Output::pretty_errorln(
+        Output::pretty_errorln(format_args!(
             "\n - '{}@{}' does not exist in this registry",
-            (bstr::BStr::new(package_name), bstr::BStr::new(package_version)),
-        );
+            bstr::BStr::new(package_name),
+            bstr::BStr::new(package_version),
+        ));
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
             if res.status_code == 401
@@ -244,11 +243,11 @@ pub fn response_error<const OTP_RESPONSE: bool>(
                     b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
                 )
             {
-                Output::pretty_errorln("\n - Received invalid OTP", ());
+                Output::pretty_errorln("\n - Received invalid OTP");
                 Global::crash();
             }
         }
-        Output::pretty_errorln("\n - {}", (bstr::BStr::new(msg),));
+        Output::pretty_errorln(format_args!("\n - {}", bstr::BStr::new(msg)));
     }
 
     Global::crash();
@@ -362,7 +361,7 @@ pub mod registry {
                             // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
                             // Bearer Token
                             if segment == b"_authToken" {
-                                registry.token = value;
+                                registry.token = value.into();
                                 url.pathname = pathname.into();
                                 url.path = pathname.into();
                                 break 'outer;
@@ -376,12 +375,12 @@ pub mod registry {
                             }
 
                             if segment == b"username" {
-                                registry.username = value;
+                                registry.username = value.into();
                                 continue;
                             }
 
                             if segment == b"_password" {
-                                registry.password = value;
+                                registry.password = value.into();
                                 continue;
                             }
                         }
@@ -397,7 +396,7 @@ pub mod registry {
                                     // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
                                     // Bearer Token
                                     if segment == b"_authToken" {
-                                        registry.token = value;
+                                        registry.token = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname.into();
@@ -415,7 +414,7 @@ pub mod registry {
                                     }
 
                                     if segment == b"username" {
-                                        registry.username = value;
+                                        registry.username = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname.into();
@@ -424,7 +423,7 @@ pub mod registry {
                                     }
 
                                     if segment == b"_password" {
-                                        registry.password = value;
+                                        registry.password = value.into();
                                         pathname = &pathname[..last_slash as usize + 1];
                                         needs_normalize = true;
                                         url.pathname = pathname.into();
@@ -1411,7 +1410,6 @@ pub mod package_manifest {
                                     // This is not an error. Nor is it really a warning.
                                     Output::note(
                                         "Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.",
-                                        (),
                                     );
                                     Output::flush();
                                 }
@@ -1491,7 +1489,9 @@ pub mod package_manifest {
 
                         if matches!(
                             err.get_errno(),
-                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::EOPNOTSUPP
+                            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux/Windows
+                            // SystemErrno spells it ENOTSUP (same value).
+                            bun_sys::Errno::EEXIST | bun_sys::Errno::ENOTEMPTY | bun_sys::Errno::ENOTSUP
                         ) {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
@@ -1562,13 +1562,11 @@ pub mod package_manifest {
                         save_task.cache_dir,
                     ) {
                         if PackageManager::verbose_install() {
-                            Output::warn(
+                            Output::warn(format_args!(
                                 "Error caching manifest for {}: {}",
-                                (
-                                    bstr::BStr::new(save_task.manifest.name()),
-                                    err.name(),
-                                ),
-                            );
+                                bstr::BStr::new(save_task.manifest.name()),
+                                err.name(),
+                            ));
                             Output::flush();
                         }
                     }

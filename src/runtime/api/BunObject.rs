@@ -483,6 +483,22 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
+/// `bun.String.toJSArray` — the un-gated `bun_jsc::bun_string_jsc` module lacks
+/// `to_js_array`; declare the C++ symbol locally (matches src/jsc/bun_string_jsc.rs:111).
+#[inline]
+fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn BunString__createArray(
+            global: *mut JSGlobalObject,
+            ptr: *const BunString,
+            len: usize,
+        ) -> JSValue;
+    }
+    // SAFETY: `array` ptr/len from a live slice; `global` borrowed for call duration.
+    let v = unsafe { BunString__createArray(global as *const _ as *mut _, array.as_ptr(), array.len()) };
+    if global.has_exception() { Err(jsc::JsError::Thrown) } else { Ok(v) }
+}
+
 // ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
 // `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the
 // inherent JSC conversion methods live on the *separate* `bun_jsc::zig_string::
@@ -895,7 +911,7 @@ pub fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, &[brace_str]);
+        return bun_string_to_js_array(global, &[brace_str]);
     }
 
     // Non-AST crate: result containers use plain Vec (arena is only for Braces::* internals).
@@ -924,7 +940,7 @@ pub fn braces(
         out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
     }
 
-    bun_string_jsc::to_js_array(global, &out_strings[..])
+    bun_string_to_js_array(global, &out_strings[..])
 }
 
 #[bun_jsc::host_fn]
@@ -952,11 +968,11 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         return Ok(JSValue::ZERO);
     }
 
-    if bin_str.len() >= MAX_PATH_BYTES {
+    if bin_str.slice().len() >= MAX_PATH_BYTES {
         return Err(global_this.throw("bin path is too long"));
     }
 
-    if bin_str.len() == 0 {
+    if bin_str.slice().is_empty() {
         return Ok(JSValue::NULL);
     }
 
@@ -1399,7 +1415,7 @@ pub fn get_public_path_with_asset_prefix(
         // PORT NOTE: `FileSystem::relative_platform` is not yet on the
         // upstream `bun_bundler::bun_fs::FileSystem`; fall through to the
         // stateless `bun_paths::relative` (matches the un-gated impl above).
-        bun_paths::relative(dir, to)
+        bun_paths::resolve_path::relative(dir, to)
     };
     if origin.is_absolute() {
         if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {

@@ -539,7 +539,7 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
     // SAFETY: valid out-pointers
     let err = unsafe { libuv::uv_cpu_info(&mut cpu_infos, &mut count) };
     if err != 0 {
-        return Err(bun_core::err!("NoProcessorInfo"));
+        return Err(OsError::Any);
     }
     let _free = scopeguard::guard((), |_| {
         // SAFETY: returned by uv_cpu_info

@@ -90,7 +90,7 @@ impl Cmd {
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
                     // SAFETY: `n.assigns` is an arena slice; see above.
-                    let has_assigns = unsafe { !(*n.assigns).is_empty() };
+                    let has_assigns = unsafe { !(&*n.assigns).is_empty() };
                     if has_assigns {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let io = interp.as_cmd(this).io.clone();

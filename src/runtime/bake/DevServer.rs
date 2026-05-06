@@ -5905,7 +5905,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         Ok(())
     }
 
-    fn to_dev_response(&mut self) -> DevResponse {
+    fn to_dev_response(&mut self) -> DevResponse<'_> {
         DevResponse::Promise(PromiseResponse {
             promise: self.ensure_promise(),
             global: self.global,
@@ -5926,10 +5926,10 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     fn on_plugin_error(&mut self) -> JsResult<()> {
         PromiseEnsureRouteBundledCtx::on_plugin_error(self)
     }
-    fn to_dev_response(&mut self) -> DevResponse {
+    fn to_dev_response(&mut self) -> DevResponse<'_> {
         PromiseEnsureRouteBundledCtx::to_dev_response(self)
     }
-    fn dev(&mut self) -> &mut DevServer {
+    fn dev(&mut self) -> &mut DevServer<'_> {
         // SAFETY: lifetime erased to satisfy the trait's invariant signature;
         // borrow does not outlive `self`.
         unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }

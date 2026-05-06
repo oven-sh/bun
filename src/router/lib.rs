@@ -949,13 +949,15 @@ impl<'a> RouteLoader<'a> {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
-            // SAFETY: single iterator over `entries` for this scan; no other
-            // `&mut Entry` into this directory is live (serialized via
-            // `RealFS.entries_mutex`). See `DirEntry::iter` `# Safety`.
-            let mut iter = unsafe { entries.iter() };
-            'outer: while let Some(entry) = iter.next() {
-                let entry: &mut Fs::Entry = entry;
-                if entry.base()[0] == b'.' {
+            let mut iter = entries.iter();
+            'outer: while let Some(entry_ptr) = iter.next() {
+                // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
+                // `*Entry` map value type, fs.zig:117). Reborrow locally for
+                // each access so `&` reads and the `&mut` `kind()` call do not
+                // overlap. Single iterator active for this scan; serialized via
+                // `RealFS.entries_mutex`.
+                // SAFETY: EntryStore-owned, valid for process lifetime.
+                if unsafe { &*entry_ptr }.base()[0] == b'.' {
                     continue 'outer;
                 }
 
@@ -963,15 +965,15 @@ impl<'a> RouteLoader<'a> {
                 // resolver's fs `Implementation` through — `Entry.kind` derefs
                 // it to lazily stat when `need_stat` is true, so null would be
                 // a latent crash / silent route-drop once the stub forwards it.
-                //
-                // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378);
-                // the resolver collapses every stat result to one of those two
-                // before this point. The bun_sys stub currently returns the wide
-                // `FileKind`, so map it: Directory → dir, everything else → file.
-                // No `_ => {}` swallow arm — symlinked/unknown route files must
-                // reach the file branch, not be silently dropped.
-                match entry.kind(resolver.fs_impl(), false) {
-                    bun_sys::EntryKind::Directory => {
+                // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
+                // SAFETY: no other live borrow of `*entry_ptr` here.
+                let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
+                // SAFETY: shared read-only borrow for the match arms; the only
+                // subsequent mutation is via `Route::parse` which takes the raw
+                // pointer and reborrows internally.
+                let entry: &Fs::Entry = unsafe { &*entry_ptr };
+                match kind {
+                    bun_sys::fs::FsEntryKind::Dir => {
                         for banned_dir in BANNED_DIRS.iter() {
                             if entry.base() == *banned_dir {
                                 continue 'outer;
@@ -988,8 +990,7 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    // .file — see note above re: 2-variant collapse.
-                    _ => {
+                    bun_sys::fs::FsEntryKind::File => {
                         let extname = bun_paths::extension(entry.base());
                         // exclude "." or ""
                         if extname.len() < 2 {
@@ -1014,7 +1015,7 @@ impl<'a> RouteLoader<'a> {
                                 if let Some(route) = Route::parse(
                                     entry.base(),
                                     extname,
-                                    entry,
+                                    entry_ptr,
                                     self.log,
                                     public_dir,
                                     self.route_dirname_len,

@@ -272,8 +272,6 @@ impl<R> StyleRule<R> {
                 unused = true;
             }
         }
-        #[cfg(any())]
-        let _ = parent_is_unused;
 
         // TODO: this
         // let pure_css_modules = context.pure_css_modules;

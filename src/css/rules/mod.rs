@@ -781,7 +781,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         core::mem::swap(&mut sty.rules, &mut rulesss);
         // SAFETY: Phase-A 'static erasure on `DeclarationBlock<'static>` —
         // matches existing pattern in declaration.rs / css_parser.rs.
-        let bump: &'static bumpalo::Bump =
+        let bump: &'static bun_alloc::Arena =
             unsafe { &*(context.allocator as *const bun_alloc::Arena) };
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),

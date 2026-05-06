@@ -2582,8 +2582,9 @@ impl<AtRule> StyleSheet<AtRule> {
         local_names: Option<&'a LocalsResultsMap>,
         symbols: &'a bun_logger::symbol::Map,
     ) -> PrintResult<ToCssResultInternal> {
-        // blocked_on: PrinterOptions: Copy (printer.rs) — Zig passed by value
-        // twice; here `options` is moved into Printer::new then re-read.
+        // PORT NOTE: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
+        // the lone field we re-read after moving `options` into Printer::new.
+        let project_root = options.project_root;
         let mut printer = Printer::new(
             allocator,
             bumpalo::collections::Vec::new_in(allocator),
@@ -2593,7 +2594,7 @@ impl<AtRule> StyleSheet<AtRule> {
             local_names,
             symbols,
         );
-        match self.to_css_with_writer_impl(&mut printer, options) {
+        match self.to_css_with_writer_impl(&mut printer, project_root) {
             Ok(result) => Ok(result),
             Err(_) => {
                 debug_assert!(printer.error_kind.is_some());
@@ -2605,10 +2606,8 @@ impl<AtRule> StyleSheet<AtRule> {
     pub fn to_css_with_writer_impl(
         &self,
         printer: &mut Printer,
-        options: PrinterOptions,
+        project_root: Option<&[u8]>,
     ) -> Result<ToCssResultInternal, PrintErr> {
-        let _project_root = options.project_root;
-
         // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
         // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
 
@@ -2619,18 +2618,21 @@ impl<AtRule> StyleSheet<AtRule> {
             printer.newline()?;
         }
 
-        // blocked_on: CssRuleList::to_css (rules/mod.rs), CssModule::new sources
-        // arg type (`&Vec<String>` vs `&Vec<Box<[u8]>>`), printer.dependencies
-        // BumpVec→Vec conversion / 'bump threading.
         if let Some(config) = &self.options.css_modules {
             let mut references = CssModuleReferences::default();
-            printer.css_module = Some(CssModule::new(config, &self.sources, _project_root, &mut references));
+            printer.css_module = Some(CssModule::new(
+                printer.allocator,
+                config,
+                &self.sources,
+                project_root,
+                &mut references,
+            ));
 
             self.rules.to_css(printer)?;
             printer.newline()?;
 
             return Ok(ToCssResultInternal {
-                dependencies: printer.dependencies.take(),
+                dependencies: printer.dependencies.take().map(|v| v.into_iter().collect()),
                 exports: {
                     let val = core::mem::take(
                         &mut printer.css_module.as_mut().unwrap().exports_by_source_index[0],
@@ -2643,7 +2645,7 @@ impl<AtRule> StyleSheet<AtRule> {
             self.rules.to_css(printer)?;
             printer.newline()?;
             return Ok(ToCssResultInternal {
-                dependencies: printer.dependencies.take(),
+                dependencies: printer.dependencies.take().map(|v| v.into_iter().collect()),
                 exports: None,
                 references: None,
             });

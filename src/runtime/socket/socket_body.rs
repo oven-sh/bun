@@ -482,7 +482,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // SAFETY: short-lived read; see `get_handlers` contract.
         let vm = unsafe { (*self.get_handlers()).vm };
-        let group = vm.rare_data().bun_connect_group::<SSL>(vm);
+        // SAFETY: per-thread VM singleton; no aliasing `&mut` held across the
+        // `rare_data()` borrow — `vm` reborrowed immutably for the 2nd arg.
+        let group = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+            .rare_data()
+            .bun_connect_group::<SSL>(vm);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -2602,7 +2606,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
-        let handlers = Handlers::from_js(global, socket_obj, false)?;
+        // SAFETY: JSC_BORROW — `JSGlobalObject` is process-lifetime; Handlers
+        // stores it as `&'static` (Phase A shape, see Handlers.rs).
+        let global_static: &'static JSGlobalObject =
+            unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
+        let handlers = Handlers::from_js(global_static, socket_obj, false)?;
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
@@ -3666,7 +3674,7 @@ pub fn js_upgrade_duplex_to_tls(
         },
     };
     dc.upgrade = UpgradedDuplex::from(
-        global,
+        global_static,
         duplex,
         UpgradedDuplexHandlers {
             on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },

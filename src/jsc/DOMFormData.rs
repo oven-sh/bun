@@ -18,7 +18,7 @@ unsafe extern "C" {
     fn WebCore__DOMFormData__create(arg0: *mut JSGlobalObject) -> JSValue;
     fn WebCore__DOMFormData__createFromURLQuery(
         arg0: *mut JSGlobalObject,
-        arg1: *mut ZigString,
+        arg1: *const ZigString,
     ) -> JSValue;
     fn WebCore__DOMFormData__toQueryString(
         arg0: *mut DOMFormData,

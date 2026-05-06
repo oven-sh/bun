@@ -1066,13 +1066,17 @@ pub struct StyleContext<'a> {
 /// PORT NOTE: Zig carried `allocator: std.mem.Allocator` for the AST arena;
 /// here that is `&'a Arena` (bumpalo). All sub-allocations during minify go
 /// through it so the whole transformed tree is bulk-freed with the arena.
-pub struct MinifyContext<'a> {
+// PORT NOTE: split lifetimes — `'bump` is the parser arena (long), `'a` is the
+// per-minify borrow scope (short). `&'a mut DeclarationHandler<'a>` would force
+// the handler borrow to outlive the arena (invariance via `bumpalo::Vec`),
+// making `Stylesheet::minify`'s stack-local handlers unusable.
+pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same allocator it was parsed into).
-    pub allocator: &'a bun_alloc::Arena,
+    pub allocator: &'bump bun_alloc::Arena,
     pub targets: &'a css::targets::Targets,
-    pub handler: &'a mut css::DeclarationHandler<'a>,
-    pub important_handler: &'a mut css::DeclarationHandler<'a>,
-    pub handler_context: css::PropertyHandlerContext<'a>,
+    pub handler: &'a mut css::DeclarationHandler<'bump>,
+    pub important_handler: &'a mut css::DeclarationHandler<'bump>,
+    pub handler_context: css::PropertyHandlerContext<'bump>,
     /// Class/id names known to be unused (tree-shaking input).
     // PORT NOTE: Zig `*const std.StringArrayHashMapUnmanaged(void)`.
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the

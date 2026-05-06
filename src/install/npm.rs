@@ -220,21 +220,22 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         Some(error.to_vec())
     };
 
-    Output::pretty_errorln(format_args!(
+    Output::pretty_errorln(
         "\n<red>{}<r>{}{}: {}\n",
-        res.status_code,
-        if !res.status.is_empty() { " " } else { "" },
-        bstr::BStr::new(&res.status),
-        bun_fmt::redacted_npm_url(&req.url.href),
-    ));
+        (
+            res.status_code,
+            if !res.status.is_empty() { " " } else { "" },
+            bstr::BStr::new(&res.status),
+            bun_fmt::redacted_npm_url(&req.url.href),
+        ),
+    );
 
     if res.status_code == 404 && pkg_id.is_some() {
         let (package_name, package_version) = pkg_id.unwrap();
-        Output::pretty_errorln(format_args!(
+        Output::pretty_errorln(
             "\n - '{}@{}' does not exist in this registry",
-            bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
-        ));
+            (bstr::BStr::new(package_name), bstr::BStr::new(package_version)),
+        );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
             if res.status_code == 401
@@ -243,11 +244,11 @@ pub fn response_error<const OTP_RESPONSE: bool>(
                     b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
                 )
             {
-                Output::pretty_errorln(format_args!("\n - Received invalid OTP"));
+                Output::pretty_errorln("\n - Received invalid OTP", ());
                 Global::crash();
             }
         }
-        Output::pretty_errorln(format_args!("\n - {}", bstr::BStr::new(msg)));
+        Output::pretty_errorln("\n - {}", (bstr::BStr::new(msg),));
     }
 
     Global::crash();
@@ -323,7 +324,7 @@ pub mod registry {
                 // If it became "$ENV_VAR/", then we need to remove the trailing slash
                 if let Some(replaced_url) = env.get(strings::trim(&registry_.url[1..], b"/")) {
                     if replaced_url.len() > 1 {
-                        registry.url = replaced_url;
+                        registry.url = replaced_url.into();
                     }
                 }
             }
@@ -440,8 +441,8 @@ pub mod registry {
                         url.path = pathname.into();
                     }
 
-                    registry.username = env.get_auto(&registry.username);
-                    registry.password = env.get_auto(&registry.password);
+                    registry.username = env.get_auto(&registry.username).into();
+                    registry.password = env.get_auto(&registry.password).into();
 
                     if !registry.username.is_empty() && !registry.password.is_empty() && auth.is_empty() {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
@@ -461,7 +462,7 @@ pub mod registry {
                 }
             }
 
-            registry.token = env.get_auto(&registry.token);
+            registry.token = env.get_auto(&registry.token).into();
 
             if needs_normalize {
                 let mut href = Vec::new();

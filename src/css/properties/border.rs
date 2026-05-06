@@ -271,9 +271,54 @@ impl Default for BorderSideWidth {
     }
 }
 
-/// No-op until `impl_fallbacks!` real body un-gates (see ImplFallbacks below).
-/// Hoisted here because `macro_rules!` is order-sensitive.
-macro_rules! impl_fallbacks { ($T:ty; $($field:ident),+) => {}; }
+// ──────────────────────────────────────────────────────────────────────────
+// ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
+// the field list at macro invocation. All fields are `CssColor`.
+// Hoisted here because `macro_rules!` is order-sensitive.
+macro_rules! impl_fallbacks {
+    ($T:ty; $($field:ident),+) => {
+        impl $T {
+            pub fn get_fallbacks(
+                &mut self,
+                allocator: &Bump,
+                targets: Targets,
+            ) -> SmallList<$T, 2> {
+                let _ = allocator;
+                let mut fallbacks = ColorFallbackKind::empty();
+                $(
+                    fallbacks.insert(self.$field.get_necessary_fallbacks(targets));
+                )+
+
+                let mut res: SmallList<$T, 2> = SmallList::default();
+                if fallbacks.contains(ColorFallbackKind::RGB) {
+                    res.append(Self {
+                        $(
+                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::RGB),
+                        )+
+                    });
+                }
+
+                if fallbacks.contains(ColorFallbackKind::P3) {
+                    res.append(Self {
+                        $(
+                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::P3),
+                        )+
+                    });
+                }
+
+                if fallbacks.contains(ColorFallbackKind::LAB) {
+                    $(
+                        self.$field = self.$field.get_fallback(allocator, ColorFallbackKind::LAB);
+                    )+
+                }
+
+                res
+            }
+        }
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rect shorthand structs (top/right/bottom/left)
@@ -469,54 +514,6 @@ define_size_shorthand! {
     end: BorderInlineEndWidth
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
-// ──────────────────────────────────────────────────────────────────────────
-
-// TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
-// the field list at macro invocation. All fields are `CssColor`.
- // blocked_on: macro ordering (must hoist above first use) + CssColor::{get_necessary_fallbacks,get_fallback} + SmallList::append
-macro_rules! impl_fallbacks {
-    ($T:ty; $($field:ident),+) => {
-        impl $T {
-            pub fn get_fallbacks(
-                &mut self,
-                allocator: &Bump,
-                targets: Targets,
-            ) -> SmallList<$T, 2> {
-                let mut fallbacks = ColorFallbackKind::empty();
-                $(
-                    fallbacks.insert(self.$field.get_necessary_fallbacks(targets));
-                )+
-
-                let mut res: SmallList<$T, 2> = SmallList::default();
-                if fallbacks.contains(ColorFallbackKind::RGB) {
-                    res.append(allocator, Self {
-                        $(
-                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::RGB),
-                        )+
-                    });
-                }
-
-                if fallbacks.contains(ColorFallbackKind::P3) {
-                    res.append(allocator, Self {
-                        $(
-                            $field: self.$field.get_fallback(allocator, ColorFallbackKind::P3),
-                        )+
-                    });
-                }
-
-                if fallbacks.contains(ColorFallbackKind::LAB) {
-                    $(
-                        self.$field = self.$field.get_fallback(allocator, ColorFallbackKind::LAB);
-                    )+
-                }
-
-                res
-            }
-        }
-    };
-}
 // ──────────────────────────────────────────────────────────────────────────
 // BorderShorthand (private)
 // ──────────────────────────────────────────────────────────────────────────

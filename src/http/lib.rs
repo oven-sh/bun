@@ -1026,7 +1026,7 @@ pub fn print_request(
             headers: request.headers,
             bytes_read: request.bytes_read,
         };
-        Output::pretty_errorln("{}", format_args!("{}", request_.curl(ignore_insecure, body)));
+        Output::pretty_errorln(&format_args!("{}", request_.curl(ignore_insecure, body)));
     }
 
     let ver: &str = match protocol {
@@ -1035,10 +1035,10 @@ pub fn print_request(
         Protocol::Http3 => "HTTP/3",
     };
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
-    Output::pretty_errorln(
+    Output::pretty_errorln(&format_args!(
         "> {} {} {}",
-        (ver, BStr::new(request.method), BStr::new(url)),
-    );
+        ver, BStr::new(request.method), BStr::new(url),
+    ));
     for header in request.headers {
         Output::pretty_errorln(&format_args!("> {}", header));
     }
@@ -4998,7 +4998,7 @@ pub fn print_request(
     };
 
     if curl {
-        Output::pretty_errorln("{}", format_args!("{}", request_.curl(ignore_insecure, body)));
+        Output::pretty_errorln(&format_args!("{}", request_.curl(ignore_insecure, body)));
     }
 
     let ver: &[u8] = match protocol {

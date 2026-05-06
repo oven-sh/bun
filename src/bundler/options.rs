@@ -3088,6 +3088,97 @@ impl PlaceholderConst {
         PlaceholderConst { dir: b"", name: b"", ext: b"", hash: None, target: b"" };
 }
 
+impl PathTemplateConst {
+    /// Byte-writer form mirroring [`PathTemplate::print`] (Zig
+    /// `PathTemplate.format`). Kept as an inherent method so callers writing
+    /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
+    /// blanket [`core::fmt::Display`] impl below.
+    pub fn print<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+        let mut remain: &[u8] = self.data;
+        while let Some(j) = strings::index_of_char(remain, b'[') {
+            let j = j as usize;
+            PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
+            remain = &remain[j + 1..];
+            if remain.is_empty() {
+                // TODO: throw error
+                writer.write_all(b"[")?;
+                break;
+            }
+
+            let mut count: isize = 1;
+            let mut end_len: usize = remain.len();
+            for (idx, c) in remain.iter().enumerate() {
+                count += match *c {
+                    b'[' => 1,
+                    b']' => -1,
+                    _ => 0,
+                };
+                if count == 0 {
+                    end_len = idx;
+                    debug_assert!(end_len <= remain.len());
+                    break;
+                }
+            }
+
+            let placeholder = &remain[0..end_len];
+
+            let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+                PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
+                remain = &remain[end_len..];
+                continue;
+            };
+
+            match field {
+                PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
+                    writer,
+                    if !self.placeholder.dir.is_empty() { self.placeholder.dir } else { b"." },
+                )?,
+                PlaceholderField::Name => {
+                    PathTemplate::write_replacing_slashes_on_windows(writer, self.placeholder.name)?
+                }
+                PlaceholderField::Ext => {
+                    PathTemplate::write_replacing_slashes_on_windows(writer, self.placeholder.ext)?
+                }
+                PlaceholderField::Hash => {
+                    if let Some(hash) = self.placeholder.hash {
+                        writer.write_all(Placeholder::hash_string(hash).as_bytes())?;
+                    }
+                }
+                PlaceholderField::Target => PathTemplate::write_replacing_slashes_on_windows(
+                    writer,
+                    self.placeholder.target,
+                )?,
+            }
+
+            remain = &remain[end_len + 1..];
+        }
+
+        PathTemplate::write_replacing_slashes_on_windows(writer, remain)
+    }
+
+    pub fn needs(&self, field: PlaceholderField) -> bool {
+        let needle: &[u8] = match field {
+            PlaceholderField::Dir => b"[dir]",
+            PlaceholderField::Name => b"[name]",
+            PlaceholderField::Ext => b"[ext]",
+            PlaceholderField::Hash => b"[hash]",
+            PlaceholderField::Target => b"[target]",
+        };
+        strings::contains(self.data, needle)
+    }
+}
+
+impl core::fmt::Display for PathTemplateConst {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // PORT NOTE: Zig `format` writes raw bytes; route through a Vec then
+        // emit via `write_str` (paths are UTF-8 in practice; lossy fallback
+        // mirrors `bstr::BStr` Display semantics).
+        let mut buf = Vec::<u8>::new();
+        self.print(&mut buf).map_err(|_| core::fmt::Error)?;
+        f.write_str(&String::from_utf8_lossy(&buf))
+    }
+}
+
 impl From<PathTemplateConst> for PathTemplate {
     fn from(c: PathTemplateConst) -> Self {
         PathTemplate {

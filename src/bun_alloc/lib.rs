@@ -84,15 +84,18 @@ pub const USE_MIMALLOC: bool = true;
  #[path = "BufferFallbackAllocator.rs"] pub mod buffer_fallback_allocator;
                                         pub mod fallback;
 
-// Re-exports so downstream `use bun_alloc::X` resolve to the real ports.
-// Zig: `pub const AllocationScope = AllocationScopeIn(std.mem.Allocator);`
-pub use allocation_scope::AllocationScope;
-pub use allocation_scope::AllocationScopeIn;
-pub use nullable_allocator::NullableAllocator;
-pub use linux_mem_fd_allocator::LinuxMemFdAllocator;
-pub use max_heap_allocator::MaxHeapAllocator;
-pub use buffer_fallback_allocator::BufferFallbackAllocator;
-pub use maybe_owned::MaybeOwned;
+// CYCLEBREAK: the module bodies above are gated (they import bun_core/sys/
+// runtime, which would back-edge tier-0). Expose unit stubs at crate root so
+// downstream `use bun_alloc::X` resolves; the real ports replace these once
+// the back-edge deps MOVE_DOWN. Zig: `pub const AllocationScope =
+// AllocationScopeIn(std.mem.Allocator);` etc.
+pub struct AllocationScope;
+pub struct AllocationScopeIn;
+pub struct NullableAllocator;
+pub struct LinuxMemFdAllocator;
+pub struct MaxHeapAllocator;
+pub struct BufferFallbackAllocator;
+pub struct MaybeOwned<T>(core::marker::PhantomData<T>);
 
 // ── stubs ─────────────────────────────────────────────────────────────────
 // Forward refs introduced by B-0 move-out seds. Real impls in bun_core (T0

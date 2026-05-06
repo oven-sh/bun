@@ -1101,7 +1101,7 @@ pub fn build_with_vm(
 /// unsafe function, must be run outside of the event loop
 /// quits the process on exception
 fn load_module(
-    vm: &VirtualMachine,
+    vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> Result<JSValue, bun_core::Error> {
@@ -1113,22 +1113,22 @@ fn load_module(
         AnyPromise::Normal(_) => unreachable!(),
     };
     promise.set_handled();
-    // PORT NOTE: reshaped for borrowck — `wait_for_promise` and `event_loop()`
-    // need `&mut VirtualMachine`; this fn receives `&VirtualMachine` (matches
-    // Zig's *VirtualMachine which is freely aliased). Cast through the raw
-    // pointer the same way `event_loop.rs::wait_for_promise` does.
-    let vm_ptr = vm as *const VirtualMachine as *mut VirtualMachine;
+    // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
+    // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
+    // permits mutation — casting a `&T` to `*mut T` and writing through it is
+    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
+    //
     // SAFETY: `vm` is the unique live VM on this thread; no overlapping &mut.
-    unsafe { (*vm_ptr).wait_for_promise(AnyPromise::Internal(promise)) };
+    unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
     // SAFETY: see above; event_loop() returns a self-ptr.
-    if unsafe { (*(*vm_ptr).event_loop()).drain_microtasks() }.is_err() {
+    if unsafe { (*(*vm).event_loop()).drain_microtasks() }.is_err() {
         Global::crash();
     }
-    // SAFETY: vm.jsc_vm is live for VM lifetime.
-    let jsc_vm = unsafe { &mut *vm.jsc_vm };
+    // SAFETY: vm is the live per-thread VM; jsc_vm is live for VM lifetime.
+    let jsc_vm = unsafe { &mut *(*vm).jsc_vm };
     match promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
@@ -1136,8 +1136,8 @@ fn load_module(
             Ok(unsafe { BakeGetModuleNamespace(global, key) })
         }
         Unwrapped::Rejected(err) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            Err(unsafe { &*vm.global }.throw_value(err).into())
+            // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
+            Err(unsafe { &*(*vm).global }.throw_value(err).into())
         }
     }
 }
@@ -1462,7 +1462,10 @@ pub struct PerThread<'a> {
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    pub vm: &'a VirtualMachine,
+    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine` is a freely-aliasing mutable
+    // pointer. Stored as `*mut` (not `&'a VirtualMachine`) so callers like
+    // `load_module` can mutate through it without a `&T as *mut T` cast (UB).
+    pub vm: *mut VirtualMachine,
     /// Indexed by entry point index (OpaqueFileId)
     pub loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)

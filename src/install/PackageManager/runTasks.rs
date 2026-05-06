@@ -108,13 +108,25 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // pointers because the loop body holds `&mut` to both for the function's
     // duration. The guard runs on every exit (incl. `?` early-returns), matching
     // Zig `defer` semantics.
-    let manager_ptr = manager as *mut PackageManager;
-    let extract_ctx_ptr = extract_ctx as *mut C::Ctx;
+    //
+    // Stacked Borrows: the raw pointers must remain the provenance root for all
+    // body accesses, otherwise the first direct use of the `&mut` fn params
+    // would pop the raw tags and the guard derefs become UB. We therefore
+    // shadow the params with reborrows *through* the raw pointers — every body
+    // use of `manager`/`extract_ctx` below is a child of `*_ptr`, so the
+    // pointers stay valid until the guards fire.
+    let manager_ptr: *mut PackageManager = manager;
+    let extract_ctx_ptr: *mut C::Ctx = extract_ctx;
+    // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
+    // `&mut` fn params; reborrowing here yields the sole live `&mut` to each
+    // for the body. Dropped before the guards reborrow the same pointers.
+    let manager = unsafe { &mut *manager_ptr };
+    let extract_ctx = unsafe { &mut *extract_ctx_ptr };
     let has_updated_ptr = &mut has_updated_this_run as *mut bool;
     let _drain_guard = scopeguard::guard((), move |()| {
-        // SAFETY: `manager` / `has_updated_this_run` outlive this fn body; the
-        // guard is the first local declared after them so it drops last, after
-        // all body borrows have ended (scope exit or `?` unwind).
+        // SAFETY: guard drops after every body borrow of `manager` has ended
+        // (scope exit or `?` unwind); `manager_ptr` retains provenance because
+        // the body only ever accessed the allocation through reborrows of it.
         let manager = unsafe { &mut *manager_ptr };
         let has_updated_this_run = unsafe { *has_updated_ptr };
         manager.drain_dependency_list();

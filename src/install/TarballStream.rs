@@ -423,7 +423,10 @@ impl TarballStream {
                             return Ok(());
                         }
                         lib::archive::Result::Ok | lib::archive::Result::Warn => {
-                            // SAFETY: libarchive returned OK/WARN with a valid entry ptr.
+                            // SAFETY: libarchive returned OK/WARN with a valid
+                            // entry pointer owned by `archive`; it stays valid
+                            // until the next `read_next_header`. No other Rust
+                            // reference to it exists.
                             self.begin_entry(unsafe { &mut *entry })?;
                         }
                         lib::archive::Result::Failed | lib::archive::Result::Fatal => {
@@ -532,7 +535,8 @@ impl TarballStream {
     }
 
     fn open_destination(&mut self) -> Result<(), bun_core::Error> {
-        let tarball = &self.extract_task.request.extract.tarball;
+        // SAFETY: `extract_task` is live until `finish()` publishes it.
+        let tarball = unsafe { &(*self.extract_task).request.extract.tarball };
         let (_, basename) = tarball.name_and_basename();
         let mut buf = PathBuffer::uninit();
         let tmpname = FileSystem::tmpname(

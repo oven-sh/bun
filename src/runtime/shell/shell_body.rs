@@ -55,8 +55,8 @@ pub use bun_shell_parser::parse::{
 };
 pub use bun_shell_parser::parse::ast as AST;
 
-// TODO(port): GlobWalker = bun.glob.GlobWalker(null, true) — generic instantiation
-pub type GlobWalker = bun_glob::GlobWalker;
+// Spec: `bun.glob.GlobWalker(null, true)` → SyscallAccessor + sentinel paths.
+pub type GlobWalker = bun_glob::BunGlobWalkerZ;
 
 pub const SUBSHELL_TODO_ERROR: &str =
     "Subshells are not implemented, please open GitHub issue!";

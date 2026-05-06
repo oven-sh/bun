@@ -66,7 +66,10 @@ pub struct WindowsNamedPipe {
     pub incoming: BabyList<u8>, // Maybe we should use IPCBuffer here as well
     pub ssl_error: CertError,
     pub handlers: Handlers,
+    #[cfg(windows)]
     pub connect_req: uv::uv_connect_t,
+    #[cfg(not(windows))]
+    pub connect_req: (),
 
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,

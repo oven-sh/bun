@@ -277,6 +277,23 @@ impl ZBox {
         }
         ZBox(v.into_boxed_slice())
     }
+    /// Copy `bytes` into a new NUL-terminated allocation. Port of Zig
+    /// `allocator.dupeZ(u8, bytes)`.
+    #[inline]
+    pub fn from_bytes(bytes: impl AsRef<[u8]>) -> ZBox {
+        let bytes = bytes.as_ref();
+        let mut v = Vec::with_capacity(bytes.len() + 1);
+        v.extend_from_slice(bytes);
+        v.push(0);
+        ZBox(v.into_boxed_slice())
+    }
+    /// Take ownership of `v` and append a trailing NUL. Port of Zig
+    /// `list.toOwnedSliceSentinel(0)`.
+    #[inline]
+    pub fn from_vec(mut v: Vec<u8>) -> ZBox {
+        v.push(0);
+        ZBox(v.into_boxed_slice())
+    }
     #[inline] pub fn len(&self) -> usize { self.0.len() - 1 }
     #[inline] pub fn is_empty(&self) -> bool { self.len() == 0 }
     #[inline] pub fn as_bytes(&self) -> &[u8] { &self.0[..self.len()] }

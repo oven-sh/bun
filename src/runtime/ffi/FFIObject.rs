@@ -523,6 +523,7 @@ fn get_cptr(value: JSValue) -> Option<usize> {
     None
 }
 
+#[allow(deprecated)] // jsc::c::JSTypedArrayBytesDeallocator — bun_jsc gates the c_api module as deprecated; no replacement path yet.
 pub fn to_array_buffer(
     global_this: &JSGlobalObject,
     value: JSValue,

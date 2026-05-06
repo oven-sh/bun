@@ -714,12 +714,12 @@ impl Encoding {
         }
 
         if !value.is_string() {
-            return Self::throw_encoding_error(global_object, value);
+            return Err(Self::throw_encoding_error(global_object, value));
         }
 
         match Self::from_js_with_default_on_empty(value, global_object, default)? {
             Some(e) => Ok(e),
-            None => Self::throw_encoding_error(global_object, value),
+            None => Err(Self::throw_encoding_error(global_object, value)),
         }
     }
 
@@ -736,13 +736,15 @@ impl Encoding {
         Ok(str.in_map_case_insensitive(&ENCODING_MAP))
     }
 
-    pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> JsResult<!> {
+    pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
         global_object
-            .err(jsc::ErrorCode::INVALID_ARG_VALUE)
-            .fmt(format_args!(
-                "encoding '{}' is an invalid encoding",
-                value.fmt_string(global_object)
-            ))
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "encoding '{}' is an invalid encoding",
+                    value.fmt_string(global_object)
+                ),
+            )
             .throw()
     }
 

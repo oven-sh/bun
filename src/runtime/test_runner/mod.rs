@@ -87,6 +87,29 @@ pub mod expect {
         Expect::get_signature(matcher_name, args, not)
     }
 
+    /// Const-context twin of `get_signature` — Zig's `getSignature` is a
+    /// `comptime` fn (.zig:103-109) that concatenates string literals. Rust
+    /// has no const-fn string concat, so call sites that need a `&'static
+    /// str` constant (e.g. inside `const_format::concatcp!`) use this macro
+    /// instead. `use super::get_signature;` imports both the fn (value
+    /// namespace) and this macro (macro namespace), so runtime callers keep
+    /// `get_signature(...)` and const callers write `get_signature!(...)`.
+    macro_rules! __get_signature {
+        ($matcher:expr, $args:expr, true $(,)?) => {
+            ::const_format::concatcp!(
+                "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>",
+                $matcher, "<d>(<r>", $args, "<d>)<r>",
+            )
+        };
+        ($matcher:expr, $args:expr, false $(,)?) => {
+            ::const_format::concatcp!(
+                "<d>expect(<r><red>received<r><d>).<r>",
+                $matcher, "<d>(<r>", $args, "<d>)<r>",
+            )
+        };
+    }
+    pub(crate) use __get_signature as get_signature;
+
     // ── shims over `bun_jsc` API gaps ─────────────────────────────────
     // The Phase-A matcher drafts were written against a slightly newer
     // `bun_jsc` surface (`JSValue::to_fmt`, `Formatter: Default`,

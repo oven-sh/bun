@@ -1619,10 +1619,13 @@ use fns as _fns_anchor;
 /// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
 pub struct SocketHandler<const SSL: bool>;
 
-impl<const SSL: bool> SocketHandler<SSL> {
-    type SocketType = uws::NewSocketHandler<SSL>;
+// PORT NOTE: Zig `const SocketType = uws.NewSocketHandler(ssl)` is an inherent
+// associated type, which is unstable in Rust. Use a module-level alias instead
+// and refer to it as `SocketType<SSL>` inside the impl.
+type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
-    fn _socket(s: Self::SocketType) -> Socket {
+impl<const SSL: bool> SocketHandler<SSL> {
+    fn _socket(s: SocketType<SSL>) -> Socket {
         if SSL {
             Socket::SocketTLS(s)
         } else {

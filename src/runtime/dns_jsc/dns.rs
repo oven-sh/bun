@@ -2846,7 +2846,10 @@ impl Resolver {
     pub fn vm(&self) -> &VirtualMachine { unsafe { &*self.vm } }
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
-    pub fn ref_(&self) { self.ref_count.ref_(); }
+    pub fn ref_(&self) {
+        // SAFETY: `self` is live; ref_count uses interior mutability.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
+    }
     /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
     /// allocation via `Box::from_raw`).
     ///

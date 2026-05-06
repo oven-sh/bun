@@ -748,9 +748,9 @@ impl<'a> BunTest<'a> {
         let Some(strong) = ref_in.buntest_weak.upgrade() else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: see BunTestPtr TODO
-        let buntest = unsafe { &mut *(Rc::as_ptr(&strong) as *mut BunTest) };
-        buntest.add_result(ref_in.phase.clone());
+        // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
+        // `run_next_tick` re-derives.
+        strong.get().add_result(ref_in.phase.clone());
         Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase.clone());
 
         Ok(JSValue::UNDEFINED)
@@ -763,22 +763,29 @@ impl<'a> BunTest<'a> {
     ) {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        // SAFETY: see BunTestPtr TODO
-        let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
-        this.timer.next = Timespec::EPOCH;
-        this.timer.state = EventLoopTimerState::Pending;
+        // Raw `*mut` (via `UnsafeCell`) because `Self::run` below re-enters and
+        // calls `.get()` on the same `Rc` — holding a long-lived `&mut` across
+        // that would alias. Each `(*this).x` is a fresh short-lived reborrow.
+        let this: *mut BunTest = this_strong.as_ptr();
+        // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
+        // deref is a point-use that does not span a re-entrant `.get()`.
+        unsafe {
+            (*this).timer.next = Timespec::EPOCH;
+            (*this).timer.state = EventLoopTimerState::Pending;
 
-        match this.phase {
-            Phase::Collection => {}
-            Phase::Execution => {
-                if let Err(e) = this.execution.handle_timeout(vm.global) {
-                    this.on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done);
+            match (*this).phase {
+                Phase::Collection => {}
+                Phase::Execution => {
+                    if let Err(e) = (*this).execution.handle_timeout(vm.global) {
+                        (*this).on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done);
+                    }
                 }
+                Phase::Done => {}
             }
-            Phase::Done => {}
         }
         if let Err(e) = Self::run(this_strong.clone(), vm.global) {
-            this.on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done);
+            // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
+            unsafe { (*this).on_uncaught_exception(vm.global, Some(vm.global.take_exception(e)), false, RefDataValue::Done) };
         }
     }
 
@@ -798,8 +805,8 @@ impl<'a> BunTest<'a> {
             }
             return; // but just in case
         };
-        // SAFETY: see BunTestPtr TODO
-        unsafe { (*(Rc::as_ptr(&strong) as *mut BunTest)).wants_wakeup = true; }
+        // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
+        strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
         vm.enqueue_task(task);
     }

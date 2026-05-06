@@ -687,19 +687,22 @@ impl BufferOutputSink {
         // SAFETY: original is a live *Response passed from begin_transform; its
         // JS wrapper is on the caller's stack.
         let input_size = unsafe { (*original).get_body_len() };
-        let vm = global.bun_vm();
+        // SAFETY: bun_vm() returns the live VM raw ptr; VM outlives this fn.
+        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
 
         // Since we're still using vm.waitForPromise, we have to also override
         // the error rejection handler. That way, we can propagate errors to the
         // caller.
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(NonNull::from(&mut sink_error));
+        vm.unhandled_pending_rejection_to_capture = Some(&mut sink_error as *mut JSValue);
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
-        vm.on_unhandled_rejection = jsc::VirtualMachineRef::on_quiet_unhandled_rejection_handler_capture_value;
-        let _vm_guard = scopeguard::guard((), |_| {
+        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        let _vm_guard = scopeguard::guard((), move |_| {
             sink_error.ensure_still_alive();
+            // SAFETY: VM outlives this guard (sync stack frame).
+            let vm = unsafe { &mut *global_static.bun_vm() };
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
             scope.apply(vm);
         });

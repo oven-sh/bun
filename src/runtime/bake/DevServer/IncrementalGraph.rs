@@ -2476,12 +2476,12 @@ impl IncrementalGraph<Server> {
 
         let start = list.len();
         if start == 0 {
-            list.reserve_exact(self.current_chunk_len + runtime.code.len() + end.len());
+            list.reserve_exact(self.current_chunk_len + runtime_code.len() + end.len());
         } else {
-            list.reserve(self.current_chunk_len + runtime.code.len() + end.len());
+            list.reserve(self.current_chunk_len + runtime_code.len() + end.len());
         }
 
-        list.extend_from_slice(runtime.code); // PERF(port): was assume_capacity
+        list.extend_from_slice(runtime_code); // PERF(port): was assume_capacity
         for entry in &self.current_chunk_parts {
             // entry is the '[]const u8' itself
             list.extend_from_slice(entry); // PERF(port): was assume_capacity
@@ -2489,17 +2489,8 @@ impl IncrementalGraph<Server> {
         list.extend_from_slice(end); // PERF(port): was assume_capacity
 
         if bun_core::FeatureFlags::BAKE_DEBUGGING_FEATURES {
-            if let Some(dump_dir) = &self.owner().dump_dir {
-                let rel_path_escaped: &[u8] = match kind {
-                    ChunkKind::InitialResponse => b"latest_chunk.js",
-                    ChunkKind::HmrChunk => b"latest_hmr.js",
-                };
-                if let Err(err) =
-                    dev_server_body::dump_bundle(dump_dir, Side::Server, rel_path_escaped, &list[start..], false)
-                {
-                    Output::warn(format_args!("Could not dump bundle: {}", err.name()));
-                }
-            }
+            // TODO(port): blocked_on: dev_server::DevServer::dump_dir / dump_bundle (sys::Dir vs Fd)
+            let _ = start;
         }
         Ok(())
     }

@@ -874,20 +874,26 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let mut diag = clap::Diagnostic::default();
 
-        let args = match clap::parse::<clap::Help>(params, clap::ParseOptions {
-            diagnostic: Some(&mut diag),
-            stop_after_positional_at: 0,
-        }) {
-            Ok(a) => a,
-            Err(err) => {
-                Self::print_help(SUBCOMMAND);
-                let _ = diag.report(Output::error_writer(), err);
-                Global::exit(1);
-            }
-        };
+        // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
+        // `cli` stores slices into it. Leak the parsed `Args` so outer slice borrows
+        // (`positionals()`, `options()`) are `'static`; inner `&[u8]` are argv-backed
+        // and already `'static`. CLI args are parsed once per process, so this is the
+        // semantic equivalent of the Zig arena that was never `deinit`'d.
+        let args: &'static clap::Args<clap::Help> =
+            match clap::parse::<clap::Help>(params, clap::ParseOptions {
+                diagnostic: Some(&mut diag),
+                stop_after_positional_at: 0,
+            }) {
+                Ok(a) => Box::leak(Box::new(a)),
+                Err(err) => {
+                    Self::print_help(subcommand);
+                    let _ = diag.report(Output::error_writer(), err);
+                    Global::exit(1);
+                }
+            };
 
         if args.flag(b"--help") {
-            Self::print_help(SUBCOMMAND);
+            Self::print_help(subcommand);
             Global::exit(0);
         }
 
@@ -994,23 +1000,23 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         // commands that support --filter
-        if SUBCOMMAND.supports_workspace_filtering() {
+        if subcommand.supports_workspace_filtering() {
             cli.filters = args.options(b"--filter");
         }
 
-        if SUBCOMMAND.supports_json_output() {
+        if subcommand.supports_json_output() {
             cli.json_output = args.flag(b"--json");
         }
 
-        if SUBCOMMAND == Subcommand::Outdated {
+        if subcommand == Subcommand::Outdated {
             // fake --dry-run, we don't actually resolve+clean the lockfile
             cli.dry_run = true;
             cli.recursive = args.flag(b"--recursive");
             // cli.json_output = args.flag(b"--json");
         }
 
-        if matches!(SUBCOMMAND, Subcommand::Pack | Subcommand::Pm | Subcommand::Publish) {
-            if SUBCOMMAND != Subcommand::Publish {
+        if matches!(subcommand, Subcommand::Pack | Subcommand::Pm | Subcommand::Publish) {
+            if subcommand != Subcommand::Publish {
                 if let Some(dest) = args.option(b"--destination") {
                     cli.pack_destination = dest;
                 }
@@ -1024,7 +1030,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
         }
 
-        if SUBCOMMAND == Subcommand::Publish {
+        if subcommand == Subcommand::Publish {
             if let Some(tag) = args.option(b"--tag") {
                 cli.publish_config.tag = tag;
             }
@@ -1064,13 +1070,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         // link and unlink default to not saving, all others default to
         // saving.
-        if matches!(SUBCOMMAND, Subcommand::Link | Subcommand::Unlink) {
+        if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
             cli.no_save = !args.flag(b"--save");
         } else {
             cli.no_save = args.flag(b"--no-save");
         }
 
-        if SUBCOMMAND == Subcommand::Patch {
+        if subcommand == Subcommand::Patch {
             let patch_commit = args.flag(b"--commit");
             if patch_commit {
                 cli.patch = PatchOpts::Commit {
@@ -1080,13 +1086,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 cli.patch = PatchOpts::Patch;
             }
         }
-        if SUBCOMMAND == Subcommand::PatchCommit {
+        if subcommand == Subcommand::PatchCommit {
             cli.patch = PatchOpts::Commit {
                 patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
             };
         }
 
-        if SUBCOMMAND == Subcommand::Audit {
+        if subcommand == Subcommand::Audit {
             if let Some(level) = args.option(b"--audit-level") {
                 cli.audit_level = Some(match AuditLevel::from_string(level) {
                     Some(l) => l,
@@ -1161,7 +1167,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.os = os_negatable.combine();
         }
 
-        if matches!(SUBCOMMAND, Subcommand::Add | Subcommand::Install) {
+        if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
             cli.development = args.flag(b"--development") || args.flag(b"--dev");
             cli.optional = args.flag(b"--optional");
             cli.peer = args.flag(b"--peer");
@@ -1209,7 +1215,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             }
         }
 
-        if SUBCOMMAND == Subcommand::Update {
+        if subcommand == Subcommand::Update {
             cli.latest = args.flag(b"--latest");
             cli.interactive = args.flag(b"--interactive");
             cli.recursive = args.flag(b"--recursive");
@@ -1239,12 +1245,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.registry = registry;
         }
 
-        if SUBCOMMAND == Subcommand::Patch && cli.positionals.len() < 2 {
+        if subcommand == Subcommand::Patch && cli.positionals.len() < 2 {
             Output::err_generic("Missing pkg to patch\n", ());
             Global::crash();
         }
 
-        if SUBCOMMAND == Subcommand::PatchCommit && cli.positionals.len() < 2 {
+        if subcommand == Subcommand::PatchCommit && cli.positionals.len() < 2 {
             Output::err_generic("Missing pkg folder to patch\n", ());
             Global::crash();
         }
@@ -1264,7 +1270,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             Global::crash();
         }
 
-        if SUBCOMMAND == Subcommand::Pm {
+        if subcommand == Subcommand::Pm {
             // `bun pm version` command options
             if let Some(git_tag_version) = args.option(b"--git-tag-version") {
                 if git_tag_version == b"true" {
@@ -1287,7 +1293,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         // `bun pm why` and `bun why` options
-        if matches!(SUBCOMMAND, Subcommand::Pm | Subcommand::Why) {
+        if matches!(subcommand, Subcommand::Pm | Subcommand::Why) {
             cli.top_only = args.flag(b"--top");
             if let Some(depth) = args.option(b"--depth") {
                 cli.depth = Some(match strings::parse_int::<usize>(depth, 10) {

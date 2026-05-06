@@ -905,9 +905,8 @@ fn attempt_security_scan_with_retry(
     let mgr: *mut PackageManager = scanner.manager;
     unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
-    let packages_scanned = collector.dedupe.count();
     scanner.handle_results(
-        &mut collector.package_paths,
+        &mut package_paths,
         start_time,
         packages_scanned,
         security_scanner,

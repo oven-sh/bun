@@ -60,7 +60,7 @@ pub struct Transpiler<'a> {
     // Phase B: confirm whether this should be removed (global mimalloc) or kept.
     pub allocator: &'a Arena,
     pub result: options::TransformResult,
-    pub resolver: Resolver,
+    pub resolver: Resolver<'a>,
     // TODO(port): lifetime — Zig used the global `Fs.FileSystem.instance`
     // singleton (`&'static mut`). Raw ptr until the singleton accessor lands.
     pub fs: *mut Fs::FileSystem,
@@ -95,14 +95,12 @@ impl<'a> Transpiler<'a> {
     /// already a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut logger::Log) {
         self.log = log;
-        // PORT NOTE: `crate::Linker` is still the unit stub `Linker(())`
-        // (lib.rs:158); `self.linker.log` threading resumes once the real
-        // `linker::Linker` is wired into the struct via `configure_linker`.
+        self.linker.log = log;
         // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
         // arena-allocated `Log`, which outlives this `Transpiler<'a>`. Zig
         // aliased the same `*Log` into `resolver.log`; `Resolver.log` is a
-        // `&mut` so we materialize one from the raw pointer.
-        self.resolver.log = unsafe { &mut *log };
+        // `*mut` so the raw pointer copies straight across.
+        self.resolver.log = log;
     }
 
     /// Port of `transpiler.zig:102 setAllocator`.
@@ -290,12 +288,61 @@ fn dup_source(s: &logger::Source) -> logger::Source {
         path: s.path.clone(),
         contents: s.contents,
         contents_is_recycled: s.contents_is_recycled,
-        identifier_name: s.identifier_name,
+        identifier_name: s.identifier_name.clone(),
         index: s.index,
     }
 }
 
 use bun_options_types::schema::api;
+
+// ── B-2 un-gate shims (parse_maybe Js/Ts arm) ────────────────────────────
+// `bun_js_parser::parser::options::JSX::Pragma` and
+// `crate::options_impl::jsx::Pragma` are field-for-field identical but
+// nominally distinct (the parser crate carries a CYCLEBREAK local copy until
+// `bun_options_types` grows the JSX surface — see parser.rs:47 TODO). Same for
+// `ModuleType`. Phase B-3 collapses the duplicates; until then convert by value.
+
+#[inline]
+fn to_parser_jsx_pragma(
+    p: crate::options_impl::jsx::Pragma,
+) -> js_ast::parser::options::JSX::Pragma {
+    use crate::options_impl::jsx::Runtime as Src;
+    use js_ast::parser::options::JSX;
+    JSX::Pragma {
+        factory: p.factory,
+        fragment: p.fragment,
+        runtime: match p.runtime {
+            // PORT NOTE: bundler-side `Runtime` carries a `_None` zero state to
+            // round-trip `api::JsxRuntime::_none`; the parser-side enum has no
+            // such variant (parser only ever sees a resolved runtime). Map it
+            // to the spec default `Automatic` (options.zig:1199 default).
+            Src::_None | Src::Automatic => JSX::Runtime::Automatic,
+            Src::Classic => JSX::Runtime::Classic,
+            Src::Solid => JSX::Runtime::Solid,
+        },
+        import_source: JSX::ImportSource {
+            development: p.import_source.development,
+            production: p.import_source.production,
+        },
+        classic_import_source: p.classic_import_source,
+        package_name: p.package_name,
+        development: p.development,
+        parse: p.parse,
+        side_effects: p.side_effects,
+    }
+}
+
+#[inline]
+fn to_parser_module_type(
+    m: crate::options_impl::ModuleType,
+) -> js_ast::parser::options::ModuleType {
+    use js_ast::parser::options::ModuleType as Dst;
+    match m {
+        crate::options_impl::ModuleType::Unknown => Dst::Unknown,
+        crate::options_impl::ModuleType::Cjs => Dst::Cjs,
+        crate::options_impl::ModuleType::Esm => Dst::Esm,
+    }
+}
 
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:Transpiler.init`.
@@ -1062,7 +1109,7 @@ impl<'a> Transpiler<'a> {
     where
         W: js_printer::WriterTrait,
     {
-        if bun_core::env_var::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS::get().unwrap_or(false) {
+        if bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get() {
             return self.print_with_source_map_maybe::<W, false>(
                 result.ast,
                 &result.source,
@@ -1209,7 +1256,7 @@ pub struct Transpiler<'a> {
     // this should be removed (global mimalloc) or kept as `&'a Arena`.
     pub allocator: &'a Arena,
     pub result: options::TransformResult,
-    pub resolver: Resolver,
+    pub resolver: Resolver<'a>,
     pub fs: &'static mut Fs::FileSystem,
     pub output_files: Vec<options::OutputFile>,
     pub resolve_results: Box<ResolveResults>,

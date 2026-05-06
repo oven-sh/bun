@@ -238,7 +238,6 @@ mod _gated {
     #[path = "generated_classes_list.rs"] pub mod generated_classes_list;
     #[path = "AbortSignal.rs"] pub mod abort_signal;
     #[path = "AsyncModule.rs"] pub mod async_module;
-    #[path = "BuildMessage.rs"] pub mod build_message;
     #[path = "BunCPUProfiler.rs"] pub mod bun_cpu_profiler;
     #[path = "BunHeapProfiler.rs"] pub mod bun_heap_profiler;
     #[path = "ConcurrentPromiseTask.rs"] pub mod concurrent_promise_task;
@@ -253,7 +252,6 @@ mod _gated {
     #[path = "NodeModuleModule.rs"] pub mod node_module_module;
     #[path = "PosixSignalHandle.rs"] pub mod posix_signal_handle;
     #[path = "ProcessAutoKiller.rs"] pub mod process_auto_killer;
-    #[path = "ResolveMessage.rs"] pub mod resolve_message;
     #[path = "WorkTask.rs"] pub mod work_task;
     #[path = "bindgen.rs"] pub mod bindgen;
     #[path = "bindgen_test.rs"] pub mod bindgen_test;
@@ -1907,43 +1905,12 @@ impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
-pub mod build_message {
-    use super::*;
-    /// `jsc.BuildMessage` — wraps a `bun.logger.Msg` for JS exposure.
-    pub struct BuildMessage {
-        pub msg: bun_logger::Msg,
-    }
-    impl BuildMessage {
-        /// Create a JS `BuildMessage` instance from a logger `Msg`.
-        pub fn create(global: &JSGlobalObject, msg: bun_logger::Msg) -> JsResult<JSValue> {
-            let _ = (global, msg);
-            // TODO(b2): codegen `BuildMessage__create` — needs JsClass derive.
-            todo!("BuildMessage::create")
-        }
-    }
-}
+#[path = "BuildMessage.rs"]
+pub mod build_message;
 pub use self::build_message::BuildMessage;
 
-pub mod resolve_message {
-    use super::*;
-    /// `jsc.ResolveMessage` — wraps a resolver error for JS exposure.
-    pub struct ResolveMessage {
-        pub msg: bun_logger::Msg,
-        pub referrer: bun_string::String,
-    }
-    impl ResolveMessage {
-        /// Create a JS `ResolveMessage` instance from a logger `Msg` + referrer.
-        pub fn create(
-            global: &JSGlobalObject,
-            msg: bun_logger::Msg,
-            referrer: bun_string::String,
-        ) -> JsResult<JSValue> {
-            let _ = (global, msg, referrer);
-            // TODO(b2): codegen `ResolveMessage__create` — needs JsClass derive.
-            todo!("ResolveMessage::create")
-        }
-    }
-}
+#[path = "ResolveMessage.rs"]
+pub mod resolve_message;
 pub use self::resolve_message::ResolveMessage;
 
 pub mod zig_exception {

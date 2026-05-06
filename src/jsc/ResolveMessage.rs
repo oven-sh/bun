@@ -1,16 +1,22 @@
 use std::io::Write as _;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_logger as logger;
-use bun_options_types::ImportKind;
-use bun_str::{strings, String as BunString, ZigString};
+use bun_logger::ImportKind;
+use bun_string::strings;
 
-#[bun_jsc::JsClass]
+use crate::zig_string::ZigString;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+
+#[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: logger::Msg,
     // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
     // allocations and free on Drop / finalize.
-    pub referrer: Option<bun_fs::Path>,
+    //
+    // PORT NOTE: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;
+    // store the duped text directly so we don't pull in `bun_paths::fs::Path`
+    // (which is lifetime-parameterised over its backing buffer).
+    pub referrer: Option<Box<[u8]>>,
     pub logged: bool,
 }
 
@@ -20,18 +26,39 @@ impl Default for ResolveMessage {
     }
 }
 
+/// `ImportKind.label()` — the canonical table lives in
+/// `bun_options_types::import_record::ImportKind::label`, but
+/// `logger::MetadataResolve.import_kind` is the type-only `bun_logger::ImportKind`
+/// (CYCLEBREAK move-down). Replicate the table here verbatim.
+fn import_kind_label(kind: ImportKind) -> &'static [u8] {
+    match kind {
+        ImportKind::EntryPointRun => b"entry-point-run",
+        ImportKind::EntryPointBuild => b"entry-point-build",
+        ImportKind::Stmt => b"import-statement",
+        ImportKind::Require => b"require-call",
+        ImportKind::Dynamic => b"dynamic-import",
+        ImportKind::RequireResolve => b"require-resolve",
+        ImportKind::At => b"import-rule",
+        ImportKind::AtConditional => b"",
+        ImportKind::Url => b"url-token",
+        ImportKind::Composes => b"composes",
+        ImportKind::Internal => b"internal",
+        ImportKind::HtmlManifest => b"html_manifest",
+    }
+}
+
 impl ResolveMessage {
-    #[bun_jsc::host_fn]
+    #[crate::host_fn]
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut ResolveMessage> {
-        global.throw("ResolveMessage is not constructable", format_args!(""))
+        Err(global.throw(format_args!("ResolveMessage is not constructable")))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_code(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match &this.msg.metadata {
-            logger::Msg::Metadata::Resolve(resolve) => {
+            logger::Metadata::Resolve(resolve) => {
                 let code: &'static [u8] = 'brk: {
-                    let specifier = this.msg.metadata.resolve().specifier.slice(&this.msg.data.text);
+                    let specifier = resolve.specifier.slice(&this.msg.data.text);
 
                     break 'brk match resolve.import_kind {
                         // Match Node.js error codes. CommonJS is historic
@@ -64,30 +91,31 @@ impl ResolveMessage {
                     };
                 };
 
-                let atom = BunString::create_atom_ascii(code);
-                Ok(atom.to_js(global))
+                let atom = bun_string::String::create_atom(code);
+                // `defer atom.deref()` — `String` derefs on Drop.
+                atom.to_js(global)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_column(this: &Self, _global: &JSGlobalObject) -> JSValue {
         if let Some(location) = &this.msg.data.location {
-            return JSValue::js_number((location.column - 1).max(0));
+            return JSValue::from((location.column - 1).max(0));
         }
 
-        JSValue::js_number(0_i32)
+        JSValue::from(0_i32)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_line(this: &Self, _global: &JSGlobalObject) -> JSValue {
         if let Some(location) = &this.msg.data.location {
-            return JSValue::js_number((location.line - 1).max(0));
+            return JSValue::from((location.line - 1).max(0));
         }
 
-        JSValue::js_number(0_i32)
+        JSValue::from(0_i32)
     }
 
     pub fn fmt(
@@ -109,8 +137,7 @@ impl ResolveMessage {
                 write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
                 return Ok(out);
             }
-            if bun_resolver::is_package_path(specifier)
-                && strings::index_of_char(specifier, b'/').is_none()
+            if bun_resolver::is_package_path(specifier) && !strings::contains_char(specifier, b'/')
             {
                 write!(
                     &mut out,
@@ -175,13 +202,7 @@ impl ResolveMessage {
 
     pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
         let mut text = Vec::new();
-        if write!(
-            &mut text,
-            "ResolveMessage: {}",
-            bstr::BStr::new(&self.msg.data.text)
-        )
-        .is_err()
-        {
+        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(&self.msg.data.text)).is_err() {
             return global.throw_out_of_memory_value();
         }
         let mut str = ZigString::init(&text);
@@ -200,7 +221,7 @@ impl ResolveMessage {
         str.to_external_value(global)
     }
 
-    #[bun_jsc::host_fn(method)]
+    #[crate::host_fn(method)]
     pub fn to_string(
         // this
         this: &mut Self,
@@ -210,13 +231,13 @@ impl ResolveMessage {
         Ok(this.to_string_fn(global))
     }
 
-    #[bun_jsc::host_fn(method)]
+    #[crate::host_fn(method)]
     pub fn to_primitive(
         this: &mut Self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_ = callframe.arguments_old(1);
+        let args_ = callframe.arguments_old::<1>();
         let args = &args_.ptr[0..args_.len];
         if !args.is_empty() {
             if !args[0].is_string() {
@@ -232,76 +253,93 @@ impl ResolveMessage {
         Ok(JSValue::NULL)
     }
 
-    #[bun_jsc::host_fn(method)]
+    #[crate::host_fn(method)]
     pub fn to_json(
         this: &mut Self,
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let object = JSValue::create_empty_object(global, 7);
-        object.put(global, ZigString::static_(b"name"), BunString::static_(b"ResolveMessage").to_js(global)?);
-        object.put(global, ZigString::static_(b"position"), this.get_position(global));
-        object.put(global, ZigString::static_(b"message"), this.get_message(global));
-        object.put(global, ZigString::static_(b"level"), this.get_level(global));
-        object.put(global, ZigString::static_(b"specifier"), this.get_specifier(global));
-        object.put(global, ZigString::static_(b"importKind"), this.get_import_kind(global));
-        object.put(global, ZigString::static_(b"referrer"), this.get_referrer(global));
+        object.put(global, b"name", bun_string::String::static_str(b"ResolveMessage").to_js(global)?);
+        object.put(global, b"position", this.get_position(global));
+        object.put(global, b"message", this.get_message(global));
+        object.put(global, b"level", this.get_level(global));
+        object.put(global, b"specifier", this.get_specifier(global));
+        object.put(global, b"importKind", this.get_import_kind(global));
+        object.put(global, b"referrer", this.get_referrer(global));
         Ok(object)
     }
 
+    /// Spec `ResolveMessage.create` (ResolveMessage.zig:166) — clone `msg` +
+    /// dupe `referrer` into a fresh heap-allocated `ResolveMessage` and wrap it
+    /// in its JSC cell. `JsClass::to_js` boxes `self` and calls the C++-side
+    /// `ResolveMessage__create(global, ptr)`; the resulting `m_ctx` is freed by
+    /// the macro-emitted `ResolveMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
         msg: &logger::Msg,
         referrer: &[u8],
-    ) -> Result<JSValue, bun_alloc::AllocError> {
-        let resolve_error = Box::new(ResolveMessage {
+    ) -> JsResult<JSValue> {
+        let resolve_error = ResolveMessage {
             msg: msg.clone()?,
-            referrer: Some(bun_fs::Path::init(Box::<[u8]>::from(referrer))),
+            referrer: Some(Box::<[u8]>::from(referrer)),
             logged: false,
-        });
+        };
         Ok(resolve_error.to_js(global))
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_position(this: &Self, global: &JSGlobalObject) -> JSValue {
-        bun_runtime::api::BuildMessage::generate_position_object(&this.msg, global)
+        crate::BuildMessage::generate_position_object(&this.msg, global)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_message(this: &Self, global: &JSGlobalObject) -> JSValue {
         ZigString::init(&this.msg.data.text).to_js(global)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JSValue {
         ZigString::init(this.msg.kind.string()).to_js(global)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_specifier(this: &Self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(this.msg.metadata.resolve().specifier.slice(&this.msg.data.text)).to_js(global)
+        match &this.msg.metadata {
+            logger::Metadata::Resolve(resolve) => {
+                ZigString::init(resolve.specifier.slice(&this.msg.data.text)).to_js(global)
+            }
+            // Unreachable in practice (ResolveMessage is only constructed for
+            // `.resolve` metadata) — Zig accessed the union arm unchecked.
+            _ => ZigString::init(b"").to_js(global),
+        }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JSValue {
-        ZigString::init(this.msg.metadata.resolve().import_kind.label()).to_js(global)
+        match &this.msg.metadata {
+            logger::Metadata::Resolve(resolve) => {
+                ZigString::init(import_kind_label(resolve.import_kind)).to_js(global)
+            }
+            _ => ZigString::init(b"").to_js(global),
+        }
     }
 
-    #[bun_jsc::host_fn(getter)]
+    #[crate::host_fn(getter)]
     pub fn get_referrer(this: &Self, global: &JSGlobalObject) -> JSValue {
         if let Some(referrer) = &this.referrer {
-            ZigString::init(&referrer.text).to_js(global)
+            ZigString::init(referrer).to_js(global)
         } else {
             JSValue::NULL
         }
     }
 
     pub extern "C" fn finalize(this: *mut ResolveMessage) {
-        // SAFETY: `this` was allocated via Box::new in `create` and ownership was
-        // transferred to the JS wrapper; finalize is called exactly once on the
-        // mutator thread during lazy sweep.
-        // Dropping the Box drops `msg` (logger::Msg) and `referrer` (owns its text).
-        // TODO(port): confirm bun_fs::Path owns `text` as Box<[u8]> so this frees it.
+        // SAFETY: `this` was allocated via `Box::new` in `JsClass::to_js` and
+        // ownership transferred to the JS wrapper; finalize is called exactly
+        // once on the mutator thread during lazy sweep. Dropping the Box drops
+        // `msg` and the owned `referrer` buffer. (Mirrors the macro-generated
+        // `ResolveMessageClass__finalize`; kept for parity with Zig source.)
         unsafe {
             drop(Box::from_raw(this));
         }
@@ -312,6 +350,6 @@ impl ResolveMessage {
 // PORT STATUS
 //   source:     src/jsc/ResolveMessage.zig (249 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      .classes.ts payload; metadata.resolve accessor and ZigString external-value ownership need Phase B verification
+//   todos:      1
+//   notes:      .classes.ts payload; referrer stored as Box<[u8]> (was Fs.Path); ZigString external-value ownership needs Phase B verification
 // ──────────────────────────────────────────────────────────────────────────

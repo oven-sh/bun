@@ -7,7 +7,7 @@ use bun_core::{FeatureFlags, Output};
 use bun_options_types::{ImportKind, ImportRecord};
 use bun_js_parser::{Index, Ref, Stmt};
 use bun_sourcemap as source_map;
-use bun_string::{strings, StringJoiner};
+use bun_string::{strings, string_joiner::StringJoiner};
 
 use crate::analyze_transpiled_module;
 use crate::bun_css;

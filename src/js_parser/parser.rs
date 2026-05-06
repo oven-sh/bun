@@ -847,6 +847,10 @@ pub mod Runtime {
     #[derive(Default, Clone, Copy)]
     pub struct Names;
 
+    impl Names {
+        pub const ACTIVATE_FUNCTION: &'static [u8] = b"activate";
+    }
+
     pub fn is_runtime_module(_: &[u8]) -> bool { false }
 }
 pub type RuntimeFeatures = Runtime::Features;
@@ -2245,6 +2249,32 @@ pub struct Jest {
     pub xit: Ref,
     pub xtest: Ref,
     pub xdescribe: Ref,
+}
+
+impl Jest {
+    /// Port of Zig `inline for (comptime std.meta.fieldNames(Jest))` — Rust has
+    /// no comptime struct-field reflection, so `_parse` iterates this static
+    /// table instead. The `&str` is the *JavaScript* global name (matches the
+    /// Zig field identifier verbatim, not the Rust snake_case rename), and the
+    /// fn-ptr projects the corresponding `Ref` out of the struct. Order matches
+    /// the Zig field declaration order so the emitted import-clause / binding
+    /// property order is identical.
+    pub const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
+        ("test", |j| j.test),
+        ("it", |j| j.it),
+        ("describe", |j| j.describe),
+        ("expect", |j| j.expect),
+        ("expectTypeOf", |j| j.expect_type_of),
+        ("beforeAll", |j| j.before_all),
+        ("beforeEach", |j| j.before_each),
+        ("afterEach", |j| j.after_each),
+        ("afterAll", |j| j.after_all),
+        ("jest", |j| j.jest),
+        ("vi", |j| j.vi),
+        ("xit", |j| j.xit),
+        ("xtest", |j| j.xtest),
+        ("xdescribe", |j| j.xdescribe),
+    ];
 }
 
 impl Default for Jest {

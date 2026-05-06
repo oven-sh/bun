@@ -1883,8 +1883,10 @@ pub fn install_jsc_hooks() {
 //   confidence: low — vtable wiring + Timer::All/ServerEntryPoint real;
 //               fetch_builtin_module HardcodedModule lookup real;
 //               transpile_source_code body ported (arena mgmt / loader
-//               dispatch / log-swap real, parse→print arm gated on
-//               bun_bundler::transpiler::__phase_a_draft).
+//               dispatch / log-swap real; parse→link→print arm un-gated:
+//               ParseOptions / parse_maybe_return_file_only / Linker::link
+//               / Transpiler::print live; source-map handler + Expr::to_js
+//               + ModuleInfo::create still gated).
 //               js_synthetic_module / get_hardcoded_module real.
 //   todos:      see TODO(b2-cycle) markers — uws::Loop surface,
 //               HiveAllocator, Debugger, RuntimeTranspilerStore,

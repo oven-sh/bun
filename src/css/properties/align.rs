@@ -8,6 +8,9 @@ use crate::prefixes::Feature;
 use crate::compat;
 
 use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, FlexAlign, FlexItemAlign, BoxOrdinalGroup};
+// SAFETY: see `css_parser::src_str` — Token payloads borrow the parser's source/arena,
+// laundered to `'static` until Phase B threads `<'a>` through `Token`.
+use crate::css_parser::src_str;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // AlignContent
@@ -15,9 +18,9 @@ use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, Fle
 
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection generators.
-// Model as proc-macro derives in Phase B.
-#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
+// Zig: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss` —
+// comptime-reflection generators ported as proc-macro derives.
+#[derive(css::Parse, css::ToCss)]
 pub enum AlignContent {
     /// Default alignment.
     Normal,
@@ -29,7 +32,13 @@ pub enum AlignContent {
     ContentPosition(AlignContentContentPosition),
 }
 
-#[derive(Clone, PartialEq)]
+// Zig: anonymous payload struct carrying `pub fn __generateToCss() void {}` —
+// the marker telling `DeriveToCss` to auto-generate the field-sequence printer.
+// In Rust the equivalent is `#[derive(css::ToCss)]` on the lifted named-field
+// struct (see `css_derive::expand_derive_to_css` struct branch); the enum arm's
+// `__inner.to_css(dest)` then resolves to this generated inherent.
+#[derive(Clone, PartialEq, css::ToCss)]
+#[css(generate_to_css)]
 pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -38,7 +47,6 @@ pub struct AlignContentContentPosition {
 }
 
 impl AlignContentContentPosition {
-    #[cfg(any())] // blocked_on: ContentPosition::parse + OverflowPosition::parse derive
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let value = ContentPosition::parse(input)?;
@@ -50,10 +58,6 @@ impl AlignContentContentPosition {
             value: self.value,
         }
     }
-
-    // Zig: pub fn __generateToCss() void {}
-    // Marker telling DeriveToCss to auto-generate the field-sequence printer for this payload.
-    // TODO(port): encode as #[css(generate_to_css)] attr on the variant in Phase B.
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -70,11 +74,13 @@ pub enum BaselinePosition {
     Last,
 }
 
-#[cfg(any())] // blocked_on: Parser::expect_ident borrow lifetime (ident borrows *input across subsequent expect_ident_matching call)
 impl BaselinePosition {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        // SAFETY: `expect_ident` returns a sub-slice of `input.tokenizer.src`;
+        // detach the borrow so `input` is reusable for the follow-up
+        // `expect_ident_matching` calls below (see `css_parser::src_str`).
+        let ident = unsafe { src_str(input.expect_ident()?) };
 
         // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
         // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
@@ -141,7 +147,6 @@ impl JustifyContentContentPosition {
     }
 }
 
-#[cfg(any())] // blocked_on: Token::Ident(&[u8]) lifetime (new_unexpected_token_error needs owned/static ident)
 impl JustifyContent {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
@@ -161,7 +166,8 @@ impl JustifyContent {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        // SAFETY: see `src_str` — borrow detached so the slice can be stored in `Token`.
+        let ident = unsafe { src_str(input.expect_ident()?) };
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
         if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {

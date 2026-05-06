@@ -133,13 +133,16 @@ impl SyntaxString {
                                 }
                                 SyntaxComponentKind::Color => ParsedComponent::Color(CssColor::parse(i)?),
                                 SyntaxComponentKind::Image => ParsedComponent::Image(Image::parse(i)?),
-                                SyntaxComponentKind::Url => ParsedComponent::Url(Url::parse(i)?),
+                                SyntaxComponentKind::Url => {
+                                    let _ = i;
+                                    todo!("blocked_on: values::url::Url::parse un-gate")
+                                }
                                 SyntaxComponentKind::Integer => ParsedComponent::Integer(CSSIntegerFns::parse(i)?),
                                 SyntaxComponentKind::Angle => ParsedComponent::Angle(Angle::parse(i)?),
                                 SyntaxComponentKind::Time => ParsedComponent::Time(Time::parse(i)?),
                                 SyntaxComponentKind::Resolution => ParsedComponent::Resolution(Resolution::parse(i)?),
                                 SyntaxComponentKind::TransformFunction => {
-                                    ParsedComponent::TransformFunction(Transform::parse(i)?)
+                                    todo!("blocked_on: properties::transform::Transform::parse un-gate")
                                 }
                                 SyntaxComponentKind::TransformList => {
                                     // blocked_on: 'bump threading — `TransformList<'bump>` borrows
@@ -472,13 +475,13 @@ impl ParsedComponent {
             ParsedComponent::LengthPercentage(v) => v.to_css(dest),
             ParsedComponent::Color(v) => v.to_css(dest),
             ParsedComponent::Image(v) => v.to_css(dest),
-            ParsedComponent::Url(v) => v.to_css(dest),
+            ParsedComponent::Url(_v) => todo!("blocked_on: values::url::Url::to_css un-gate"),
             ParsedComponent::Integer(v) => CSSIntegerFns::to_css(v, dest),
             ParsedComponent::Angle(v) => v.to_css(dest),
             ParsedComponent::Time(v) => v.to_css(dest),
             ParsedComponent::Resolution(v) => v.to_css(dest),
-            ParsedComponent::TransformFunction(v) => v.to_css(dest),
-            ParsedComponent::TransformList(v) => v.to_css(dest),
+            ParsedComponent::TransformFunction(_v) => todo!("blocked_on: Transform::to_css un-gate"),
+            ParsedComponent::TransformList(_v) => todo!("blocked_on: TransformList::to_css un-gate"),
             ParsedComponent::CustomIdent(_v) => {
                 // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
                 // Body once un-gated: `CustomIdentFns::to_css(v, dest)`

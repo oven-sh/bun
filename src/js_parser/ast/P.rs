@@ -1833,7 +1833,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: generate_react_refresh_import_hmr
     pub fn generate_react_refresh_import(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1847,7 +1846,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: B::Object::Property; b(); S::Local/Import; Decl::List; Part
     fn generate_react_refresh_import_hmr<const HOT_MODULE_RELOADING: bool>(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -1866,70 +1864,79 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_record_index =
             self.add_import_record_by_range(ImportKind::Stmt, logger::Range::NONE, import_path);
 
-        // TODO(port): Zig used `if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem`
-        // as the item type. We split into two vecs and pick at the end.
+        // PORT NOTE: Zig used `if (hot_module_reloading) B.Object.Property else js_ast.ClauseItem`
+        // as the comptime item type. Rust const-generics can't select a type
+        // for a local, so we keep two arena vecs and only fill the one the
+        // const-generic arm selects (the other stays empty / zero-cost).
         let len = 1
             + usize::from(self.react_refresh.register_used)
             + usize::from(self.react_refresh.signature_used);
-        let mut items_hmr = BumpVec::<B::Object::Property>::with_capacity_in(len, allocator);
-        let mut items_import = BumpVec::<js_ast::ClauseItem>::with_capacity_in(len, allocator);
+        let mut items_hmr =
+            BumpVec::<B::Property>::with_capacity_in(if HOT_MODULE_RELOADING { len } else { 0 }, allocator);
+        let mut items_import =
+            BumpVec::<js_ast::ClauseItem>::with_capacity_in(if HOT_MODULE_RELOADING { 0 } else { len }, allocator);
 
-        let stmts = allocator.alloc_slice_fill_default::<Stmt>(1);
         let mut declared_symbols = crate::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(allocator, len)?;
+        declared_symbols.ensure_total_capacity(len)?;
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime")?;
-        declared_symbols.push(DeclaredSymbol { r#ref: namespace_ref, is_top_level: true });
-        // PERF(port): was assume_capacity
+        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: namespace_ref, is_top_level: true });
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        unsafe { &mut *self.module_scope }.generated.push(allocator, namespace_ref)?;
+        unsafe { &mut *self.module_scope }.generated.append(namespace_ref)?;
 
         for entry in clauses {
             if entry.enabled {
                 if HOT_MODULE_RELOADING {
-                    items_hmr.push(B::Object::Property {
-                        key: self.new_expr(E::String { data: entry.name }, logger::Loc::EMPTY),
-                        value: self.b(B::Identifier { r#ref: entry.r#ref }, logger::Loc::EMPTY),
-                        ..Default::default()
+                    let key = self.new_expr(E::String::init(entry.name), logger::Loc::EMPTY);
+                    let value = self.b(B::Identifier { r#ref: entry.r#ref }, logger::Loc::EMPTY);
+                    // PERF(port): was assume_capacity
+                    items_hmr.push(B::Property {
+                        flags: Default::default(),
+                        key,
+                        value,
+                        default_value: None,
                     });
                 } else {
+                    // PERF(port): was assume_capacity
                     items_import.push(js_ast::ClauseItem {
-                        alias: entry.name,
-                        original_name: entry.name,
+                        alias: entry.name as *const [u8],
+                        original_name: entry.name as *const [u8],
                         alias_loc: logger::Loc::default(),
-                        name: LocRef { r#ref: Some(entry.r#ref), loc: logger::Loc::default() },
+                        name: LocRef { ref_: Some(entry.r#ref), loc: logger::Loc::default() },
                     });
                 }
-                // PERF(port): was assume_capacity
-                declared_symbols.push(DeclaredSymbol { r#ref: entry.r#ref, is_top_level: true });
+                declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: entry.r#ref, is_top_level: true });
                 // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-                unsafe { &mut *self.module_scope }.generated.push(allocator, entry.r#ref)?;
-                self.is_import_item.put(allocator, entry.r#ref, ())?;
+                unsafe { &mut *self.module_scope }.generated.append(entry.r#ref)?;
+                self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
-                    allocator,
                     entry.r#ref,
                     js_ast::NamedImport {
-                        alias: entry.name,
-                        alias_loc: logger::Loc::EMPTY,
-                        namespace_ref,
+                        alias: Some(entry.name as *const [u8]),
+                        alias_loc: Some(logger::Loc::EMPTY),
+                        namespace_ref: Some(namespace_ref),
                         import_record_index,
-                        ..Default::default()
+                        local_parts_with_uses: Default::default(),
+                        alias_is_star: false,
+                        is_exported: false,
                     },
                 )?;
             }
         }
 
-        stmts[0] = if HOT_MODULE_RELOADING {
+        let stmt = if HOT_MODULE_RELOADING {
+            let binding = self.b(
+                B::Object { properties: items_hmr.into_bump_slice_mut(), is_single_line: false },
+                logger::Loc::EMPTY,
+            );
+            let value = self.new_expr(
+                E::RequireString { import_record_index, ..Default::default() },
+                logger::Loc::EMPTY,
+            );
             self.s(
                 S::Local {
                     kind: js_ast::s::Kind::KConst,
-                    decls: Decl::List::from_slice(
-                        self.allocator,
-                        &[Decl {
-                            binding: self.b(B::Object { properties: items_hmr.into_bump_slice(), ..Default::default() }, logger::Loc::EMPTY),
-                            value: Some(self.new_expr(E::RequireString { import_record_index, ..Default::default() }, logger::Loc::EMPTY)),
-                        }],
-                    )?,
+                    decls: G::DeclList::from_slice(&[Decl { binding, value: Some(value) }])?,
                     ..Default::default()
                 },
                 logger::Loc::EMPTY,
@@ -1938,20 +1945,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.s(
                 S::Import {
                     namespace_ref,
-                    items: items_import.into_bump_slice(),
+                    items: items_import.into_bump_slice_mut(),
                     import_record_index,
                     is_single_line: false,
-                    ..Default::default()
+                    default_name: None,
+                    star_name_loc: None,
                 },
                 logger::Loc::EMPTY,
             )
         };
+        let stmts = allocator.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
 
         parts.push(js_ast::Part {
             stmts,
             declared_symbols,
-            import_record_indices: BabyList::<u32>::from_slice(allocator, &[import_record_index])?,
-            tag: js_ast::Part::Tag::Runtime,
+            import_record_indices: BabyList::<u32>::from_owned_slice(Box::new([import_record_index])),
+            tag: crate::PartTag::Runtime,
             ..Default::default()
         });
         Ok(())
@@ -6931,8 +6940,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 // Split out of the round-D/E gated block above so the parser entry point
 // (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
 // round-E (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`, `compute_character_frequency`) are wired to their
-// real signatures; their bodies `todo!()` until their own un-gate rounds.
+// `apply_repl_transforms`) are wired to their real signatures; their bodies
+// `todo!()` until their own un-gate rounds. `compute_character_frequency` is
+// fully un-gated (lexer.all_comments + CharFreq.scan live).
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {

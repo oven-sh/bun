@@ -962,9 +962,8 @@ impl SideEffects {
 //   (BabyList ts_decorators); index/raw-ptr reshape pending. simplify_unused_binary_comma_expr
 //   uses a local Vec until P.binary_expression_simplify_stack element type is fixed
 //   (P.rs:537 currently `()`).
-//   should_keep_stmt_in_dead_control_flow (~110L) needs StmtNodeList = *mut [Stmt]
-//   iteration; B::* raw-ptr deref; G::Decl::List::move_from_vec.
-//   All other bodies (incl. simplify_unused_expr e_if/e_unary/e_binary/e_call/e_new/
+//   All other bodies (incl. should_keep_stmt_in_dead_control_flow,
+//   simplify_unused_expr e_if/e_unary/e_binary/e_call/e_new/
 //   e_array/e_dot/e_identifier) are un-gated above.
 #[allow(warnings)]
 mod _draft {

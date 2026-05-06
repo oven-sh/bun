@@ -5608,6 +5608,18 @@ pub trait WriteAll {
     }
 }
 
+// Growable scratch buffer — needed by `Url::to_css` (minify length-compare
+// path) and any caller that wants to serialize into a `Vec<u8>` before
+// committing to the Printer. Mirrors Zig `std.Io.Writer.Allocating`.
+impl WriteAll for Vec<u8> {
+    type Error = core::convert::Infallible;
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
+        self.extend_from_slice(buf);
+        Ok(())
+    }
+}
+
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Num, Dimension};
 

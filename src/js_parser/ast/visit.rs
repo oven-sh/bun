@@ -1063,12 +1063,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             // note: our version assumes useDefineForClassFields is true
+            // blocked_on: TS ctor-field hoisting — touches `Stmt::assign`, `E::Dot` ctor,
+            //   `declare_symbol`, and overlapping `&mut [Property]` borrows that need a
+            //   reshaped Vec dance. Preserved verbatim in `_draft::visit_class`.
+            //   Gated behind `#[cfg(any())]` so the verify gate excludes it (was a
+            //   silent `let _ = constructor;` no-op in live code).
+            #[cfg(any())]
             if Self::IS_TYPESCRIPT_ENABLED {
                 if let Some(constructor) = constructor_function {
-                    // blocked_on: TS ctor-field hoisting — touches `Stmt::assign`, `E::Dot` ctor,
-                    //   `declare_symbol`, and overlapping `&mut [Property]` borrows that need a
-                    //   reshaped Vec dance. Preserved verbatim in `_draft::visit_class`.
-                    let _ = constructor;
+                    // spec visit.zig:686-747: count `is_typescript_ctor_field` args, find
+                    // `super()` index, insert `this.x = x` assignments into the ctor body
+                    // and prepend matching field decls to `class.properties`.
                 }
             }
 

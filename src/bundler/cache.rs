@@ -685,7 +685,7 @@ impl JavaScript {
                 // (inside the lexer); reading `temp_log.errors` while that borrow is
                 // live is rejected. Read through the parser's own handle instead.
                 if parser.log_mut().errors == 0 {
-                    log.add_range_error(Some(source), parser.lexer.range(), err.name())
+                    log.add_range_error(Some(source), parser.lexer.range(), err.name().as_bytes())
                         .expect("unreachable");
                 }
                 drop(parser);

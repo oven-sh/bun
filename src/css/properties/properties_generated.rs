@@ -3740,9 +3740,8 @@ impl Property {
         input: &mut css::Parser,
         options: &css::ParserOptions,
     ) -> css::Result<Property> {
-        // Fallthrough straight to `Unparsed` so the declaration parser still
-        // round-trips (matches the Zig tail of the real `parse`).
-        UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
+        let _ = (property_id, input, options);
+        todo!("blocked_on: generics::parse_tocss_numeric_gated — Property::parse")
     }
     #[cfg(any())] // blocked_on: generics::parse_tocss_numeric_gated (css::generic::{parse_with_options,Parse,ParseWithOptions})
     pub fn parse(

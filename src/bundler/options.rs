@@ -2363,7 +2363,7 @@ impl<'a> BundleOptions<'a> {
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
-            global_cache: GlobalCache::Disable,
+            global_cache: GlobalCache::disable,
             prefer_offline_install: false,
             prefer_latest_install: false,
             install: None,

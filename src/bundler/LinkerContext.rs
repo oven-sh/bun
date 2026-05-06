@@ -200,7 +200,8 @@ pub struct LinkerContext<'a> {
 
 impl<'a> LinkerContext<'a> {
     pub fn mark_pending_task_done(&self) {
-        self.pending_task_count.fetch_sub(1, Ordering::Monotonic);
+        // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
+        self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
     pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
@@ -2072,7 +2073,7 @@ impl<'a> LinkerContext<'a> {
             let part = &parts[source_index as usize].slice()[part_index];
             let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
 
-            if can_be_removed_if_unused && part.tag == Part::Tag::CommonjsNamedExport {
+            if can_be_removed_if_unused && part.tag == js_ast::PartTag::CommonjsNamedExport {
                 if self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::Cjs {
                     can_be_removed_if_unused = false;
                 }
@@ -2107,7 +2108,7 @@ impl<'a> LinkerContext<'a> {
                         entry_point_kinds,
                         css_reprs,
                     );
-                } else if record.flags.is_external_without_side_effects {
+                } else if record.flags.contains(bun_options_types::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS) {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -2161,13 +2162,18 @@ impl<'a> LinkerContext<'a> {
         {
             // SAFETY: parse_graph backref
             let parse_graph = unsafe { &*self.parse_graph };
+            // SAFETY: `part.stmts` is `*mut [Stmt]` (arena slice); reborrow for the
+            // debug print only.
+            let stmts: &[Stmt] = unsafe { &*part.stmts };
             debug_tree_shake!(
                 "markPartLiveForTreeShaking({}): {}:{} = {}, {}",
                 source_index,
-                bstr::BStr::new(&parse_graph.input_files.get(source_index).source.path.pretty),
+                bstr::BStr::new(&parse_graph.input_files.get(source_index as usize).source.path.pretty),
                 part_index,
-                if !part.stmts.is_empty() { part.stmts[0].loc.start } else { Loc::EMPTY.start },
-                if !part.stmts.is_empty() { <&'static str>::from(&part.stmts[0].data) } else { <&'static str>::from(&Stmt::empty().data) },
+                if !stmts.is_empty() { stmts[0].loc.start } else { Loc::EMPTY.start },
+                // Zig used `@tagName(stmts[0].data)`. `StmtData` is `#[derive(strum::IntoStaticStr)]`
+                // so the conversion is on the value, not the reference.
+                if !stmts.is_empty() { <&'static str>::from(&stmts[0].data) } else { "s_empty" },
             );
         }
 

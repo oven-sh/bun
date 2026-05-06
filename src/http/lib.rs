@@ -1680,46 +1680,34 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
     hasher.final_()
 }
 
-pub const fn hash_header_const(name: &[u8]) -> u64 {
-    // TODO(port): this was a comptime fn in Zig calling Wyhash + lowerString.
-    // Needs `const fn` Wyhash + ASCII lowercase in bun_wyhash. Stub for Phase B.
-    let mut hasher = Wyhash::init(0);
-    let mut remain = name;
-    const WYHASH_BUF_LEN: usize = 48;
-    let mut buf = [0u8; WYHASH_BUF_LEN];
-    while !remain.is_empty() {
-        let end = if WYHASH_BUF_LEN < remain.len() { WYHASH_BUF_LEN } else { remain.len() };
-        // std.ascii.lowerString equivalent
-        let mut i = 0;
-        while i < end {
-            buf[i] = remain[i].to_ascii_lowercase();
-            i += 1;
-        }
-        hasher.update(&buf[0..end]);
-        remain = &remain[end..];
-    }
-    hasher.final_()
-}
+// PORT NOTE: Zig computed this at comptime via `Wyhash + lowerString`.
+// Wyhash11 is not yet `const fn`, so alias `hash_header_name` and cache the
+// three values that are looked up on every request via `LazyLock`.
+#[inline(always)]
+pub fn hash_header_const(name: &[u8]) -> u64 { hash_header_name(name) }
 
 // for each request we need this hashs, putting on top of the file to avoid exceeding comptime quota limit
-const AUTHORIZATION_HEADER_HASH: u64 = hash_header_const(b"Authorization");
-const PROXY_AUTHORIZATION_HEADER_HASH: u64 = hash_header_const(b"Proxy-Authorization");
-const COOKIE_HEADER_HASH: u64 = hash_header_const(b"Cookie");
+static AUTHORIZATION_HEADER_HASH: std::sync::LazyLock<u64> =
+    std::sync::LazyLock::new(|| hash_header_name(b"Authorization"));
+static PROXY_AUTHORIZATION_HEADER_HASH: std::sync::LazyLock<u64> =
+    std::sync::LazyLock::new(|| hash_header_name(b"Proxy-Authorization"));
+static COOKIE_HEADER_HASH: std::sync::LazyLock<u64> =
+    std::sync::LazyLock::new(|| hash_header_name(b"Cookie"));
 
 const HOST_HEADER_NAME: &[u8] = b"Host";
 const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
-    picohttp::Header { name: b"Transfer-Encoding", value: b"chunked" };
+    picohttp::Header::new(b"Transfer-Encoding", b"chunked");
 const CONNECTION_HEADER: picohttp::Header =
-    picohttp::Header { name: b"Connection", value: b"keep-alive" };
-const ACCEPT_HEADER: picohttp::Header = picohttp::Header { name: b"Accept", value: b"*/*" };
+    picohttp::Header::new(b"Connection", b"keep-alive");
+const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
 const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
-    picohttp::Header { name: b"Accept-Encoding", value: ACCEPT_ENCODING_COMPRESSION };
+    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
-    picohttp::Header { name: b"Accept-Encoding", value: ACCEPT_ENCODING_NO_COMPRESSION };
+    picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
 const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
     ACCEPT_ENCODING_HEADER_NO_COMPRESSION
@@ -1730,10 +1718,10 @@ const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRE
 fn get_user_agent_header() -> picohttp::Header {
     // SAFETY: OVERRIDDEN_DEFAULT_USER_AGENT is set once at startup before HTTP thread spawns
     let ua = unsafe { OVERRIDDEN_DEFAULT_USER_AGENT };
-    picohttp::Header {
-        name: b"User-Agent",
-        value: if !ua.is_empty() { ua } else { Global::USER_AGENT },
-    }
+    picohttp::Header::new(
+        b"User-Agent",
+        if !ua.is_empty() { ua } else { Global::user_agent.as_bytes() },
+    )
 }
 
 const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;

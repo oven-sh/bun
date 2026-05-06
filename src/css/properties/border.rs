@@ -530,7 +530,7 @@ impl BorderShorthand {
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S: css::DeepClone, const P: u8>(
+    pub fn set_border<S: for<'a> css::DeepClone<'a>, const P: u8>(
         &mut self,
         allocator: &Bump,
         border: &GenericBorder<S, P>,
@@ -1088,8 +1088,8 @@ struct FlushContext<'a> {
     // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
     // here because the per-side BorderShorthand pointers are passed separately.
     flushed_properties: &'a mut BorderProperty,
-    dest: &'a mut DeclarationList,
-    ctx: &'a mut PropertyHandlerContext,
+    dest: &'a mut DeclarationList<'a>,
+    ctx: &'a mut PropertyHandlerContext<'a>,
     logical_supported: bool,
     logical_shorthand_supported: bool,
 }

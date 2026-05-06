@@ -9,7 +9,6 @@ use core::sync::atomic::Ordering;
 use bun_core::Error;
 use bun_picohttp as picohttp;
 
-use crate::h2_frame_parser as wire;
 // `H2Client.zig` is the parent module of `h2_client/`; `live_streams` lives there.
 use super::client_session::ClientSession;
 use crate::HTTPClient;

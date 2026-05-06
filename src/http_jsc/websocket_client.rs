@@ -1059,8 +1059,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     fn enqueue_encoded_bytes(&mut self, socket: &Socket<SSL>, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = &self.proxy_tunnel {
-            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            let wrote = match unsafe { tunnel.data.as_ref() }.write(bytes) {
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`);
+            // `write` mutates the SSL wrapper on the owning thread.
+            let wrote = match unsafe { &mut *tunnel.data.as_ptr() }.write(bytes) {
                 Ok(w) => w,
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);

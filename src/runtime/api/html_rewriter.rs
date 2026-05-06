@@ -424,10 +424,7 @@ impl HTMLRewriterLoader {
     }
 
     pub fn sink(&mut self) -> webcore::Sink<'_> {
-        // TODO(b2-blocked): `webcore::sink::SinkHandler` impl for
-        // HTMLRewriterLoader (vtable wraps connect/write/end). Until that
-        // trait impl lands, this would not type-check against `Sink::init`.
-        todo!("blocked_on: webcore::sink::SinkHandler for HTMLRewriterLoader")
+        webcore::Sink::init(self)
     }
 
     fn write_bytes<const DEINIT: bool>(&mut self, bytes: ByteList) -> Option<bun_sys::Error> {

@@ -831,10 +831,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                let _put_net = scopeguard::guard((), |()| {
-                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs.
+                let _put_net = scopeguard::guard((), move |()| {
+                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
+                    // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
                     unsafe {
-                        (*manager_ptr)
+                        (*mgr_iter_ptr)
                             .preallocated_network_tasks
                             .put((*task_ptr).request.package_manifest_mut().network);
                     }

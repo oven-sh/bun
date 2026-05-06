@@ -92,22 +92,33 @@ impl MySQLRequestQueue {
         }
     }
 
-    /// PORT NOTE: takes both `this` (the queue) and `connection` (the
-    /// embedding `JSMySQLConnection`) as **raw pointers**. The queue is a
-    /// field of `*connection`, so a long-lived `&mut self` receiver would
-    /// alias any `&mut *connection` materialized for `run()`/`on_error()`
-    /// below (Stacked Borrows UB). With raw-ptr receivers, each
-    /// `(*this).…` / `(*connection).…` access forms a fresh short-lived
-    /// borrow that ends before the next one begins — mirroring Zig's freely-
-    /// aliasing `*T` semantics.
+    /// PORT NOTE: takes only `connection` (the embedding `JSMySQLConnection`)
+    /// as a **raw pointer** and derives the queue pointer locally via
+    /// `addr_of_mut!((*connection).connection.queue)`. The queue is a field of
+    /// `*connection`, so any `&mut *connection` materialized for
+    /// `run()`/`on_error()` below covers the queue bytes. Deriving `this` from
+    /// the *same* raw root keeps both projections on one SharedRW provenance
+    /// tag: each `&mut *connection` becomes a child reborrow that is popped
+    /// (not invalidating `this`) when `(*this)` is next used — mirroring Zig's
+    /// freely-aliasing `*T` semantics. Passing `this` and `connection` as
+    /// sibling raw args from the caller would split provenance and is UB under
+    /// Stacked Borrows (the second `&mut self.…` at the call site pops the
+    /// first raw's tag).
     ///
     /// # Safety
-    /// - `this` must point to the live queue embedded as
-    ///   `(*connection).connection.queue`.
-    /// - `connection` must be live for the duration of the call.
-    /// - `run()`/`on_error()`/`reset_connection_timeout()`/`is_able_to_write()`
-    ///   on `*connection` must not access the queue's backing storage.
-    pub unsafe fn advance(this: *mut Self, connection: *mut MySQLConnection) {
+    /// - `connection` must be live for the duration of the call and carry
+    ///   provenance for the entire `JSMySQLConnection` allocation.
+    /// - `run()` / `is_able_to_write()` *do* read queue scalars
+    ///   (`is_ready_for_query`, `pipelined_requests`, …) via
+    ///   `connection.can_execute_query()` etc. — this is sound because those
+    ///   reads go through the `&mut *connection` reborrow itself, and no
+    ///   `(*this)` access overlaps the lifetime of that `&mut`.
+    pub unsafe fn advance(connection: *mut MySQLConnection) {
+        // SAFETY: caller contract — `connection` has full-allocation
+        // provenance; `addr_of_mut!` projects the embedded queue without
+        // creating an intermediate `&mut` (so `connection`'s tag stays live).
+        let this: *mut Self =
+            unsafe { core::ptr::addr_of_mut!((*connection).connection.queue) };
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.

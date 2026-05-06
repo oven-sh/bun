@@ -6355,7 +6355,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
         // retags below don't pop its provenance. Re-borrow `&mut *rfs` per use.
-        let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
         // SAFETY: resolver mutex held; no aliased `EntriesMap` access in this scope.
         let mut cached_dir_entry_result = unsafe { rfs!().entries.get_or_put(dir_path) }?;
@@ -7023,7 +7023,7 @@ impl<'a> Resolver<'a> {
         // Derive provenance from the raw `*mut FileSystem` field directly so later
         // `unsafe { &mut *self.fs() }` calls (e.g. `dirname_store.append_*`) cannot pop `rfs`'s tag
         // under Stacked Borrows (PORTING.md §Forbidden: aliased-&mut).
-        let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
         rfs!().entries_mutex.lock();
@@ -7851,7 +7851,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field so the `&mut *self.fs()` calls below (`abs_buf`/`dirname_store.append_slice`)
         // don't pop its provenance. Re-borrow `&mut *rfs` at the single use site.
-        let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
 
         let ext_buf = bufs!(extension_path);
 
@@ -8189,7 +8189,7 @@ impl<'a> Resolver<'a> {
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
         // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
-        let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         #[allow(unused_macros)]
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
@@ -8395,7 +8395,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
-        let rfs: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
         let entries: *const Fs::file_system::DirEntry = entries;
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
@@ -8456,7 +8456,7 @@ impl<'a> Resolver<'a> {
         // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
         // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
-        let rfs_ptr: *mut Fs::file_system::RealFS = unsafe { core::ptr::addr_of_mut!((*self.fs).fs) };
+        let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
         let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
         // PORT NOTE: re-borrow per use; see SAFETY note above.
         macro_rules! rfs { () => { unsafe { &mut *rfs_ptr } } }

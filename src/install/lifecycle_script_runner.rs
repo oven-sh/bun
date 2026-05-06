@@ -350,12 +350,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// Used to be called from multiple threads during isolated installs; now single-threaded
     /// TODO: re-evaluate whether some variables still need to be atomic
-    pub fn spawn_next_script(&mut self, next_script_index: u8) -> Result<(), bun_core::Error> {
+    ///
+    /// # Safety
+    /// `this` must have been produced by `Self::new` (`Box::into_raw`) and be uniquely
+    /// accessed by the caller for the duration of this call. The pointer is stored as a
+    /// long-lived backref (reader `parent`, intrusive-heap node, process exit handler),
+    /// so it must carry allocation-rooted provenance — passing a `*mut Self` coerced
+    /// from a transient `&mut Self` reborrow would leave dead Stacked Borrows tags once
+    /// the caller resumes using that borrow.
+    pub unsafe fn spawn_next_script(
+        this: *mut Self,
+        next_script_index: u8,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         bun_core::analytics::Features::lifecycle_scripts_inc(1);
 
-        if !self.has_incremented_alive_count {
-            self.has_incremented_alive_count = true;
+        if !(*this).has_incremented_alive_count {
+            (*this).has_incremented_alive_count = true;
             // .monotonic is okay because because this value is only used by hoisted installs, which
             // only use this type on the main thread.
             let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -363,35 +374,45 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // errdefer { decrement alive_count; ensure_not_in_heap }
         // PORT NOTE: Zig's `errdefer` is modeled by splitting the fallible body into
-        // `spawn_next_script_inner` and running the cleanup on the error branch. A scopeguard
-        // capturing a raw `*mut Self` (the previous approach) is UB under Stacked Borrows: the
-        // raw ptr derived from `self` is invalidated by subsequent uses of `self` in the body,
-        // so the guard's `&mut *ptr` on unwind would deref a dead tag.
-        let result = self.spawn_next_script_inner(next_script_index);
+        // `spawn_next_script_inner` and running the cleanup on the error branch. Both
+        // functions take the allocation-rooted `*mut Self` (mirroring Zig's
+        // `*LifecycleScriptSubprocess` receiver) so that backrefs stored into the
+        // readers / intrusive heap / process exit handler retain valid Stacked Borrows
+        // provenance after we return — deriving them from a `&mut self` reborrow would
+        // leave dead tags once that borrow is popped by subsequent `self` uses, and the
+        // synchronous `process.on_exit` dispatch below would alias a second `&mut Self`.
+        let result = Self::spawn_next_script_inner(this, next_script_index);
         if result.is_err() {
-            if self.has_incremented_alive_count {
-                self.has_incremented_alive_count = false;
+            if (*this).has_incremented_alive_count {
+                (*this).has_incremented_alive_count = false;
                 // .monotonic is okay because because this value is only used by hoisted installs.
                 let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
             }
-            self.ensure_not_in_heap();
+            (*this).ensure_not_in_heap();
         }
         result
     }
 
-    fn spawn_next_script_inner(&mut self, next_script_index: u8) -> Result<(), bun_core::Error> {
-        let manager = self.manager;
-        let original_script = self.scripts.items[next_script_index as usize]
+    /// # Safety
+    /// See [`Self::spawn_next_script`]. `this` is dereferenced for disjoint field
+    /// access only — no whole-struct `&mut Self` is held across any call that may
+    /// reenter via the stored exit-handler backref.
+    unsafe fn spawn_next_script_inner(
+        this: *mut Self,
+        next_script_index: u8,
+    ) -> Result<(), bun_core::Error> {
+        let manager = (*this).manager;
+        let original_script = (*this).scripts.items[next_script_index as usize]
             .as_ref()
             .expect("script present");
-        let cwd = &self.scripts.cwd;
-        self.stdout.set_parent(self);
-        self.stderr.set_parent(self);
+        let cwd = &(*this).scripts.cwd;
+        (*this).stdout.set_parent(this);
+        (*this).stderr.set_parent(this);
 
-        self.ensure_not_in_heap();
+        (*this).ensure_not_in_heap();
 
-        self.current_script_index = next_script_index;
-        self.has_called_process_exit = false;
+        (*this).current_script_index = next_script_index;
+        (*this).has_called_process_exit = false;
 
         let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
         // TODO(b0): replace_package_manager_run arrives from move-in (bun_runtime::cli::run_command → install::lifecycle_script_runner).

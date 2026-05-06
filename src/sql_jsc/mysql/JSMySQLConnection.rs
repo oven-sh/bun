@@ -1031,7 +1031,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
     // via the dispatch table (only register on_handshake when SSL == true).
 
     pub fn on_close(this: &mut JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32, _: Option<*mut c_void>) {
-        let _guard = scopeguard::guard((), |_| this.deref());
+        // Zig `defer this.deref();` — releases the socket ref taken in on_open.
+        // Raw-pointer guard so no `&mut` alias is captured and no reference
+        // outlives the potential free.
+        let p: *mut JSMySQLConnection = this;
+        // SAFETY: `p` from live `&mut this`; paired with the `ref_()` in on_open.
+        let _guard = scopeguard::guard((), move |_| unsafe { JSMySQLConnection::deref(p) });
         this.fail(b"Connection closed", err!("ConnectionClosed"));
     }
 

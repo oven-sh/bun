@@ -231,9 +231,12 @@ impl ParseTask {
                 },
                 None => (b"", b""),
             };
+        // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
+        // only read `transpiler().options.target` here.
+        let known_target = unsafe { (*ctx).transpiler().options.target };
         ParseTask {
             // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF).
-            ctx: ctx as *const BundleV2 as *const BundleV2<'static>,
+            ctx: ctx as *mut BundleV2<'static>,
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,

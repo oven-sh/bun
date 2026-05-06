@@ -1556,6 +1556,7 @@ impl ScopedLogger {
 #[macro_export]
 macro_rules! declare_scope {
     ($name:ident, hidden) => {
+        #[allow(non_upper_case_globals)]
         pub static $name: $crate::output::ScopedLogger =
             $crate::output::ScopedLogger::new(
                 // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
@@ -1564,6 +1565,7 @@ macro_rules! declare_scope {
             );
     };
     ($name:ident, visible) => {
+        #[allow(non_upper_case_globals)]
         pub static $name: $crate::output::ScopedLogger =
             $crate::output::ScopedLogger::new(
                 stringify!($name),

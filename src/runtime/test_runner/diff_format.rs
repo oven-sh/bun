@@ -28,30 +28,6 @@ impl<'a> Default for DiffFormatter<'a> {
     }
 }
 
-/// Bridge a `core::fmt::Formatter` (or any `fmt::Write`) into a `std::io::Write`
-/// sink so byte-oriented helpers like `print_diff_main` can stream into a
-/// `Display::fmt` formatter without an intermediate `Vec<u8>`.
-struct FmtIoAdapter<'a, 'b> {
-    inner: &'a mut fmt::Formatter<'b>,
-    error: bool,
-}
-
-impl<'a, 'b> std::io::Write for FmtIoAdapter<'a, 'b> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // print_diff_main only ever emits UTF-8; lossily decoding is defensive.
-        match self.inner.write_str(&String::from_utf8_lossy(buf)) {
-            Ok(()) => Ok(buf.len()),
-            Err(_) => {
-                self.error = true;
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "fmt error"))
-            }
-        }
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Zig: var scope = bun.AllocationScope.init(default_allocator);

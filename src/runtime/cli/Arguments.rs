@@ -1335,7 +1335,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --bail expects a number: {}", e));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --bail expects a number: {:?}", e));
                         Output::flush();
                         Global::exit(1);
                     }

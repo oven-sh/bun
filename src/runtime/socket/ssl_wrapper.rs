@@ -116,14 +116,11 @@ impl From<WriteDataError> for bun_core::Error {
 impl<T: Copy> SSLWrapper<T> {
     /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
     pub fn init_with_ctx(
-        ctx: *mut boring_sys::SSL_CTX,
+        ctx: NonNull<boring_sys::SSL_CTX>,
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<Self, bun_alloc::AllocError> {
         bun_boringssl::load();
-        // Zig signature is non-nullable `*SSL_CTX`; callers hand us a raw FFI
-        // pointer so normalize to NonNull here (treat null as OOM-equivalent).
-        let ctx = NonNull::new(ctx).ok_or(bun_alloc::AllocError)?;
         // SAFETY: ctx is a valid non-null SSL_CTX*; SSL_new returns null on OOM.
         let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
             .ok_or(bun_alloc::AllocError)?;

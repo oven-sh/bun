@@ -259,7 +259,10 @@ impl EVP {
         };
         if let Some(&algorithm) = MAP.get(lookup_key) {
             if let Some(md) = algorithm.md() {
-                return Some(EVP::init(algorithm, md, engine));
+                // CYCLEBREAK cast: `Algorithm::md()` was lowered to `bun_sha_hmac`
+                // and returns that crate's opaque `EVP_MD`; both name the same C
+                // `struct env_md_st`, so a pointer cast is the correct unification.
+                return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
             }
 
             // PORT NOTE: Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).

@@ -1,19 +1,21 @@
 // This file is the old linker, used by Bun.Transpiler.
+//
+// Port of `src/bundler/linker.zig`.
 
 use std::io::Write as _;
 
 use bun_collections::HashMap;
 use bun_logger::Log;
-use bun_options_types::ImportRecord;
+use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_paths::{self, SEP};
-use bun_fs as Fs;
+use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
-use bun_str::strings;
+use bun_string::strings;
 use bun_sys::Fd;
 use bun_url::URL;
 
 use crate::options::{self, BundleOptions, ImportPathFormat};
-use crate::transpiler::{self, ParseResult, PluginRunner, ResolveQueue, ResolveResults, Transpiler};
+use crate::transpiler::{ParseResult, PluginRunner, ResolveQueue, ResolveResults};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum CSSResolveError {
@@ -26,25 +28,39 @@ impl From<CSSResolveError> for bun_core::Error {
     }
 }
 
-pub type OnImportCallback = fn(resolve_result: &resolver::Result, import_record: &mut ImportRecord, origin: URL);
+pub type OnImportCallback =
+    fn(resolve_result: &resolver::Result, import_record: &mut ImportRecord, origin: &URL<'_>);
 
-type HashedFileNameMap = HashMap<u64, Box<[u8]>>;
+type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
-pub struct Linker<'a> {
-    // allocator field dropped — global mimalloc (callers pass bun.default_allocator)
-    pub options: &'a mut BundleOptions,
-    pub fs: &'static Fs::FileSystem,
-    pub log: &'a mut Log,
-    pub resolve_queue: &'a mut ResolveQueue,
-    pub resolver: &'a mut Resolver,
-    pub resolve_results: &'a mut ResolveResults,
+// PORT NOTE: `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
+// (`transpiler.rs:1111`). The Zig value is a hard `false` (`const isCacheEnabled
+// = false;`); inline it here so `get_hashed_filename` compiles without depending
+// on the gated `Transpiler` impl.
+const IS_CACHE_ENABLED: bool = false;
+
+pub struct Linker {
+    // allocator field dropped — global mimalloc (callers pass `bun.default_allocator`)
+    // PORT NOTE: Zig stored borrowed `*BundleOptions` / `*Log` / `*Resolver` /
+    // `*ResolveQueue` / `*ResolveResults` / `*FileSystem`. The un-gated
+    // `Transpiler` struct owns those values directly and also owns `linker:
+    // crate::Linker` by value, so storing Rust references here would alias
+    // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
+    // pointers (matching Zig's `*T`) and dereference at use-site; same
+    // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
+    pub options: *mut BundleOptions,
+    pub fs: *mut Fs::FileSystem,
+    pub log: *mut Log,
+    pub resolve_queue: *mut ResolveQueue,
+    pub resolver: *mut Resolver,
+    pub resolve_results: *mut ResolveResults,
     pub any_needs_runtime: bool,
     pub runtime_import_record: Option<ImportRecord>,
     pub hashed_filenames: HashedFileNameMap,
     pub import_counter: usize,
     pub tagged_resolutions: TaggedResolution,
 
-    pub plugin_runner: Option<&'a mut PluginRunner>,
+    pub plugin_runner: Option<*mut PluginRunner>,
 }
 
 pub const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -58,24 +74,112 @@ pub struct TaggedResolution {
     // jsx_classic: Option<resolver::Result>,
 }
 
-// TODO(port): BSSStringList is a static BSS-backed string list from bun_alloc; verify generics shape
-type ImportPathsList = bun_alloc::BSSStringList<512, 128>;
-// TODO(port): Zig used `pub var ... = undefined` initialized in init(); model as Option for now
-pub static mut RELATIVE_PATHS_LIST: Option<&'static mut ImportPathsList> = None;
+// ── relative_paths_list singleton ────────────────────────────────────────
+// Zig: `const ImportPathsList = allocators.BSSStringList(512, 128);
+//        pub var relative_paths_list: *ImportPathsList = undefined;`
+//
+// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the Zig generics as
+// `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
+// PORT NOTE: `bss_string_list!` would be the canonical declare-site macro but
+// expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
+// enable `#![feature(sync_unsafe_cell)]`. Use the heap-allocating `init()`
+// fallback under a `Once` instead — same lifetime semantics (process-static,
+// never freed), just not BSS-backed. Swap to the macro once the crate-level
+// feature flag lands.
+pub type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
 
-impl<'a> Linker<'a> {
+static RELATIVE_PATHS_LIST_ONCE: std::sync::Once = std::sync::Once::new();
+static RELATIVE_PATHS_LIST_PTR: core::sync::atomic::AtomicPtr<ImportPathsList> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+#[inline]
+fn relative_paths_list_ptr() -> *mut ImportPathsList {
+    RELATIVE_PATHS_LIST_ONCE.call_once(|| {
+        let p: *mut ImportPathsList = ImportPathsList::init();
+        RELATIVE_PATHS_LIST_PTR.store(p, core::sync::atomic::Ordering::Release);
+    });
+    RELATIVE_PATHS_LIST_PTR.load(core::sync::atomic::Ordering::Acquire)
+}
+
+// ── HardcodedModule alias lookup ────────────────────────────────────────
+// CYCLEBREAK FORWARD_DECL: `bun_resolve_builtins::HardcodedModule::Alias::get`.
+// `bun_resolve_builtins` is not a dependency of `bun_bundler` yet (see
+// Cargo.toml `TODO(b2-blocked)`); mirror the resolver's local `module_loader`
+// stub so `link()` type-checks. Returns `None` (no remap) until the dep lands.
+mod hardcoded_module {
+    use super::*;
+    #[derive(Default, Clone, Copy)]
+    pub struct AliasOptions {
+        pub rewrite_jest_for_tests: bool,
+    }
+    pub struct Alias {
+        pub path: &'static [u8],
+        pub tag: ImportRecordTag,
+    }
+    #[allow(clippy::extra_unused_type_parameters)]
+    pub fn get(_name: &[u8], _target: options::Target, _opts: AliasOptions) -> Option<Alias> {
+        // TODO(b2-blocked): bun_resolve_builtins — real lookup table.
+        None
+    }
+}
+
+// ── ExternalModules::is_node_builtin shim ───────────────────────────────
+// `options::ExternalModules::is_node_builtin` is `#[cfg(any())]`-gated for the
+// same `bun_resolve_builtins` reason. Provide a local fallback so the
+// browser-target diagnostic branch compiles; the conservative `false` simply
+// routes both messages through the generic "Maybe you need to bun install?"
+// arm until the real table is wired up.
+#[inline]
+fn is_node_builtin(_path: &[u8]) -> bool {
+    // TODO(b2-blocked): bun_resolve_builtins.
+    false
+}
+
+#[inline]
+fn without_leading_slash(s: &[u8]) -> &[u8] {
+    // PORT NOTE: `strings.withoutLeadingSlash` is not yet ported into
+    // `bun_string::immutable`; trivial enough to inline.
+    if !s.is_empty() && (s[0] == b'/' || (cfg!(windows) && s[0] == b'\\')) {
+        &s[1..]
+    } else {
+        s
+    }
+}
+
+/// Intern a freshly-allocated byte buffer for the lifetime of the process.
+///
+/// Zig used `linker.allocator.dupe(u8, ...)` / `allocPrint` with
+/// `bun.default_allocator` and never frees the result — the linker is a
+/// per-transpile singleton whose output paths flow into `ImportRecord.path:
+/// Path<'static>`. Match those semantics by leaking; the backing allocation is
+/// mimalloc (global allocator) just like the Zig original.
+// PERF(port): route through `relative_paths_list().append()` once the
+// `BSSStringList::append` `'static`-erasure helper exists for this crate.
+#[inline]
+fn intern(buf: Vec<u8>) -> &'static [u8] {
+    Vec::leak(buf)
+}
+#[inline]
+fn intern_box(buf: Box<[u8]>) -> &'static [u8] {
+    Box::leak(buf)
+}
+#[inline]
+fn dupe(src: &[u8]) -> &'static [u8] {
+    intern(src.to_vec())
+}
+
+impl Linker {
     pub fn init(
-        log: &'a mut Log,
-        resolve_queue: &'a mut ResolveQueue,
-        options: &'a mut BundleOptions,
-        resolver: &'a mut Resolver,
-        resolve_results: &'a mut ResolveResults,
-        fs: &'static Fs::FileSystem,
+        log: *mut Log,
+        resolve_queue: *mut ResolveQueue,
+        options: *mut BundleOptions,
+        resolver: *mut Resolver,
+        resolve_results: *mut ResolveResults,
+        fs: *mut Fs::FileSystem,
     ) -> Self {
-        // SAFETY: single-threaded init at Transpiler construction; mirrors Zig `pub var` write
-        unsafe {
-            RELATIVE_PATHS_LIST = Some(ImportPathsList::init());
-        }
+        // Zig wrote `relative_paths_list = ImportPathsList.init(allocator);`
+        // here; the singleton accessor handles that lazily on first use.
+        let _ = relative_paths_list_ptr();
 
         Self {
             options,
@@ -93,21 +197,35 @@ impl<'a> Linker<'a> {
         }
     }
 
+    /// Accessor for the `relative_paths_list` singleton (Zig:
+    /// `Linker.relative_paths_list`). Returns `*mut` because the Zig contract
+    /// is a global `*Self` pointer — fabricating `&'static mut` here would
+    /// alias on every call.
+    #[inline]
+    pub fn relative_paths_list() -> *mut ImportPathsList {
+        relative_paths_list_ptr()
+    }
+
+    // ── getModKey / getHashedFilename ────────────────────────────────────
+    // The inline `bun_resolver::fs` module does not yet expose `RealFS::ModKey`
+    // (`mod_key`/`hash_name` live in the gated `fs_full`). `link()` only ever
+    // calls `generate_import_path` with `use_hashed_name == false`, so neither
+    // path is reachable from the un-gated transpiler surface. Gate the real
+    // bodies and provide a loud stub so any future caller fails fast instead
+    // of silently mis-hashing.
+    #[cfg(any())]
     pub fn get_mod_key(
         &mut self,
-        file_path: Fs::Path,
+        file_path: &Fs::Path<'_>,
         fd: Option<Fd>,
     ) -> Result<Fs::RealFS::ModKey, bun_core::Error> {
-        // TODO(port): Zig used std.fs.File / std.fs.cwd().openFile here. Replace with bun_sys::File
-        // open in read-only mode. The std::fs ban applies; this is a placeholder shape.
         let file: bun_sys::File = if let Some(f) = fd {
             f.into_file()
         } else {
             bun_sys::File::open(file_path.text, bun_sys::O::RDONLY, 0)?
         };
         Fs::FileSystem::set_max_fd(file.handle());
-        let modkey = Fs::RealFS::ModKey::generate(&self.fs.fs, file_path.text, &file)?;
-
+        let modkey = Fs::RealFS::ModKey::generate(&mut (*self.fs).fs, file_path.text, &file)?;
         if fd.is_none() {
             file.close();
         }
@@ -116,42 +234,43 @@ impl<'a> Linker<'a> {
 
     pub fn get_hashed_filename(
         &mut self,
-        file_path: Fs::Path,
-        fd: Option<Fd>,
-    ) -> Result<&[u8], bun_core::Error> {
-        // TODO(port): narrow error set
-        if Transpiler::IS_CACHE_ENABLED {
+        file_path: &Fs::Path<'_>,
+        _fd: Option<Fd>,
+    ) -> Result<&'static [u8], bun_core::Error> {
+        if IS_CACHE_ENABLED {
             let hashed = bun_wyhash::hash(file_path.text);
-            // PORT NOTE: reshaped for borrowck — Zig did getOrPut then early-return on found_existing
             if let Some(v) = self.hashed_filenames.get(&hashed) {
-                return Ok(v);
+                return Ok(*v);
             }
         }
-
-        let modkey = self.get_mod_key(file_path, fd)?;
-        let hash_name = modkey.hash_name(file_path.text);
-
-        if Transpiler::IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
-            self.hashed_filenames
-                .insert(hashed, Box::<[u8]>::from(hash_name));
-        }
-
-        Ok(hash_name)
+        // TODO(b2-blocked): bun_resolver::fs::RealFS::ModKey — see gated
+        // `get_mod_key` above. Unreachable from `link()` (which always passes
+        // `use_hashed_name=false`); the only other caller is the still-gated
+        // `Transpiler::print_maybe_source_file_only` draft body.
+        let _ = file_path;
+        unimplemented!("Linker::get_hashed_filename: RealFS::ModKey not yet exposed by bun_resolver::fs (Phase B)")
     }
 
-    /// This modifies the Ast in-place! It resolves import records and generates paths.
-    pub fn link<
-        const IMPORT_PATH_FORMAT: ImportPathFormat,
-        const IGNORE_RUNTIME: bool,
-        const IS_BUN: bool,
-    >(
+    /// This modifies the Ast in-place! It resolves import records and
+    /// generates paths.
+    ///
+    /// PORT NOTE: `comptime import_path_format` demoted to a runtime arg —
+    /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
+    /// crate doesn't enable `adt_const_params`. All callers pass a literal,
+    /// and the inner `generate_import_path` body is a single `match` either
+    /// way, so codegen is equivalent.
+    pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
         &mut self,
-        file_path: Fs::Path,
+        file_path: &Fs::Path<'_>,
         result: &mut ParseResult,
-        origin: URL,
+        origin: &URL<'_>,
+        import_path_format: ImportPathFormat,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+        // SAFETY: `Transpiler` outlives all `link()` calls and is the sole owner
+        // of the pointees; raw-ptr aliasing matches the Zig `*BundleOptions` etc.
+        let opts = unsafe { &mut *self.options };
+        let log = unsafe { &mut *self.log };
+
         let source_dir = file_path.source_dir();
         let mut externals: Vec<u32> = Vec::new();
         let mut had_resolve_errors = false;
@@ -164,68 +283,87 @@ impl<'a> Linker<'a> {
             | options::Loader::Js
             | options::Loader::Ts
             | options::Loader::Tsx => {
-                for (record_i, import_record) in
-                    result.ast.import_records.slice_mut().iter_mut().enumerate()
-                {
-                    if import_record.flags.is_unused
-                        || (IS_BUN
-                            && is_deferred
-                            && !result.is_pending_import(u32::try_from(record_i).unwrap()))
+                // PORT NOTE: reshaped for borrowck — Zig iterated
+                // `result.ast.import_records.slice()` while also reading other
+                // `result.*` fields and (in the not-found branch) borrowing
+                // `&result.source`. Hoist the slice borrow per-iteration via
+                // index so `result` stays available.
+                let len = result.ast.import_records.slice().len();
+                for record_i in 0..len {
                     {
-                        continue;
+                        let import_record =
+                            &mut result.ast.import_records.slice_mut()[record_i];
+                        if import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                            || (IS_BUN
+                                && is_deferred
+                                && !result
+                                    .is_pending_import(u32::try_from(record_i).unwrap()))
+                        {
+                            continue;
+                        }
                     }
 
                     let record_index = record_i;
                     if !IGNORE_RUNTIME {
+                        let import_record =
+                            &mut result.ast.import_records.slice_mut()[record_i];
                         if import_record.path.namespace == b"runtime" {
-                            if IMPORT_PATH_FORMAT == ImportPathFormat::AbsoluteUrl {
+                            if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = Fs::Path::init_with_namespace(
-                                    origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?,
+                                    intern_box(
+                                        origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?,
+                                    ),
                                     b"bun",
                                 );
                             } else {
-                                import_record.path = self.generate_import_path::<IMPORT_PATH_FORMAT>(
+                                import_record.path = self.generate_import_path(
                                     source_dir,
                                     RUNTIME_SOURCE_PATH,
                                     false,
                                     b"bun",
                                     origin,
+                                    import_path_format,
                                 )?;
                             }
 
                             result.ast.runtime_import_record_id =
-                                u32::try_from(record_index).unwrap();
+                                Some(u32::try_from(record_index).unwrap());
                             result.ast.needs_runtime = true;
                             continue;
                         }
                     }
 
                     if IS_BUN {
-                        // TODO(port): jsc::ModuleLoader lives in the runtime crate; verify path
-                        if let Some(replacement) =
-                            bun_resolve_builtins::HardcodedModule::HardcodedModule::Alias::get(
-                                import_record.path.text,
-                                self.options.target,
-                                bun_resolve_builtins::HardcodedModule::AliasOptions {
-                                    rewrite_jest_for_tests: self.options.rewrite_jest_for_tests,
-                                },
-                            )
-                        {
-                            if replacement.tag == bun_options_types::ImportRecordTag::Builtin
+                        let import_record =
+                            &mut result.ast.import_records.slice_mut()[record_i];
+                        if let Some(replacement) = hardcoded_module::get(
+                            import_record.path.text,
+                            opts.target,
+                            hardcoded_module::AliasOptions {
+                                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
+                            },
+                        ) {
+                            if replacement.tag == ImportRecordTag::Builtin
                                 && import_record.kind.is_common_js()
                             {
                                 continue;
                             }
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
-                            import_record.flags.is_external_without_side_effects = true;
+                            import_record
+                                .flags
+                                .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                             continue;
                         }
                         if strings::starts_with(import_record.path.text, b"node:") {
-                            // if a module is not found here, it is not found at all
-                            // so we can just disable it
-                            had_resolve_errors =
-                                self.when_module_not_found::<IS_BUN>(import_record, result)?;
+                            // if a module is not found here, it is not found at
+                            // all so we can just disable it
+                            had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
+                                log,
+                                opts,
+                                &mut result.ast.import_records.slice_mut()[record_i],
+                                &result.source,
+                            )?;
 
                             if had_resolve_errors {
                                 return Err(bun_core::err!("ResolveMessage"));
@@ -233,7 +371,7 @@ impl<'a> Linker<'a> {
                             continue;
                         }
 
-                        if strings::has_prefix(import_record.path.text, b"bun:") {
+                        if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
                             import_record.path =
                                 Fs::Path::init(&import_record.path.text[b"bun:".len()..]);
                             import_record.path.namespace = b"bun";
@@ -243,35 +381,46 @@ impl<'a> Linker<'a> {
                         }
 
                         // Resolve dynamic imports lazily for perf
-                        if import_record.kind == bun_options_types::ImportKind::Dynamic {
+                        if import_record.kind == ImportKind::Dynamic {
                             continue;
                         }
                     }
 
-                    if let Some(runner) = self.plugin_runner.as_deref_mut() {
+                    // CYCLEBREAK FORWARD_DECL: `PluginRunner` is an opaque
+                    // `[u8; 0]` newtype in the un-gated transpiler header
+                    // (real impl lives in `bundler_jsc::plugin_runner`), so
+                    // `could_be_plugin` / `on_resolve` have no method bodies
+                    // to call here. Gate the dispatch until the JSC-side
+                    // plugin runner is linked.
+                    #[cfg(any())]
+                    if let Some(runner) = self.plugin_runner {
+                        let import_record =
+                            &mut result.ast.import_records.slice_mut()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
-                            if let Some(path) = runner.on_resolve(
+                            if let Some(path) = unsafe { &mut *runner }.on_resolve(
                                 import_record.path.text,
                                 file_path.text,
-                                self.log,
+                                log,
                                 import_record.range.loc,
                                 if IS_BUN {
-                                    transpiler::PluginTarget::Bun
-                                } else if self.options.target == options::Target::Browser {
-                                    transpiler::PluginTarget::Browser
+                                    crate::transpiler::PluginTarget::Bun
+                                } else if opts.target == options::Target::Browser {
+                                    crate::transpiler::PluginTarget::Browser
                                 } else {
-                                    transpiler::PluginTarget::Node
+                                    crate::transpiler::PluginTarget::Node
                                 },
                             )? {
-                                import_record.path = self
-                                    .generate_import_path::<IMPORT_PATH_FORMAT>(
-                                        source_dir,
-                                        path.text,
-                                        false,
-                                        path.namespace,
-                                        origin,
-                                    )?;
-                                import_record.flags.print_namespace_in_path = true;
+                                import_record.path = self.generate_import_path(
+                                    source_dir,
+                                    path.text,
+                                    false,
+                                    path.namespace,
+                                    origin,
+                                    import_path_format,
+                                )?;
+                                import_record
+                                    .flags
+                                    .insert(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH);
                                 continue;
                             }
                         }
@@ -284,27 +433,34 @@ impl<'a> Linker<'a> {
         if had_resolve_errors {
             return Err(bun_core::err!("ResolveMessage"));
         }
+        // PERF(port): Zig clearAndFree; Vec drop at scope end frees.
         externals.clear();
-        // PERF(port): Zig clearAndFree; Vec drop at scope end frees — profile in Phase B
+        let _ = externals;
         Ok(())
     }
 
+    // PORT NOTE: reshaped for borrowck — Zig passed `&mut self` + `&mut
+    // ImportRecord` (a sub-borrow of `result.ast`) + `&mut ParseResult`. In
+    // Rust those overlap; pass the disjoint pieces explicitly.
     fn when_module_not_found<const IS_BUN: bool>(
-        &mut self,
+        log: &mut Log,
+        opts: &BundleOptions,
         import_record: &mut ImportRecord,
-        result: &mut ParseResult,
+        source: &bun_logger::Source,
     ) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
-        if import_record.flags.handles_import_errors {
+        if import_record
+            .flags
+            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+        {
             import_record.path.is_disabled = true;
             return Ok(false);
         }
 
         if IS_BUN {
             // make these happen at runtime
-            if import_record.kind == bun_options_types::ImportKind::Require
-                || import_record.kind == bun_options_types::ImportKind::RequireResolve
-                || import_record.kind == bun_options_types::ImportKind::Dynamic
+            if import_record.kind == ImportKind::Require
+                || import_record.kind == ImportKind::RequireResolve
+                || import_record.kind == ImportKind::Dynamic
             {
                 return Ok(false);
             }
@@ -313,39 +469,42 @@ impl<'a> Linker<'a> {
         if !import_record.path.text.is_empty()
             && resolver::is_package_path(import_record.path.text)
         {
-            if self.options.target == options::Target::Browser
-                && options::ExternalModules::is_node_builtin(import_record.path.text)
+            if opts.target == options::Target::Browser
+                && is_node_builtin(import_record.path.text)
             {
-                self.log.add_resolve_error(
-                    &result.source,
+                log.add_resolve_error(
+                    Some(source),
                     import_record.range,
                     format_args!(
                         "Could not resolve: \"{}\". Try setting --target=\"node\"",
                         bstr::BStr::new(import_record.path.text)
                     ),
+                    import_record.path.text,
                     import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 )?;
             } else {
-                self.log.add_resolve_error(
-                    &result.source,
+                log.add_resolve_error(
+                    Some(source),
                     import_record.range,
                     format_args!(
                         "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
                         bstr::BStr::new(import_record.path.text)
                     ),
+                    import_record.path.text,
                     import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 )?;
             }
         } else {
-            self.log.add_resolve_error(
-                &result.source,
+            log.add_resolve_error(
+                Some(source),
                 import_record.range,
                 format_args!(
                     "Could not resolve: \"{}\"",
                     bstr::BStr::new(import_record.path.text)
                 ),
+                import_record.path.text,
                 import_record.kind,
                 bun_core::err!("ModuleNotFound"),
             )?;
@@ -353,58 +512,68 @@ impl<'a> Linker<'a> {
         Ok(true)
     }
 
-    pub fn generate_import_path<const IMPORT_PATH_FORMAT: ImportPathFormat>(
+    pub fn generate_import_path(
         &mut self,
         source_dir: &[u8],
-        source_path: &[u8],
+        source_path: &'static [u8],
         use_hashed_name: bool,
-        namespace: &[u8],
-        origin: URL,
-    ) -> Result<Fs::Path, bun_core::Error> {
-        // TODO(port): narrow error set
-        match IMPORT_PATH_FORMAT {
+        namespace: &'static [u8],
+        origin: &URL<'_>,
+        import_path_format: ImportPathFormat,
+    ) -> Result<Fs::Path<'static>, bun_core::Error> {
+        // SAFETY: see `link()`.
+        let fs = unsafe { &*self.fs };
+        let opts = unsafe { &*self.options };
+
+        match import_path_format {
             ImportPathFormat::AbsolutePath => {
                 if namespace == b"node" {
                     return Ok(Fs::Path::init_with_namespace(source_path, b"node"));
                 }
 
                 if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
-                    let relative_name = self.fs.relative(source_dir, source_path);
+                    // PORT NOTE: `linker.fs.relative` is a thin wrapper over
+                    // `bun.path.relative`; the inline `bun_resolver::fs`
+                    // module doesn't expose it yet, so call the path layer
+                    // directly. The threadlocal-buffer result must be
+                    // dup'd to outlive this call (Zig leaked into Path).
+                    let relative_name =
+                        dupe(bun_paths::resolve_path::relative(source_dir, source_path));
                     Ok(Fs::Path::init_with_pretty(source_path, relative_name))
                 } else {
                     Ok(Fs::Path::init_with_namespace(source_path, namespace))
                 }
             }
             ImportPathFormat::Relative => {
-                let mut relative_name = self.fs.relative(source_dir, source_path);
+                let relative_name =
+                    bun_paths::resolve_path::relative(source_dir, source_path);
 
-                let pretty: Box<[u8]>;
+                let pretty: &'static [u8];
+                let relative_name_out: &'static [u8];
                 if use_hashed_name {
                     let basepath = Fs::Path::init(source_path);
-                    let basename = self.get_hashed_filename(basepath, None)?;
+                    let basename = self.get_hashed_filename(&basepath, None)?;
                     let dir = basepath.name.dir_with_trailing_slash();
-                    let mut _pretty: Vec<u8> =
-                        Vec::with_capacity(dir.len() + basename.len() + basepath.name.ext.len());
+                    let mut _pretty: Vec<u8> = Vec::with_capacity(
+                        dir.len() + basename.len() + basepath.name.ext.len(),
+                    );
                     _pretty.extend_from_slice(dir);
                     _pretty.extend_from_slice(basename);
                     _pretty.extend_from_slice(basepath.name.ext);
-                    pretty = _pretty.into_boxed_slice();
-                    relative_name = Box::<[u8]>::from(relative_name);
-                    // TODO(port): lifetime — Zig dup'd relative_name into linker.allocator; ownership of
-                    // these slices inside Fs::Path needs to be settled in Phase B
+                    pretty = intern(_pretty);
+                    relative_name_out = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
                         && !(relative_name[0] == SEP || relative_name[0] == b'.')
                     {
-                        pretty = strings::concat(&[b"./", relative_name])?;
+                        pretty = intern_box(strings::concat(&[b"./", relative_name])?);
                     } else {
-                        pretty = Box::<[u8]>::from(relative_name);
+                        pretty = dupe(relative_name);
                     }
-
-                    relative_name = &pretty;
+                    relative_name_out = pretty;
                 }
 
-                Ok(Fs::Path::init_with_pretty(pretty, relative_name))
+                Ok(Fs::Path::init_with_pretty(pretty, relative_name_out))
             }
 
             ImportPathFormat::AbsoluteUrl => {
@@ -419,57 +588,58 @@ impl<'a> Linker<'a> {
                         &mut buf,
                         "{}/{}",
                         bstr::BStr::new(strings::without_trailing_slash(origin.href)),
-                        bstr::BStr::new(strings::without_leading_slash(source_path)),
+                        bstr::BStr::new(without_leading_slash(source_path)),
                     )
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                    Ok(Fs::Path::init(buf.into_boxed_slice()))
+                    Ok(Fs::Path::init(intern(buf)))
                 } else {
                     let mut absolute_pathname = Fs::PathName::init(source_path);
 
-                    if !self.options.preserve_extensions {
-                        if let Some(ext) =
-                            self.options.out_extensions.get(absolute_pathname.ext)
-                        {
+                    if !opts.preserve_extensions {
+                        if let Some(ext) = opts.out_extensions.get(absolute_pathname.ext) {
                             absolute_pathname.ext = ext;
                         }
                     }
 
-                    let mut base = self.fs.relative_to(source_path);
+                    // PORT NOTE: `fs.relativeTo(source_path)` ==
+                    // `relative(fs.top_level_dir, source_path)` in Zig.
+                    let mut base: &[u8] =
+                        bun_paths::resolve_path::relative(fs.top_level_dir, source_path);
                     if let Some(dot) = strings::last_index_of_char(base, b'.') {
                         base = &base[0..dot];
                     }
 
-                    let dirname = bun_paths::dirname(base).unwrap_or(b"");
+                    let dirname = bun_core::dirname(base).unwrap_or(b"");
 
-                    let mut basename = bun_paths::basename(base);
+                    let mut basename: &[u8] = bun_paths::basename(base);
 
                     if use_hashed_name {
                         let basepath = Fs::Path::init(source_path);
-
-                        basename = self.get_hashed_filename(basepath, None)?;
+                        basename = self.get_hashed_filename(&basepath, None)?;
                     }
 
-                    Ok(Fs::Path::init(origin.join_alloc(
+                    Ok(Fs::Path::init(intern_box(origin.join_alloc(
                         b"",
                         dirname,
                         basename,
                         absolute_pathname.ext,
                         source_path,
-                    )?))
+                    )?)))
                 }
             }
 
-            _ => unreachable!(),
+            ImportPathFormat::PackagePath => unreachable!(),
         }
     }
 
     pub fn resolve_result_hash_key(&self, resolve_result: &resolver::Result) -> u64 {
         let path = resolve_result.path_const().expect("unreachable");
+        let fs = unsafe { &*self.fs };
         let mut hash_key = path.text;
 
         // Shorter hash key is faster to hash
-        if strings::starts_with(path.text, self.fs.top_level_dir) {
-            hash_key = &path.text[self.fs.top_level_dir.len()..];
+        if strings::starts_with(path.text, fs.top_level_dir) {
+            hash_key = &path.text[fs.top_level_dir.len()..];
         }
 
         bun_wyhash::hash(hash_key)
@@ -477,18 +647,23 @@ impl<'a> Linker<'a> {
 
     pub fn enqueue_resolve_result(
         &mut self,
-        resolve_result: &resolver::Result,
+        resolve_result: resolver::Result,
     ) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
-        let hash_key = self.resolve_result_hash_key(resolve_result);
+        let hash_key = self.resolve_result_hash_key(&resolve_result);
 
-        let get_or_put_entry = self.resolve_results.get_or_put(hash_key)?;
+        // SAFETY: see `link()`.
+        let resolve_results = unsafe { &mut *self.resolve_results };
+        let resolve_queue = unsafe { &mut *self.resolve_queue };
 
-        if !get_or_put_entry.found_existing {
-            self.resolve_queue.write_item(resolve_result.clone())?;
+        // PORT NOTE: Zig `getOrPut` → `HashMap::entry`; `found_existing` is
+        // whether the key was already present.
+        let found_existing = resolve_results.contains_key(&hash_key);
+        if !found_existing {
+            resolve_results.insert(hash_key, ());
+            resolve_queue.push_back(resolve_result);
         }
 
-        Ok(!get_or_put_entry.found_existing)
+        Ok(!found_existing)
     }
 }
 
@@ -496,6 +671,11 @@ impl<'a> Linker<'a> {
 // PORT STATUS
 //   source:     src/bundler/linker.zig (421 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      Fs::Path string ownership unresolved; const-generic enum ImportPathFormat needs ConstParamTy; HardcodedModule::Alias crate path needs verification
+//   todos:      4
+//   notes:      ImportPathFormat const-generic demoted to runtime arg
+//               (no `adt_const_params` in this crate); HardcodedModule /
+//               is_node_builtin / PluginRunner are FORWARD_DECL stubs until
+//               `bun_resolve_builtins` + `bundler_jsc::plugin_runner` deps
+//               land; `get_hashed_filename` body gated on
+//               `bun_resolver::fs::RealFS::ModKey`.
 // ──────────────────────────────────────────────────────────────────────────

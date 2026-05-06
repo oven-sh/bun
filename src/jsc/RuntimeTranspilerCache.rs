@@ -799,7 +799,7 @@ impl RuntimeTranspilerCache {
         Err(bun_core::err!("CacheDisabled"))
     }
 
-    pub fn is_eligible(&self, path: &FsPath) -> bool {
+    pub fn is_eligible(&self, path: &FsPath<'_>) -> bool {
         path.is_file()
     }
 
@@ -871,12 +871,9 @@ impl RuntimeTranspilerCache {
     pub fn get(
         &mut self,
         source: &Source,
-        // TODO(b2-blocked): bun_js_parser::Parser::Options — type path unconfirmed; gated body.
-        #[cfg(any())] parser_options: &bun_js_parser::Parser::Options,
+        parser_options: &ParserOptions<'_>,
         used_jsx: bool,
     ) -> bool {
-        #[cfg(any())] // TODO(b2-blocked): bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE, bun_logger::Source.{contents, path}, bun_js_parser::Parser::Options::hash_for_runtime_transpiler, bun_analytics::Features
-        {
         if !FeatureFlags::RUNTIME_TRANSPILER_CACHE {
             return false;
         }
@@ -893,11 +890,14 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        if !source.path.is_file() {
+        // PORT NOTE: `bun_logger::fs::Path` is the trimmed TYPE_ONLY mirror and
+        // doesn't carry `is_file()` yet; inline the same check the resolver
+        // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
+        if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
             return false;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
+        let input_hash = self.input_hash.unwrap_or_else(|| hash(source.contents));
         self.input_hash = Some(input_hash);
         self.input_byte_length = Some(source.contents.len() as u64);
 
@@ -915,7 +915,7 @@ impl RuntimeTranspilerCache {
                 bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {}",
-                    bstr::BStr::new(&source.path.text),
+                    bstr::BStr::new(source.path.text),
                     err.name()
                 );
                 return false;
@@ -927,19 +927,19 @@ impl RuntimeTranspilerCache {
                 bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {} bytes, restored",
-                    bstr::BStr::new(&source.path.text),
+                    bstr::BStr::new(source.path.text),
                     self.entry.as_ref().unwrap().output_code.byte_slice().len()
                 );
             } else {
                 bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {} bytes, ignored for debug build",
-                    bstr::BStr::new(&source.path.text),
+                    bstr::BStr::new(source.path.text),
                     self.entry.as_ref().unwrap().output_code.byte_slice().len()
                 );
             }
         }
-        bun_core::analytics::Features::TRANSPILER_CACHE.fetch_add(1, Ordering::Relaxed);
+        bun_analytics::features::transpiler_cache.fetch_add(1, Ordering::Relaxed);
 
         #[cfg(debug_assertions)]
         {
@@ -950,15 +950,10 @@ impl RuntimeTranspilerCache {
             }
         }
 
-        return self.entry.is_some();
-        } // end #[cfg(any())]
-        let _ = (source, used_jsx);
-        false
+        self.entry.is_some()
     }
 
     pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
-        #[cfg(any())] // TODO(b2-blocked): bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE, bun_string::String::{clone_latin1, clone, latin1}
-        {
         const _: () = assert!(
             FeatureFlags::RUNTIME_TRANSPILER_CACHE,
             "RuntimeTranspilerCache is disabled"
@@ -969,9 +964,9 @@ impl RuntimeTranspilerCache {
         }
         debug_assert!(self.entry.is_none());
         let output_code = BunString::clone_latin1(output_code_bytes);
-        self.output_code = Some(output_code.clone());
-        // TODO(port): Zig stored `output_code` then passed the same handle to to_file;
-        // BunString is refcounted so clone+store is equivalent.
+        // PORT NOTE: Zig stored `output_code` then passed the same handle to to_file;
+        // BunString is refcounted so dupe_ref + store is equivalent.
+        self.output_code = Some(output_code.dupe_ref());
 
         if let Err(err) = Self::to_file(
             self.input_byte_length.unwrap(),
@@ -989,8 +984,6 @@ impl RuntimeTranspilerCache {
         {
             bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
         }
-        } // end #[cfg(any())]
-        let _ = (output_code_bytes, sourcemap, esm_record);
     }
 }
 
@@ -1000,6 +993,12 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // PORT STATUS
 //   source:     src/jsc/RuntimeTranspilerCache.zig (706 lines)
 //   confidence: medium
-//   todos:      17
-//   notes:      allocator fields dropped per §Allocators (verify callers); bun_io::FixedBufferStream/Read/Write + bun_sys::File pread_all/Tmpfile/make_open_path are placeholders; threadlocal cache-dir reshaped to store len instead of slice
+//   todos:      11
+//   notes:      Metadata::{encode,decode}, OutputCode::byte_slice, is_eligible,
+//               get(), put() un-gated (B-2). Disk I/O paths (Entry::{save,load},
+//               from_file*, to_file, get_cache_dir/get_cache_file_path,
+//               really_get_cache_dir) remain gated on bun_sys::{Tmpfile,
+//               File::pread_all, make_open_path} + bun_io::FixedBufferStream.
+//               Allocator fields dropped per §Allocators; threadlocal cache-dir
+//               reshaped to store len instead of slice.
 // ──────────────────────────────────────────────────────────────────────────

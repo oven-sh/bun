@@ -3161,7 +3161,7 @@ impl PackageManifest {
                             // jsc-independent FFI). The extern decl is duplicated locally so the
                             // minimum-release-age filter (`is_package_version_too_recent`) is not a
                             // silent no-op while the `bun_wtf` crate split is pending.
-                            extern "C" {
+                            unsafe extern "C" {
                                 fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
                             }
                             if !publish_time_str.is_empty() {

@@ -698,7 +698,16 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct ExtractTarball;
 #[derive(Default)] pub struct NetworkTask;
 #[derive(Default)] pub struct TarballStream;
-#[derive(Default)] pub struct PackageManager;
+#[derive(Default)] pub struct PackageManager {
+    pub options: PackageManagerOptionsStub,
+    pub timestamp_for_manifest_cache_control: u32,
+}
+#[derive(Default)] pub struct PackageManagerOptionsStub {
+    pub enable: PackageManagerEnableStub,
+}
+#[derive(Default)] pub struct PackageManagerEnableStub {
+    pub manifest_cache: bool,
+}
 #[derive(Default)] pub struct FolderResolution;
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
 #[derive(Default)] pub struct SecurityScanSubprocess;

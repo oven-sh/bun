@@ -2544,6 +2544,78 @@ impl Synchronized {
 }
 
 #[cfg(test)]
+mod output_macro_tests {
+    //! Compile-shape regression tests for the `pretty*!`/`note!`/`warn!`/
+    //! `debug!` wrapper macros. These don't drive a live `Source` (no I/O);
+    //! they assert that the macros *expand* for the shapes the Zig originals
+    //! accept and that the `*ln!` newline guard const-evaluates correctly.
+    use super::_needs_nl;
+    use bun_core_macros::pretty_fmt;
+
+    /// `note!`/`warn!`/`debug!` must accept a `concat!(..)` template — Zig's
+    /// `note(comptime fmt, args)` is routinely called with `"a" ++ "b"`. The
+    /// `:literal` matcher rejected this; `:expr` + proc-macro `concat!`
+    /// flattening makes it compile.
+    #[test]
+    fn prefix_wrappers_accept_concat() {
+        if false {
+            crate::note!(concat!("from ", "two parts {}"), 1);
+            crate::warn!(concat!("w ", "{}"), 2);
+            crate::debug!(concat!("d ", "{}"), 3);
+            crate::debug_warn!(concat!("dw"));
+            crate::err_generic!(concat!("e ", "{}"), 4);
+            // …and still accept plain literals.
+            crate::note!("plain {}", 1);
+            crate::warn!("plain");
+        }
+    }
+
+    /// `pretty!`/`pretty_error!`/`prettyln!`/`pretty_errorln!` bind each arg
+    /// once into a `match` tuple; a side-effecting block arg must therefore be
+    /// usable, and a moved non-`Copy` value must remain usable afterwards
+    /// (the macro takes `&($arg)`, never moves).
+    #[test]
+    fn pretty_binds_args_once() {
+        if false {
+            let mut n = 0i32;
+            crate::pretty!("{}", { n += 1; n });
+            let _ = n;
+
+            let s = String::from("x");
+            crate::pretty_errorln!("{} {}", s, s.len());
+            // `s` was borrowed, not moved, by the match-tuple binding.
+            drop(s);
+
+            crate::prettyln!("{} {} {}", 1, "two", 3.0);
+            crate::pretty_error!("<r>{}", 0);
+        }
+    }
+
+    /// `*ln!` macros must not append a second `\n` when the template already
+    /// ends in one. The guard runs on the *processed* template (`pretty_fmt!`
+    /// flattens `concat!`), so a wrapper-prefixed template that ends in `\n`
+    /// still suppresses the extra newline.
+    #[test]
+    fn ln_macros_suppress_double_newline() {
+        // Direct templates.
+        const A: &str = _needs_nl(pretty_fmt!("hello\n", false));
+        assert_eq!(A, "");
+        const B: &str = _needs_nl(pretty_fmt!("hello", false));
+        assert_eq!(B, "\n");
+        // `note!("hi\n")` → `pretty_errorln!(concat!("<blue>note<r><d>:<r> ", "hi\n"))`
+        const C: &str = _needs_nl(pretty_fmt!(
+            concat!("<blue>note<r><d>:<r> ", "hi\n"),
+            false
+        ));
+        assert_eq!(C, "", "note!(\"hi\\n\") would double-newline");
+        // Trailing reset tag does not defeat the guard (the stripped template
+        // is what's checked).
+        const D: &str = _needs_nl(pretty_fmt!("done<r>\n", false));
+        assert_eq!(D, "");
+    }
+}
+
+#[cfg(test)]
 mod pretty_fmt_tests {
     //! Parity checks between the `pretty_fmt!` proc-macro (compile-time) and
     //! `pretty_fmt_runtime` (1:1 port of Zig `prettyFmt`). Guards against the

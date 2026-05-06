@@ -649,12 +649,12 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     }
 
-    // Unit-variant block: try to match a single ident against the keyword set.
-    // Uses `try_parse` so the parser cursor rewinds on no-match (Zig:
-    // `input.tryParse(parseIdentMatching, .{...})`).
-    let unit_block = if units.is_empty() {
-        quote! {}
-    } else {
+    // Build the unit-variant matcher as a closure body. When this is the *last*
+    // attempted group it is invoked directly (its error propagates); when a
+    // payload group follows, it is wrapped in `try_parse` so the cursor rewinds
+    // on no-match (Zig: `input.tryParse(Parser.expectIdent, .{})` then
+    // `input.reset(&state)`).
+    let unit_matcher = {
         let arms = units.iter().map(|(ident, kw)| {
             let kw = syn::LitByteStr::new(kw.as_bytes(), ident.span());
             quote! {
@@ -664,33 +664,31 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         quote! {
-            if let ::core::result::Result::Ok(__v) = __input.try_parse(
-                |__p: &mut ::bun_css::css_parser::Parser<'_>| -> ::bun_css::Result<Self> {
-                    let __loc = __p.current_source_location();
-                    let __id = __p.expect_ident()?;
-                    #(#arms)*
-                    ::core::result::Result::Err(
-                        __loc.new_unexpected_token_error(::bun_css::Token::Ident(
-                            // SAFETY: `__id` is a sub-slice of the parser's source
-                            // buffer (see `enum_property_util::parse`).
-                            unsafe { ::bun_css::css_parser::src_str(__id) },
-                        )),
-                    )
-                },
-            ) {
-                return ::core::result::Result::Ok(__v);
+            |__p: &mut ::bun_css::css_parser::Parser<'_>| -> ::bun_css::Result<Self> {
+                let __loc = __p.current_source_location();
+                let __id = __p.expect_ident()?;
+                #(#arms)*
+                ::core::result::Result::Err(
+                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(
+                        // SAFETY: `__id` is a sub-slice of the parser's source
+                        // buffer (see `enum_property_util::parse`).
+                        unsafe { ::bun_css::css_parser::src_str(__id) },
+                    )),
+                )
             }
         }
     };
 
-    // Payload block: try each payload's inherent/trait `parse` in order; the
-    // last one is non-`try` so its error propagates (Zig: last_payload_index).
-    let payload_block = if payloads.is_empty() {
-        quote! {}
-    } else {
+    // Payload block builder. `terminal` controls whether the *last* payload
+    // propagates its error (Zig: `i == last_payload_index && last > void_index`)
+    // or is `try_parse`d like the others so a following unit block can run.
+    let payload_block = |terminal: bool| -> TokenStream2 {
+        if payloads.is_empty() {
+            return quote! {};
+        }
         let last = payloads.len() - 1;
         let stmts = payloads.iter().enumerate().map(|(i, (ident, ty))| {
-            if i == last {
+            if terminal && i == last {
                 quote! {
                     return <#ty>::parse(__input).map(#name::#ident);
                 }
@@ -707,16 +705,37 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
         quote! { #(#stmts)* }
     };
 
-    // Tail error for the (units-only / units-after-payload) case where neither
-    // block returned. Mirrors Zig's `newErrorForNextToken()`.
-    let tail_err = quote! {
-        ::core::result::Result::Err(__input.new_error_for_next_token())
-    };
-
-    let body = if units_first {
-        quote! { #unit_block #payload_block #[allow(unreachable_code)] #tail_err }
-    } else {
-        quote! { #payload_block #unit_block #[allow(unreachable_code)] #tail_err }
+    let body = match (units.is_empty(), payloads.is_empty()) {
+        (true, true) => {
+            return Err(syn::Error::new_spanned(name, "#[derive(Parse)] on empty enum"));
+        }
+        // Only payload variants — last one's error propagates.
+        (true, false) => {
+            let p = payload_block(true);
+            quote! { #p }
+        }
+        // Only unit variants — direct ident match, error propagates.
+        (false, true) => {
+            quote! { return (#unit_matcher)(__input); }
+        }
+        // Mixed: whichever group is declared first is tried first; the
+        // *second* group is terminal.
+        (false, false) if units_first => {
+            let p = payload_block(true);
+            quote! {
+                if let ::core::result::Result::Ok(__v) = __input.try_parse(#unit_matcher) {
+                    return ::core::result::Result::Ok(__v);
+                }
+                #p
+            }
+        }
+        (false, false) => {
+            let p = payload_block(false);
+            quote! {
+                #p
+                return (#unit_matcher)(__input);
+            }
+        }
     };
 
     Ok(quote! {

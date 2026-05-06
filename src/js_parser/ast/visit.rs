@@ -256,11 +256,33 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let prev_require_to_convert_count = self.imports_to_convert_from_require.len();
                 let prev_macro_call_count = self.macro_call_count;
                 let orig_dead = self.is_control_flow_dead;
-                // blocked_on: Runtime::Features.replace_exports is a `bool` stub (parser.rs:260),
-                //   not the real `StringArrayHashMap<ReplaceableExport>`; replace_decl_and_possibly_remove
-                //   is gated (P.rs:5202). The IS_POSSIBLY_DECL_TO_REMOVE lookup/replace path is preserved
-                //   in `_draft::visit_decls` and re-enabled when those un-gate.
-                let _ = orig_dead;
+                // PORT NOTE: `replacement` is a raw `*const` (Zig `?*ReplaceableExport`) so the
+                // borrow of `self.options` does not survive across `visit_expr_in_out(&mut self)`.
+                let mut replacement: Option<*const crate::parser::Runtime::ReplaceableExport> = None;
+                if IS_POSSIBLY_DECL_TO_REMOVE {
+                    if let BData::BIdentifier(id) = decl.binding.data {
+                        // SAFETY: arena-owned B::Identifier valid for 'a.
+                        let id_ref = unsafe { (*id).r#ref };
+                        let name = self.load_name_from_ref(id_ref);
+                        let found = self
+                            .options
+                            .features
+                            .replace_exports
+                            .get_ptr(name)
+                            .map(|r| {
+                                (
+                                    r as *const crate::parser::Runtime::ReplaceableExport,
+                                    r.is_replace(),
+                                )
+                            });
+                        if let Some((ptr, is_replace)) = found {
+                            replacement = Some(ptr);
+                            if self.options.features.dead_code_elimination && !is_replace {
+                                self.is_control_flow_dead = true;
+                            }
+                        }
+                    }
+                }
 
                 if self.options.features.react_fast_refresh {
                     self.react_refresh.last_hook_seen = None;
@@ -338,7 +360,26 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
 
-                // blocked_on: see above — IS_POSSIBLY_DECL_TO_REMOVE replace path gated.
+                if IS_POSSIBLY_DECL_TO_REMOVE {
+                    self.is_control_flow_dead = orig_dead;
+                    if let BData::BIdentifier(_) = decl.binding.data {
+                        if let Some(_ptr) = replacement {
+                            // blocked_on: P::replace_decl_and_possibly_remove is #[cfg(any())]-gated
+                            //   (P.rs); un-gate this call when it lands. Body preserved in
+                            //   `_draft::visit_decls`.
+                            #[cfg(any())]
+                            {
+                                // SAFETY: _ptr points into self.options.features.replace_exports,
+                                // which is not mutated during the visit pass.
+                                let replacer = unsafe { &*_ptr };
+                                if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                                    continue 'outer;
+                                }
+                            }
+                            let _ = &mut j; // keep 'outer label live until #[cfg] un-gates
+                        }
+                    }
+                }
 
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
@@ -352,8 +393,34 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
-                // blocked_on: Runtime::Features.replace_exports map + replace_decl_and_possibly_remove.
-                // Preserved in `_draft::visit_decls`.
+                if let BData::BIdentifier(id) = decl.binding.data {
+                    // SAFETY: arena-owned B::Identifier valid for 'a.
+                    let id_ref = unsafe { (*id).r#ref };
+                    let name = self.load_name_from_ref(id_ref);
+                    if let Some(_ptr) = self
+                        .options
+                        .features
+                        .replace_exports
+                        .get_ptr(name)
+                        .map(|r| r as *const crate::parser::Runtime::ReplaceableExport)
+                    {
+                        // blocked_on: P::replace_decl_and_possibly_remove is #[cfg(any())]-gated
+                        //   (P.rs); un-gate this call when it lands. Body preserved in
+                        //   `_draft::visit_decls`.
+                        #[cfg(any())]
+                        {
+                            // SAFETY: _ptr points into self.options.features.replace_exports,
+                            // which is not mutated during the visit pass.
+                            let replacer = unsafe { &*_ptr };
+                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                                let is_after = self.vis_scope().is_after_const_local_prefix;
+                                self.visit_decl(decl, false, was_const && !is_after, false);
+                            } else {
+                                continue 'outer;
+                            }
+                        }
+                    }
+                }
             }
 
             // out_decls[j] = decl.*;
@@ -385,10 +452,46 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 return;
                             }
                         }
-                        // blocked_on: E::Object::as_property + Expr::as_string_literal both touch
-                        //   gated rope/EString surface; the inner property-match-and-compact loop
-                        //   is preserved verbatim in `_draft::visit_binding_and_expr_for_macro`.
-                        let _ = &mut object;
+                        let mut end: u32 = 0;
+                        for property in bound_object.properties() {
+                            if let Some(name) = property.key.as_string_literal(self.allocator) {
+                                if let Some(query) = object.as_property(name) {
+                                    match query.expr.data {
+                                        ExprData::EObject(_) | ExprData::EArray(_) => {
+                                            self.visit_binding_and_expr_for_macro(
+                                                property.value,
+                                                query.expr,
+                                            );
+                                        }
+                                        _ => {
+                                            if self.options.features.inlining {
+                                                if let BData::BIdentifier(id) = property.value.data {
+                                                    // SAFETY: arena-owned B::Identifier valid for 'a.
+                                                    let id = unsafe { &*id };
+                                                    self.const_values
+                                                        .put(id.r#ref, query.expr)
+                                                        .expect("oom");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // output_properties[end] = output_properties[query.i]
+                                    // SAFETY: both indices < object.properties.len; G::Property
+                                    // has no Drop; src/dst may alias when end == query.i.
+                                    unsafe {
+                                        let props_ptr =
+                                            object.properties.slice_mut().as_mut_ptr();
+                                        core::ptr::copy(
+                                            props_ptr.add(query.i as usize),
+                                            props_ptr.add(end as usize),
+                                            1,
+                                        );
+                                    }
+                                    end += 1;
+                                }
+                            }
+                        }
+                        object.properties.len = end;
                     }
                 }
             }
@@ -728,7 +831,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: `FnOnlyDataVisit::class_name_ref` is `Option<&'a mut Ref>`, so the
         // shadow ref must outlive the parser. Allocate it in the bump arena (Zig kept it
         // on the stack and passed `&shadow_ref` — Rust's lifetime on the field forbids that).
-        let shadow_ref: &'a mut Ref = self.allocator.alloc(Ref::NONE);
+        // We hold it as a raw `*mut Ref` and only materialise a `&'a mut Ref` at the
+        // moment we hand it to `fn_only_data_visit.class_name_ref`; all other reads/writes
+        // go through the raw pointer so two `&mut Ref` to the same allocation never
+        // coexist (the field's `&mut` is restored/overwritten before any read here).
+        let shadow_ref_ptr: *mut Ref = self.allocator.alloc(Ref::NONE) as *mut Ref;
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -738,10 +845,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
-            *shadow_ref = name.ref_.unwrap();
+            // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
+            unsafe { *shadow_ref_ptr = name.ref_.unwrap() };
             // SAFETY: original_name is arena-owned, valid for 'a.
-            let original_name: &'a [u8] =
-                unsafe { &*self.symbols[shadow_ref.inner_index() as usize].original_name };
+            let original_name: &'a [u8] = unsafe {
+                &*self.symbols[(*shadow_ref_ptr).inner_index() as usize].original_name
+            };
             self.vis_scope()
                 .members
                 .put(
@@ -758,12 +867,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             } else {
                 b"_default"
             };
-            *shadow_ref = self
+            let new_ref = self
                 .new_symbol(SymbolKind::Constant, name_str)
                 .expect("unreachable");
+            // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
+            unsafe { *shadow_ref_ptr = new_ref };
         }
 
-        self.record_declared_symbol(*shadow_ref);
+        // SAFETY: shadow_ref_ptr valid for 'a; no live &mut alias here.
+        self.record_declared_symbol(unsafe { *shadow_ref_ptr });
 
         if let Some(extends) = class.extends {
             class.extends = Some(self.visit_expr(extends));
@@ -775,7 +887,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
             // — manual restore at block end below; no early returns in this block.
 
-            let shadow_ref_ptr: *mut Ref = shadow_ref as *mut Ref;
             let mut constructor_function: Option<*mut E::Function> = None;
             // SAFETY: arena-owned slice valid for 'a; exclusive during visit pass.
             let properties: &mut [G::Property] = unsafe { &mut *class.properties };
@@ -959,23 +1070,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
+        // SAFETY: shadow_ref_ptr valid for 'a; the per-property `class_name_ref` &mut was
+        // restored to `old_class_name_ref` (and the static-block one to `old_fn_only_data`)
+        // before reaching here, so no live &mut alias to this allocation exists.
+        if self.symbols[unsafe { *shadow_ref_ptr }.inner_index() as usize].use_count_estimate == 0 {
             // If there was originally no class name but something inside needed one
             // (e.g. there was a static property initializer that referenced "this"),
             // store our generated name so the class expression ends up with a name.
-            *shadow_ref = Ref::NONE;
+            // SAFETY: see above.
+            unsafe { *shadow_ref_ptr = Ref::NONE };
         } else if class.class_name.is_none() {
+            // SAFETY: see above.
+            let sr = unsafe { *shadow_ref_ptr };
             class.class_name = Some(LocRef {
-                ref_: Some(*shadow_ref),
+                ref_: Some(sr),
                 loc: name_scope_loc,
             });
-            self.record_declared_symbol(*shadow_ref);
+            self.record_declared_symbol(sr);
         }
 
         // class name scope
         self.pop_scope();
 
-        *shadow_ref
+        // SAFETY: see above.
+        unsafe { *shadow_ref_ptr }
     }
 
     // Try separating the list for appending, so that it's not a pointer.

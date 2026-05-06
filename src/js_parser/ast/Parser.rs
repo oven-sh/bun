@@ -312,7 +312,7 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log.add_error(p.source, p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log.add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
                     return Ok(());
                 }
                 return Err(e);
@@ -585,12 +585,158 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // reconciler-6: tail re-gated — ~148 port errors below (Path::is_node_module/
+        // reconciler-6: tail re-gated — port errors below (Path::is_node_module/
         // is_jsx_file, p.bump→allocator, Stmt::Data paths, Tracer.end() on (), Loc:!Hash,
         // Part:!Clone, G::Decl::List assoc-type, b::Identifier.ref_).
         // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
         #[cfg(any())]
         {
+        } // end reconciler-6 #[cfg(any())] gate
+        let _ = (&hashbang, &mut p);
+        todo!("phase-b2: Parser::_parse tail (cache→to_ast) re-gated by reconciler-6")
+    }
+
+    #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
+    pub fn analyze(
+        &mut self,
+        context: *mut c_void,
+        callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let mut p = TSXParser::init(
+            self.bump,
+            self.log,
+            self.source,
+            self.define,
+            self.lexer,
+            self.options,
+        )?;
+
+        // Consume a leading hashbang comment
+        let mut hashbang: &[u8] = b"";
+        if p.lexer.token == js_lexer::T::THashbang {
+            hashbang = p.lexer.identifier;
+            p.lexer.next()?;
+        }
+        let _ = hashbang;
+
+        // Parse the file in the first pass, but do not bind symbols
+        let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
+        let parse_tracer = bun_core::perf::trace("JSParser::parse");
+
+        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+            Ok(s) => s,
+            Err(e) => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    Output::print(format_args!(
+                        "JSParser.parse: caught error {} at location: {}\n",
+                        e.name(),
+                        p.lexer.loc().start
+                    ));
+                    let _ = p.log.print(Output::writer());
+                }
+                return Err(e);
+            }
+        };
+
+        parse_tracer.end();
+
+        if self.log.errors > 0 {
+            #[cfg(target_arch = "wasm32")]
+            {
+                // If the logger is backed by console.log, every print appends a newline.
+                // so buffering is kind of mandatory here
+                // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
+                // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
+                // that returns an `impl core::fmt::Write` flushed on drop.
+                for msg in self.log.msgs.as_slice() {
+                    let mut m: logger::Msg = *msg;
+                    let _ = m.write_format(Output::writer(), true);
+                }
+            }
+            return Err(err!("SyntaxError"));
+        }
+
+        let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        p.prepare_for_visit_pass()?;
+
+        let mut parts = BumpVec::new_in(p.allocator);
+
+        p.append_part(&mut parts, stmts)?;
+        visit_tracer.end();
+
+        let analyze_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        callback(context, &mut p, parts.as_mut_slice())?;
+        analyze_tracer.end();
+        Ok(())
+    }
+
+    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+        // TODO(port): narrow error set
+        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
+        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
+        // the lifetime on `Action` (Zig held the same pointer).
+        let _prev_action = (); // bun_crash_handler::CURRENT_ACTION.replace(...)
+        let _restore = scopeguard::guard((), |_| {
+            // bun_crash_handler::CURRENT_ACTION.set(prev_action);
+        });
+
+        // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
+        // to the lexer at `Parser::init`; reading the error count is sound.
+        let orig_error_count = unsafe { self.log.as_ref() }.errors;
+        let mut p = P::<TS, JX, false>::init(
+            self.bump,
+            // SAFETY: handing the unique `&'a mut Log` to the inner parser;
+            // matches Zig's two-`*Log` aliasing model (P also receives the
+            // lexer which holds the same Log).
+            unsafe { &mut *self.log.as_ptr() },
+            self.source,
+            self.define,
+            // SAFETY: Zig moves lexer/options by value into `P`; `Parser` is
+            // not reused after `_parse` returns.
+            unsafe { core::ptr::read(&self.lexer) },
+            unsafe { core::ptr::read(&self.options) },
+        )?;
+
+        if p.options.features.hot_module_reloading {
+            debug_assert!(!p.options.tree_shaking);
+        }
+
+        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
+        // Let's enable this flag file-wide
+        if p.options.features.minify_syntax || p.options.features.inlining {
+            p.should_fold_typescript_constant_expressions = true;
+        }
+
+        // PERF(port): was stack-fallback allocator (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
+        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.allocator);
+        // PERF(port): was stack-fallback allocator (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
+        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.allocator);
+
+        // (Zig asserted the stack-fallback allocator owns the buffer; not applicable here.)
+
+        // defer {
+        //     if (p.allocated_names_pool) |pool| {
+        //         pool.data = p.allocated_names;
+        //         pool.release();
+        //         p.allocated_names_pool = null;
+        //     }
+        // }
+
+        // Consume a leading hashbang comment
+        let mut hashbang: &[u8] = b"";
+        if p.lexer.token == js_lexer::T::THashbang {
+            hashbang = p.lexer.identifier;
+            p.lexer.next()?;
+        }
+
+        // Detect a leading "// @bun" pragma
+        if self.options.features.dont_bundle_twice {
+            if let Some(pragma) = self.has_bun_pragma(!hashbang.is_empty()) {
+                return Ok(js_ast::Result::AlreadyBundled(pragma));
+            }
+        }
+
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
@@ -600,11 +746,21 @@ impl<'a> Parser<'a> {
                 // parser.rs PORT NOTE) — the caller guarantees the pointer is
                 // unique and outlives the parse; Zig held `*RuntimeTranspilerCache`.
                 let cache = unsafe { &mut *cache_ptr };
+                // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
+                // resolver `fs::Path` (not the logger stub) — inline their
+                // bodies until the logger Path grows them.
+                let path = &p.source.path;
+                #[cfg(windows)]
+                const NM: &[u8] = b"\\node_modules\\";
+                #[cfg(not(windows))]
+                const NM: &[u8] = b"/node_modules/";
+                let is_node_module = strings::last_index_of(path.name.dir, NM).is_some();
+                let is_jsx_file = strings::has_suffix_comptime(path.name.filename, b".jsx")
+                    || strings::has_suffix_comptime(path.name.filename, b".tsx");
                 if cache.get(
                     p.source,
                     &p.options as *const _ as *const (),
-                    p.options.jsx.parse
-                        && (!p.source.path.is_node_module() || p.source.path.is_jsx_file()),
+                    p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
                     return Ok(js_ast::Result::Cached);
                 }
@@ -613,19 +769,19 @@ impl<'a> Parser<'a> {
 
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions { is_module_scope: true, ..Default::default() };
-        let parse_tracer = bun_core::perf::trace("JSParser::parse");
+        let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
 
         // Parsing seems to take around 2x as much time as visiting.
         // Which makes sense.
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
-        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s,
+        let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+            Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log.add_error(p.source, p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log.add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
 
                     // Return a SyntaxError so that we reuse existing code for handling errors.
                     return Err(err!("SyntaxError"));
@@ -760,13 +916,13 @@ impl<'a> Parser<'a> {
             for stmt in stmts.iter() {
                 match &stmt.data {
                     js_ast::StmtData::SLocal(local) => {
-                        if local.decls.len() > 1 {
+                        if (local.decls.len as usize) > 1 {
                             for decl in local.decls.slice() {
                                 let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                                 // SAFETY: capacity reserved above
                                 unsafe { sliced.set_len(1) };
                                 let mut _local = **local;
-                                _local.decls = G::Decl::List::init_one(p.allocator, *decl)?;
+                                _local.decls = G::DeclList::init_one(*decl)?;
                                 sliced[0] = p.s(_local, stmt.loc);
                                 p.append_part(&mut parts, sliced.as_mut_slice())?;
                             }
@@ -886,7 +1042,7 @@ impl<'a> Parser<'a> {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
-                    DeclaredSymbol::List::init_capacity(p.allocator, count).expect("unreachable");
+                    crate::DeclaredSymbolList::init_capacity(count).expect("unreachable");
                 let decls = p.allocator.alloc_slice_fill_default::<G::Decl>(count);
                 if uses_dirname {
                     decls[0] = G::Decl {
@@ -897,7 +1053,7 @@ impl<'a> Parser<'a> {
                         )),
                     };
                     // PERF(port): was assume_capacity
-                    declared_symbols.push(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
                 }
                 if uses_filename {
                     decls[uses_dirname as usize] = G::Decl {
@@ -907,14 +1063,14 @@ impl<'a> Parser<'a> {
                             logger::Loc::EMPTY,
                         )),
                     };
-                    declared_symbols.push(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
                 }
 
                 let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
                     p.s(
                         S::Local {
                             kind: js_ast::LocalKind::KVar,
-                            decls: Decl::List::from_owned_slice(decls),
+                            decls: G::DeclList::from_slice(decls).expect("oom"),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -923,7 +1079,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    tag: js_ast::PartTag::DirnameFilename,
+                    tag: crate::PartTag::DirnameFilename,
                     ..Default::default()
                 });
                 uses_dirname = false;
@@ -962,8 +1118,8 @@ impl<'a> Parser<'a> {
                         deferred_import.namespace.loc,
                     );
                     let mut declared_symbols =
-                        DeclaredSymbol::List::init_capacity(p.allocator, 1).expect("unreachable");
-                    declared_symbols.push(DeclaredSymbol {
+                        crate::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: deferred_import.namespace.ref_.unwrap(),
                         is_top_level: true,
                     });
@@ -971,7 +1127,7 @@ impl<'a> Parser<'a> {
                     before.push(js_ast::Part {
                         stmts: import_part_stmts,
                         declared_symbols,
-                        tag: js_ast::PartTag::ImportToConvertFromRequire,
+                        tag: crate::PartTag::ImportToConvertFromRequire,
                         // This part has a single symbol, so it may be removed if unused.
                         can_be_removed_if_unused: true,
                         ..Default::default()
@@ -1221,7 +1377,7 @@ impl<'a> Parser<'a> {
 
                                         for (i, before_part) in before.iter().enumerate() {
                                             if before_part.tag
-                                                == js_ast::PartTag::ImportToConvertFromRequire
+                                                == crate::PartTag::ImportToConvertFromRequire
                                             {
                                                 let _ = before.swap_remove(i);
                                                 break;
@@ -1494,7 +1650,7 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.bundle);
             let count = (uses_dirname as usize) + (uses_filename as usize);
             let mut declared_symbols =
-                DeclaredSymbol::List::init_capacity(p.allocator, count).expect("unreachable");
+                crate::DeclaredSymbolList::init_capacity(count).expect("unreachable");
             let decls = p.allocator.alloc_slice_fill_default::<G::Decl>(count);
             if uses_dirname {
                 // var __dirname = import.meta
@@ -1510,7 +1666,7 @@ impl<'a> Parser<'a> {
                         logger::Loc::EMPTY,
                     )),
                 };
-                declared_symbols.push(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
+                declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.dirname_ref, is_top_level: true });
             }
             if uses_filename {
                 // var __filename = import.meta.path
@@ -1526,14 +1682,14 @@ impl<'a> Parser<'a> {
                         logger::Loc::EMPTY,
                     )),
                 };
-                declared_symbols.push(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
+                declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
             }
 
             let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
                 p.s(
                     S::Local {
                         kind: js_ast::LocalKind::KVar,
-                        decls: Decl::List::from_owned_slice(decls),
+                        decls: G::DeclList::from_slice(decls).expect("oom"),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -1542,7 +1698,7 @@ impl<'a> Parser<'a> {
             before.push(js_ast::Part {
                 stmts: part_stmts,
                 declared_symbols,
-                tag: js_ast::PartTag::DirnameFilename,
+                tag: crate::PartTag::DirnameFilename,
                 ..Default::default()
             });
         }
@@ -1596,7 +1752,7 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            let mut declared_symbols = js_ast::DeclaredSymbol::List::default();
+            let mut declared_symbols = crate::DeclaredSymbolList::default();
             declared_symbols.ensure_total_capacity(p.allocator, items_count)?;
 
             // For CommonJS modules, use require instead of import
@@ -1624,7 +1780,7 @@ impl<'a> Parser<'a> {
                             value: p.b(B::Identifier { r#ref: r }, logger::Loc::EMPTY),
                             ..Default::default()
                         };
-                        declared_symbols.push(DeclaredSymbol { ref_: r, is_top_level: true });
+                        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                         prop_i += 1;
                     }
                 }
@@ -1643,7 +1799,7 @@ impl<'a> Parser<'a> {
                     p.s(
                         S::Local {
                             kind: js_ast::LocalKind::KConst,
-                            decls: Decl::List::from_owned_slice(decls),
+                            decls: G::DeclList::from_slice(decls).expect("oom"),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -1653,8 +1809,8 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_owned_slice(import_record_indices),
-                    tag: js_ast::PartTag::BunTest,
+                    import_record_indices: BabyList::<u32>::from_slice(import_record_indices).expect("oom"),
+                    tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });
             } else {
@@ -1681,7 +1837,7 @@ impl<'a> Parser<'a> {
                             alias_loc: logger::Loc::EMPTY,
                             original_name: b"",
                         };
-                        declared_symbols.push(DeclaredSymbol { ref_: r, is_top_level: true });
+                        declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: r, is_top_level: true });
                         clause_i += 1;
                     }
                 }
@@ -1706,8 +1862,8 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    import_record_indices: BabyList::<u32>::from_owned_slice(import_record_indices),
-                    tag: js_ast::PartTag::BunTest,
+                    import_record_indices: BabyList::<u32>::from_slice(import_record_indices).expect("oom"),
+                    tag: crate::PartTag::BunTest,
                     ..Default::default()
                 });
             }
@@ -1891,9 +2047,6 @@ impl<'a> Parser<'a> {
         }
 
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
-        } // end reconciler-6 #[cfg(any())] gate
-        let _ = (&hashbang, &mut p);
-        todo!("phase-b2: Parser::_parse tail (unwrap_commonjs_to_esm → to_ast) re-gated by reconciler-6")
     }
 
     #[allow(dead_code)] // called from gated `_parse` body above

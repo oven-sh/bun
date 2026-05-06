@@ -2422,6 +2422,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
+            // Wire the ExpressionTransposer self-referential context now that
+            // `self` is in its final location (Zig: `ImportTransposer.init(this)`
+            // etc. at the tail of `P.init`; Rust defers to here because `init`
+            // returns `Self` by value and would invalidate any earlier `*mut Self`).
+            let self_ptr = self as *mut Self as *mut core::ffi::c_void;
+            self.import_transposer.context.0 = self_ptr;
+            self.require_transposer.context.0 = self_ptr;
+            self.require_resolve_transposer.context.0 = self_ptr;
+        }
+        {
             // Compact `scopes_in_order` (parse pass leaves None holes from
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
             let mut buf = BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.allocator);
@@ -6983,13 +6993,22 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
+                    let result = match ImportScanner::scan::<TYPESCRIPT, J, SCAN_ONLY, false>(
                         self,
                         // SAFETY: Part.stmts is an arena-owned slice valid for 'a.
                         unsafe { &mut *part.stmts },
                         wrap_mode != WrapMode::None,
                         None,
-                    )?;
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            // `part` is a bitwise duplicate of `parts[idx]`;
+                            // discard without dropping so the source slot keeps
+                            // sole ownership.
+                            core::mem::forget(part);
+                            return Err(e);
+                        }
+                    };
                     kept_import_equals = kept_import_equals || result.kept_import_equals;
                     removed_import_equals = removed_import_equals || result.removed_import_equals;
 
@@ -7046,7 +7065,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
 
             // leave the first part in there for namespace export when bundling
-            parts.truncate(parts_end);
+            // PORT NOTE: Zig `parts.items.len = parts_end` does not drop the tail.
+            // `truncate` would drop slots that may alias kept parts (the loop
+            // above did `ptr::read` without clearing the source), so use
+            // `set_len` to match Zig's no-destructor semantics.
+            // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
+            // (arena-/process-lifetime, same as Zig).
+            unsafe { parts.set_len(parts_end) };
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
@@ -7500,13 +7525,47 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             to_expr_wrapper_namespace: (), // Binding2ExprWrapper.Namespace — Phase-B placeholder
             to_expr_wrapper_hoisted: (),   // Binding2ExprWrapper.Hoisted — Phase-B placeholder
-            // TODO(port): ExpressionTransposer in Zig captures `*P`; the Rust
-            // type alias currently has `Context = ()` (Phase B wires the real
-            // callbacks). Seed each with an arena-owned unit context + identity
-            // visitor so the field types are satisfied.
-            import_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
-            require_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
-            require_resolve_transposer: ExpressionTransposer::init(allocator.alloc(()), |_, e, _| e),
+            // ExpressionTransposer in Zig captures `*P`. The context cell is
+            // null here (P is still under construction); `prepare_for_visit_pass`
+            // writes `self as *mut Self` into each cell before any transposer
+            // call. Visitors below cast back to `&mut Self` and dispatch to the
+            // real `transpose_*` methods (Zig: P.transposeImport/Require/RequireResolve).
+            import_transposer: ExpressionTransposer::init(
+                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
+                |ctx, arg, state| {
+                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
+                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
+                    // matches Zig's self-referential `*P` capture.
+                    let _p = unsafe { &mut *(ctx.0 as *mut Self) };
+                    let _ = (arg, state);
+                    // blocked_on: P::transpose_import gated (#[cfg(any())] above).
+                    todo!("ImportTransposer: P::transpose_import (gated)")
+                },
+            ),
+            require_transposer: ExpressionTransposer::init(
+                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
+                |ctx, arg, state| {
+                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
+                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
+                    // matches Zig's self-referential `*P` capture. The transposer
+                    // field (a sibling of the borrowed parser state) is not
+                    // accessed reentrantly by `transpose_require`.
+                    let p = unsafe { &mut *(ctx.0 as *mut Self) };
+                    p.transpose_require(arg, &state)
+                },
+            ),
+            require_resolve_transposer: ExpressionTransposer::init(
+                allocator.alloc(TransposerCtx(core::ptr::null_mut())),
+                |ctx, arg, state| {
+                    debug_assert!(!ctx.0.is_null(), "transposer ctx not wired (prepare_for_visit_pass)");
+                    // SAFETY: ctx.0 set to `self as *mut Self` in prepare_for_visit_pass;
+                    // matches Zig's self-referential `*P` capture.
+                    let _p = unsafe { &mut *(ctx.0 as *mut Self) };
+                    let _ = (arg, state);
+                    // blocked_on: P::transpose_require_resolve gated (#[cfg(any())] above).
+                    todo!("RequireResolveTransposer: P::transpose_require_resolve (gated)")
+                },
+            ),
             source,
             // Zig: `MacroState.init(allocator)` leaves `prepend_stmts = undefined`;
             // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate
@@ -7656,10 +7715,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         // For SCAN_ONLY, the caller (Parser) assigns the borrowed variants after construction.
 
-        // TODO(port): Binding2ExprWrapper / ExpressionTransposer .init(this) — these wrap
-        // a back-pointer to `this`; in Rust they need either a lifetime or a raw *mut Self.
-        // The struct-literal above already seeded the Phase-B placeholder values
-        // (unit context + identity visitor); nothing further to wire here.
+        // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. The Rust
+        // struct-literal above seeded each transposer with the real visitor and a
+        // null `TransposerCtx` cell; the cell is populated with `self as *mut Self`
+        // in `prepare_for_visit_pass` (after `this` reaches its final address).
+        // TODO(port): Binding2ExprWrapper.{Namespace,Hoisted}.init(this) —
+        // self-referential; same pattern once the wrapper types are real.
 
         if this.options.features.top_level_await || SCAN_ONLY {
             this.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
@@ -7688,7 +7749,10 @@ pub struct LowerUsingDeclarationsContext {
 //   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
 //   • `DeclaredSymbolList`/`BabyList` API has no allocator param in this port
 //   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
-#[cfg(any())] // reconciler-6: re-gate (r#ref→ref_, DeclaredSymbolList::push, BabyList allocator-param, generate_temp_ref gated)
+// reconciler-6 re-gate removed: those API divergences are fixed inline below;
+// `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
+// calls these via `should_lower_using_declarations` path.
+#[cfg(any())] // reconciler-6: re-gate (r#ref→ref_, DeclaredSymbolList::push, generate_temp_ref gated)
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, J: JsxT, const S_: bool>(
         p: &mut P<'a, T, J, S_>,

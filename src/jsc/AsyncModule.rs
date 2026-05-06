@@ -173,14 +173,23 @@ impl<'a> AsyncModule<'a> {
                     global_this.take_error(JsError::Thrown),
                 );
             } else {
-                // TODO(b2-blocked): `VirtualMachine::process_fetch_log` is a
-                // zero-arg stub; until it is typed, fall back to a bare
-                // `Errorable::err` so the C++ side still observes `success ==
-                // false` rather than panicking on `todo!()`. The lossy bit is
-                // the per-log-msg JS error array — Phase B wires the real
-                // `processFetchLog(global, specifier, referrer, log, &mut errorable, e)`.
-                let _ = log;
+                // Spec AsyncModule.zig:440-447 —
+                // `VirtualMachine.processFetchLog(globalThis, specifier,
+                // referrer, log, &errorable, e)` synthesizes a JS
+                // Error/AggregateError from the parser log and writes it into
+                // `errorable.result.err.value`. Routed through the §Dispatch
+                // `LoaderHooks::process_fetch_log` slot (body lives in
+                // `bun_runtime`); without this the import promise would reject
+                // with `undefined` (ModuleLoader.cpp:473).
                 errorable = ErrorableResolvedSource::err(e, JSValue::UNDEFINED);
+                super::process_fetch_log(
+                    global_this as *const JSGlobalObject as *mut JSGlobalObject,
+                    specifier,
+                    referrer,
+                    log,
+                    &mut errorable,
+                    e,
+                );
             }
         } else {
             errorable = ErrorableResolvedSource::ok(*resolved_source);

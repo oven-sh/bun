@@ -1025,6 +1025,10 @@ pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
 // PORT STATUS
 //   source:     src/css/generics.zig (674 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      Heavy @typeInfo reflection reshaped into traits + blanket impls; per-type derives (DeepClone/CssEql/CssHash/ToCss) needed in Phase B; ParseWithOptions blanket uses specialization.
+//   todos:      9
+//   notes:      Heavy @typeInfo reflection reshaped into traits + blanket impls;
+//               per-type derives `#[derive(DeepClone, CssEql, CssHash)]` are
+//               implemented in `bun_css_derive` and re-exported here (same-name
+//               trait+derive idiom). ParseWithOptions blanket uses
+//               specialization.
 // ──────────────────────────────────────────────────────────────────────────

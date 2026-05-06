@@ -11,6 +11,7 @@ use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
 use crate::css_properties::box_shadow::BoxShadowHandler;
+use crate::css_properties::custom::CustomPropertyName;
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{InsetHandler, MarginHandler, PaddingHandler, ScrollMarginHandler};
@@ -41,13 +42,13 @@ pub struct DeclarationBlock<'bump> {
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
-// blocked_on: Printer::new signature + DeclarationBlock::to_css (gated below).
+// blocked_on: Printer::new signature (Zig passes allocator + Managed(u8) +
+// writer + options + null + null + &symbols; the Rust ctor shape is unsettled).
 #[cfg(any())]
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut arraylist: Vec<u8> = Vec::new();
         let mut symbols = bun_logger::symbol::Map::default();
-        // TODO(port): Printer::new signature — Zig passes allocator + Managed(u8) + writer + options + null + null + &symbols
         let mut printer = css::Printer::new(
             Vec::<u8>::new(),
             &mut arraylist,
@@ -120,9 +121,7 @@ impl<'bump> DeclarationBlock<'bump> {
                     // Zig: `hndlr.decls.append(prop.*); prop.* = .{ .all = .@"revert-layer" }`
                     // — move the value out and overwrite the slot with a
                     // non-allocating placeholder so the source list's drop is a
-                    // no-op. `placeholder_property()` resolves to
-                    // `Property::All(CSSWideKeyword::RevertLayer)` once
-                    // properties_generated un-gates.
+                    // no-op.
                     hndlr.decls.push(core::mem::replace(prop, placeholder_property()));
                 }
             }
@@ -145,60 +144,14 @@ impl<'bump> DeclarationBlock<'bump> {
 
 /// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
 /// Zig: `css.Property{ .all = .@"revert-layer" }`.
-// blocked_on: properties_generated — flips to the real variant when the
-// `Property` enum un-gates in `properties/mod.rs`.
-#[cfg(any())]
 #[inline(always)]
 fn placeholder_property() -> css::Property {
     css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
 }
-#[cfg(not(any()))]
-#[inline(always)]
-fn placeholder_property() -> css::Property {
-    // `Property` is the unit stub `()` until `generate_properties.ts` emits Rust.
-    #[allow(clippy::unit_arg)]
-    Default::default()
-}
 
-// ─── parse / to_css / hash (gated) ────────────────────────────────────────
-// blocked_on: css_parser::rule_parsers (RuleBodyParser / RuleBodyItemParser /
-// DeclarationParser traits live in the `#[cfg(any())] mod rule_parsers`
-// block), properties_generated (Property::to_css / property_id / variants),
-// and the per-property handler modules. The data layout above is real; only
-// behavior is deferred.
-#[cfg(any())]
+// ─── to_css ───────────────────────────────────────────────────────────────
+
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn parse(input: &mut css::Parser<'bump>, options: &css::ParserOptions) -> Result<DeclarationBlock<'bump>> {
-        let bump = input.allocator();
-        let mut important_declarations = DeclarationList::new_in(bump);
-        let mut declarations = DeclarationList::new_in(bump);
-        let mut decl_parser = PropertyDeclarationParser {
-            important_declarations: &mut important_declarations,
-            declarations: &mut declarations,
-            options,
-        };
-        let mut parser = css::RuleBodyParser::<PropertyDeclarationParser<'_, 'bump>>::new(input, &mut decl_parser);
-
-        while let Some(res) = parser.next() {
-            if let Err(e) = res {
-                if options.error_recovery {
-                    options.warn(e);
-                    continue;
-                }
-                // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
-                // union, not an error union. Free any declarations accumulated so far.
-                // PORT NOTE: in Rust, `declarations`/`important_declarations` are Vec<Property>
-                // and drop on early return; deepDeinit is implicit via Drop.
-                return Err(e);
-            }
-        }
-
-        Ok(DeclarationBlock {
-            important_declarations,
-            declarations,
-        })
-    }
-
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         let length = self.len();
         let mut i: usize = 0;
@@ -207,7 +160,7 @@ impl<'bump> DeclarationBlock<'bump> {
         for decl in self.declarations.iter() {
             decl.to_css(dest, false)?;
             if i != length - 1 {
-                dest.write_char(';')?;
+                dest.write_char(b';')?;
                 dest.whitespace()?;
             }
             i += 1;
@@ -215,7 +168,7 @@ impl<'bump> DeclarationBlock<'bump> {
         for decl in self.important_declarations.iter() {
             decl.to_css(dest, true)?;
             if i != length - 1 {
-                dest.write_char(';')?;
+                dest.write_char(b';')?;
                 dest.whitespace()?;
             }
             i += 1;
@@ -227,7 +180,7 @@ impl<'bump> DeclarationBlock<'bump> {
     /// Writes the declarations to a CSS block, including starting and ending braces.
     pub fn to_css_block(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.whitespace()?;
-        dest.write_char('{')?;
+        dest.write_char(b'{')?;
         dest.indent();
 
         let mut i: usize = 0;
@@ -238,7 +191,7 @@ impl<'bump> DeclarationBlock<'bump> {
             dest.newline()?;
             decl.to_css(dest, false)?;
             if i != length - 1 || !dest.minify {
-                dest.write_char(';')?;
+                dest.write_char(b';')?;
             }
             i += 1;
         }
@@ -246,76 +199,139 @@ impl<'bump> DeclarationBlock<'bump> {
             dest.newline()?;
             decl.to_css(dest, true)?;
             if i != length - 1 || !dest.minify {
-                dest.write_char(';')?;
+                dest.write_char(b';')?;
             }
             i += 1;
         }
 
         dest.dedent();
         dest.newline()?;
-        dest.write_char('}')
+        dest.write_char(b'}')
     }
+}
 
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
+// ─── parse ────────────────────────────────────────────────────────────────
+//
+// PORT NOTE: every consumer (`StyleRule`, `Keyframe`, `PageRule`,
+// `StyleAttribute`, `NestedRuleParser`) stores `DeclarationBlock<'static>` —
+// the crate-wide `'bump`-erasure placeholder until `'bump` threads through
+// `CssRule`. `parse()` therefore lives on the `'static` instantiation and
+// erases the parser arena's lifetime at the boundary; this collapses together
+// with the `transmute` in `rules/style.rs::minify` when `CssRule<'bump, R>`
+// lands.
+
+impl DeclarationBlock<'static> {
+    pub fn parse(input: &mut css::Parser, options: &css::ParserOptions) -> Result<DeclarationBlock<'static>> {
+        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // every `DeclarationBlock` produced from this parser. `'static` here is
+        // the crate-wide erasure (see note above), not a real static borrow.
+        let bump: &'static Bump = unsafe { &*(input.allocator() as *const Bump) };
+        let mut important_declarations = DeclarationList::new_in(bump);
+        let mut declarations = DeclarationList::new_in(bump);
+        let mut decl_parser = PropertyDeclarationParser {
+            important_declarations: &mut important_declarations,
+            declarations: &mut declarations,
+            options,
+        };
+        let mut parser = css::RuleBodyParser::new(input, &mut decl_parser);
+
+        while let Some(res) = parser.next() {
+            if let Err(e) = res {
+                if options.error_recovery {
+                    options.warn(e);
+                    continue;
+                }
+                // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
+                // union, not an error union. Free any declarations accumulated so far.
+                // PORT NOTE: in Rust, `declarations`/`important_declarations` are bumpalo
+                // Vec<Property> and drop on early return; deepDeinit is implicit via Drop.
+                return Err(e);
+            }
+        }
+
+        Ok(DeclarationBlock {
+            important_declarations,
+            declarations,
+        })
+    }
+}
+
+// ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
+// blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
+// derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
+// below are the real manual unrolls of Zig's comptime-reflection helpers
+// (`implementEql`/`implementDeepClone`); they un-gate the moment the
+// per-variant trait impls land in `properties_generated.rs`.
+#[cfg(any())]
+impl<'bump> DeclarationBlock<'bump> {
+    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash11) {
         for decl in self.declarations.iter() {
             decl.property_id().hash(hasher);
         }
-
         for decl in self.important_declarations.iter() {
             decl.property_id().hash(hasher);
         }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        // TODO(port): css.implementEql is comptime field reflection — replace with #[derive(PartialEq)]
-        css::implement_eql(self, other)
+        use crate::generics::CssEql;
+        if self.declarations.len() != other.declarations.len()
+            || self.important_declarations.len() != other.important_declarations.len()
+        {
+            return false;
+        }
+        self.declarations.iter().zip(other.declarations.iter()).all(|(a, b)| a.eql(b))
+            && self
+                .important_declarations
+                .iter()
+                .zip(other.important_declarations.iter())
+                .all(|(a, b)| a.eql(b))
     }
 
     pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
-        // TODO(port): css.implementDeepClone is comptime field reflection — replace with Clone impl
-        css::implement_deep_clone(self, bump)
+        use crate::generics::DeepClone;
+        // PORT NOTE: `css.implementDeepClone` is comptime field reflection;
+        // for a struct it deep-clones each field. `DeclarationList<'bump>` is
+        // `ArrayList<'bump, Property>`, which already has the blanket
+        // `DeepClone` impl in `generics.rs` once `Property: DeepClone`.
+        Self {
+            important_declarations: self.important_declarations.deep_clone(bump),
+            declarations: self.declarations.deep_clone(bump),
+        }
     }
 }
 
-// ─── PropertyDeclarationParser + parse_declaration (gated) ────────────────
-// blocked_on: css_parser::rule_parsers — `RuleBodyParser` / `DeclarationParser`
-// / `RuleBodyItemParser` / `ComposesCtx` / `ComposesState` / `NoComposesCtx`
-// are all inside the `#[cfg(any())] mod rule_parsers` block; and
-// properties_generated — `PropertyId::from_str` / `Property::parse` /
-// `Property::Composes` / `CustomPropertyId` are codegen stubs.
-#[cfg(any())]
-mod parse_decl {
-use super::*;
+// ─── PropertyDeclarationParser ────────────────────────────────────────────
 
 pub struct PropertyDeclarationParser<'a, 'bump> {
     pub important_declarations: &'a mut DeclarationList<'bump>,
     pub declarations: &'a mut DeclarationList<'bump>,
-    pub options: &'a css::ParserOptions,
+    pub options: &'a css::ParserOptions<'a>,
 }
 
-// PORT NOTE: Zig's nested AtRuleParser/QualifiedRuleParser/DeclarationParser/RuleBodyItemParser
-// are structural duck-typing namespaces consumed by RuleBodyParser(T) at comptime.
-// In Rust these are trait impls.
+// PORT NOTE: Zig's nested AtRuleParser/QualifiedRuleParser/DeclarationParser/
+// RuleBodyItemParser are structural duck-typing namespaces consumed by
+// RuleBodyParser(T) at comptime. In Rust these are trait impls.
 
 impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
 
-    fn parse_prelude(&mut self, name: &[u8], input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::AtRuleInvalid(name)))
+    fn parse_prelude(_this: &mut Self, name: &[u8], input: &mut css::Parser) -> Result<Self::Prelude> {
+        Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
     }
 
     fn parse_block(
-        &mut self,
+        _this: &mut Self,
         _: Self::Prelude,
         _: &css::ParserState,
         input: &mut css::Parser,
     ) -> Result<Self::AtRule> {
-        Err(input.new_error(css::BasicParseErrorKind::AtRuleBodyInvalid))
+        Err(input.new_error(css::BasicParseErrorKind::at_rule_body_invalid))
     }
 
     fn rule_without_block(
-        &mut self,
+        _this: &mut Self,
         _: Self::Prelude,
         _: &css::ParserState,
     ) -> css::Maybe<Self::AtRule, ()> {
@@ -327,146 +343,130 @@ impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump
     type Prelude = ();
     type QualifiedRule = ();
 
-    fn parse_prelude(&mut self, input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::QualifiedRuleInvalid))
+    fn parse_prelude(_this: &mut Self, input: &mut css::Parser) -> Result<Self::Prelude> {
+        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
     }
 
     fn parse_block(
-        &mut self,
+        _this: &mut Self,
         _prelude: Self::Prelude,
         _start: &css::ParserState,
         input: &mut css::Parser,
     ) -> Result<Self::QualifiedRule> {
-        Err(input.new_error(css::BasicParseErrorKind::QualifiedRuleInvalid))
+        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
     }
 }
 
 impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
     type Declaration = ();
 
-    fn parse_value(&mut self, name: &[u8], input: &mut css::Parser) -> Result<Self::Declaration> {
+    fn parse_value(this: &mut Self, name: &[u8], input: &mut css::Parser) -> Result<Self::Declaration> {
         parse_declaration(
             name,
             input,
-            self.declarations,
-            self.important_declarations,
-            self.options,
+            this.declarations,
+            this.important_declarations,
+            this.options,
         )
     }
 }
 
 impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump> {
-    fn parse_qualified(&self) -> bool {
+    fn parse_qualified(_this: &Self) -> bool {
         false
     }
 
-    fn parse_declarations(&self) -> bool {
+    fn parse_declarations(_this: &Self) -> bool {
         true
     }
 }
 
+// ─── parse_declaration ────────────────────────────────────────────────────
+
 pub fn parse_declaration<'bump>(
     name: &[u8],
-    input: &mut css::Parser<'bump>,
+    input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
 ) -> Result<()> {
-    parse_declaration_impl::<css::NoComposesCtx>(
+    parse_declaration_impl(
         name,
         input,
         declarations,
         important_declarations,
         options,
-        None,
+        &mut css::NoComposesCtx,
     )
 }
 
-// TODO(port): `composes_ctx: anytype` — Zig branches on `@TypeOf(composes_ctx) != void`.
-// Modeled as Option<&mut C> where C provides composes_state + record_composes; define a
-// ComposesCtx trait in css_parser (or wherever the real ctx type lives) in Phase B.
+// PORT NOTE: Zig `composes_ctx: anytype` — branches on
+// `comptime @TypeOf(composes_ctx) != void`. The Rust shape is a `ComposesCtx`
+// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
+// `DisallowEntirely` so the `void` fast-path collapses into the match's
+// no-op arm.
 pub fn parse_declaration_impl<'bump, C>(
     name: &[u8],
-    input: &mut css::Parser<'bump>,
+    input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
     important_declarations: &mut DeclarationList<'bump>,
     options: &css::ParserOptions,
-    composes_ctx: Option<&mut C>,
+    composes_ctx: &mut C,
 ) -> Result<()>
 where
-    C: css::ComposesCtx,
+    C: css::ComposesCtx + ?Sized,
 {
-    let property_id = css::PropertyId::from_str(name);
-    let mut delimiters = css::Delimiters { bang: true, ..Default::default() };
-    if !matches!(property_id, css::PropertyId::Custom(css::CustomPropertyId::Custom(_))) {
-        // TODO(port): Zig condition is `property_id != .custom or property_id.custom != .custom` —
-        // i.e. NOT (tag == .custom AND payload tag == .custom). Verify enum shape in Phase B.
-        delimiters.curly_bracket = true;
+    let property_id = css::PropertyId::from_string(name);
+    let mut delimiters = css::Delimiters::BANG;
+    // Zig: `if (property_id != .custom or property_id.custom != .custom)` —
+    // i.e. NOT (tag == .custom AND payload tag == .custom).
+    if !matches!(property_id, css::PropertyId::Custom(CustomPropertyName::Custom(_))) {
+        delimiters |= css::Delimiters::CURLY_BRACKET;
     }
-    struct Closure<'a> {
-        property_id: css::PropertyId,
-        options: &'a css::ParserOptions,
-    }
-    let mut closure = Closure { property_id, options };
     let source_location = input.current_source_location();
-    let mut property = match input.parse_until_before(
-        delimiters,
-        &mut closure,
-        |this: &mut Closure<'_>, input2: &mut css::Parser| -> Result<css::Property> {
-            css::Property::parse(this.property_id, input2, this.options)
-        },
-    ) {
-        Err(e) => return Err(e),
-        Ok(v) => v,
-    };
+    // PORT NOTE: Zig threaded `&closure` + fn through `parseUntilBefore`; the
+    // Rust method takes a single `FnOnce(&mut Parser)`, so capture by move
+    // (`PropertyId` is `Copy`, `options` is a borrow).
+    let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+        css::Property::parse(property_id, input2, options)
+    })?;
     let important = input
         .try_parse(|i: &mut css::Parser| -> Result<()> {
-            if let Err(e) = i.expect_delim('!') {
-                return Err(e);
-            }
+            i.expect_delim(b'!')?;
             i.expect_ident_matching(b"important")
         })
         .is_ok();
-    if let Err(e) = input.expect_exhausted() {
-        return Err(e);
-    }
+    input.expect_exhausted()?;
 
-    if let Some(composes_ctx) = composes_ctx {
-        if input.flags.css_modules {
-            if let css::Property::Composes(composes) = &mut property {
-                match composes_ctx.composes_state() {
-                    css::ComposesState::DisallowEntirely => {}
-                    css::ComposesState::Allow => {
-                        composes_ctx.record_composes(composes);
-                    }
-                    css::ComposesState::DisallowNested(info) => {
-                        options.warn_fmt_with_notes(
-                            "\"composes\" is not allowed inside nested selectors",
-                            format_args!(""),
-                            info.line,
-                            info.column,
-                            &[],
-                        );
-                    }
-                    css::ComposesState::DisallowNotSingleClass(info) => {
-                        let bump = input.allocator();
-                        // TODO(port): warn_fmt_with_notes ownership — Zig dupes both text and the
-                        // notes slice into options.allocator; verify whether the Rust signature
-                        // borrows or owns.
-                        options.warn_fmt_with_notes(
-                            "\"composes\" only works inside single class selectors",
-                            format_args!(""),
-                            source_location.line,
-                            source_location.column,
-                            bump.alloc_slice_copy(&[bun_logger::Data {
-                                text: bump.alloc_slice_copy(
-                                    b"The parent selector is not a single class selector because of the syntax here:",
-                                ),
-                                location: info.to_logger_location(options.filename),
-                                ..Default::default()
-                            }]),
-                        );
-                    }
+    if input.flags.css_modules() {
+        if let css::Property::Composes(composes) = &mut property {
+            match composes_ctx.composes_state() {
+                css::ComposesState::DisallowEntirely => {}
+                css::ComposesState::Allow(_) => {
+                    composes_ctx.record_composes(composes);
+                }
+                css::ComposesState::DisallowNested(info) => {
+                    // PORT NOTE: Zig passed an empty notes slice; `warn_fmt`
+                    // is the no-notes path.
+                    options.warn_fmt(
+                        format_args!("\"composes\" is not allowed inside nested selectors"),
+                        info.line,
+                        info.column,
+                    );
+                }
+                css::ComposesState::DisallowNotSingleClass(info) => {
+                    // blocked_on: ParserOptions::warn_fmt_with_notes
+                    // (`bun_logger::Log` notes-ownership API). Until that
+                    // lands the note ("The parent selector is not a single
+                    // class selector because of the syntax here:" at
+                    // `info.to_logger_location(options.filename)`) is dropped;
+                    // the primary warning still fires at the right location.
+                    let _ = info;
+                    options.warn_fmt(
+                        format_args!("\"composes\" only works inside single class selectors"),
+                        source_location.line,
+                        source_location.column,
+                    );
                 }
             }
         }
@@ -479,10 +479,6 @@ where
 
     Ok(())
 }
-
-} // mod parse_decl
-#[cfg(any())]
-pub use parse_decl::{parse_declaration, parse_declaration_impl, PropertyDeclarationParser};
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 ///
@@ -511,15 +507,9 @@ pub struct DeclarationHandler<'bump> {
 
 impl<'bump> DeclarationHandler<'bump> {
     pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
-        // blocked_on: properties_generated — `Property::Direction` variant is
-        // codegen output (`generate_properties.ts`); the unit-stub `Property`
-        // has no variants. Un-gates with `properties/mod.rs` → properties_generated.
-        #[cfg(any())]
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
-        #[cfg(not(any()))]
-        { let _ = self.direction.take(); }
         // if (this.unicode_bidi) |unicode_bidi| {
         //     this.unicode_bidi = null;
         //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
@@ -592,6 +582,6 @@ impl<'bump> DeclarationHandler<'bump> {
 // PORT STATUS
 //   source:     src/css/declaration.zig (461 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      Parser protocol namespaces → trait impls; composes_ctx anytype → Option<&mut C: ComposesCtx>; DeclarationList/Block/Handler are arena-backed (bumpalo Vec<'bump>) — Default replaced with new(bump)
+//   todos:      3
+//   notes:      parse/to_css/to_css_block + PropertyDeclarationParser + parse_declaration{,_impl} un-gated; composes_ctx anytype → &mut impl ComposesCtx; DeclarationBlock::parse lives on 'static (crate-wide 'bump erasure — re-threads with CssRule<'bump>); deep_clone/eql/hash_property_ids gated on Property: DeepClone/CssEql + PropertyId::hash; DebugFmt Display gated on Printer::new; DisallowNotSingleClass note dropped pending warn_fmt_with_notes
 // ──────────────────────────────────────────────────────────────────────────

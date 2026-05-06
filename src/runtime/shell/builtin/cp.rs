@@ -37,6 +37,10 @@ pub struct ExecState {
     pub output_waiting: u32,
     pub output_done: u32,
     pub err: Option<ShellErr>,
+    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
+    pub output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
     #[cfg(windows)]
     pub ebusy: EbusyState,
 }
@@ -85,6 +89,7 @@ impl Cp {
             output_waiting: 0,
             output_done: 0,
             err: None,
+            output_queue: std::collections::VecDeque::new(),
             #[cfg(windows)]
             ebusy: EbusyState::default(),
         });
@@ -213,14 +218,21 @@ impl Cp {
     pub fn on_io_writer_chunk(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _: usize,
-        _e: Option<bun_sys::SystemError>,
+        written: usize,
+        e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
         }
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
+        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_queue.pop_front()
+        } else {
+            None
+        };
+        if let Some(task) = pending {
+            // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
+            // pushed by `write_err`/`write_out`; not yet freed.
+            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
         }
         Self::next(interp, cmd)
     }
@@ -287,18 +299,23 @@ impl OutputTaskVTable for Cp {
     fn write_err(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            // Stash so on_io_writer_chunk can route to the OutputTask state
+            // machine and reclaim the box (stopgap for missing WriterTag).
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stderr
-                    .enqueue(child, errbuf, safeguard),
+                    .enqueue(childptr, errbuf, safeguard),
             );
         }
         Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
@@ -312,19 +329,22 @@ impl OutputTaskVTable for Cp {
     fn write_out(
         interp: &mut Interpreter,
         cmd: NodeId,
-        _child: *mut OutputTask<Self>,
+        child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.output_queue.push_back(child);
+            }
+            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
             let buf = output.slice().to_vec();
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(child, &buf, safeguard),
+                    .enqueue(childptr, &buf, safeguard),
             );
         }
         let buf = output.slice().to_vec();

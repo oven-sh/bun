@@ -1117,13 +1117,13 @@ impl Bunfig {
 
         // PORT NOTE: reshaped for borrowck — Zig stored both `&mut ctx` and
         // `&mut ctx.args` simultaneously inside Parser. In Rust we route bunfig
-        // writes through `self.ctx.args` directly. `log` is re-derived from
-        // `ctx.log` (raw pointer) to avoid the overlapping borrow with `ctx`.
-        // SAFETY: same invariant as above; Parser holds the only live &mut.
-        let log2: &mut logger::Log = unsafe { &mut *ctx.log };
+        // writes through `self.ctx.args` directly. `log` is derived from the
+        // copied raw pointer above so it does not overlap the `&mut ctx` borrow.
+        // SAFETY: Parser never reaches `ctx.log` (only `self.log`), so no two
+        // live `&mut` to the same `Log` coexist.
         let mut parser = Parser {
             json: expr,
-            log: log2,
+            log,
             source,
             ctx,
             bump: &bump,

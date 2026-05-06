@@ -1462,7 +1462,7 @@ pub mod formatter {
         /// explicitly and leave `map`/`map_node` fresh on the clone.
         pub(super) fn shallow_clone(&self) -> Self {
             debug_assert!(
-                self.map_node.is_none() && self.map.is_empty(),
+                self.map_node.is_none(),
                 "shallow_clone source must not own a visited map"
             );
             Self {

@@ -7,18 +7,384 @@ use bun_core::{self, err, Error};
 #[cfg(debug_assertions)]
 use bun_jsc::{CallFrame, VirtualMachine};
 
-// TODO(port): std.debug.* has no mapped Rust crate. These placeholder types stand in for
-// Zig's self-debug-info / stack-unwinding machinery. Phase B must wire these to either a
-// `bun_crash_handler` equivalent or the `backtrace`/`addr2line` crates (or drop the impl
-// and shell out to the existing C++ unwinder). Everything below that touches them is a
-// best-effort structural translation only.
+// Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
+// `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup helpers. The frame-pointer
+// unwinder is ported verbatim from `vendor/zig/lib/std/debug.zig`; the DWARF-backed
+// unwind path is omitted (`supports_unwinding = false` here) so `StackIterator` falls
+// through to fp-walking exactly as Zig does on targets without DWARF support.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
-    pub struct SelfInfo;
-    pub struct StackIterator {
-        pub fp: usize,
+    use core::ffi::{c_int, c_void};
+    use core::sync::atomic::{AtomicI32, Ordering};
+    use std::collections::HashMap;
+
+    use bun_core::{err, Error};
+
+    // ── ThreadContext / have_ucontext ────────────────────────────────────
+    // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
+    #[cfg(not(windows))]
+    pub type ThreadContext = libc::ucontext_t;
+    #[cfg(windows)]
+    pub type ThreadContext = bun_sys::windows::CONTEXT;
+
+    // Zig: `pub const have_ucontext = posix.ucontext_t != void;`
+    pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
+    // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
+    // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
+    const HAVE_GETCONTEXT: bool =
+        cfg!(all(not(windows), not(target_os = "android"), not(target_os = "openbsd")));
+
+    // DWARF unwinding requires the full `Dwarf` parser (not ported). Zig falls back to
+    // fp-walking when `SelfInfo.supports_unwinding == false`; we hard-code that here.
+    const SUPPORTS_UNWINDING: bool = false;
+
+    // ── std.debug.getContext ─────────────────────────────────────────────
+    /// Port of `std.debug.getContext`. Captures the current register state.
+    /// Returns `false` if the platform has no `getcontext`.
+    #[inline(always)]
+    pub fn get_context(context: *mut ThreadContext) -> bool {
+        #[cfg(windows)]
+        {
+            // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
+            unsafe {
+                core::ptr::write(context, core::mem::zeroed());
+                bun_sys::windows::ntdll::RtlCaptureContext(context);
+            }
+            return true;
+        }
+        #[cfg(not(windows))]
+        {
+            if !HAVE_GETCONTEXT {
+                return false;
+            }
+            #[cfg(any(target_os = "android", target_os = "openbsd"))]
+            {
+                let _ = context;
+                return false;
+            }
+            #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
+            {
+                // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
+                let result = unsafe { libc::getcontext(context) } == 0;
+                // On aarch64-macos, the system getcontext doesn't write anything into the pc
+                // register slot, it only writes lr. This makes the context consistent with
+                // other aarch64 getcontext implementations which write the current lr
+                // (where getcontext will return to) into both the lr and pc slot of the context.
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                {
+                    // SAFETY: getcontext just initialized `*context`; mcontext is non-null.
+                    unsafe {
+                        let mctx = (*context).uc_mcontext;
+                        if !mctx.is_null() {
+                            (*mctx).__ss.__pc = (*mctx).__ss.__lr;
+                        }
+                    }
+                }
+                return result;
+            }
+        }
     }
-    pub struct ThreadContext;
+
+    // ── @frameAddress() ──────────────────────────────────────────────────
+    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
+    #[inline(always)]
+    fn frame_address() -> usize {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let fp: usize;
+            // SAFETY: reading rbp is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let fp: usize;
+            // SAFETY: reading x29 (fp) is side-effect-free.
+            unsafe { core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags)) };
+            fp
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // PORT NOTE: @frameAddress() — approximate with a stack local's addr on
+            // arches without an asm! mapping yet. fp-walk will fail its alignment
+            // sanity check and terminate cleanly.
+            let probe = 0u8;
+            &probe as *const u8 as usize
+        }
+    }
+
+    // ── MemoryAccessor (vendor/zig/lib/std/debug/MemoryAccessor.zig) ─────
+    /// Reads memory from any address of the current process using OS-specific
+    /// syscalls, bypassing memory page protection. Used by `StackIterator` to
+    /// safely walk frame pointers without segfaulting on a corrupt stack.
+    struct MemoryAccessor {
+        #[cfg(target_os = "linux")]
+        mem: c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
+        #[cfg(not(target_os = "linux"))]
+        mem: (),
+    }
+
+    #[cfg(target_os = "linux")]
+    static CACHED_PID: AtomicI32 = AtomicI32::new(-1);
+
+    impl MemoryAccessor {
+        const INIT: Self = Self {
+            #[cfg(target_os = "linux")]
+            mem: -1,
+            #[cfg(not(target_os = "linux"))]
+            mem: (),
+        };
+
+        fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+            #[cfg(target_os = "linux")]
+            loop {
+                match self.mem {
+                    -2 => break,
+                    -1 => {
+                        let pid = match CACHED_PID.load(Ordering::Relaxed) {
+                            -1 => {
+                                // SAFETY: getpid has no preconditions.
+                                let pid = unsafe { libc::getpid() };
+                                CACHED_PID.store(pid, Ordering::Relaxed);
+                                pid
+                            }
+                            pid => pid,
+                        };
+                        let local = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
+                        let remote = libc::iovec { iov_base: address as *mut c_void, iov_len: buf.len() };
+                        // SAFETY: iovecs point to valid memory for their stated lengths.
+                        let bytes_read =
+                            unsafe { libc::process_vm_readv(pid, &local, 1, &remote, 1, 0) };
+                        if bytes_read >= 0 {
+                            return bytes_read as usize == buf.len();
+                        }
+                        // SAFETY: errno location is thread-local and always valid.
+                        match unsafe { *libc::__errno_location() } {
+                            libc::EFAULT => return false,
+                            // EPERM (containers), ENOMEM, ENOSYS (qemu) → fall through to /proc/pid/mem
+                            _ => {}
+                        }
+                        let mut path_buf = [0u8; 32];
+                        let path = {
+                            use std::io::Write as _;
+                            let mut cur = std::io::Cursor::new(&mut path_buf[..]);
+                            let _ = write!(cur, "/proc/{}/mem\0", pid);
+                            let n = cur.position() as usize;
+                            &path_buf[..n]
+                        };
+                        // SAFETY: path is NUL-terminated.
+                        let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY) };
+                        if fd < 0 {
+                            self.mem = -2;
+                            break;
+                        }
+                        self.mem = fd;
+                    }
+                    fd => {
+                        // SAFETY: fd is a valid open file descriptor; buf is writable.
+                        let n = unsafe {
+                            libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), address as libc::off_t)
+                        };
+                        return n >= 0 && n as usize == buf.len();
+                    }
+                }
+            }
+            if !is_valid_memory(address) {
+                return false;
+            }
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
+            }
+            true
+        }
+
+        fn load_usize(&mut self, address: usize) -> Option<usize> {
+            let mut result = [0u8; core::mem::size_of::<usize>()];
+            if self.read(address, &mut result) { Some(usize::from_ne_bytes(result)) } else { None }
+        }
+    }
+
+    impl Drop for MemoryAccessor {
+        fn drop(&mut self) {
+            #[cfg(target_os = "linux")]
+            if self.mem >= 0 {
+                // SAFETY: self.mem is a valid fd we opened.
+                unsafe { libc::close(self.mem) };
+            }
+        }
+    }
+
+    fn is_valid_memory(address: usize) -> bool {
+        let page_size = bun_alloc::page_size();
+        let aligned_address = address & !(page_size - 1);
+        if aligned_address == 0 {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            // PORT NOTE: VirtualQuery path — fall back to "valid" on Windows; the
+            // fp-walker is not used there (RtlVirtualUnwind path is taken instead).
+            let _ = aligned_address;
+            return true;
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
+            let rc = unsafe { libc::msync(aligned_address as *mut c_void, page_size, libc::MS_ASYNC) };
+            if rc != 0 {
+                // SAFETY: errno location is thread-local and always valid.
+                return unsafe { *libc::__errno_location() } != libc::ENOMEM;
+            }
+            true
+        }
+    }
+
+    // ── StackIterator (vendor/zig/lib/std/debug.zig:771) ─────────────────
+    pub struct StackIterator {
+        // Skip every frame before this address is found.
+        first_address: Option<usize>,
+        // Last known value of the frame pointer register.
+        pub fp: usize,
+        ma: MemoryAccessor,
+        // When SelfInfo and a register context is available, this iterator can unwind
+        // stacks with frames that don't use a frame pointer (ie. -fomit-frame-pointer),
+        // using DWARF and MachO unwind info.
+        unwind_state: Option<UnwindState>,
+    }
+
+    struct UnwindState {
+        last_error: Option<UnwindError>,
+        pc: usize,
+    }
+
+    impl StackIterator {
+        // Offset of the saved BP wrt the frame pointer.
+        const FP_OFFSET: usize = if cfg!(any(target_arch = "riscv64", target_arch = "riscv32")) {
+            // On RISC-V the frame pointer points to the top of the saved register
+            // area, on pretty much every other architecture it points to the stack
+            // slot where the previous frame pointer is saved.
+            2 * core::mem::size_of::<usize>()
+        } else {
+            0
+        };
+        const FP_BIAS: usize = 0; // SPARC only — not a Bun target.
+        // Positive offset of the saved PC wrt the frame pointer.
+        const PC_OFFSET: usize = if cfg!(target_arch = "powerpc64") {
+            2 * core::mem::size_of::<usize>()
+        } else {
+            core::mem::size_of::<usize>()
+        };
+
+        pub fn init(first_address: Option<usize>, fp: Option<usize>) -> StackIterator {
+            // (SPARC `flushw` omitted — not a Bun target.)
+            StackIterator {
+                first_address,
+                fp: fp.unwrap_or_else(frame_address),
+                ma: MemoryAccessor::INIT,
+                unwind_state: None,
+            }
+        }
+
+        pub fn init_with_context(
+            first_address: Option<usize>,
+            _debug_info: &mut SelfInfo,
+            context: *mut ThreadContext,
+        ) -> Result<StackIterator, Error> {
+            let _ = context;
+            // The implementation of DWARF unwinding on aarch64-macos is not complete. However, Apple mandates that
+            // the frame pointer register is always used, so on this platform we can safely use the FP-based unwinder.
+            #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
+            {
+                // SAFETY: caller passes a `getcontext`-initialized ucontext; mcontext is non-null.
+                let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
+                return Ok(Self::init(first_address, Some(fp)));
+            }
+            #[allow(unreachable_code)]
+            if SUPPORTS_UNWINDING {
+                // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
+                // is `false`, so this branch is dead. Kept to mirror Zig structure.
+                return Err(err!("UnsupportedCpuArchitecture"));
+            }
+            Ok(Self::init(first_address, None))
+        }
+
+        pub fn get_last_error(&mut self) -> Option<LastUnwindError> {
+            if !HAVE_UCONTEXT {
+                return None;
+            }
+            if let Some(unwind_state) = &mut self.unwind_state {
+                if let Some(e) = unwind_state.last_error.take() {
+                    return Some(LastUnwindError { err: e, address: unwind_state.pc });
+                }
+            }
+            None
+        }
+
+        pub fn next(&mut self) -> Option<usize> {
+            let mut address = self.next_internal()?;
+            if let Some(first_address) = self.first_address {
+                while address != first_address {
+                    address = self.next_internal()?;
+                }
+                self.first_address = None;
+            }
+            Some(address)
+        }
+
+        fn next_internal(&mut self) -> Option<usize> {
+            // PORT NOTE: the `unwind_state` DWARF path (`next_unwind`) is not ported
+            // (`SUPPORTS_UNWINDING == false`); Zig falls through to fp-walking here too.
+
+            // `builtin.omit_frame_pointer` — Bun debug builds always keep frame pointers.
+
+            let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
+
+            // Sanity check.
+            if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
+                return None;
+            }
+            let new_fp = self.ma.load_usize(fp)?.checked_add(Self::FP_BIAS)?;
+
+            // Sanity check: the stack grows down thus all the parent frames must be
+            // be at addresses that are greater (or equal) than the previous one.
+            // A zero frame pointer often signals this is the last frame, that case
+            // is gracefully handled by the next call to next_internal.
+            if new_fp != 0 && new_fp < self.fp {
+                return None;
+            }
+            let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+
+            self.fp = new_fp;
+
+            Some(new_pc)
+        }
+    }
+
+    pub type UnwindError = Error;
+    pub struct LastUnwindError {
+        pub address: usize,
+        pub err: UnwindError,
+    }
+
+    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
+    pub struct SelfInfo {
+        address_map: HashMap<usize, Box<Module>>,
+    }
+
+    /// Port of `SelfInfo.Module`. On Linux Zig uses `Dwarf.ElfModule`; on Darwin a
+    /// MachO symbol table reader. Both ultimately resolve `address → {name, CU,
+    /// source_location}`. The DWARF/MachO parsers are not ported; `dladdr(3)`
+    /// provides the symbol-name half (which is what `btjs` actually consumes for
+    /// its `__`/`_llint_call_javascript` prefix checks). `source_location` is left
+    /// `None`, which `print_line_info` already handles.
+    // PORT NOTE: full `readElfDebugInfo`/`readMachODebugInfo` (~2k LOC of DWARF) not
+    // ported — `dladdr` is the libc-level equivalent for symbol-name resolution.
+    pub struct Module {
+        base_address: usize,
+        name: Box<[u8]>,
+    }
+
     pub struct SourceLocation {
         pub file_name: Box<[u8]>,
         pub line: u32,
@@ -29,12 +395,285 @@ mod zig_std_debug {
         pub compile_unit_name: Box<[u8]>,
         pub source_location: Option<SourceLocation>,
     }
-    pub type UnwindError = bun_core::Error;
-    pub struct LastUnwindError {
-        pub address: usize,
-        pub err: UnwindError,
+
+    impl SelfInfo {
+        /// Port of `SelfInfo.open`.
+        pub fn open() -> Result<SelfInfo, Error> {
+            // `if (builtin.strip_debug_info) return error.MissingDebugInfo;`
+            if !cfg!(debug_assertions) {
+                return Err(err!("MissingDebugInfo"));
+            }
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "illumos",
+                windows,
+            ))]
+            {
+                // SelfInfo.init — non-Windows path is just an empty address_map.
+                return Ok(SelfInfo { address_map: HashMap::new() });
+            }
+            #[allow(unreachable_code)]
+            Err(err!("UnsupportedOperatingSystem"))
+        }
+
+        /// Port of `SelfInfo.getModuleForAddress`.
+        pub fn get_module_for_address(&mut self, address: usize) -> Result<&mut Module, Error> {
+            #[cfg(target_vendor = "apple")]
+            {
+                return self.lookup_module_dyld(address);
+            }
+            #[cfg(windows)]
+            {
+                let _ = address;
+                return Err(err!("MissingDebugInfo"));
+            }
+            #[cfg(not(any(target_vendor = "apple", windows)))]
+            {
+                return self.lookup_module_dl(address);
+            }
+        }
+
+        /// Port of `SelfInfo.getModuleNameForAddress`. Returns the basename of the
+        /// shared object containing `address`, or `None` if not found.
+        pub fn get_module_name_for_address(&mut self, address: usize) -> Option<Box<[u8]>> {
+            #[cfg(target_vendor = "apple")]
+            {
+                return lookup_module_name_dyld(address);
+            }
+            #[cfg(windows)]
+            {
+                let _ = address;
+                return None;
+            }
+            #[cfg(not(any(target_vendor = "apple", windows)))]
+            {
+                return lookup_module_name_dl(address);
+            }
+        }
+
+        #[cfg(not(any(target_vendor = "apple", windows)))]
+        fn lookup_module_dl(&mut self, address: usize) -> Result<&mut Module, Error> {
+            struct Ctx {
+                // Input
+                address: usize,
+                // Output
+                base_address: usize,
+                name: Box<[u8]>,
+                found: bool,
+            }
+            let mut ctx = Ctx { address, base_address: 0, name: Box::default(), found: false };
+
+            unsafe extern "C" fn callback(
+                info: *mut libc::dl_phdr_info,
+                _size: libc::size_t,
+                data: *mut c_void,
+            ) -> c_int {
+                // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
+                let context = unsafe { &mut *(data as *mut Ctx) };
+                // SAFETY: dl_iterate_phdr passes a valid info pointer.
+                let info = unsafe { &*info };
+                // The base address is too high
+                if context.address < info.dlpi_addr as usize {
+                    return 0;
+                }
+                // SAFETY: dlpi_phdr points to dlpi_phnum entries.
+                let phdrs =
+                    unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+                for phdr in phdrs {
+                    if phdr.p_type != libc::PT_LOAD {
+                        continue;
+                    }
+                    // Overflowing addition is used to handle the case of VSDOs having a p_vaddr = 0xffffffffff700000
+                    let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
+                    let seg_end = seg_start + phdr.p_memsz as usize;
+                    if context.address >= seg_start && context.address < seg_end {
+                        // Android libc uses NULL instead of an empty string to mark the
+                        // main program
+                        context.name = if info.dlpi_name.is_null() {
+                            Box::default()
+                        } else {
+                            // SAFETY: dlpi_name is a valid NUL-terminated C string.
+                            unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }
+                                .to_bytes()
+                                .to_vec()
+                                .into_boxed_slice()
+                        };
+                        context.base_address = info.dlpi_addr as usize;
+                        context.found = true;
+                        return 1; // error.Found → stop iteration
+                    }
+                }
+                0
+            }
+
+            // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
+            unsafe { libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void) };
+
+            if !ctx.found {
+                return Err(err!("MissingDebugInfo"));
+            }
+
+            if !self.address_map.contains_key(&ctx.base_address) {
+                let obj_di = Box::new(Module { base_address: ctx.base_address, name: ctx.name });
+                self.address_map.insert(ctx.base_address, obj_di);
+            }
+            Ok(self.address_map.get_mut(&ctx.base_address).unwrap())
+        }
+
+        #[cfg(target_vendor = "apple")]
+        fn lookup_module_dyld(&mut self, address: usize) -> Result<&mut Module, Error> {
+            // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
+            // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+            let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            if rc == 0 {
+                return Err(err!("MissingDebugInfo"));
+            }
+            let base_address = info.dli_fbase as usize;
+            if !self.address_map.contains_key(&base_address) {
+                let name = if info.dli_fname.is_null() {
+                    Box::default()
+                } else {
+                    // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+                    unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }
+                        .to_bytes()
+                        .to_vec()
+                        .into_boxed_slice()
+                };
+                self.address_map.insert(base_address, Box::new(Module { base_address, name }));
+            }
+            Ok(self.address_map.get_mut(&base_address).unwrap())
+        }
     }
-    pub const HAVE_UCONTEXT: bool = true; // TODO(port): std.debug.have_ucontext
+
+    impl Module {
+        /// Port of `Module.getSymbolAtAddress`.
+        pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
+            let _ = self.base_address;
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+            let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            if rc == 0 || info.dli_sname.is_null() {
+                // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
+                // rather than erroring, so the caller still prints the address line.
+                return Ok(SymbolInfo {
+                    name: b"???".to_vec().into_boxed_slice(),
+                    compile_unit_name: bun_paths::basename(&self.name)
+                        .to_vec()
+                        .into_boxed_slice(),
+                    source_location: None,
+                });
+            }
+            // SAFETY: dli_sname is a valid NUL-terminated C string when non-null.
+            let name = unsafe { core::ffi::CStr::from_ptr(info.dli_sname) }
+                .to_bytes()
+                .to_vec()
+                .into_boxed_slice();
+            let compile_unit_name = if info.dli_fname.is_null() {
+                bun_paths::basename(&self.name).to_vec().into_boxed_slice()
+            } else {
+                // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+                bun_paths::basename(unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }.to_bytes())
+                    .to_vec()
+                    .into_boxed_slice()
+            };
+            Ok(SymbolInfo {
+                name,
+                compile_unit_name,
+                // PORT NOTE: DWARF line-table lookup not ported; dladdr does not provide
+                // file:line. `print_line_info` handles `None` by printing `???:?:?`.
+                source_location: None,
+            })
+        }
+    }
+
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    fn lookup_module_name_dl(address: usize) -> Option<Box<[u8]>> {
+        struct Ctx {
+            address: usize,
+            name: Option<Box<[u8]>>,
+        }
+        let mut ctx = Ctx { address, name: None };
+
+        unsafe extern "C" fn callback(
+            info: *mut libc::dl_phdr_info,
+            _size: libc::size_t,
+            data: *mut c_void,
+        ) -> c_int {
+            // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
+            let context = unsafe { &mut *(data as *mut Ctx) };
+            // SAFETY: dl_iterate_phdr passes a valid info pointer.
+            let info = unsafe { &*info };
+            if context.address < info.dlpi_addr as usize {
+                return 0;
+            }
+            // SAFETY: dlpi_phdr points to dlpi_phnum entries.
+            let phdrs =
+                unsafe { core::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+            for phdr in phdrs {
+                if phdr.p_type != libc::PT_LOAD {
+                    continue;
+                }
+                let seg_start = (info.dlpi_addr as usize).wrapping_add(phdr.p_vaddr as usize);
+                let seg_end = seg_start + phdr.p_memsz as usize;
+                if context.address >= seg_start && context.address < seg_end {
+                    let name = if info.dlpi_name.is_null() {
+                        &b""[..]
+                    } else {
+                        // SAFETY: dlpi_name is a valid NUL-terminated C string.
+                        unsafe { core::ffi::CStr::from_ptr(info.dlpi_name) }.to_bytes()
+                    };
+                    context.name =
+                        Some(bun_paths::basename(name).to_vec().into_boxed_slice());
+                    return 1; // error.Found → stop iteration
+                }
+            }
+            0
+        }
+
+        // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
+        unsafe { libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void) };
+        ctx.name
+    }
+
+    #[cfg(target_vendor = "apple")]
+    fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
+        // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+        let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
+        let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+        if rc == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        // SAFETY: dli_fname is a valid NUL-terminated C string when non-null.
+        let name = unsafe { core::ffi::CStr::from_ptr(info.dli_fname) }.to_bytes();
+        Some(bun_paths::basename(name).to_vec().into_boxed_slice())
+    }
+
+    // ── std.debug.getSelfDebugInfo ───────────────────────────────────────
+    static mut SELF_DEBUG_INFO: Option<SelfInfo> = None;
+
+    /// Port of `std.debug.getSelfDebugInfo`. NOT thread-safe (the Zig original
+    /// has the same `TODO multithreaded awareness` caveat); btjs is only called
+    /// from lldb on a stopped process.
+    pub fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
+        // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
+        // mutable global; this is debug-only and invoked from a stopped process.
+        unsafe {
+            let slot = &mut *core::ptr::addr_of_mut!(SELF_DEBUG_INFO);
+            if let Some(info) = slot {
+                return Ok(info);
+            }
+            *slot = Some(SelfInfo::open()?);
+            Ok(slot.as_mut().unwrap())
+        }
+    }
 }
 #[cfg(debug_assertions)]
 use zig_std_debug::{SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext, UnwindError};

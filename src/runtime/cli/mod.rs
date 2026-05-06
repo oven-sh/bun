@@ -732,24 +732,11 @@ pub mod command {
             Tag::ReservedCommand => return ReservedCommand::exec(),
             Tag::DiscordCommand => return super::discord_command::DiscordCommand::exec(),
             Tag::InitCommand => {
-                // InitCommand parses its own argv (no Context); --help is handled
-                // inside `InitCommand::exec` in Zig. While the body is gated,
-                // surface --help here so `bun init --help` works.
-                for a in bun::argv().iter().skip(2) {
-                    if matches!(a, b"--help" | b"-h") {
-                        tag_print_help(Tag::InitCommand, true);
-                        Global::exit(0);
-                    }
-                }
-                
-                {
-                    return super::init_command::InitCommand::exec(
-                        &bun::argv()[2.min(bun::argv().len())..],
-                    );
-                }
-                // TODO(b2-blocked): InitCommand::exec — needs bun_json /
-                // js_parser / js_printer / bundler::options + create_command.
-                todo!("Command::start dispatch for InitCommand (body gated; use --help)");
+                // InitCommand parses its own argv (no Context); Zig:
+                //   .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..])
+                return super::init_command::InitCommand::exec(
+                    &bun::argv()[2.min(bun::argv().len())..],
+                );
             }
             Tag::InstallCompletionsCommand => {
                 // Minimal port of the non-interactive path: detect $SHELL and

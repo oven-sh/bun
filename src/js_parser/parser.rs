@@ -2718,6 +2718,7 @@ impl<'a> Default for ReactRefresh<'a> {
             last_hook_seen: None,
             hook_ctx_storage: None,
             latest_signature_ref: Ref::NONE,
+            _phantom: core::marker::PhantomData,
         }
     }
 }

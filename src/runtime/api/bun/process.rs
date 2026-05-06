@@ -3013,6 +3013,27 @@ pub mod sync {
         fn buffer(p: *mut uv::Pipe) -> Self { WindowsStdio::Buffer(p) }
     }
 
+    impl Default for Options {
+        fn default() -> Self {
+            Self {
+                stdin: SyncStdio::Ignore,
+                stdout: SyncStdio::Inherit,
+                stderr: SyncStdio::Inherit,
+                ipc: None,
+                cwd: Box::default(),
+                detached: false,
+                argv: Vec::new(),
+                envp: None,
+                use_execve_on_macos: false,
+                argv0: None,
+                #[cfg(windows)]
+                windows: Default::default(),
+                #[cfg(not(windows))]
+                windows: (),
+            }
+        }
+    }
+
     impl Options {
         pub fn to_spawn_options(&self, new_process_group: bool) -> SpawnOptions {
             SpawnOptions {

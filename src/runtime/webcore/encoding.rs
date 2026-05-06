@@ -251,8 +251,6 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
             if str.is_dead() {
                 return str;
             }
-            // SAFETY: chars is a writable buffer of `input.len()` bytes (str is not dead).
-            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len()) };
             strings::copy_latin1_into_ascii(chars, &input);
             str
         }

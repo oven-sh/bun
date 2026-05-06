@@ -2282,7 +2282,8 @@ impl Element {
         // duration of the lol-html callback; end_tag_handler is a fresh Box
         // whose ownership transfers to lol-html on success.
         if unsafe {
-            (*self.element).on_end_tag(
+            lolhtml::Element::on_end_tag(
+                self.element,
                 EndTagHandler::ON_END_TAG_HANDLER,
                 end_tag_handler as *mut core::ffi::c_void,
             )
@@ -2292,7 +2293,7 @@ impl Element {
             // SAFETY: end_tag_handler allocated above and not yet handed to lol-html.
             unsafe { drop(Box::from_raw(end_tag_handler)) };
             let err = create_lolhtml_error(global_object);
-            return global_object.throw_value(err);
+            return Err(global_object.throw_value(err));
         }
 
         function.protect();
@@ -2313,7 +2314,7 @@ impl Element {
             return Ok(JSValue::NULL);
         }
 
-        attr.to_js(global_object)
+        html_string_to_js(attr, global_object)
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.

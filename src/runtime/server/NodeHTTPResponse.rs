@@ -1064,11 +1064,13 @@ pub fn Bun__NodeHTTPRequest__onResolve(
     callframe: &CallFrame,
 ) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_old(2);
-    let this: &mut NodeHTTPResponse = arguments[1].as_::<NodeHTTPResponse>().unwrap();
+    let arguments = callframe.arguments_old::<2>();
+    // SAFETY: arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
+    let this: &mut NodeHTTPResponse =
+        unsafe { &mut *arguments.ptr[1].as_::<NodeHTTPResponse>().unwrap() };
     this.promise.deinit();
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(global_object.bun_vm(), arguments[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
     if !this.flags.contains(Flags::REQUEST_HAS_COMPLETED)
         && !this.flags.contains(Flags::SOCKET_CLOSED)

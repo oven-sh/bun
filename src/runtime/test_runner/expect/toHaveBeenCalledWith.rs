@@ -49,7 +49,7 @@ pub fn to_have_been_called_with(
                 )));
             }
 
-            if call_item.get_length(global)? != arguments.len() {
+            if call_item.get_length(global)? != arguments.len() as u64 {
                 continue;
             }
 

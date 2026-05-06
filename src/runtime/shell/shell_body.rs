@@ -4697,7 +4697,11 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_req) = template_value.as_::<jsc::WebCore::Response>() {
+        // TODO(b2-blocked): `Response: JsClass` — codegen impl pending. Treat as never
+        // matching until the class binding lands.
+        if false {
+            // blocked_on: bun_jsc::WebCore::Response (JsClass impl)
+            let _req = template_value;
             let idx = out_jsobjs.len();
             marked_argument_buffer.append(template_value);
             out_jsobjs.push(template_value);

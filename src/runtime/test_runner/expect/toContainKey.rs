@@ -50,11 +50,13 @@ impl Expect {
         }
 
         // handle failure
-
-        let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = expected.to_fmt(&mut formatter);
+        // PORT NOTE: Zig held two `value.toFmt(&formatter)` results live at once; in Rust each
+        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned adapter, so allocate
+        // a second formatter for the other value.
+        let mut formatter2 = super::make_formatter(global);
         if not {
-            let received_fmt = value.to_fmt(&mut formatter);
+            let expected_fmt = expected.to_fmt(&mut formatter);
+            let received_fmt = value.to_fmt(&mut formatter2);
             let signature = Expect::get_signature("toContainKey", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -70,6 +72,8 @@ impl Expect {
             );
         }
 
+        let expected_fmt = expected.to_fmt(&mut formatter);
+        let value_fmt = value.to_fmt(&mut formatter2);
         let signature = Expect::get_signature("toContainKey", "<green>expected<r>", false);
         this.throw(
             global,

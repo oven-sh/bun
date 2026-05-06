@@ -3232,27 +3232,28 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             // absolute path of some kind (UNC or otherwise)
             _is_absolute = true;
 
-            if is_sep_t(path[1]) {
+            if is_sep_t(path!()[1]) {
                 // Matched double path separator at the beginning
                 let mut j: usize = 2;
                 let mut last: usize = j;
                 // Match 1 or more non-path separators
-                while j < len && !is_sep_t(path[j]) {
+                while j < len && !is_sep_t(path!()[j]) {
                     j += 1;
                 }
                 if j < len && j != last {
-                    let first_part = &path[last..j];
+                    let first_part_start = last;
+                    let first_part_end = j;
                     // Matched!
                     last = j;
                     // Match 1 or more path separators
-                    while j < len && is_sep_t(path[j]) {
+                    while j < len && is_sep_t(path!()[j]) {
                         j += 1;
                     }
                     if j < len && j != last {
                         // Matched!
                         last = j;
                         // Match 1 or more non-path separators
-                        while j < len && !is_sep_t(path[j]) {
+                        while j < len && !is_sep_t(path!()[j]) {
                             j += 1;
                         }
                         if j == len || j != last {
@@ -3271,21 +3272,39 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                             //   device =
                             //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                             //   rootEnd = j;
+                            // PORT NOTE: path may alias tmp_buf (cwd branch). The Zig original
+                            // relies on memmove + non-overlapping ranges; use ptr::copy here.
                             buf_size = 2;
                             tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                             tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
                             buf_offset = buf_size;
-                            buf_size += first_part.len();
-                            memmove(&mut tmp_buf[buf_offset..buf_size], first_part);
+                            let first_part_len = first_part_end - first_part_start;
+                            buf_size += first_part_len;
+                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            unsafe {
+                                core::ptr::copy(
+                                    path_ptr.add(first_part_start),
+                                    tmp_buf.as_mut_ptr().add(buf_offset),
+                                    first_part_len,
+                                );
+                            }
                             buf_offset = buf_size;
                             buf_size += 1;
                             tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            let slice = &path[last..j];
+                            let slice_len = j - last;
                             buf_offset = buf_size;
-                            buf_size += slice.len();
-                            memmove(&mut tmp_buf[buf_offset..buf_size], slice);
+                            buf_size += slice_len;
+                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                            unsafe {
+                                core::ptr::copy(
+                                    path_ptr.add(last),
+                                    tmp_buf.as_mut_ptr().add(buf_offset),
+                                    slice_len,
+                                );
+                            }
 
-                            device = &tmp_buf[0..buf_size];
+                            device_ptr = tmp_buf.as_ptr();
+                            device_len = buf_size;
                             device_in_tmp = true;
                             root_end = j;
                         }
@@ -3294,12 +3313,13 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             } else {
                 root_end = 1;
             }
-        } else if is_windows_device_root_t(byte0) && path[1] == T::from_u8(CHAR_COLON) {
+        } else if is_windows_device_root_t(byte0) && path!()[1] == T::from_u8(CHAR_COLON) {
             // Possible device root
             device_buf = [byte0, T::from_u8(CHAR_COLON)];
-            device = &device_buf;
+            device_ptr = device_buf.as_ptr();
+            device_len = 2;
             root_end = 2;
-            if len > 2 && is_sep_t(path[2]) {
+            if len > 2 && is_sep_t(path!()[2]) {
                 // Treat separator following the drive name as an absolute path
                 // indicator
                 _is_absolute = true;
@@ -3307,8 +3327,9 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             }
         }
 
-        let device_len = device.len();
         if device_len > 0 {
+            // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
+            let device = unsafe { core::slice::from_raw_parts(device_ptr, device_len) };
             if resolved_device_len > 0 {
                 // Translated from the following JS code:
                 //   if (StringPrototypeToLowerCase(device) !==
@@ -3321,7 +3342,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
             } else {
                 // Translated from the following JS code:
                 //   resolvedDevice = device;
-                buf_size = device.len();
+                buf_size = device_len;
                 // Copy device over if it's backed by an anonymous buffer.
                 if !device_in_tmp {
                     memmove(&mut tmp_buf[0..buf_size], device);

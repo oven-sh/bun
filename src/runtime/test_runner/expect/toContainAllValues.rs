@@ -24,7 +24,7 @@ pub fn to_contain_all_values(
 
     let expected = arguments[0];
     if !expected.js_type().is_array() {
-        return global.throw_invalid_argument_type("toContainAllValues", "expected", "array");
+        return Err(global.throw_invalid_argument_type("toContainAllValues", "expected", "array"));
     }
     expected.ensure_still_alive();
     let value: JSValue =

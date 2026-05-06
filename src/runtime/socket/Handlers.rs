@@ -317,7 +317,9 @@ impl<'a> Scope<'a> {
     /// Returns true if `handlers` was destroyed (client mode, last ref).
     /// Callers that also hold the pointer in a socket field must null it.
     pub fn exit(&mut self) -> bool {
-        self.handlers.vm.event_loop().exit();
+        // SAFETY: `event_loop()` returns a non-null self-pointer into the VM;
+        // single JS thread, no aliasing `&mut EventLoop` outlives this call.
+        unsafe { (*self.handlers.vm.event_loop()).exit() };
         self.handlers.mark_inactive()
     }
 }
@@ -383,7 +385,12 @@ impl SocketConfig {
             let ssl: Option<SSLConfig> = match &generated.tls {
                 GeneratedTls::None => None,
                 GeneratedTls::Boolean(b) => if *b { Some(SSLConfig::zero()) } else { None },
-                GeneratedTls::Object(ssl) => Some(SSLConfig::from_generated(vm, global, ssl)?),
+                GeneratedTls::Object(ssl) => {
+                    // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single
+                    // JS thread, no aliasing `&mut VirtualMachine` outlives this call.
+                    let vm_mut = unsafe { &mut *global.bun_vm() };
+                    SSLConfig::from_generated(vm_mut, global, ssl)?
+                }
             };
             // PORT NOTE: `errdefer bun.memory.deinit(&ssl)` — ssl drops on `?`
             break 'blk SocketConfig {
@@ -405,7 +412,7 @@ impl SocketConfig {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_.get() {
             if unix.length() == 0 {
-                return global.throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path"));
+                return Err(global.throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
             result.hostname_or_unix = unix.to_utf8();
             let slice = result.hostname_or_unix.slice();

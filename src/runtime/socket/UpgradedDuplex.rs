@@ -496,22 +496,22 @@ impl<'a> UpgradedDuplex<'a> {
 
         self.wrapper = None; // Drop runs SSLWrapper teardown
 
-        self.origin = Strong::empty();
+        self.origin.deinit();
         if let Some(callback) = self.on_data_callback.get() {
             host_fn::set_function_data(callback, core::ptr::null_mut());
-            self.on_data_callback = Strong::empty();
+            self.on_data_callback.deinit();
         }
         if let Some(callback) = self.on_end_callback.get() {
             host_fn::set_function_data(callback, core::ptr::null_mut());
-            self.on_end_callback = Strong::empty();
+            self.on_end_callback.deinit();
         }
         if let Some(callback) = self.on_writable_callback.get() {
             host_fn::set_function_data(callback, core::ptr::null_mut());
-            self.on_writable_callback = Strong::empty();
+            self.on_writable_callback.deinit();
         }
         if let Some(callback) = self.on_close_callback.get() {
             host_fn::set_function_data(callback, core::ptr::null_mut());
-            self.on_close_callback = Strong::empty();
+            self.on_close_callback.deinit();
         }
         self.ssl_error = CertError::default();
     }

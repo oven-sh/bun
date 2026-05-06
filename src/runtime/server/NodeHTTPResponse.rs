@@ -1267,7 +1267,7 @@ impl NodeHTTPResponse {
                 };
             }
 
-            let result = jsc::node::StringOrBuffer::from_js_with_encoding(
+            let result = crate::node::StringOrBuffer::from_js_with_encoding(
                 global_object,
                 input_value,
                 encoding,

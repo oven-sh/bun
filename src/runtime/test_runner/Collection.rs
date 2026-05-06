@@ -126,20 +126,18 @@ impl Collection {
         &mut self,
         global_this: &JSGlobalObject,
         _: Option<JSValue>,
-        data: bun_test::bun_test_ref_data_value::RefDataValue,
+        data: RefDataValue,
     ) -> JsResult<()> {
         group::begin();
         let _g = scopeguard::guard((), |_| group::end());
 
-        let _formatter = super::make_formatter(global_this);
-        // TODO(port): ConsoleObject.Formatter construction — Zig used struct-literal; verify Rust ctor shape.
+        let _formatter = make_formatter(global_this);
 
-        let prev_scope: &DescribeScope = match data {
-            bun_test::bun_test_ref_data_value::RefDataValue::Collection(c) => c.active_scope,
-            _ => 'blk: {
+        let prev_scope: NonNull<DescribeScope> = match data {
+            RefDataValue::Collection { active_scope } => active_scope,
+            _ => {
                 debug_assert!(false); // this probably can't happen
-                // SAFETY: active_scope is always valid while Collection lives.
-                break 'blk unsafe { self.active_scope.as_ref() };
+                self.active_scope
             }
         };
 

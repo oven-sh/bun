@@ -1218,7 +1218,7 @@ impl BunxCommand {
                             "{}/node_modules/.bin/{}{}",
                             BStr::new(bunx_cache_dir),
                             BStr::new(&package_name_for_bin),
-                            bun_core::EXE_SUFFIX,
+                            EXE_SUFFIX,
                         )
                         .expect("unreachable");
                         let written = absolute_in_cache_dir_buf.len() - cursor.len();

@@ -4299,7 +4299,7 @@ impl Resolver {
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    #[host_fn]
+    // FFI shim emitted by `export_host_fn!` below.
     pub fn global_lookup_service(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old(2);
         if arguments.len() < 2 {

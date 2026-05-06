@@ -1460,7 +1460,7 @@ pub struct HTTPClient<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
-    pub proxy_tunnel: Option<Arc<ProxyTunnel>>,
+    pub proxy_tunnel: Option<NonNull<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub h2: Option<NonNull<h2::Stream>>,
@@ -1484,7 +1484,9 @@ impl<'a> Drop for HTTPClient<'a> {
         // proxy_authorization: Option<Vec<u8>> — dropped automatically.
         // proxy_headers: Option<Headers> — dropped automatically.
         if let Some(tunnel) = self.proxy_tunnel.take() {
-            tunnel.detach_and_deref();
+            // SAFETY: tunnel was created by ProxyTunnel::new (Box::into_raw) and
+            // refcounted; detach_and_deref releases this client's strong ref.
+            unsafe { (*tunnel.as_ptr()).detach_and_deref() };
         }
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.

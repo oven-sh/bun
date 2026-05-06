@@ -237,6 +237,11 @@ pub struct InitOpts {
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
 
+// SAFETY: `ca` holds borrowed `[*:0]const u8` C-string pointers from caller
+// config (Zig `[]stringZ`). They are copied into the spawned HTTP thread and
+// only read there; no shared mutable state crosses the thread boundary.
+unsafe impl Send for InitOpts {}
+
 impl Default for InitOpts {
     fn default() -> Self {
         Self {

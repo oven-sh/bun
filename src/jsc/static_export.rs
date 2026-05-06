@@ -27,11 +27,18 @@ impl<T, P> StaticExport<T, P> {
     }
 
     // Zig: `comptime "wrap" ++ this.symbol_name`
-    // TODO(port): const string concatenation over a *field* is not expressible
-    // in stable Rust. Callers should invoke `const_format::concatcp!("wrap", SYM)`
-    // directly with the literal, or this becomes part of the export proc-macro.
+    // PORT NOTE: const string concatenation over a *field* is not expressible
+    // in stable Rust. `StaticExport` instances are process-lifetime singletons
+    // describing C `@export` symbols (never freed in Zig either), so we leak the
+    // prefixed name — same precedent as `bun_alloc::heap_breakdown::named_allocator`.
+    // Callers with a literal in hand should prefer `const_format::concatcp!("wrap", SYM)`
+    // directly; Phase B replaces this whole mechanism with `#[no_mangle]` + proc-macro.
+    // PERF(port): was comptime `++` (zero-cost) — profile in Phase B
     pub fn wrapped_name(&self) -> &'static str {
-        todo!("port: comptime concat over field")
+        let mut s = String::with_capacity(4 + self.symbol_name.len());
+        s.push_str("wrap");
+        s.push_str(self.symbol_name);
+        Box::leak(s.into_boxed_str())
     }
 }
 
@@ -39,6 +46,6 @@ impl<T, P> StaticExport<T, P> {
 // PORT STATUS
 //   source:     src/jsc/static_export.zig (15 lines)
 //   confidence: low
-//   todos:      3
+//   todos:      2
 //   notes:      comptime-only export metadata; Phase B should replace with #[no_mangle] + proc-macro and delete this type
 // ──────────────────────────────────────────────────────────────────────────

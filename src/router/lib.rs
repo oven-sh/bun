@@ -943,14 +943,6 @@ impl<'a> RouteLoader<'a> {
         root_dir_info: DirInfoRef,
         base_dir: &[u8],
     ) {
-        
-        // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
-        //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
-        //   bun_resolver::fs→sys still pending the EntryMap surface. Once that
-        //   lands, the body below already uses the accessor API (entry.dir()/base()/
-        //   kind()) and Route::parse is un-gated, so this should compile with only
-        //   the iterator-loop reshape.
-        {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {

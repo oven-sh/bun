@@ -40,7 +40,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             let val = reader.byte()?;
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::uint4, value: CellValue { uint4: val as u32 }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: val as u32 }, ..Default::default() });
             }
             // SAFETY: same-size POD bitcast u8 -> i8
             let ival: i8 = unsafe { core::mem::transmute::<u8, i8>(val) };
@@ -52,7 +52,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(&data));
             }
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::uint4, value: CellValue { uint4: reader.int::<u16>()? as u32 }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u16>()? as u32 }, ..Default::default() });
             }
             Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int::<i16>()? as i32 }, ..Default::default() })
         }
@@ -63,7 +63,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             if unsigned {
                 // TODO(port): Zig `reader.int(u24)` — Rust has no native u24; NewReader port must expose int_u24()/int_i24()
-                return Ok(SQLDataCell { tag: CellTag::uint4, value: CellValue { uint4: reader.int_u24()? }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int_u24()? }, ..Default::default() });
             }
             Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int_i24()? }, ..Default::default() })
         }
@@ -73,7 +73,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(&data));
             }
             if unsigned {
-                return Ok(SQLDataCell { tag: CellTag::uint4, value: CellValue { uint4: reader.int::<u32>()? }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u32>()? }, ..Default::default() });
             }
             Ok(SQLDataCell { tag: CellTag::int4, value: CellValue { int4: reader.int::<i32>()? }, ..Default::default() })
         }
@@ -84,7 +84,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 let val = reader.int::<u64>()?;
                 if val <= u32::MAX as u64 {
-                    return Ok(SQLDataCell { tag: CellTag::uint4, value: CellValue { uint4: u32::try_from(val).unwrap() }, ..Default::default() });
+                    return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: u32::try_from(val).unwrap() }, ..Default::default() });
                 }
                 if bigint {
                     return Ok(SQLDataCell { tag: CellTag::uint8, value: CellValue { uint8: val }, ..Default::default() });
@@ -263,13 +263,11 @@ pub fn decode_binary_value<Context: ReaderContext>(
     }
 }
 
-// TODO(port): Zig accesses `bun.String.cloneUTF8(slice).value.WTFStringImpl` directly (union field).
-// Replace this helper with the canonical bun_str API once available (e.g.
-// `bun_str::String::clone_utf8(slice).leak_wtf_string_impl()`); kept local to avoid repeating the
-// raw union access at every call site.
+// Zig accesses `bun.String.cloneUTF8(slice).value.WTFStringImpl` directly (union field);
+// `leak_wtf_impl()` is the Rust equivalent — transfers the +1 ref to the cell (`free_value = 1`).
 #[inline]
-fn clone_utf8_wtf_impl(slice: &[u8]) -> *mut bun_str::WTFStringImpl {
-    bun_str::String::clone_utf8(slice).value.wtf_string_impl
+fn clone_utf8_wtf_impl(slice: &[u8]) -> bun_string::WTFStringImpl {
+    bun_string::String::clone_utf8(slice).leak_wtf_impl()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

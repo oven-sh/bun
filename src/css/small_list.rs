@@ -920,7 +920,7 @@ where
     }
 
     #[inline]
-    fn prefix_helper<T: css::ImageFallback>(
+    fn prefix_helper<T: ImageFallback>(
         prefix: &'static str,
         pfs: &css::VendorPrefix,
         pfi: &SmallList<T, 1>,

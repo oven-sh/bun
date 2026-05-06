@@ -689,13 +689,15 @@ impl<'a> Loader<'a> {
 
     pub fn load(
         &mut self,
-        suffix: DotEnvFileSuffix,
         dir: &mut bun_sys::fs::DirEntry,
         env_files: &[&[u8]],
+        suffix: DotEnvFileSuffix,
         skip_default_env: bool,
     ) -> Result<(), bun_core::Error> {
         // PERF(port): SUFFIX was `comptime DotEnvFileSuffix` — demoted to runtime arg
-        // (avoids unstable adt_const_params; cold path).
+        // (avoids unstable adt_const_params; cold path). Argument order matches the Zig
+        // signature (`dir, env_files, comptime suffix, skip_default_env`) so high-tier
+        // callers (transpiler/install/lockfile) need no shim.
         let start = bun_core::time::nano_timestamp();
 
         // Create a reusable buffer for parsing multiple files.
@@ -1469,6 +1471,10 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Downstream callers spell this `dot_env::Value` / `dotenv::map::Entry`; both alias the
+/// canonical `HashTableValue`.
+pub type Value = HashTableValue;
+
 #[derive(Default, Clone)]
 pub struct HashTableValue {
     // TODO(port): Zig stored borrowed `[]const u8`; values are sometimes allocator.dupe'd, sometimes
@@ -1740,6 +1746,22 @@ impl StdEnvMapWrapper {
 // PORT NOTE: stores a raw ptr (Loader is !Sync via &mut Map borrow; same single-thread
 // invariant the Zig had). Callers `unsafe`-deref under that invariant.
 pub static INSTANCE: OnceLock<usize /* *mut Loader<'static> */> = OnceLock::new();
+
+/// Read the global singleton — `Some(&mut Loader)` once `set_instance` has been called.
+/// SAFETY: same single-thread CLI-init invariant the Zig `var instance: ?*Loader` had;
+/// callers must not alias the returned `&mut` (mirrors raw `*Loader` deref in Zig).
+#[inline]
+pub fn instance() -> Option<&'static mut Loader<'static>> {
+    INSTANCE
+        .get()
+        .map(|&addr| unsafe { &mut *(addr as *mut Loader<'static>) })
+}
+
+/// Install the global singleton. First-writer-wins (OnceLock); subsequent calls are no-ops.
+#[inline]
+pub fn set_instance(loader: &'static mut Loader<'static>) {
+    let _ = INSTANCE.set(loader as *mut Loader<'static> as usize);
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

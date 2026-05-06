@@ -105,28 +105,24 @@ impl Start {
         }
     }
 
-    // TODO(b2-blocked): from_js depends on JSValue::get_optional/BuiltinName +
-    // FileSink option construction; un-gate once those land.
-    #[cfg(any())]
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
         if value.is_empty_or_undefined_or_null() || !value.is_object() {
             return Ok(Start::Empty);
         }
 
-        if let Some(chunk_size) = value.get(global_this, "chunkSize") {
+        if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
-                // TODO(port): @truncate(i52) semantics — using mask; revisit exact bit-width
-                let truncated = chunk_size.to_int64() & ((1i64 << 52) - 1);
-                return Ok(Start::ChunkSize(BlobSizeType::try_from(truncated).unwrap()));
+                // Zig: `@as(Blob.SizeType, @intCast(@truncate(@as(i52, chunkSize.toInt64()))))`
+                // — `@truncate` to i52 then `@intCast` to u32. Low-32-bit wrap matches that
+                // for the in-range values JS can produce; revisit if exact i52 sign-extension
+                // semantics matter.
+                return Ok(Start::ChunkSize(chunk_size.to_int64() as BlobSizeType));
             }
         }
 
         Ok(Start::Empty)
     }
 
-    // TODO(b2-blocked): const-generic enum param needs `ConstParamTy`; body
-    // depends on FileSink option construction + JSValue::get_optional surface.
-    #[cfg(any())]
     pub fn from_js_with_tag<const TAG: StartTag>(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -142,14 +138,16 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 0;
                 let mut empty = true;
 
-                if let Some(val) = value.get_own(global_this, "asUint8Array")? {
+                // TODO(port): Zig used `getOwn`; `bun_jsc::JSValue::get_own` not yet
+                // exported — `get` walks the prototype chain. Swap once available.
+                if let Some(val) = value.get(global_this, b"asUint8Array")? {
                     if val.is_boolean() {
                         as_uint8array = val.to_boolean();
                         empty = false;
                     }
                 }
 
-                if let Some(val) = value.fast_get(global_this, bun_jsc::BuiltinName::Stream)? {
+                if let Some(val) = value.fast_get(global_this, jsc::BuiltinName::Stream)? {
                     if val.is_boolean() {
                         stream = val.to_boolean();
                         empty = false;
@@ -157,13 +155,12 @@ impl Start {
                 }
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, bun_jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        // TODO(port): @truncate(i51) semantics — using mask
-                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
-                        chunk_size = BlobSizeType::try_from(0i64.max(truncated)).unwrap();
+                        // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
+                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
 
@@ -179,56 +176,66 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 0;
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, bun_jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
-                        // TODO(port): @truncate(i51) semantics — using mask
-                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
-                        chunk_size = BlobSizeType::try_from(0i64.max(truncated)).unwrap();
+                        // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
+                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
 
-                if let Some(path) = value.fast_get(global_this, bun_jsc::BuiltinName::Path)? {
+                if let Some(path) = value.fast_get(global_this, jsc::BuiltinName::Path)? {
                     if !path.is_string() {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EINVAL as _,
-                            syscall: sys::Syscall::Write,
+                            syscall: sys::Tag::write,
                             ..Default::default()
                         }));
                     }
 
-                    return Ok(Start::FileSink(crate::webcore::sink::FileSinkOptions {
+                    return Ok(Start::FileSink(FileSinkOptions {
                         chunk_size,
-                        input_path: crate::webcore::sink::FileSinkInputPath::Path(
+                        input_path: crate::webcore::PathOrFileDescriptor::Path(
+                            // Zig `path.toSlice(globalThis, allocator)` — allocator param
+                            // folded into the owning `ZigStringSlice`.
                             path.to_slice(global_this)?,
                         ),
-                        // TODO(port): path.toSlice(globalThis, allocator) — allocator param dropped
                     }));
-                } else if let Some(fd_value) = value.get_truthy(global_this, "fd")? {
+                } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
                     if !fd_value.is_any_int() {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Syscall::Write,
+                            syscall: sys::Tag::write,
                             ..Default::default()
                         }));
                     }
 
-                    if let Some(fd) = Fd::from_js(fd_value) {
-                        return Ok(Start::FileSink(crate::webcore::sink::FileSinkOptions {
+                    // `bun.FD.fromJS` — `bun_sys_jsc::FdJsc` isn't a dep of this crate yet,
+                    // so inline the body (int → range-check → `Fd::from_uv`).
+                    let fd = {
+                        let fd64 = fd_value.to_int64();
+                        if fd64 < 0 || fd64 > i64::from(i32::MAX) {
+                            None
+                        } else {
+                            Some(Fd::from_uv(fd64 as i32))
+                        }
+                    };
+                    if let Some(fd) = fd {
+                        return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,
-                            input_path: crate::webcore::sink::FileSinkInputPath::Fd(fd),
+                            input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
                         }));
                     } else {
                         return Ok(Start::Err(SysError {
                             errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Syscall::Write,
+                            syscall: sys::Tag::write,
                             ..Default::default()
                         }));
                     }
                 }
 
-                return Ok(Start::FileSink(crate::webcore::sink::FileSinkOptions {
-                    input_path: crate::webcore::sink::FileSinkInputPath::Fd(bun_sys::INVALID_FD),
+                return Ok(Start::FileSink(FileSinkOptions {
+                    input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
                     chunk_size,
                 }));
             }
@@ -240,13 +247,12 @@ impl Start {
                 let mut chunk_size: BlobSizeType = 2048;
 
                 if let Some(chunk_size_val) =
-                    value.fast_get(global_this, bun_jsc::BuiltinName::HighWaterMark)?
+                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        // TODO(port): @truncate(i51) semantics — using mask
-                        let truncated = chunk_size_val.to_int64() & ((1i64 << 51) - 1);
-                        chunk_size = BlobSizeType::try_from(256i64.max(truncated)).unwrap();
+                        // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
+                        chunk_size = 256i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
 
@@ -255,9 +261,10 @@ impl Start {
                 }
             }
             _ => {
-                // Zig: @compileError("Unuspported tag")
-                // TODO(port): const-generic compile error — unreachable at runtime
-                unreachable!("Unsupported tag");
+                // Zig: `@compileError("Unsupported tag " ++ @tagName(tag))` — const-generic
+                // monomorphization makes this dead for valid TAG; runtime unreachable
+                // until `generic_const_exprs` lets us hoist to a compile error.
+                unreachable!("Unsupported StartTag");
             }
         }
 

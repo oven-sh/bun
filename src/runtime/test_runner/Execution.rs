@@ -905,7 +905,7 @@ enum AdvanceSequenceStatus {
 fn step_sequence(
     buntest_strong: BunTestPtr,
     global_this: &JSGlobalObject,
-    group: &mut ConcurrentGroup,
+    group: NonNull<ConcurrentGroup>,
     sequence_index: usize,
     now: &mut Timespec,
 ) -> JsResult<AdvanceSequenceStatus> {

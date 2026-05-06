@@ -263,7 +263,6 @@ mod _gated {
     #[path = "resolve_path_jsc.rs"] pub mod resolve_path_jsc;
     #[path = "resolver_jsc.rs"] pub mod resolver_jsc;
     #[path = "virtual_machine_exports.rs"] pub mod virtual_machine_exports;
-    #[path = "web_worker.rs"] pub mod web_worker;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1241,7 +1240,7 @@ stub_ty!(
     JSGlobalObject,
     URL, VM,
     ZigStackTrace, ZigStackFrame,
-    ZigException, RuntimeTranspilerCache,
+    ZigException,
     AbortSignal, JSBundler,
 );
 
@@ -2099,50 +2098,9 @@ pub use self::js_string::JSString;
 pub mod ref_string {}
 pub use self::ref_string as RefString;
 
-pub mod debugger {
-    /// `jsc.Debugger.AsyncTaskTracker` — see Debugger.zig.
-    #[derive(Debug, Default, Copy, Clone)]
-    pub struct AsyncTaskTracker {
-        pub id: u64,
-    }
-    impl AsyncTaskTracker {
-        pub fn init(vm: &mut super::virtual_machine::VirtualMachine) -> Self {
-            let _ = vm;
-            // TODO(b2): vm.nextAsyncTaskID() — gated until Debugger.rs un-gates.
-            Self { id: 0 }
-        }
-    }
-
-    /// `jsc.Debugger.DebuggerId` — `bun.GenericIndex(i32, Debugger)`.
-    /// Newtype over `i32` (Rust has no `bun_core::GenericIndex` at this tier).
-    #[repr(transparent)]
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-    pub struct DebuggerId(pub i32);
-    impl DebuggerId {
-        pub const INVALID: Self = Self(-1);
-        #[inline] pub const fn new(i: i32) -> Self { Self(i) }
-        #[inline] pub const fn get(self) -> i32 { self.0 }
-    }
-}
+#[path = "Debugger.rs"] pub mod debugger;
 pub use self::debugger as Debugger;
-pub mod saved_source_map {
-    /// `jsc.SavedSourceMap` — per-VM sourcemap store. Full impl gated.
-    #[derive(Default)]
-    pub struct SavedSourceMap {
-        // TODO(b2): real fields — gated until SavedSourceMap.rs un-gates.
-        _priv: (),
-    }
-    impl SavedSourceMap {
-        /// `SavedSourceMap.get(path)` (SavedSourceMap.zig:320) — look up the
-        /// parsed sourcemap for `path`. Returns `None` until the real
-        /// `HashTable` + `MappingProvider` machinery un-gates.
-        pub fn get(&mut self, path: &[u8]) -> Option<*mut bun_sourcemap::ParsedSourceMap> {
-            let _ = path;
-            // TODO(b2): map lookup + lazy parse — gated until SavedSourceMap.rs un-gates.
-            None
-        }
-    }
-}
+#[path = "SavedSourceMap.rs"] pub mod saved_source_map;
 pub use self::saved_source_map as SavedSourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────

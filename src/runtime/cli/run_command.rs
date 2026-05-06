@@ -493,9 +493,11 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     if let Some(log) = vm.log {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
         let log = unsafe { &mut *log.as_ptr() };
-        // TODO(b2): `Log::print` wants `&mut impl fmt::Write`; route through a
-        // shim once `Output::error_writer()` implements `fmt::Write`.
-        let _ = log.print(&mut bun_core::output::FmtWriteAdapter::stderr());
+        // TODO(b2): route through `Output::error_writer_buffered()` once a
+        // `fmt::Write` adapter exists; buffer-then-dump for now.
+        let mut buf = String::new();
+        let _ = log.print(&mut buf);
+        Output::pretty_error(format_args!("{}", buf));
     }
     Output::flush();
 }

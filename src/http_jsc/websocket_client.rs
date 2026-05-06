@@ -618,13 +618,17 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.receive_body_remain = 0;
                 if is_final {
                     // Decompress the complete message
-                    // PORT NOTE: reshaped for borrowck — readable_slice borrows self
-                    // TODO(port): borrowck — need to extract slice before calling dispatch
-                    let slice_ptr = self.receive_buffer.readable_slice(0).as_ptr();
-                    let slice_len = self.receive_buffer.readable_slice(0).len();
-                    // SAFETY: slice valid until clear_receive_buffers below
-                    let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-                    self.dispatch_compressed_data(slice, kind);
+                    // PORT NOTE: take ownership of the fifo so the readable
+                    // slice does not alias `&mut self` while dispatching
+                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_*` may
+                    // call `terminate → clear_data → clear_receive_buffers(true)`
+                    // which would drop the Vec backing a laundered `&[u8]`.
+                    let buf = core::mem::replace(
+                        &mut self.receive_buffer,
+                        LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+                    );
+                    self.dispatch_compressed_data(buf.readable_slice(0), kind);
+                    drop(buf);
                     self.clear_receive_buffers(false);
                     self.receiving_compressed = false;
                     self.message_is_compressed = false;
@@ -645,12 +649,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.message_is_compressed = false;
                 return data.len();
             } else if data.is_empty() {
-                // PORT NOTE: reshaped for borrowck
-                let slice_ptr = self.receive_buffer.readable_slice(0).as_ptr();
-                let slice_len = self.receive_buffer.readable_slice(0).len();
-                // SAFETY: slice valid until clear_receive_buffers below
-                let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-                self.dispatch_data(slice, kind);
+                // PORT NOTE: take ownership of the fifo so the readable slice
+                // does not alias `&mut self` while dispatching (PORTING.md
+                // §Forbidden: aliased-&mut).
+                let buf = core::mem::replace(
+                    &mut self.receive_buffer,
+                    LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+                );
+                self.dispatch_data(buf.readable_slice(0), kind);
+                drop(buf);
                 self.clear_receive_buffers(false);
                 self.message_is_compressed = false;
                 return 0;
@@ -675,12 +682,15 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.receive_pending_chunk_len = 0;
             self.receive_body_remain = 0;
             if is_final {
-                // PORT NOTE: reshaped for borrowck
-                let slice_ptr = self.receive_buffer.readable_slice(0).as_ptr();
-                let slice_len = self.receive_buffer.readable_slice(0).len();
-                // SAFETY: slice valid until clear_receive_buffers below
-                let slice = unsafe { core::slice::from_raw_parts(slice_ptr, slice_len) };
-                self.dispatch_data(slice, kind);
+                // PORT NOTE: take ownership of the fifo so the readable slice
+                // does not alias `&mut self` while dispatching (PORTING.md
+                // §Forbidden: aliased-&mut).
+                let buf = core::mem::replace(
+                    &mut self.receive_buffer,
+                    LinearFifo::<u8, DynamicBuffer<u8>>::init(),
+                );
+                self.dispatch_data(buf.readable_slice(0), kind);
+                drop(buf);
                 self.clear_receive_buffers(false);
                 self.message_is_compressed = false;
             }

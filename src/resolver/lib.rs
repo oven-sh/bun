@@ -87,19 +87,25 @@ pub mod fs {
                 #[inline]
                 pub fn instance() -> &'static Self { &$zst }
                 pub fn append_slice(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_core::Error> {
-                    let s = $backing().append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    // SAFETY: `$backing()` returns the raw `*mut` singleton (Zig `*Self`);
+                    // the singleton serializes all mutation through its internal `mutex`.
+                    let s = unsafe { &mut *$backing() }.append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
                     // SAFETY: `append` returns a slice into the singleton's backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
                     // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
                     Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], bun_core::Error> {
-                    let s = $backing().append(parts).map_err(|_| bun_core::err!("OutOfMemory"))?;
+                    // SAFETY: see `append_slice`.
+                    let s = unsafe { &mut *$backing() }.append(parts).map_err(|_| bun_core::err!("OutOfMemory"))?;
                     // SAFETY: see `append_slice`.
                     Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
                 }
                 #[inline]
-                pub fn exists(&self, value: &[u8]) -> bool { $backing().exists(value) }
+                pub fn exists(&self, value: &[u8]) -> bool {
+                    // SAFETY: see `append_slice`.
+                    unsafe { &*$backing() }.exists(value)
+                }
             }
         };
     }

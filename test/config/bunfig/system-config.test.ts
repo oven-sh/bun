@@ -316,7 +316,10 @@ describe("system-wide bunfig.toml", () => {
         BUN_SYSTEM_CONFIG: undefined,
         ALLUSERSPROFILE: join(String(dir), "allusers"),
         // Neutralise home config lookup so only the system path is stressed.
+        // bun.env_var.HOME resolves to USERPROFILE on Windows, so override
+        // both in case getHomeConfigPath changes its precedence order later.
         XDG_CONFIG_HOME: join(String(dir), "no-home"),
+        USERPROFILE: join(String(dir), "no-home"),
         HOME: join(String(dir), "no-home"),
       },
       cwd: join(String(dir), "project"),
@@ -326,7 +329,7 @@ describe("system-wide bunfig.toml", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Auto-discovered: we warn about the broken file but still run.
-    expect(stderr).toContain("ignoring auto-discovered system bunfig");
+    expect(stderr).toContain("aborted parsing auto-discovered system bunfig");
     // `bun pm cache` printed *some* cache directory — i.e. the process
     // continued past the broken bunfig.
     expect(stdout.trim().length).toBeGreaterThan(0);

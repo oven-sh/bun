@@ -281,7 +281,10 @@ pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comp
         loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd) catch |err| {
             if (result.is_explicit) return err;
             if (ctx.log.hasAny()) ctx.log.print(Output.errorWriter()) catch {};
-            Output.warn("ignoring auto-discovered system bunfig at \"{s}\" ({s})", .{ path, @errorName(err) });
+            // Bunfig.parse mutates ctx in place as it walks keys, so any settings
+            // before the failing key are already applied. We can't "ignore" the
+            // file — we can only abort the rest of the parse.
+            Output.warn("aborted parsing auto-discovered system bunfig at \"{s}\" ({s}); keys before the error may have been applied", .{ path, @errorName(err) });
             // Clear the log so the warning doesn't get re-printed later by
             // the caller's `ctx.log.print` paths or dumpBuildError.
             ctx.log.reset();
@@ -298,7 +301,7 @@ pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comp
                 Global.exit(1);
             }
             ctx.log.print(Output.errorWriter()) catch {};
-            Output.warn("ignoring auto-discovered system bunfig at \"{s}\"", .{path});
+            Output.warn("aborted parsing auto-discovered system bunfig at \"{s}\"; keys before the error may have been applied", .{path});
             ctx.log.reset();
         }
     }

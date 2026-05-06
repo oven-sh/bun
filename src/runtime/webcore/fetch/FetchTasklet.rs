@@ -1385,7 +1385,8 @@ impl FetchTasklet {
         })();
         // deref when done because we ref inside onWriteRequestDataDrain
         FetchTasklet::deref(this);
-        result
+        let () = result;
+        Ok(())
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.

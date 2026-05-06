@@ -688,8 +688,9 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         job_ref.start_linux();
 
         Ok(promise_value)
-    }
+}
 
+impl CronRegisterJob {
     // -- Windows --
 
     fn start_windows(&mut self) {

@@ -43,9 +43,9 @@ pub struct BuildCommand;
 impl BuildCommand {
     pub fn exec(
         ctx: Command::Context,
-        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::__phase_a_draft::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
-        Global::configure_allocator(Global::AllocatorConfig { long_running: true });
+        Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
         // PERF(port): allocator param dropped — global mimalloc
         let log = ctx.log;
         let user_requested_browser_target =
@@ -60,7 +60,7 @@ impl BuildCommand {
         }
 
         if fetcher.is_some() {
-            ctx.args.packages = options::Packages::External;
+            ctx.args.packages = Some(api::PackagesMode::External);
             ctx.bundler_options.compile = false;
         }
 

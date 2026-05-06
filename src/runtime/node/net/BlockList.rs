@@ -93,7 +93,8 @@ impl BlockList {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
+    // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = Box::into_raw(Box::new(Self {
             ref_count: AtomicU32::new(1),
@@ -122,7 +123,10 @@ impl BlockList {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn]
+    // NOTE: no `#[bun_jsc::host_fn]` — receiver-less assoc fns aren't supported
+    // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
+    // `.classes.ts` codegen owns the static-method link name and calls
+    // `<Self>::is_block_list` directly.
     pub fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [value] = frame.arguments_as_array::<1>();
         Ok(JSValue::from(value.as_::<Self>().is_some()))
@@ -452,7 +456,7 @@ fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
     None
 }
 
-fn _compare_ipv6(l: &sockaddr::In6, r: &sockaddr::In6) -> Ordering {
+fn _compare_ipv6(l: &socket_address::inet::sockaddr_in6, r: &socket_address::inet::sockaddr_in6) -> Ordering {
     let l128 = u128::from_ne_bytes(l.addr).swap_bytes();
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)

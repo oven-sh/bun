@@ -308,15 +308,13 @@ pub fn generate_files(
     // Normalize file paths
     let mut normalized_buf = bun_paths::PathBuffer::uninit();
     let mut normalized_name: &[u8] = if bun_paths::is_absolute(entry_point) {
-        path::relative_normalized_buf(
+        resolve_path::relative_normalized_buf::<path::platform::Loose, true>(
             &mut normalized_buf,
-            bun_fs::FileSystem::instance().top_level_dir,
+            FileSystem::instance().top_level_dir(),
             entry_point,
-            path::Platform::Loose,
-            true,
         )
     } else {
-        path::normalize_buf(entry_point, &mut normalized_buf, path::Platform::Loose)
+        resolve_path::normalize_buf::<path::platform::Loose>(entry_point, &mut normalized_buf)
     };
 
     if !extension.is_empty() {

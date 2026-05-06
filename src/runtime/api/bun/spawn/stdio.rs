@@ -584,9 +584,9 @@ impl Stdio {
                 return Ok(());
             }
 
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::Strong {
+            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
                 array_buffer,
-                held: jsc::Strong::create(array_buffer.value, global),
+                held: jsc::StrongOptional::create(array_buffer.value, global),
             });
             return Ok(());
         }

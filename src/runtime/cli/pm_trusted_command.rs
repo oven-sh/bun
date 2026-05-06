@@ -172,7 +172,7 @@ pub struct TrustCommand;
 /// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
 struct ScriptInfo {
     package_id: PackageID,
-    scripts_list: Lockfile::Package::Scripts::List,
+    scripts_list: lockfile::package::scripts::List,
     skip: bool,
 }
 
@@ -456,8 +456,8 @@ impl TrustCommand {
         let package_json_source =
             logger::Source::init_path_string(PackageManager::ROOT_PACKAGE_JSON_PATH, &package_json_contents);
 
-        let mut package_json = match bun_json::parse_utf8(&package_json_source, ctx.log) {
-            // TODO(port): bun.json.parseUTF8 crate path — likely bun_interchange::json
+        let mut package_json = match bun_interchange::json::parse_utf8(&package_json_source, ctx.log) {
+            // TODO(port): bun_interchange::json::parse_utf8 takes (source, log, bump) — bump arena needed
             Ok(v) => v,
             Err(err) => {
                 let _ = ctx.log.print(Output::error_writer());

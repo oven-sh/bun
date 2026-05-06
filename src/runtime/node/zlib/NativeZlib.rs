@@ -175,7 +175,7 @@ impl NativeZlib {
 
         let err = self.stream.set_params(level, strategy);
         if err.is_error() {
-            <Self as CompressionStream>::emit_error(self, global, frame.this(), err);
+            CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -195,6 +195,8 @@ impl NativeZlib {
     }
 }
 } // mod _impl
+
+pub use _impl::NativeZlib;
 
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 

@@ -53,10 +53,11 @@ impl Readable {
         }
     }
 
-    pub fn r#ref(&mut self) {
+    pub fn ref_(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
-                pipe.update_ref(true);
+                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
+                unsafe { (*pipe.data.as_ptr()).update_ref(true) };
             }
             _ => {}
         }
@@ -65,7 +66,8 @@ impl Readable {
     pub fn unref(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
-                pipe.update_ref(false);
+                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
+                unsafe { (*pipe.data.as_ptr()).update_ref(false) };
             }
             _ => {}
         }
@@ -73,18 +75,18 @@ impl Readable {
 
     pub fn init(
         stdio: Stdio,
-        event_loop: &jsc::EventLoop,
-        process: &mut Subprocess,
+        event_loop: NonNull<EventLoop>,
+        process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        max_size: Option<&mut MaxBuf>,
+        max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
-        Subprocess::assert_stdio_result(&result);
+        super::assert_stdio_result(result);
 
         #[cfg(unix)]
         {
-            if matches!(stdio, Stdio::Pipe { .. }) {
+            if matches!(stdio, Stdio::Pipe) {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
@@ -154,7 +156,8 @@ impl Readable {
                 *self = Readable::Closed;
             }
             Readable::Pipe(pipe) => {
-                pipe.close();
+                // SAFETY: holding the IntrusiveRc keeps the PipeReader alive; RefPtr has no DerefMut.
+                unsafe { (*pipe.data.as_ptr()).close() };
             }
             _ => {}
         }

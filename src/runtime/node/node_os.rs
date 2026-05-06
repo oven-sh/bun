@@ -653,7 +653,12 @@ pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
     {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
         // TODO(port): std.posix.gethostname → bun_sys::posix::gethostname
-        let s = bun_sys::posix::gethostname(&mut name_buffer).unwrap_or(b"unknown");
+        // SAFETY: valid buffer
+        let s: &[u8] = if unsafe { libc::gethostname(name_buffer.as_mut_ptr() as *mut c_char, name_buffer.len()) } == 0 {
+            bun_str::slice_to_nul(&name_buffer)
+        } else {
+            b"unknown"
+        };
         return Ok(ZigString::init(s).with_encoding().to_js(global));
     }
 }
@@ -679,9 +684,9 @@ pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
     #[cfg(target_os = "linux")]
     let result: [f64; 3] = 'loadavg: {
         // SAFETY: zeroed POD
-        let mut info: c::struct_sysinfo = unsafe { core::mem::zeroed() };
+        let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { c::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&mut info) } == 0 {
             break 'loadavg [
                 ((info.loads[0] as f64 / 65536.0) * 100.0).ceil() / 100.0,
                 ((info.loads[1] as f64 / 65536.0) * 100.0).ceil() / 100.0,
@@ -717,9 +722,9 @@ pub use network_interfaces_windows as network_interfaces;
 #[cfg(unix)]
 pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // getifaddrs sets a pointer to a linked list
-    let mut interface_start: *mut c::ifaddrs = core::ptr::null_mut();
+    let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
     // SAFETY: valid out-pointer
-    let rc = unsafe { c::getifaddrs(&mut interface_start) };
+    let rc = unsafe { libc::getifaddrs(&mut interface_start) };
     if rc != 0 {
         let errno = bun_sys::posix::errno(rc);
         // Android API 30+: SELinux denies the netlink socket getifaddrs uses.
@@ -1247,9 +1252,9 @@ pub fn totalmem() -> u64 {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: zeroed POD
-        let mut info: c::struct_sysinfo = unsafe { core::mem::zeroed() };
+        let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { c::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&mut info) } == 0 {
             // SAFETY: same-size POD reinterpret
             return unsafe { core::mem::transmute::<_, u64>(info.totalram) }.wrapping_mul(info.mem_unit as c_ulong as u64);
         }
@@ -1306,9 +1311,9 @@ pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
     {
         let _ = global;
         // SAFETY: zeroed POD
-        let mut info: c::struct_sysinfo = unsafe { core::mem::zeroed() };
+        let mut info: libc::sysinfo = unsafe { core::mem::zeroed() };
         // SAFETY: valid out-pointer
-        if unsafe { c::sysinfo(&mut info) } == 0 {
+        if unsafe { libc::sysinfo(&mut info) } == 0 {
             return Ok(info.uptime as f64);
         }
         return Ok(0.0);

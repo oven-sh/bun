@@ -459,9 +459,9 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    match glob::match_(include.glob.slice(), match_path) {
-                        glob::MatchResult::Match => included = true,
-                        glob::MatchResult::NegateNoMatch | glob::MatchResult::NegateMatch => unreachable!(),
+                    match glob::r#match(include.glob.slice(), match_path) {
+                        GlobMatchResult::Match => included = true,
+                        GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
                         _ => {}
                     }
                 }
@@ -484,8 +484,8 @@ fn iterate_included_project_tree(
                     };
                     // NOTE: These patterns have `!` so `.match` logic is
                     // inverted here
-                    match glob::match_(exclude.glob.slice(), match_path) {
-                        glob::MatchResult::NegateNoMatch => included = false,
+                    match glob::r#match(exclude.glob.slice(), match_path) {
+                        GlobMatchResult::NegateNoMatch => included = false,
                         _ => {}
                     }
                 }
@@ -1259,7 +1259,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string() {
-            let normalized = path::normalize_buf(bin_str, &mut path_buf, path::Style::Posix);
+            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
             bins.push(BinInfo {
                 path: ZStr::from_bytes(normalized),
                 ty: BinType::File,
@@ -1275,7 +1275,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string() {
-                        let normalized = path::normalize_buf(bin_str, &mut path_buf, path::Style::Posix);
+                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                         bins.push(BinInfo {
                             path: ZStr::from_bytes(normalized),
                             ty: BinType::File,
@@ -1292,7 +1292,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let Expr::Data::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string() {
-                    let normalized = path::normalize_buf(bin_str, &mut path_buf, path::Style::Posix);
+                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                     bins.push(BinInfo {
                         path: ZStr::from_bytes(normalized),
                         ty: BinType::Dir,
@@ -1348,14 +1348,14 @@ fn is_excluded<'a>(
 
         // check default ignores that only apply to the root project directory
         for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::match_(pattern, entry_name) {
-                glob::MatchResult::Match => {
+            match glob::r#match(pattern, entry_name) {
+                GlobMatchResult::Match => {
                     // cannot be reversed
                     return Some((pattern, IgnorePatternsKind::Default));
                 }
-                glob::MatchResult::NoMatch => {}
+                GlobMatchResult::NoMatch => {}
                 // default patterns don't use `!`
-                glob::MatchResult::NegateNoMatch | glob::MatchResult::NegateMatch => unreachable!(),
+                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
             }
         }
     }
@@ -1368,8 +1368,8 @@ fn is_excluded<'a>(
     let mut ignored = false;
 
     for &(pattern, can_override) in DEFAULT_IGNORE_PATTERNS {
-        match glob::match_(pattern, entry_name) {
-            glob::MatchResult::Match => {
+        match glob::r#match(pattern, entry_name) {
+            GlobMatchResult::Match => {
                 if can_override {
                     ignored = true;
                     ignore_pattern = pattern;
@@ -1382,9 +1382,9 @@ fn is_excluded<'a>(
 
                 return Some((pattern, IgnorePatternsKind::Default));
             }
-            glob::MatchResult::NoMatch => {}
+            GlobMatchResult::NoMatch => {}
             // default patterns don't use `!`
-            glob::MatchResult::NegateNoMatch | glob::MatchResult::NegateMatch => unreachable!(),
+            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
         }
     }
 
@@ -1407,13 +1407,13 @@ fn is_excluded<'a>(
             }
 
             let match_path = if pattern.flags.contains(PatternFlags::REL_PATH) { rel } else { entry_name };
-            match glob::match_(pattern.glob.slice(), match_path) {
-                glob::MatchResult::Match => {
+            match glob::r#match(pattern.glob.slice(), match_path) {
+                GlobMatchResult::Match => {
                     ignored = true;
                     ignore_pattern = pattern.glob.slice();
                     ignore_kind = ignore.kind;
                 }
-                glob::MatchResult::NegateNoMatch => ignored = false,
+                GlobMatchResult::NegateNoMatch => ignored = false,
                 _ => {}
             }
         }
@@ -1533,7 +1533,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     let abs_workspace_path: &[u8] = strings::without_trailing_slash(
-        strings::without_suffix(abs_package_json_path.as_bytes(), b"package.json"),
+        strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
     manager.env.map.put(b"npm_command", b"pack")?;
 
@@ -1750,7 +1750,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     let mut path_buf = PathBuffer::uninit();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string() {
-                            let normalized = path::normalize_buf(file_entry_str, &mut path_buf, path::Style::Posix);
+                            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(file_entry_str, &mut path_buf);
                             let Some(parsed) = Pattern::from_utf8(normalized)? else { continue };
                             if parsed.flags.contains(PatternFlags::NEGATED) {
                                 #[cold]

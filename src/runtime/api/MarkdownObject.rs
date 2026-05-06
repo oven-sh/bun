@@ -86,7 +86,7 @@ pub fn render_to_ansi(
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
-    let Some(buffer) = bun_jsc::node::StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
     };
 
@@ -98,6 +98,8 @@ pub fn render_to_ansi(
         kitty_graphics: false,
         light: md::detect_light_background(),
         columns: 80,
+        remote_image_paths: None,
+        image_base_dir: None,
     };
     if theme_value.is_object() {
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? { theme.colors = v; }
@@ -140,7 +142,7 @@ pub fn render_to_html(
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
-    let Some(buffer) = bun_jsc::node::StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
     };
 
@@ -239,7 +241,7 @@ pub fn render(
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
-    let Some(buffer) = bun_jsc::node::StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
     };
 
@@ -336,7 +338,7 @@ fn render_ast(
     }
 
     // PERF(port): was arena bulk-free — profile in Phase B
-    let Some(buffer) = bun_jsc::node::StringOrBuffer::from_js(global_this, input_value)? else {
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return global_this.throw_invalid_arguments("Expected a string or buffer to render", &[]);
     };
 

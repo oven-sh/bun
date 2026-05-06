@@ -1614,13 +1614,22 @@ pub mod js_bundler {
         }
 
         pub fn dispatch(this: &mut Self) {
-            this.js_task = jsc::AnyTask::new::<Self>(this, Self::run_on_js_thread);
+            this.js_task = AnyTask {
+                ctx: core::ptr::NonNull::new(this as *mut Self as *mut c_void),
+                callback: Self::run_on_js_thread_wrap,
+            };
             // SAFETY: bv2 is a valid backref set by BundleV2
             unsafe {
                 (*this.bv2)
                     .js_loop_for_plugins()
-                    .enqueue_task_concurrent(jsc::ConcurrentTask::create(this.js_task.task()));
+                    .enqueue_task_concurrent(ConcurrentTask::create(this.js_task.task()));
             }
+        }
+
+        fn run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
+            // SAFETY: ctx was stored from `*mut Self` in `dispatch`.
+            Self::run_on_js_thread(unsafe { &mut *(ctx as *mut Self) });
+            Ok(())
         }
 
         pub fn run_on_js_thread(this: &mut Self) {
@@ -1749,9 +1758,18 @@ pub mod js_bundler {
             }
         }
 
+        fn run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
+            // SAFETY: ctx was stored from `*mut Self` in `dispatch`.
+            Self::run_on_js_thread(unsafe { &mut *(ctx as *mut Self) });
+            Ok(())
+        }
+
         pub fn dispatch(this: &mut Self) {
-            this.js_task = jsc::AnyTask::new::<Self>(this, Self::run_on_js_thread);
-            let concurrent_task = jsc::ConcurrentTask::create_from(&this.js_task);
+            this.js_task = AnyTask {
+                ctx: core::ptr::NonNull::new(this as *mut Self as *mut c_void),
+                callback: Self::run_on_js_thread_wrap,
+            };
+            let concurrent_task = ConcurrentTask::create(this.js_task.task());
             // SAFETY: bv2 backref is valid
             unsafe {
                 (*this.bv2)
@@ -1780,7 +1798,7 @@ pub mod js_bundler {
             unsafe {
                 match &mut *this.parse_task.ctx.loop_() {
                     jsc::AnyEventLoop::Js(jsc_event_loop) => {
-                        jsc_event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::from_callback(
+                        jsc_event_loop.enqueue_task_concurrent(ConcurrentTask::from_callback(
                             this.parse_task.ctx,
                             BundleV2::on_notify_defer,
                         ));
@@ -1858,7 +1876,7 @@ pub mod js_bundler {
                 unsafe { core::mem::transmute::<u8, api::Loader>(loader_as_int.to::<u8>()) };
             // SAFETY: bv2 backref is valid; plugins is Some
             let global = unsafe { (*(*this.bv2).plugins.unwrap()).global_object() };
-            let source_code = match jsc::node::StringOrBuffer::from_js_to_owned_slice(
+            let source_code = match crate::node::types::StringOrBuffer::from_js_to_owned_slice(
                 global,
                 source_code_value,
             ) {

@@ -721,7 +721,7 @@ pub type OpenPtyFn = unsafe extern "C" fn(
 #[cfg(target_os = "linux")]
 mod lib_util {
     use super::*;
-    use core::ffi::CStr;
+    use bun_core::ZStr;
 
     // TODO(port): Zig used non-atomic file-level vars (single-threaded init).
     // Using a once-cell would be more idiomatic; keeping mutable statics to match.
@@ -737,7 +737,11 @@ mod lib_util {
             LOADED = true;
 
             // Try libutil.so first (most common), then libutil.so.1
-            const LIB_NAMES: [&CStr; 3] = [c"libutil.so", c"libutil.so.1", c"libc.so.6"];
+            const LIB_NAMES: [&ZStr; 3] = [
+                bun_core::zstr!("libutil.so"),
+                bun_core::zstr!("libutil.so.1"),
+                bun_core::zstr!("libc.so.6"),
+            ];
             for lib_name in LIB_NAMES {
                 HANDLE = sys::dlopen(lib_name, sys::RTLD::LAZY);
                 if HANDLE.is_some() {

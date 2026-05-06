@@ -1380,9 +1380,9 @@ impl PublishCommand {
                             if let Some(value) = &bin_prop.value {
                                 if value.is_string() && value.data.as_e_string().len() != 0 {
                                     break 'value Some(ZStr::from_bytes(
-                                        strings::without_prefix_z(
+                                        strings::without_prefix_comptime_z(
                                             // replace separators
-                                            path::normalize_buf_z(
+                                            normalize_buf_z(
                                                 &value.data.as_e_string().string()?,
                                                 &mut path_buf,
                                                 path::Platform::Posix,
@@ -1440,7 +1440,7 @@ impl PublishCommand {
                 let normalized_bin_dir = ZStr::from_bytes(
                     strings::without_trailing_slash(
                         strings::without_prefix(
-                            path::normalize_buf(
+                            normalize_buf(
                                 &bin_dir_str,
                                 &mut path_buf,
                                 path::Platform::Posix,
@@ -1486,7 +1486,7 @@ impl PublishCommand {
                         }
                     });
 
-                    let mut iter = DirIterator::iterate(dir, DirIterator::Encoding::U8);
+                    let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().unwrap().ok().flatten() {
                         let (name, subpath) = 'name_and_subpath: {
                             let name = entry.name.slice();
@@ -1531,7 +1531,7 @@ impl PublishCommand {
                             ..Default::default()
                         });
 
-                        if entry.kind == DirIterator::EntryKind::Directory {
+                        if entry.kind == bun_sys::EntryKind::Directory {
                             // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
                             let Ok(subdir) = bun_sys::openat(dir, &name, bun_sys::O::DIRECTORY, 0).unwrap() else {
                                 continue;
@@ -1561,7 +1561,7 @@ impl PublishCommand {
         maybe_json_len: Option<usize>,
         maybe_otp: Option<&[u8]>,
         uses_workspaces: bool,
-        auth_type: Option<install::package_manager::Options::AuthType>,
+        auth_type: Option<AuthType>,
     ) -> Result<http::HeaderBuilder, AllocError> {
         let mut headers = http::HeaderBuilder::default();
         let npm_auth_type: &[u8] = if maybe_otp.is_none() {
@@ -1603,9 +1603,9 @@ impl PublishCommand {
             write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
-                Global::USER_AGENT,
-                Global::OS_NAME,
-                Global::ARCH_NAME,
+                Global::user_agent,
+                Global::os_name,
+                Global::arch_name,
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 ci_name.unwrap_or(""),
@@ -1654,9 +1654,9 @@ impl PublishCommand {
             write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
-                Global::USER_AGENT,
-                Global::OS_NAME,
-                Global::ARCH_NAME,
+                Global::user_agent,
+                Global::os_name,
+                Global::arch_name,
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 ci_name.unwrap_or(""),
@@ -1687,7 +1687,7 @@ impl PublishCommand {
             b"latest"
         };
 
-        let encoded_tarball_len = bun_base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
+        let encoded_tarball_len = bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
         let version_without_build_tag = Dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(

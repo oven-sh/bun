@@ -646,13 +646,10 @@ pub fn file_read_error(err: bun_core::Error, stderr: &mut impl std::io::Write, f
 // TODO(port): this fn uses std.fs.path.resolve / std.posix.toPosixPath / std.fs.File directly in
 // the Zig source, which is itself non-idiomatic for the Bun codebase. Port to bun_sys::File.
 pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-    let paths: [&[u8]; 2] = [cwd, filename];
-    // TODO(port): std.fs.path.resolve equivalent
-    let outpath = bun_paths::resolve(&paths)?;
-    let file = bun_sys::File::open_z(&bun_sys::to_posix_path(&outpath)?, bun_sys::OpenFlags::READ_ONLY)?;
-    // file closed on Drop
-    let size = file.get_end_pos()?;
-    file.read_to_end_alloc(size)
+    let _paths: [&[u8]; 2] = [cwd, filename];
+    // TODO(port): std.fs.path.resolve / std.posix.toPosixPath equivalents — Zig source itself
+    // uses non-idiomatic std APIs here. Re-implement on top of bun_sys::File once needed.
+    todo!("blocked_on: bun_paths::resolve / bun_sys::to_posix_path")
 }
 
 // TODO(port): narrow error set
@@ -969,7 +966,7 @@ fn load_bunfig<const CMD: Command::Tag>(
     config_path: &ZStr,
     ctx: &mut Command::Context,
 ) -> Result<(), bun_core::Error> {
-    let source = match bun_sys::File::to_source(config_path, bun_sys::ToSourceOptions { convert_bom: true }) {
+    let source = match logger::to_source(config_path, logger::ToSourceOptions { convert_bom: true }) {
         bun_sys::Result::Ok(s) => s,
         bun_sys::Result::Err(err) => {
             if auto_loaded {
@@ -1003,11 +1000,11 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
     if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z(data_dir, buf, &paths, resolve_path::Platform::Auto));
+        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, buf, &paths));
     }
 
     if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z(home_dir, buf, &paths, resolve_path::Platform::Auto));
+        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(home_dir, buf, &paths));
     }
 
     None
@@ -1020,7 +1017,7 @@ pub fn load_config<const CMD: Command::Tag>(
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
-        if let Some(graph) = bun_standalone::StandaloneModuleGraph::get() {
+        if let Some(graph) = StandaloneModuleGraph::get() {
             if graph.flags.disable_autoload_bunfig {
                 return Ok(());
             }
@@ -1087,11 +1084,10 @@ pub fn load_config<const CMD: Command::Tag>(
 
         let awd = ctx.args.absolute_working_dir.as_ref().unwrap();
         let parts: [&[u8]; 2] = [awd.as_bytes(), config_path_];
-        let joined = resolve_path::join_abs_string_buf(
+        let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
             awd.as_bytes(),
             &mut config_buf,
             &parts,
-            resolve_path::Platform::Auto,
         );
         let joined_len = joined.len();
         config_buf[joined_len] = 0;

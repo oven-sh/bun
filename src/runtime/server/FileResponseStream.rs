@@ -235,10 +235,9 @@ impl FileResponseStream {
                 if state_ != ReadState::Eof && *max == 0 {
                     #[cfg(not(unix))]
                     self.reader.pause();
-                    self.eof_task = Some(AnyTask::new::<FileResponseStream, _>(
-                        Self::on_reader_done,
-                        self,
-                    ));
+                    // Zig: jsc.AnyTask.New(FileResponseStream, onReaderDone).init(this)
+                    // TODO(port): callback dispatch — see AnyTask::New comment.
+                    self.eof_task = Some(AnyTask::New::<FileResponseStream>::init(self));
                     self.vm
                         .event_loop()
                         .enqueue_task(Task::init(self.eof_task.as_mut().unwrap()));

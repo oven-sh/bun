@@ -4,7 +4,6 @@
 
 use core::ffi::CStr;
 
-use bun_boringssl as boringssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
 use bun_str::String as BunString;
 use bun_uws::{

@@ -1463,18 +1463,19 @@ impl<'a> Repl<'a> {
         // For everything else, use Bun.inspect without colors
         let mut array: Vec<u8> = Vec::new();
         jsc::ConsoleObject::format2(
-            jsc::ConsoleLevel::Log,
+            jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &[value],
+            &value,
             1,
             &mut array,
-            jsc::ConsoleFormatOptions {
+            jsc::ConsoleObject::FormatOptions {
                 enable_colors: false,
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
+                ..Default::default()
             },
         )?;
         // TODO(port): array.writer.flush() — Vec<u8> writer needs no flush
@@ -1652,18 +1653,19 @@ impl<'a> Repl<'a> {
         let Some(global) = self.global else { return; };
         // Use .Error level for proper error formatting with Bun.inspect
         if jsc::ConsoleObject::format2(
-            jsc::ConsoleLevel::Error,
+            jsc::ConsoleObject::MessageLevel::Error,
             global,
-            &[error_value],
+            &error_value,
             1,
             writer,
-            jsc::ConsoleFormatOptions {
+            jsc::ConsoleObject::FormatOptions {
                 enable_colors,
                 add_newline: true,
                 flush: false,
                 quote_strings: true,
                 ordered_properties: false,
                 max_depth: 4,
+                ..Default::default()
             },
         )
         .is_err()

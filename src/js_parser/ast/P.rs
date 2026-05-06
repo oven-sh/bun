@@ -62,6 +62,7 @@ pub trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log(&mut self) -> &mut logger::Log;
     fn bump(&self) -> &'a Bump;
+    fn source(&self) -> &'a logger::Source;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
 }

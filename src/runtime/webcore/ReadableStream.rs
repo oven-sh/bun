@@ -917,25 +917,6 @@ impl<C: SourceContext> NewSource<C> {
     }
 }
 
-// ─── local extension shim: `JSValue::withAsyncContextIfNeeded` ───────────────
-// `bun_jsc::JSValue` doesn't yet re-export this; bind the C++ symbol locally
-// (same pattern as `runtime/api/cron.rs` / `h2_frame_parser.rs`).
-trait JSValueAsyncContextExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueAsyncContextExt for JSValue {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        // SAFETY: FFI into JSC bindings; `global` is a valid &JSGlobalObject.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
-    }
-}
-
 // ─── codegen-facing inherent methods ─────────────────────────────────────────
 // Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc. — the
 // `.classes.ts` → `generated_classes.rs` thunks call these by exact name on
@@ -991,14 +972,19 @@ impl<C: SourceContext> NewSource<C> {
                 streams::StreamError::Error(e) => {
                     Err(global_this.throw_value(e.to_js(global_this)))
                 }
-                streams::StreamError::JSValue(js_err) => {
+                // Zig spec reads `err.JSValue` unconditionally in the else arm — UB on
+                // `.WeakJSValue`/`.AbortReason`. Preserve the *intent* (always throw on
+                // `.err`) without the union-pun: route through `to_js_weak`, which
+                // returns the JS error value plus whether it was a strong (protected)
+                // ref that needs `unprotect()`.
+                _ => {
+                    let (js_err, was_strong) = err.to_js_weak(global_this);
                     js_err.ensure_still_alive();
-                    js_err.unprotect();
-                    Err(global_this.throw_value(*js_err))
+                    if was_strong == streams::WasStrong::Strong {
+                        js_err.unprotect();
+                    }
+                    Err(global_this.throw_value(js_err))
                 }
-                // Zig source has no other variants here; `WeakJSValue`/`AbortReason` are
-                // post-Zig additions to the Rust enum — fall through like the default arm.
-                _ => result.to_js(global_this),
             },
             streams::Result::Pending(_) => {
                 let out = result.to_js(global_this)?;
@@ -1013,8 +999,8 @@ impl<C: SourceContext> NewSource<C> {
                 let value = JSValue::TRUE;
                 // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
                 unsafe {
-                    JSObjectSetPropertyAtIndex(
-                        global_this,
+                    jsc::c_api::JSObjectSetPropertyAtIndex(
+                        global_this as *const JSGlobalObject as *mut JSGlobalObject,
                         flags.as_object_ref(),
                         0,
                         value.as_object_ref(),
@@ -1191,19 +1177,6 @@ impl<C: SourceContext> NewSource<C> {
     ) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(global_this, call_frame, streams::BufferActionTag::Json)
     }
-}
-
-// JSC C-API extern (process_result writes the `done` flag at index 0).
-// TODO(port): move to jsc_sys / re-export from `bun_jsc::c_api`.
-#[allow(deprecated)]
-unsafe extern "C" {
-    fn JSObjectSetPropertyAtIndex(
-        ctx: *const JSGlobalObject,
-        object: jsc::c_api::JSObjectRef,
-        property_index: core::ffi::c_uint,
-        value: jsc::c_api::JSObjectRef,
-        exception: *mut jsc::c_api::JSValueRef,
-    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

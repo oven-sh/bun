@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, BuiltinIO, Impl, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;

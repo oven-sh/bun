@@ -19,7 +19,7 @@ impl From<OptionValueType> for &'static str {
 }
 
 impl super::validators::StringEnum for OptionValueType {
-    const VALUES_INFO: &'static str = "boolean | string";
+    const VALUES_INFO: &'static str = "boolean|string";
     fn from_bun_string(s: &String) -> Option<Self> {
         if s.eql_comptime(b"boolean") {
             Some(Self::Boolean)

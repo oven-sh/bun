@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
-use bun_str::{String, ZigString};
+use bun_str::{OwnedString, String, ZigString};
 
 use super::parse_args_utils::{
     classify_token, find_option_by_short_name, is_option_like_value, OptionDefinition,
@@ -193,8 +193,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {
             if item.is_string() {
-                let str = item.to_bun_string(global)?;
-                // `defer str.deref()` — bun_str::String drops here
+                let str = OwnedString::new(item.to_bun_string(global)?);
                 if str.eql_comptime(b"-e")
                     || str.eql_comptime(b"--eval")
                     || str.eql_comptime(b"-p")

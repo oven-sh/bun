@@ -9,7 +9,6 @@ use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
-use crate::webcore::blob::BlobExt as _;
 // `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
 use bun_sha_hmac::sha as hashers;
 
@@ -48,7 +47,12 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 
 /// `union(enum)` → Rust enum with payload variants.
 /// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated; this is the `m_ctx` payload.
+///
+/// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
+/// `extern "C" fn(..., *mut CryptoHasher)` shims — C++ never reads this layout
+/// (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass]
+#[repr(C)]
 pub enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(Option<Box<HMAC>>),
@@ -1198,7 +1202,10 @@ impl_static_hasher!(hashers::SHA512_256, "SHA512_256", 32);
 // instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
 // `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
 // generic/alias support.
-// TODO(port): blocked_on: bun_jsc::JsClass generic-type support (or per-alias derive)
+// The per-monomorphization `JsClass` impl + extern shims live in
+// `build/*/codegen/generated_classes.rs` (one block per `pub type` alias below);
+// `#[repr(C)]` here only silences the `improper_ctypes` lint on those externs.
+#[repr(C)]
 pub struct StaticCryptoHasher<H: StaticHasher> {
     pub hashing: H,
     pub digested: bool,

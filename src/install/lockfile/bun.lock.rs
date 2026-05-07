@@ -1831,13 +1831,13 @@ pub fn parse_into_binary_lockfile(
                 pkg.resolutions = DependencySlice { off, len };
 
                 if let Some(bin_expr) = value.get(b"bin") {
-                    pkg.bin = Bin::parse_append(bin_expr, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
+                    pkg.bin = Bin::parse_append(&bin_expr, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
                 } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                    pkg.bin = Bin::parse_append_from_directories(bin_dir_expr, &mut string_buf)?;
+                    pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut string_buf)?;
                 }
 
                 // there should be no duplicates
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg, string_buf.bytes.as_slice())?;
+                let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
                 let entry = pkg_map.get_or_put(name);
                 if entry.found_existing {

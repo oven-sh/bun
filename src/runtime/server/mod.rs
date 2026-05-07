@@ -232,7 +232,7 @@ impl AnyRoute {
             // SAFETY: intrusive refcount; ptr was Box::into_raw'd with rc=1.
             AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
             // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { FileRoute::deref_(p.as_ptr()) },
+            AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
             AnyRoute::Html(r) => r.deref(),
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }

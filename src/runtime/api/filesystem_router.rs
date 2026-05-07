@@ -346,7 +346,7 @@ impl FileSystemRouter {
         // `Box<[u8]>`, so copy the bytes; no extra ref needed.
         // SAFETY: `base_dir` was just set to Some above.
         fs_router.router.config.dir =
-            Box::from(unsafe { ref_string_slice(fs_router.base_dir.unwrap()) });
+            Box::from(unsafe { (*fs_router.base_dir.unwrap()).leak() });
 
         Ok(fs_router)
     }
@@ -637,7 +637,7 @@ impl FileSystemRouter {
     pub fn get_asset_prefix(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(asset_prefix) = this.asset_prefix {
             // SAFETY: `asset_prefix` is a live `*mut RefString`.
-            return Ok(zs_to_js(unsafe { ref_string_slice(asset_prefix) }, global_this));
+            return Ok(zs_to_js(unsafe { (*asset_prefix).leak() }, global_this));
         }
 
         Ok(JSValue::NULL)
@@ -922,7 +922,7 @@ impl MatchedRoute {
             this.route().file_path,
             if let Some(base_dir) = this.base_dir {
                 // SAFETY: `base_dir` is a live `*mut RefString`.
-                unsafe { ref_string_slice(base_dir) }
+                unsafe { (*base_dir).leak() }
             } else {
                 // SAFETY: VM singleton is alive on the JS thread for the duration of this getter.
                 unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir }
@@ -930,7 +930,7 @@ impl MatchedRoute {
             &origin_url,
             if let Some(prefix) = this.asset_prefix {
                 // SAFETY: `prefix` is a live `*mut RefString`.
-                unsafe { ref_string_slice(prefix) }
+                unsafe { (*prefix).leak() }
             } else {
                 b""
             },

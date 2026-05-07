@@ -92,7 +92,8 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
     update_requests: &mut UpdateRequestArray,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
-    if manager.subcommand != Subcommand::PatchCommit && manager.subcommand != Subcommand::Patch {
+    let subcommand = manager.subcommand;
+    if subcommand != Subcommand::PatchCommit && subcommand != Subcommand::Patch {
         // PORT NOTE: reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
         // sub-slice of `update_requests`; we take its length and truncate the Vec so
         // the next call can take the Vec by value (Zig threaded `*[]UpdateRequest`).
@@ -105,7 +106,7 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
             unsafe { &mut *ctx.log },
             positionals,
             update_requests,
-            manager.subcommand,
+            subcommand,
         )
         .len();
         update_requests.truncate(len);

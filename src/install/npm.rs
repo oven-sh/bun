@@ -734,25 +734,21 @@ impl<T: NegatableEnum> Negatable<T> {
         }
     }
 
-    pub fn from_json(expr: JSON::Expr) -> Result<T, AllocError> {
+    /// Generic over `JsonExprView` so both `bun_logger::js_ast::Expr` (JSON
+    /// parser) and `bun_js_parser::Expr` (YAML / package.json cache) call the
+    /// one canonical body — Zig only has the single `js_ast.Expr` type.
+    pub fn from_json<E: JSON::JsonExprView>(expr: &E) -> Result<T, AllocError> {
         let mut this = T::NONE.negatable();
-        match &expr.data {
-            JSON::ExprData::EArray(arr) => {
-                let items = arr.slice();
-                if !items.is_empty() {
-                    for item in items {
-                        // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
-                        // so no transcode allocator is needed (Zig: asString(allocator)).
-                        if let Some(value) = item.as_utf8_string_literal() {
-                            this.apply(value);
-                        }
-                    }
+        if let Some(items) = expr.json_array_items() {
+            for item in items {
+                // JSON parsed via `parse_utf8` always yields UTF-8 EStrings,
+                // so no transcode allocator is needed (Zig: asString(allocator)).
+                if let Some(value) = item.json_utf8_string() {
+                    this.apply(value);
                 }
             }
-            JSON::ExprData::EString(str) => {
-                this.apply(str.data);
-            }
-            _ => {}
+        } else if let Some(str) = expr.json_utf8_string() {
+            this.apply(str);
         }
 
         Ok(this.combine())
@@ -2659,15 +2655,15 @@ impl PackageManifest {
                 let mut package_version: PackageVersion = empty_version;
 
                 if let Some(cpu_q) = prop.value.as_ref().unwrap().as_property(b"cpu") {
-                    package_version.cpu = Negatable::<Architecture>::from_json(cpu_q.expr)?;
+                    package_version.cpu = Negatable::<Architecture>::from_json(&cpu_q.expr)?;
                 }
 
                 if let Some(os_q) = prop.value.as_ref().unwrap().as_property(b"os") {
-                    package_version.os = Negatable::<OperatingSystem>::from_json(os_q.expr)?;
+                    package_version.os = Negatable::<OperatingSystem>::from_json(&os_q.expr)?;
                 }
 
                 if let Some(libc) = prop.value.as_ref().unwrap().as_property(b"libc") {
-                    package_version.libc = Negatable::<Libc>::from_json(libc.expr)?;
+                    package_version.libc = Negatable::<Libc>::from_json(&libc.expr)?;
                 }
 
                 if let Some(has_install_script) = prop.value.as_ref().unwrap().as_property(b"hasInstallScript") {

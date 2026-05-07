@@ -2,12 +2,6 @@
 //!
 //! Ported from src/runtime/api/html_rewriter.zig.
 
-/// `{ html?: bool }` option bag for `before/after/replace/append/prepend`.
-#[derive(Default, Clone, Copy)]
-pub struct ContentOptions {
-    pub html: bool,
-}
-
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;

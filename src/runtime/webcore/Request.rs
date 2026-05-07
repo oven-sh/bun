@@ -524,10 +524,9 @@ impl Request {
             js_gen::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
         if let BodyValue::Locked(locked) = &mut *self.body {
-            // TODO(port): Arc<BodyValue> mutation — see field note
-            let mut old = core::mem::take(&mut locked.readable);
-            drop(old);
-            locked.readable = Default::default();
+            // `mem::take` swaps in `Default` and returns the old value, which
+            // is then dropped — equivalent to Zig's `old.deinit(); ... = .{}`.
+            let _ = core::mem::take(&mut locked.readable);
         }
     }
 
@@ -1305,21 +1304,26 @@ impl Request {
                         // first value
                     }
                     Ok(None) => {
-                        let implements = match value.implements_to_string(global_this) {
-                            Ok(b) => b,
-                            Err(e) => bail!(Err(e)),
-                        };
+                        // Preserve Zig short-circuit ordering: only probe
+                        // `implementsToString` (which performs JS property
+                        // lookup with observable side effects) when the first
+                        // two guards already hold.
                         if value == values_to_try[values_to_try.len() - 1]
                             && !is_first_argument_a_url
-                            && implements
                         {
-                            let str = match BunString::from_js(value, global_this) {
-                                Ok(s) => s,
+                            let implements = match value.implements_to_string(global_this) {
+                                Ok(b) => b,
                                 Err(e) => bail!(Err(e)),
                             };
-                            req.url = str;
-                            if !req.url.is_empty() {
-                                fields.insert(Fields::Url);
+                            if implements {
+                                let str = match BunString::from_js(value, global_this) {
+                                    Ok(s) => s,
+                                    Err(e) => bail!(Err(e)),
+                                };
+                                req.url = str;
+                                if !req.url.is_empty() {
+                                    fields.insert(Fields::Url);
+                                }
                             }
                         }
                     }

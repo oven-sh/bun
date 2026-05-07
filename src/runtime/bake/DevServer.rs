@@ -827,9 +827,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let dev_ptr: *mut DevServer = &mut *dev;
 
     // PORT NOTE: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
-    // via `@fieldParentPtr`). The Rust port stores these by value with no back-
-    // pointer; the assertion is moot until `owner()` is wired (blocked_on:
-    // IncrementalGraph/DirectoryWatchStore::owner).
+    // via `@fieldParentPtr`). The Rust port stores these by value; `owner()`
+    // is provided on `IncrementalGraph` via `offset_of!` so the invariant is
+    // structural. Retain the field touches so the addresses are stable for
+    // `@fieldParentPtr` consumers below.
     let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
 
     dev.graph_safety_lock.lock();
@@ -1124,11 +1125,9 @@ impl Drop for DevServer {
             bun_crash_handler::remove_pre_crash_handler(self as *mut _ as *mut c_void);
         }
 
-        for failure in self.bundling_failures.values() {
-            // TODO(port): blocked_on: SerializedFailure::deinit — Drop on the
-            // owning map handles the allocation; explicit deinit was Zig-side.
-            let _ = failure;
-        }
+        // PORT NOTE: Zig looped `failure.deinit()` then `clearAndFree`. The
+        // map's `Drop` runs `SerializedFailure::drop` for each value, so the
+        // explicit loop is folded into field drop.
 
         if self.current_bundle.is_some() {
             debug_assert!(false); // impossible to de-initialize this state correctly.
@@ -1151,8 +1150,8 @@ impl Drop for DevServer {
         for value in self.source_maps.entries.values_mut() {
             debug_assert!(value.ref_count > 0);
             value.ref_count = 0;
-            // TODO(port): blocked_on: source_map_store::Entry::deinit — Drop handles
-            // owned buffers; explicit deinit was Zig-side allocator free.
+            // PORT NOTE: `Entry`'s owned buffers are freed by `Drop` when the
+            // map drops; Zig's explicit `deinit` was the allocator-free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
             self.timer_heap()
@@ -1160,9 +1159,8 @@ impl Drop for DevServer {
         }
 
         for event in &mut self.watcher_atomics.events {
-            // TODO(port): blocked_on: bun_collections::StringArrayHashMap::clear
-            event.dirs = Default::default();
-            event.files = Default::default();
+            event.dirs.clear_and_free();
+            event.files.clear_and_free();
             event.extra_files.clear();
         }
 

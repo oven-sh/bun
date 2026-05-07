@@ -6098,8 +6098,11 @@ unsafe fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
     None
 }
 
-/// Backs `bun_core::output::OUTPUT_SINK_VTABLE` — stderr/mkdir/open/QuietWriter.
-pub static OUTPUT_SINK_VTABLE_IMPL: bun_core::output::OutputSinkVTable =
+/// Backs `bun_core::output::__BUN_OUTPUT_SINK_VTABLE` — stderr/mkdir/open/
+/// QuietWriter. Declared `extern "Rust"` in `bun_core::output`; link-time
+/// resolved (no runtime registration / init-order hazard).
+#[unsafe(no_mangle)]
+pub static __BUN_OUTPUT_SINK_VTABLE: bun_core::output::OutputSinkVTable =
     bun_core::output::OutputSinkVTable {
         stderr: || bun_core::output::File(Fd::stderr()),
         make_path: |cwd, dir| {
@@ -6152,6 +6155,26 @@ pub static OUTPUT_SINK_VTABLE_IMPL: bun_core::output::OutputSinkVTable =
         read: |fd, buf| read(fd, buf).map_err(Into::into),
     };
 
-pub fn install_output_sink() {
-    bun_core::output::install_output_sink(&OUTPUT_SINK_VTABLE_IMPL);
+/// `bun_uws_sys::__bun_uws_stat_file` body — declared `extern "Rust"` in
+/// `bun_uws_sys::SocketContext` so the SSL-context cache key can fold cert-file
+/// `(mtime, size)` without depending on `bun_sys`. Spec
+/// `SocketContext.zig:81`: `bun.sys.stat(path)` → `[mt.sec, mt.nsec, st.size]`.
+#[unsafe(no_mangle)]
+pub fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]> {
+    match stat(path) {
+        Ok(st) => {
+            #[cfg(unix)]
+            {
+                // libc::stat exposes mtime as `st_mtime` (sec) +
+                // `st_mtime_nsec` (nsec) on Linux/BSD/macOS.
+                Some([st.st_mtime as i64, st.st_mtime_nsec as i64, st.st_size as i64])
+            }
+            #[cfg(not(unix))]
+            {
+                // uv_stat_t shape (Windows sys_uv path).
+                Some([st.mtim.sec, st.mtim.nsec, st.size as i64])
+            }
+        }
+        Err(_) => None,
+    }
 }

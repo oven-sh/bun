@@ -273,6 +273,20 @@ unsafe fn init_runtime_state(
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).
                 unsafe { ptr::write(ptr::addr_of_mut!((*vm).transpiler), transpiler) };
+                // Spec VirtualMachine.zig:1286-1299 — post-`Transpiler.init`
+                // wiring that runs in the struct-init tail of `VirtualMachine.init`
+                // (BEFORE `JSGlobalObject.create`). `configure_linker` MUST run
+                // after the `ptr::write` above so the self-referential
+                // `addr_of_mut!(self.options)` etc. captured by `Linker::init`
+                // point at the final `(*vm).transpiler` storage, not the moved-
+                // from stack temporary.
+                // SAFETY: `vm` unique on this thread; `transpiler` just written.
+                unsafe {
+                    let t = &mut (*vm).transpiler;
+                    t.options.emit_dce_annotations = false;
+                    t.resolver.prefer_module_field = false;
+                    t.configure_linker();
+                }
             }
             Err(e) => {
                 // Spec: `try Transpiler.init(...)` bubbles the error out of
@@ -4711,6 +4725,46 @@ pub fn __bun_get_vm_ctx(kind: bun_aio::AllocatorType) -> bun_aio::EventLoopCtx {
             bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(mini)
         }
     }
+}
+
+/// `bun_uws_sys::__bun_uws_parse_date` body — declared `extern "Rust"` in
+/// `bun_uws_sys::request`. Spec `Request.zig:62` `dateForHeader`: wrap the
+/// header bytes in a `bun.String`, call `String.parseDate(&s, vm.global)`,
+/// return `@intFromFloat` if finite and non-negative, else `null`.
+#[unsafe(no_mangle)]
+pub fn __bun_uws_parse_date(value: &[u8]) -> Option<u64> {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
+    // the VM; `date_for_header` is only reachable from a `Bun.serve` request
+    // callback (JS thread, VM live).
+    let global = unsafe { &*(*vm).global };
+    let mut string = bun_string::String::init(value);
+    // PORT NOTE: Zig `dateForHeader` returns `bun.JSError!?u64` and lets the
+    // caller propagate the throw. The Rust `AnyRequest::date_for_header`
+    // returns plain `Option<u64>` (the only callers — FileRoute / static
+    // routes — treat a throw the same as "header absent / unparsable"), so
+    // swallow `JsError` here and surface `None`.
+    let date_f64 = match bun_jsc::bun_string_jsc::parse_date(&mut string, global) {
+        Ok(v) => v,
+        Err(_) => {
+            string.deref();
+            return None;
+        }
+    };
+    string.deref();
+    if !date_f64.is_nan() && date_f64.is_finite() && date_f64 >= 0.0 {
+        Some(date_f64 as u64)
+    } else {
+        None
+    }
+}
+
+/// `bun_core::__bun_fs_events_close_and_wait` body — declared `extern "Rust"`
+/// in `bun_core::Global`. Spec `Global.zig:220`:
+/// `bun.jsc.Node.FSEvents.closeAndWait()`.
+#[unsafe(no_mangle)]
+pub fn __bun_fs_events_close_and_wait() {
+    crate::node::fs_events::close_and_wait();
 }
 
 /// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for

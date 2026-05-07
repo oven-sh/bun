@@ -6,16 +6,19 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use core::sync::atomic::{AtomicPtr, Ordering};
-
 use bun_boringssl_sys::SSL_CTX;
 
 use crate::create_bun_socket_error_t;
 
-/// Hook: `fn(path: &ZStr) -> Option<[mtime_sec, mtime_nsec, size]>`. Registered
-/// by `bun_runtime::init()`; null = stat unavailable (digest feeds zeros).
-pub static STAT_FILE_HOOK: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
-pub type StatFileFn = unsafe fn(&bun_core::ZStr) -> Option<[i64; 3]>;
+unsafe extern "Rust" {
+    /// `bun.sys.stat(path)` → `[mtime_sec, mtime_nsec, size]` for the SSL
+    /// cache-key digest (spec `SocketContext.zig:81`). `bun_uws_sys` (T0)
+    /// cannot depend on `bun_sys`, so the body is `#[no_mangle]` in
+    /// `bun_sys` and link-time resolved. Returns `None` on stat failure
+    /// (digest feeds zeros — `create_ssl_context` will then fail on the same
+    /// path and the entry never reaches the cache).
+    fn __bun_uws_stat_file(path: &bun_core::ZStr) -> Option<[i64; 3]>;
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -135,13 +138,9 @@ impl BunSocketContextOptions {
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {
-                    let hook = STAT_FILE_HOOK.load(Ordering::Relaxed);
-                    if !hook.is_null() {
-                        // SAFETY: hook was registered as a `StatFileFn` by runtime init;
-                        // *mut () → fn ptr transmute is the §Dispatch tag+ptr pattern.
-                        if let Some(m) = unsafe { core::mem::transmute::<*mut (), StatFileFn>(hook)(path) } {
-                            meta = m;
-                        }
+                    // SAFETY: link-time extern; `path` borrowed for the call.
+                    if let Some(m) = unsafe { __bun_uws_stat_file(path) } {
+                        meta = m;
                     }
                 }
                 hp.update(as_bytes(&meta));

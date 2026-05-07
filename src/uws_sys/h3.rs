@@ -94,8 +94,8 @@ impl Request {
     }
     pub fn date_for_header(&mut self, name: &[u8]) -> Option<u64> {
         // Cycle-break: parsing an HTTP date requires `bun_str::String` +
-        // `jsc::VirtualMachine` (tier > 0). Low tier calls through a hook
-        // registered at runtime init — see `crate::request::PARSE_DATE_HOOK`.
+        // `jsc::VirtualMachine` (tier > 0). Low tier calls a link-time
+        // `extern "Rust"` defined in `bun_runtime::jsc_hooks`.
         self.header(name).and_then(crate::request::parse_date_via_hook)
     }
     pub fn query(&mut self, name: &[u8]) -> &[u8] {

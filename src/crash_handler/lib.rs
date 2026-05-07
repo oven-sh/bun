@@ -2199,6 +2199,27 @@ unsafe extern "C" {
     fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
 }
 
+/// `bun_core::__bun_dump_stack_trace` body — declared `extern "Rust"` in
+/// `bun_core::Global` so T0 callers reach the symbolicating dumper without a
+/// crate-dep cycle. The two `*Limits` structs are layout-twins; copy fields
+/// rather than transmuting so a future divergence is a compile error here.
+#[unsafe(no_mangle)]
+pub fn __bun_dump_stack_trace(
+    trace: &StackTrace<'_>,
+    limits: &bun_core::DumpStackTraceOptions,
+) {
+    dump_stack_trace(
+        trace,
+        WriteStackTraceLimits {
+            frame_count: limits.frame_count,
+            stop_at_jsc_llint: limits.stop_at_jsc_llint,
+            skip_stdlib: limits.skip_stdlib,
+            skip_file_patterns: limits.skip_file_patterns,
+            skip_function_patterns: limits.skip_function_patterns,
+        },
+    );
+}
+
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {

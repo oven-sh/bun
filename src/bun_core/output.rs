@@ -72,33 +72,25 @@ pub struct OutputSinkVTable {
     pub read: unsafe fn(fd: Fd, buf: &mut [u8]) -> Result<usize, crate::Error>,
 }
 
-/// Installed by `bun_sys` at startup via [`install_output_sink`]. Startup ordering
-/// guarantees it is set before any Output write. Load via [`output_sink()`].
-pub static OUTPUT_SINK_VTABLE: core::sync::atomic::AtomicPtr<OutputSinkVTable> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+// SAFETY: vtable is a bag of `fn` pointers (all `Sync`); the struct holds no
+// interior mutability. Required so the link-time `extern static` below is legal.
+unsafe impl Sync for OutputSinkVTable {}
 
-/// Called once by `bun_sys` at startup with a `&'static OutputSinkVTable`.
-#[inline]
-pub fn install_output_sink(vtable: &'static OutputSinkVTable) {
-    // SAFETY: `AtomicPtr<T>` only accepts `*mut T`, but the stored pointer is
-    // never written through — `output_sink()` loads it back as `&*p` (shared
-    // ref) and the vtable itself is `&'static` and immutable. The const→mut
-    // cast here is purely to satisfy `AtomicPtr`'s signature; no `&mut` is
-    // ever materialized from it, so no provenance/aliasing UB.
-    OUTPUT_SINK_VTABLE.store(
-        core::ptr::from_ref(vtable).cast_mut(),
-        core::sync::atomic::Ordering::Release,
-    );
+unsafe extern "Rust" {
+    /// Link-time output sink. Defined `#[no_mangle]` in `bun_sys`
+    /// (stderr/mkdir/open/QuietWriter bodies). Replaces the former
+    /// runtime-registered `OUTPUT_SINK_VTABLE: AtomicPtr` — the only provider
+    /// was always `bun_sys`, so the indirection bought nothing but an
+    /// init-order hazard.
+    static __BUN_OUTPUT_SINK_VTABLE: OutputSinkVTable;
 }
 
-/// Load the installed sink. Panics with an actionable message if `bun_sys` has not
-/// yet called [`install_output_sink`] (startup ordering bug).
+/// Load the installed sink. Link-time resolved; never null.
 #[inline]
 pub fn output_sink() -> &'static OutputSinkVTable {
-    let p = OUTPUT_SINK_VTABLE.load(core::sync::atomic::Ordering::Acquire);
-    debug_assert!(!p.is_null(), "OUTPUT_SINK_VTABLE not installed (bun_sys::init must run first)");
-    // SAFETY: install_output_sink stores a &'static; never freed.
-    unsafe { &*p }
+    // SAFETY: `__BUN_OUTPUT_SINK_VTABLE` is a `#[no_mangle]` `'static` in
+    // `bun_sys`; the linker guarantees it is defined.
+    unsafe { &__BUN_OUTPUT_SINK_VTABLE }
 }
 
 /// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
@@ -304,17 +296,14 @@ pub fn init_test() {
 }
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
-/// Real impl walks stdio fds and `tcsetattr`s; lives in bun_sys. Hook-registered.
+/// Thin alias over [`crate::output::stdio::restore`] (the real impl, also in
+/// this crate); the indirection exists only because Zig spells the path both
+/// `Output.Source.Stdio.restore` and `Output.Stdio.restore`.
 pub mod source {
     pub mod stdio {
-        pub static RESTORE_HOOK: core::sync::atomic::AtomicPtr<()> =
-            core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+        #[inline]
         pub fn restore() {
-            let p = RESTORE_HOOK.load(core::sync::atomic::Ordering::Acquire);
-            if !p.is_null() {
-                // SAFETY: installed as `fn()` by bun_sys at startup.
-                unsafe { core::mem::transmute::<*mut (), fn()>(p)() }
-            }
+            crate::output::stdio::restore();
         }
     }
 }

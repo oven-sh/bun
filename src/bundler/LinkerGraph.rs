@@ -511,9 +511,17 @@ impl LinkerGraph {
 
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
-            // SAFETY: capacity reserved; `zero()` initializes all columns.
-            unsafe { self.meta.set_len(self.ast.len()) };
-            self.meta.zero();
+            // PORT NOTE: Zig does `meta.len = ast.len; meta.zero()` — a raw
+            // memset(0) is the valid empty state for Zig's unmanaged
+            // containers. Rust `Vec`/`Box` require a non-null dangling
+            // pointer when empty, so zeroed bytes violate their invariants
+            // (`slice::from_raw_parts` null-check trips on first read). Fill
+            // each slot with `Default` instead.
+            let ast_len = self.ast.len();
+            debug_assert!(ast_len <= import_records_len);
+            for _ in 0..ast_len {
+                self.meta.append_assume_capacity(JSMeta::default());
+            }
 
             if scb.list.len() > 0 {
                 self.is_scb_bitset =

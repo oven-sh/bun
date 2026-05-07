@@ -2,26 +2,23 @@ use core::ffi::{c_ushort, c_char};
 use core::marker::{PhantomData, PhantomPinned};
 
 
-use core::sync::atomic::{AtomicPtr, Ordering};
-
 // TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;
 
-/// Hook: `fn(header_value: &[u8]) -> Option<u64>` parsing an HTTP date header
-/// into milliseconds-since-epoch. Registered by `bun_runtime::init()` (wraps
-/// `bun_str::String::parse_date` + `jsc::VirtualMachine::get().global()`).
-/// Null = unregistered → `date_for_header` returns `None`.
-pub static PARSE_DATE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
-pub type ParseDateFn = unsafe fn(&[u8]) -> Option<u64>;
+unsafe extern "Rust" {
+    /// Parse an HTTP date header into milliseconds-since-epoch. Spec
+    /// `Request.zig:67`: `bun.String.parseDate(&string,
+    /// bun.jsc.VirtualMachine.get().global)` then `@intFromFloat` if finite
+    /// and non-negative. `bun_uws_sys` (T0) cannot name `bun_jsc`/`bun_string`,
+    /// so the body is `#[no_mangle]` in `bun_runtime::jsc_hooks` and link-time
+    /// resolved. Returns `None` on parse failure / NaN / negative.
+    fn __bun_uws_parse_date(value: &[u8]) -> Option<u64>;
+}
 
 #[inline]
 pub(crate) fn parse_date_via_hook(value: &[u8]) -> Option<u64> {
-    let hook = PARSE_DATE_HOOK.load(Ordering::Relaxed);
-    if hook.is_null() {
-        return None;
-    }
-    // SAFETY: hook was registered as a `ParseDateFn` by runtime init.
-    unsafe { core::mem::transmute::<_, ParseDateFn>(hook)(value) }
+    // SAFETY: link-time extern; `value` borrowed for the call.
+    unsafe { __bun_uws_parse_date(value) }
 }
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)

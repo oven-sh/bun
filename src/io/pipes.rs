@@ -26,9 +26,9 @@ impl PollOrFd {
 
     // PORT NOTE: reshaped for borrowck — Zig took `*const PollOrFd` and mutated
     // through the `*FilePoll` pointer.
-    pub fn set_owner(&mut self, owner: *mut c_void) {
+    pub fn set_owner(&mut self, owner_tag: u8, owner: *mut c_void) {
         if let PollOrFd::Poll(poll) = self {
-            poll.set_owner(owner);
+            poll.set_owner(owner_tag, owner);
         }
     }
 

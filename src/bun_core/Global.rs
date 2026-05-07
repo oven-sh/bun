@@ -23,9 +23,15 @@ use crate::ZStr;
 pub static RESET_SEGV: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-/// Set by `bun_runtime` (→ jsc::node::fs_events::close_and_wait). No-op if null.
-pub static FS_EVENTS_CLOSE_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+unsafe extern "Rust" {
+    /// `bun.jsc.Node.FSEvents.closeAndWait()` — flush the macOS FSEvents
+    /// CFRunLoop thread before process exit (spec `Global.zig:220`). Body is
+    /// `#[no_mangle]` in `bun_runtime::node::fs_events`; link-time resolved.
+    fn __bun_fs_events_close_and_wait();
+    /// `bun.crash_handler.dumpStackTrace` — symbolicating dumper. Body is
+    /// `#[no_mangle]` in `bun_crash_handler`; link-time resolved.
+    fn __bun_dump_stack_trace(trace: &StackTrace<'_>, limits: &DumpStackTraceOptions);
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE-IN: crash_handler primitives (CYCLEBREAK §→core, from ptr/safety/collections/sys)
@@ -113,29 +119,12 @@ impl Default for DumpStackTraceOptions {
 }
 pub type DumpOptions = DumpStackTraceOptions;
 
-/// Low-tier hook: bun_crash_handler installs the real symbolicating dumper.
-/// Signature: `fn(trace: &StackTrace, limits: &DumpStackTraceOptions)`.
-pub static DUMP_STACK_TRACE_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// Zig: crash_handler.dumpStackTrace. Core fallback prints raw addresses via
-/// the WTF C++ helper; full symbolication arrives via DUMP_STACK_TRACE_HOOK.
+/// Zig: `crash_handler.dumpStackTrace`. Forwards to the symbolicating dumper
+/// in `bun_crash_handler` via a link-time `extern "Rust"`.
 pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
     crate::output::flush();
-    let hook = DUMP_STACK_TRACE_HOOK.load(Ordering::Acquire);
-    if !hook.is_null() {
-        // SAFETY: hook is a valid `fn(&StackTrace, &DumpStackTraceOptions)` written by
-        // bun_crash_handler init; never freed.
-        let f: fn(&StackTrace<'_>, &DumpStackTraceOptions) =
-            unsafe { core::mem::transmute(hook) };
-        return f(trace, &limits);
-    }
-    // Fallback: WTF__DumpStackTrace prints raw addresses to stderr.
-    unsafe extern "C" {
-        fn WTF__DumpStackTrace(ptr: *const usize, count: usize);
-    }
-    let n = core::cmp::min(trace.index, limits.frame_count);
-    unsafe { WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), n) };
+    // SAFETY: link-time extern; `trace`/`limits` borrowed for the call.
+    unsafe { __bun_dump_stack_trace(trace, &limits) }
 }
 
 pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackTraceOptions) {
@@ -680,13 +669,10 @@ pub static Bun__userAgent: SyncCStr =
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onExit() {
-    // `bun.jsc.Node.FSEvents.closeAndWait()` — called via hook (CYCLEBREAK pattern 3);
-    // bun_runtime registers the fn-ptr at init. No-op if null.
-    // SAFETY: hook is either null or a valid `fn()` written by runtime init.
-    let hook = FS_EVENTS_CLOSE_HOOK.load(Ordering::Relaxed);
-    if !hook.is_null() {
-        unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
-    }
+    // `bun.jsc.Node.FSEvents.closeAndWait()` — link-time `extern "Rust"`
+    // defined in `bun_runtime::node::fs_events` (CYCLEBREAK).
+    // SAFETY: link-time extern; no preconditions.
+    unsafe { __bun_fs_events_close_and_wait() };
 
     run_exit_callbacks();
     Output::flush();

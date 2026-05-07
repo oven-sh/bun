@@ -1143,15 +1143,11 @@ impl ShellRmTask {
     ) -> bun_sys::Maybe<()> {
         let dirfd = self.cwd;
         match bun_sys::unlinkat_with_flags(dirfd, path, 0) {
-            Ok(()) => {
-                // SAFETY: `parent_dir_task` is live; this thread owns it.
-                self.verbose_deleted(unsafe { &mut *parent_dir_task }, path.as_bytes())
-            }
+            Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        // SAFETY: see above.
-                        return self.verbose_deleted(unsafe { &mut *parent_dir_task }, path.as_bytes());
+                        return self.verbose_deleted(parent_dir_task, path.as_bytes());
                     }
                     Err(self.error_with_path(e, path.as_bytes()))
                 }
@@ -1185,11 +1181,7 @@ impl ShellRmTask {
                                 bun_sys::AT_REMOVEDIR,
                             ) {
                                 // it was empty, we saved a syscall
-                                Ok(()) => self.verbose_deleted(
-                                    // SAFETY: see above.
-                                    unsafe { &mut *parent_dir_task },
-                                    path.as_bytes(),
-                                ),
+                                Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
                                 Err(e2) => match e2.get_errno() {
                                     // not empty, process directory as we would normally
                                     E::ENOTEMPTY => vtable
@@ -1219,6 +1211,14 @@ impl ShellRmTask {
             *slot = Some(err);
             self.error_signal().store(true, Ordering::SeqCst);
         }
+    }
+}
+
+impl Drop for ShellRmTask {
+    fn drop(&mut self) {
+        // SAFETY: `root_task` was `Box::into_raw`'d in `create` and is never
+        // freed by `DirTask::deinit` (root has `parent_task == null`).
+        drop(unsafe { Box::from_raw(self.root_task) });
     }
 }
 
@@ -1274,15 +1274,18 @@ impl DirTask {
             }
         }
 
-        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
-        // Derived *after* the optional `cwd_path` write above so the write
-        // cannot pop this borrow's tag under Stacked Borrows.
-        let tm = unsafe { &*tm_ptr };
-
         // SAFETY: caller contract; exclusive access to `path` / `is_absolute`.
-        let is_absolute = Platform::AUTO.is_absolute(unsafe { (*this).path.as_bytes() });
-        // SAFETY: as above.
-        unsafe { (*this).is_absolute = is_absolute };
+        let is_absolute = unsafe {
+            let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
+            (*this).is_absolute = abs;
+            abs
+        };
+
+        // SAFETY: `task_manager` is live until pending_main_callbacks hits 0.
+        // `root_task` lives in a separate allocation, so this borrow does not
+        // overlap any DirTask and the field-level `&mut` taken inside
+        // `verbose_deleted` cannot pop its tag under Stacked Borrows.
+        let tm = unsafe { &*tm_ptr };
         if let Err(err) = tm.remove_entry(this, is_absolute) {
             tm.handle_err(err);
         }

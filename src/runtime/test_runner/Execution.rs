@@ -351,7 +351,14 @@ impl Execution {
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
-                        let _ = kill_count.processes; // not yet reported here (Zig discards too)
+                        if kill_count.processes > 0 {
+                            bun_core::pretty_errorln!(
+                                "<d>killed {} dangling process{}<r>",
+                                kill_count.processes,
+                                if kill_count.processes != 1 { "es" } else { "" },
+                            );
+                            bun_core::Output::flush();
+                        }
                     }
                 }
             }
@@ -607,14 +614,14 @@ impl Execution {
         }
     }
 
-    fn on_group_started(_global_this: &JSGlobalObject) {
-        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
-        // Zig: `globalThis.bunVM().auto_killer.enable()`
+    fn on_group_started(global_this: &JSGlobalObject) {
+        // SAFETY: bun_vm() returns the live per-thread VM.
+        global_this.bun_vm().as_mut().auto_killer.enable();
     }
 
-    fn on_group_completed(_global_this: &JSGlobalObject) {
-        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
-        // Zig: `globalThis.bunVM().auto_killer.disable()`
+    fn on_group_completed(global_this: &JSGlobalObject) {
+        // SAFETY: bun_vm() returns the live per-thread VM.
+        global_this.bun_vm().as_mut().auto_killer.disable();
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {

@@ -915,9 +915,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                manager.task_batch.push(ThreadPoolBatch::from(
-                    enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr),
-                ));
+                // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
+                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
+                manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             _ => unreachable!(),
         }

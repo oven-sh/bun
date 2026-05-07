@@ -288,7 +288,7 @@ impl ReadFile {
         )
     }
 
-    pub const IO_TAG: io::poll::Tag = io::poll::Tag::ReadFile;
+    pub const IO_TAG: io::Tag = io::Tag::ReadFile;
 
     pub fn on_readable(request: *mut io::Request) {
         // SAFETY: request points to ReadFile.io_request (intrusive field).
@@ -302,7 +302,7 @@ impl ReadFile {
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
-        self.task = ThreadPool::Task { callback: Self::do_read_loop_task };
+        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
@@ -319,7 +319,7 @@ impl ReadFile {
         bloblog!("ReadFile.onIOError");
         self.errno = Some(bun_core::errno_to_err(err.errno));
         self.system_error = Some(err.to_system_error());
-        self.task = ThreadPool::Task { callback: Self::do_read_loop_task };
+        self.task = WorkPoolTask { node: Default::default(), callback: Self::do_read_loop_task };
         // On macOS, we use one-shot mode, so:
         // - we don't need to unregister
         // - we don't need to delete from kqueue
@@ -646,7 +646,7 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
-            if bun_io::is_readable(fd) == bun_io::Readable::NotReady {
+            if bun_core::is_readable(fd) == bun_core::PollFlag::not_ready {
                 self.wait_for_readable();
                 return;
             }
@@ -655,7 +655,7 @@ impl ReadFile {
         self.do_read_loop();
     }
 
-    fn do_read_loop_task(task: *mut WorkPoolTask) {
+    unsafe fn do_read_loop_task(task: *mut WorkPoolTask) {
         // SAFETY: task points to ReadFile.task (intrusive field).
         let this: &mut ReadFile = unsafe {
             &mut *((task as *mut u8)
@@ -760,9 +760,9 @@ impl ReadFile {
                         // call. We already know it's done.
                         && !self.read_eof
                     {
-                        match bun_io::is_readable(self.opened_fd) {
-                            bun_io::Readable::NotReady => {}
-                            bun_io::Readable::Ready | bun_io::Readable::Hup => continue,
+                        match bun_core::is_readable(self.opened_fd) {
+                            bun_core::PollFlag::not_ready => {}
+                            bun_core::PollFlag::ready | bun_core::PollFlag::hup => continue,
                         }
                     }
                     self.read_eof = false;
@@ -796,6 +796,7 @@ impl ReadFile {
 // ReadFileUV (Windows)
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
 pub struct ReadFileUV<'a> {
     pub loop_: *mut libuv::uv_loop_t,
     pub event_loop: &'a EventLoop,
@@ -820,6 +821,7 @@ pub struct ReadFileUV<'a> {
     pub req: libuv::fs_t,
 }
 
+#[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
     // TODO(port): FileOpener/FileCloser trait impls (see ReadFile note above).
     pub fn get_fd(&mut self, then: fn(&mut Self, Fd)) {

@@ -188,16 +188,6 @@ impl WalkTaskErr {
 
 pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
-impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
-    fn run(&mut self) {
-        WalkTask::run(self)
-    }
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        WalkTask::then(self, promise)
-    }
-}
-
 impl<'a> WalkTask<'a> {
     // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
     // allocation). With the global mimalloc allocator `Box::new` is infallible
@@ -243,7 +233,7 @@ impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
         drop(guard);
     }
 
-    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
         // PORT NOTE: Zig `defer this.deinit()` freed walker + self. Ownership of
         // `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
         // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path

@@ -412,9 +412,6 @@ pub fn upload(
     )
 }
 
-// TODO(b2-blocked): NetworkSink — `streams::NetworkSink` and its `JSSink::SinkSignal`
-// are gated alongside `HTTPServerWritable` in `webcore/streams.rs`. Un-gate together.
-
 /// returns a writable stream that writes to the s3 path
 pub fn writable_stream(
     this: &mut S3Credentials,
@@ -544,12 +541,9 @@ pub fn writable_stream(
     // explicitly set it to a dead pointer
     // we use this memory address to disable signals being sent
     sink.signal.clear();
-    bun_core::assert!(sink.signal.is_dead());
+    bun_core::assert_with_location(sink.signal.is_dead(), core::panic::Location::caller());
     Ok(sink.to_js(global_this))
 }
-
-mod _upload_stream_gated {
-use super::*;
 
 pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
@@ -887,10 +881,6 @@ pub fn upload_stream(
     Ok(ctx.end_promise.value())
 }
 
-} // mod _upload_stream_gated
-
-pub use _upload_stream_gated::{S3UploadStreamWrapper, S3UploadStreamWrapperRef, upload_stream};
-
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
 pub fn download_stream(
     this: &S3Credentials,
@@ -1062,9 +1052,6 @@ pub fn download_stream(
     http.schedule(&mut batch);
     bun_http::http_thread().schedule(batch);
 }
-
-// TODO(b2-blocked): ByteStream — `ByteStream::Source` and `ByteStream::on_data`/`parent`
-// are stubbed in `webcore.rs`. Un-gate once `webcore::byte_stream` body lands.
 
 /// returns a readable stream that reads from the s3 path
 pub fn readable_stream(

@@ -6621,6 +6621,23 @@ pub mod external_shared_descriptor {
     pub use super::Blob__deref as deref;
 }
 
+// SAFETY: `Blob__ref`/`Blob__deref` operate on the intrusive `ref_count` and
+// keep the heap-allocated `Blob` alive while the count is > 0.
+unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__ref(&mut *this) }
+    }
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
+        unsafe { Blob__deref(&mut *this) }
+    }
+}
+
+/// Bindgen adapter for `Blob` (moved here from `bun_jsc::bindgen` to break the
+/// `bun_jsc` → `bun_runtime` dependency cycle — `Blob` lives in this crate).
+pub type BindgenBlob = bun_jsc::bindgen::BindgenExternalShared<Blob>;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__ref(self_: &mut Blob) {
     debug_assert!(self_.is_heap_allocated(), "cannot ref: this Blob is not heap-allocated");

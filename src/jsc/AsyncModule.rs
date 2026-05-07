@@ -270,10 +270,50 @@ unsafe extern "C" {
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_install::{self as install, PackageID, PackageManager};
+use bun_install::package_manager::run_tasks;
+use bun_install::{self as install, LogLevel, PackageID, PackageManager};
 use bun_string::{self as bun_str, strings};
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
+
+/// `RunTasksCallbacks` impl for the auto-install module queue. Mirrors the Zig
+/// anonymous `comptime callbacks: anytype` struct passed at
+/// AsyncModule.zig:108-133 — `onExtract = void`, `onResolve` /
+/// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
+/// methods, `progress_bar` selected via const generic to match the
+/// `enable_ansi_colors_stderr` branch.
+struct QueueRunTasksCallbacks<const PROGRESS: bool>;
+
+impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbacks<PROGRESS> {
+    type Ctx = Queue;
+
+    const PROGRESS_BAR: bool = PROGRESS;
+    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
+    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
+    const HAS_ON_RESOLVE: bool = true;
+
+    fn on_resolve(ctx: &mut Queue) {
+        Queue::on_resolve(ctx)
+    }
+
+    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_core::Error, url: &[u8]) {
+        ctx.on_package_manifest_error(name, err, url)
+    }
+
+    fn on_package_download_error(
+        ctx: &mut Queue,
+        id: install::package_manager_task::Id,
+        name: &[u8],
+        resolution: &Resolution,
+        err: bun_core::Error,
+        url: &[u8],
+    ) {
+        // PORT NOTE: non-store-installer call sites wrap `PackageID` as
+        // `Task::Id::from_package_id(pkg_id)` (runTasks.rs); recover the
+        // `u32` here so the body matches AsyncModule.zig:184.
+        ctx.on_package_download_error(id.get() as PackageID, name, resolution, err, url)
+    }
+}
 
 impl Queue {
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
@@ -317,12 +357,19 @@ impl Queue {
                 let import_record_id = pending.import_record_id;
                 // SAFETY: vm_ptr derived via @fieldParentPtr; valid for the lifetime of self.
                 let vm = unsafe { &mut *vm_ptr };
+                // PORT NOTE: reshaped for borrowck — `lockfile.str()` ties the
+                // returned slice to `&vm`, which conflicts with passing
+                // `&mut vm` to `resolve_error`. The lockfile string buffer is
+                // stable across `resolve_error` (no realloc on the error
+                // path); detach the borrow via raw ptr.
+                let name: *const [u8] = vm.package_manager().lockfile.str(&dependency.name);
                 module
                     .resolve_error(
                         vm,
                         import_record_id,
                         PackageResolveError {
-                            name: vm.package_manager().lockfile.str(&dependency.name),
+                            // SAFETY: see PORT NOTE above.
+                            name: unsafe { &*name },
                             err,
                             url: b"",
                             version: dependency.version.clone(),
@@ -350,41 +397,29 @@ impl Queue {
     }
 
     pub fn run_tasks(&mut self) {
-        let pm = self.vm().package_manager();
+        // PORT NOTE: reshaped for borrowck — Zig held `pm` across the call
+        // while passing `this` (which can recover `pm` via
+        // `@fieldParentPtr`). The Rust `run_tasks` free fn takes both
+        // `&mut PackageManager` and `&mut Queue`; recover the disjoint
+        // package-manager borrow via raw ptr so neither aliases the other.
+        let vm: *mut VirtualMachine = self.vm();
+        // SAFETY: `vm` derived via `@fieldParentPtr`; `package_manager()`
+        // returns a borrow disjoint from `vm.modules` (= `self`).
+        let pm = unsafe { (*vm).package_manager() };
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            pm.run_tasks(
-                self,
-                PackageManager::RunTasksCallbacks {
-                    on_extract: (),
-                    on_resolve: Self::on_resolve,
-                    on_package_manifest_error: Self::on_package_manifest_error,
-                    on_package_download_error: Self::on_package_download_error,
-                    progress_bar: true,
-                },
-                true,
-                PackageManager::Options::LogLevel::Default,
-            )
-            .expect("unreachable");
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
+                .expect("unreachable");
         } else {
-            pm.run_tasks(
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
+                pm,
                 self,
-                PackageManager::RunTasksCallbacks {
-                    on_extract: (),
-                    on_resolve: Self::on_resolve,
-                    on_package_manifest_error: Self::on_package_manifest_error,
-                    on_package_download_error: Self::on_package_download_error,
-                    progress_bar: false,
-                },
                 true,
-                PackageManager::Options::LogLevel::DefaultNoProgress,
+                LogLevel::DefaultNoProgress,
             )
             .expect("unreachable");
         }
-        // TODO(port): Zig passes `*Queue` as a comptime type param to
-        // pm.runTasks for callback dispatch. Phase B: confirm Rust
-        // PackageManager::run_tasks signature.
     }
 
     pub fn on_package_manifest_error(&mut self, name: &[u8], err: bun_core::Error, url: &[u8]) {
@@ -542,14 +577,17 @@ impl Queue {
                         continue;
                     }
 
-                    let package = pm.lockfile.packages.get(package_id);
+                    let package = pm.lockfile.packages.get(package_id as usize);
                     debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
+                    // PORT NOTE: Zig passed `pm.lockfile` as a separate arg;
+                    // the Rust port collapsed it onto `&mut self.lockfile`
+                    // (PackageManagerLifecycle.rs) to avoid the
+                    // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
                     match pm.determine_preinstall_state(
                         &package,
-                        &pm.lockfile,
                         &mut name_and_version_hash,
                         &mut patchfile_hash,
                     ) {

@@ -1699,8 +1699,8 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-/// `jsc.zig:202` — `GeneratedClassesList = @import("./generated_classes_list.zig").Classes`.
-pub use self::generated_classes_list::Classes as GeneratedClassesList;
+// `jsc.zig:202` — `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
+// (layering: every aliased type is defined above `bun_jsc`).
 
 
 /// Extension trait providing JSC-aware methods on `bun_string::String`.

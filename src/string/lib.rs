@@ -876,6 +876,9 @@ impl ZigString {
     pub const EMPTY: Self = Self { ptr: b"".as_ptr(), len: 0 };
 
     #[inline]
+    pub const fn is_empty(&self) -> bool { self.len == 0 }
+
+    #[inline]
     pub const fn init(s: &[u8]) -> Self {
         Self { ptr: s.as_ptr(), len: s.len() }
     }
@@ -1005,6 +1008,18 @@ impl ZigString {
         };
         list.push(0);
         bun_core::ZBox::from_vec_with_nul(list)
+    }
+
+    /// `ZigString.charAt` — first/nth code unit, widened to `u16` regardless
+    /// of encoding (ZigString.zig:615). Caller must ensure `i < self.len`.
+    #[inline]
+    pub fn char_at(self, i: usize) -> u16 {
+        debug_assert!(i < self.len);
+        if self.is_16bit() {
+            self.utf16_slice()[i]
+        } else {
+            self.slice()[i] as u16
+        }
     }
 
     /// `ZigString.eqlComptime` — encoding-aware equality against a `'static`

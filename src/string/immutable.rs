@@ -3370,6 +3370,14 @@ pub enum ToUTF16Error {
 impl From<AllocError> for ToUTF16Error {
     fn from(_: AllocError) -> Self { ToUTF16Error::OutOfMemory }
 }
+impl From<ToUTF16Error> for bun_core::Error {
+    fn from(e: ToUTF16Error) -> Self {
+        match e {
+            ToUTF16Error::InvalidByteSequence => bun_core::err!("InvalidByteSequence"),
+            ToUTF16Error::OutOfMemory => bun_core::err!("OutOfMemory"),
+        }
+    }
+}
 
 /// `strings.toUTF16Alloc` — convert UTF-8 → UTF-16LE **iff** `bytes` contains
 /// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the

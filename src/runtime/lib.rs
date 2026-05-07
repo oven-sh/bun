@@ -42,6 +42,12 @@ pub mod timer;
 pub mod dispatch;
 pub mod jsc_hooks;
 pub mod hw_exports;
+// `generated_classes_list.zig` lives under `src/jsc/` but every type it
+// aliases is defined in this crate (api/webcore/test_runner/bake) or a
+// same-tier dep, so it is `#[path]`-mounted here to avoid a bun_jsc cycle.
+#[path = "../jsc/generated_classes_list.rs"]
+pub mod generated_classes_list;
+pub use generated_classes_list::Classes as GeneratedClassesList;
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
 pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs

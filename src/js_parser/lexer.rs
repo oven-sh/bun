@@ -4100,8 +4100,8 @@ fn float64(num: i32) -> f64 {
 }
 
 pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
-    // TODO(port): Zig is generic over `Buffer` (could be []const u8 or []const u16);
-    // this port handles the byte case. Phase B may add a u16 overload if needed.
+    // Zig `isLatin1Identifier(comptime Buffer, name)` is generic over `[]const u8`
+    // and `[]const u16`; the u16 instantiation is [`is_latin1_identifier_u16`].
     let name = name.as_ref();
     if name.is_empty() {
         return false;
@@ -4118,6 +4118,36 @@ pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
                 b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
                 _ => return false,
             }
+        }
+    }
+
+    true
+}
+
+/// `JSLexer.isLatin1Identifier(comptime []const u16, name)` — UTF-16 overload
+/// of [`is_latin1_identifier`]. Walks code units exactly as the Zig generic
+/// does (no narrowing/alloc): any unit `> 0xFF` fails the predicate, otherwise
+/// the byte rules apply.
+pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    match name[0] {
+        c @ 0..=0xFF => match c as u8 {
+            b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+            _ => return false,
+        },
+        _ => return false,
+    }
+
+    for &c in &name[1..] {
+        match c {
+            c @ 0..=0xFF => match c as u8 {
+                b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'$' | b'_' => {}
+                _ => return false,
+            },
+            _ => return false,
         }
     }
 

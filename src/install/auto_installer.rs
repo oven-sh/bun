@@ -180,16 +180,24 @@ impl hooks::AutoInstaller for PackageManager {
         package.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
 
         let dep_start = dependencies_list.len();
-        let total_len = dep_start + total_dependencies_count as usize;
         debug_assert!(dependencies_list.len() == resolutions_list.len());
 
-        // SAFETY: capacity reserved above; slots are filled by the loop below.
-        unsafe { dependencies_list.set_len(total_len) };
-        let mut dependencies: &mut [dependency::Dependency] =
-            &mut dependencies_list[dep_start..total_len];
-        for d in dependencies.iter_mut() {
-            *d = dependency::Dependency::default();
+        // Zig writes through `items.ptr[len..total_len]` and only bumps
+        // `.items.len` after the last fallible point (Package.zig:265-296).
+        // Mirror that with `spare_capacity_mut()` so an error from `clone_in`
+        // leaves both buffer lengths untouched and the lockfile consistent.
+        let spare = dependencies_list.spare_capacity_mut();
+        for slot in &mut spare[..total_dependencies_count as usize] {
+            slot.write(dependency::Dependency::default());
         }
+        // SAFETY: the first `total_dependencies_count` spare slots were just
+        // initialized with `Dependency::default()` above.
+        let mut dependencies: &mut [dependency::Dependency] = unsafe {
+            core::slice::from_raw_parts_mut(
+                spare.as_mut_ptr().cast::<dependency::Dependency>(),
+                total_dependencies_count as usize,
+            )
+        };
 
         for (_, dep) in package_json.dependency_iter() {
             if !dep.behavior.is_enabled(features) {
@@ -198,12 +206,22 @@ impl hooks::AutoInstaller for PackageManager {
             // SAFETY: `pm` is the unique owner; `string_builder` borrows
             // disjoint lockfile fields.
             let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            dependencies[0] = dep.clone_in(pm_ref, source_buf, &mut string_builder)?;
+            match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
+                Ok(cloned) => dependencies[0] = cloned,
+                Err(e) => {
+                    // Zig: `defer string_builder.clamp()` — must run on the
+                    // error path too. Buffer lengths were never bumped, so
+                    // returning here leaves the lockfile consistent.
+                    string_builder.clamp();
+                    return Err(e);
+                }
+            }
             dependencies = &mut dependencies[1..];
             if dependencies.is_empty() {
                 break;
             }
         }
+        let remaining = dependencies.len() as u32;
 
         package.meta.arch = package_json.arch();
         package.meta.os = package_json.os();
@@ -214,7 +232,7 @@ impl hooks::AutoInstaller for PackageManager {
 
         package.dependencies = crate::lockfile::DependencySlice::new(
             dep_start as u32,
-            total_dependencies_count - dependencies.len() as u32,
+            total_dependencies_count - remaining,
         );
         package.resolutions = crate::lockfile::PackageIDSlice::new(
             package.dependencies.off,
@@ -222,11 +240,11 @@ impl hooks::AutoInstaller for PackageManager {
         );
 
         let new_length = package.dependencies.len as usize + dep_start;
-        // SAFETY: capacity reserved above; slots filled by `fill()` below.
-        unsafe { resolutions_list.set_len(new_length) };
-        resolutions_list[dep_start..new_length].fill(crate::INVALID_PACKAGE_ID);
-        // SAFETY: shrink dependencies_list to actual filled length.
+        // SAFETY: capacity reserved above; `[dep_start..new_length)` was
+        // initialized by the clone loop. Commit only now that all fallible
+        // `clone_in` calls have succeeded.
         unsafe { dependencies_list.set_len(new_length) };
+        resolutions_list.resize(new_length, crate::INVALID_PACKAGE_ID);
 
         string_builder.clamp();
 

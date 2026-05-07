@@ -367,6 +367,27 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
+/// `bun.default_allocator.realloc(slice, new_size)` — resize a mimalloc-owned
+/// byte allocation in place when possible, returning the (possibly moved) slice.
+///
+/// # Safety
+/// `slice` must be backed by a live allocation from the default (mimalloc)
+/// allocator with byte alignment ≤ `MI_MAX_ALIGN_SIZE`. After return, the old
+/// `slice` reference is invalidated; only the returned slice is valid.
+pub unsafe fn realloc_slice(
+    slice: &mut [u8],
+    new_size: usize,
+) -> core::result::Result<&mut [u8], AllocError> {
+    // SAFETY: caller guarantees `slice.as_mut_ptr()` is a mimalloc-owned block.
+    let new_ptr = unsafe { mimalloc::mi_realloc(slice.as_mut_ptr().cast(), new_size) };
+    if new_ptr.is_null() {
+        return Err(AllocError);
+    }
+    // SAFETY: `mi_realloc` returns at least `new_size` bytes, aligned per
+    // `MI_MAX_ALIGN_SIZE`, with the prefix preserved up to `min(old, new)`.
+    Ok(unsafe { core::slice::from_raw_parts_mut(new_ptr.cast::<u8>(), new_size) })
+}
+
 /// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
 #[inline]
 pub fn usable_size(ptr: *const u8) -> usize {

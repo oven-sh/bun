@@ -12,12 +12,11 @@
 //! and stubs the reflection-driven generators with `// TODO(port): proc-macro`.
 
 use core::ffi::c_void;
-use core::panic::Location;
 
 use bun_core::Environment;
 use bun_core::Output;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_str::ZigString;
+use jsc::ZigString;
 
 // ───────────────────────────── type aliases ──────────────────────────────
 

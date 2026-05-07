@@ -162,7 +162,9 @@ pub mod time {
 
     // `std.time.{nanoTimestamp,milliTimestamp,timestamp}` — full impls live in
     // `util::time`; re-export here so `bun_core::time::*` resolves uniformly.
-    pub use crate::util::time::{nano_timestamp, milli_timestamp, timestamp, MS_PER_DAY, S_PER_DAY};
+    pub use crate::util::time::{
+        nano_timestamp, milli_timestamp, timestamp, MS_PER_DAY, NS_PER_US, S_PER_DAY, US_PER_MS,
+    };
 
     #[derive(Clone, Copy)]
     pub struct Timer { started: std::time::Instant }

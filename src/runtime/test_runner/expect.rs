@@ -2364,13 +2364,7 @@ impl ExpectCustomAsymmetricMatcher {
 
     fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> Result<bool, bun_core::Error> {
         if dont_throw {
-            // `JSGlobalObject::clear_exception` lives in the gated JSGlobalObject.rs;
-            // bind the FFI symbol locally (matches BlockList.rs shim).
-            unsafe extern "C" {
-                fn JSGlobalObject__clearException(global: *const JSGlobalObject);
-            }
-            // SAFETY: FFI — `global_this` is a valid JSGlobalObject*; C++ side has no extra preconditions.
-            unsafe { JSGlobalObject__clearException(global_this) };
+            global_this.clear_exception();
             return Ok(false);
         }
         // TODO(port): narrow error set (JsError → bun_core::Error mapping)

@@ -190,10 +190,9 @@ pub enum BuiltinInput {
 pub struct BuiltinBlob {
     pub blob: crate::webcore::Blob,
 }
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting (Zig
-// used `bun.ptr.RefCount`).
-unsafe impl Send for BuiltinBlob {}
-unsafe impl Sync for BuiltinBlob {}
+// `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,
+// which already asserts `Send + Sync`. No `unsafe impl` needed.
+const _: fn() = || { fn assert<T: Send + Sync>() {} assert::<BuiltinBlob>(); };
 
 impl BuiltinIO {
     /// From the Cmd's IO::OutKind. Spec: Builtin.zig `init` stdin/stdout/stderr

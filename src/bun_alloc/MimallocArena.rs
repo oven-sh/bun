@@ -35,6 +35,12 @@ pub struct MimallocArena {
 // `MimallocArena` being passed to thread-pool workers); concurrent `&self`
 // allocation across threads is the caller's responsibility, same as Zig.
 unsafe impl Send for MimallocArena {}
+// AUDIT(unsound): `Sync` is over-broad — `mi_heap_*` allocation is NOT safe
+// under concurrent `&self`. Kept because the bundler embeds `&MimallocArena`
+// in `Send + Sync` contexts but only ever allocates from the owning thread.
+// Proposed fix: add a debug `ThreadLock` to `alloc`/`realloc` (mirroring Zig)
+// so cross-thread allocation panics in debug, or split a `Sync`-only
+// `MimallocArenaFreeHandle` for the cross-thread `mi_free` path.
 unsafe impl Sync for MimallocArena {}
 
 impl Default for MimallocArena {

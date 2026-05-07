@@ -174,9 +174,9 @@ pub struct TemporaryDirectory {
     pub name: &'static [u8],
 }
 
-// SAFETY: `Dir` is an `Fd` newtype (POD); `ZBox`/`&'static [u8]` are Send+Sync.
-unsafe impl Send for TemporaryDirectory {}
-unsafe impl Sync for TemporaryDirectory {}
+// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
+// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
+const _: fn() = || { fn assert<T: Send + Sync>() {} assert::<TemporaryDirectory>(); };
 
 // We need a temporary directory that can be rename()
 // This is important for extracting files.

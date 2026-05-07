@@ -138,10 +138,8 @@ pub struct CssRuleList<R> {
     pub v: Vec<CssRule<R>>,
 }
 
-// SAFETY: see `CssRule` Send/Sync note above — `CssRuleList` is just a `Vec`
-// of `CssRule<R>`, so its auto-traits follow `CssRule<R>`'s.
-unsafe impl<R: Send> Send for CssRuleList<R> {}
-unsafe impl<R: Sync> Sync for CssRuleList<R> {}
+// `CssRuleList<R>` is auto-`Send`/`Sync` via `Vec<CssRule<R>>` and the
+// `CssRule<R>` impls above — no `unsafe impl` needed.
 
 impl<R> Default for CssRuleList<R> {
     fn default() -> Self {

@@ -1007,8 +1007,12 @@ impl bun_core::OptionsEnvArg for String {
 impl Default for String {
     #[inline] fn default() -> Self { Self::EMPTY }
 }
-// `String` is just a tag + raw ptr; thread-safety of the underlying WTF impl
-// is gated by `to_thread_safe()` at the call site (matches Zig).
+// SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or static/dead).
+// Thread-safety of the underlying WTF impl is gated by `to_thread_safe()` at
+// the call site (matches Zig `bun.String` and the C++ `BunString` ABI).
+// AUDIT: technically over-broad — a non-thread-safe `StringImpl` sent across
+// threads would race its non-atomic refcount. Kept to match the Zig/JSC FFI
+// contract; tightening would require a `ThreadSafeString` newtype split.
 unsafe impl Send for String {}
 unsafe impl Sync for String {}
 

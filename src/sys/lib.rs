@@ -3753,6 +3753,9 @@ pub mod darwin {}
 pub struct DynLib {
     handle: *mut c_void,
 }
+// SAFETY: `handle` is an opaque OS handle from `dlopen`/`LoadLibrary`. The
+// underlying loader is process-global and internally synchronized; `dlsym`/
+// `GetProcAddress` may be called from any thread. Matches `std::DynLib`.
 unsafe impl Send for DynLib {}
 unsafe impl Sync for DynLib {}
 impl DynLib {

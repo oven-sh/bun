@@ -82,8 +82,8 @@ struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
 // only guards `LazySourceMap::load`; `File::to_wtf_string` and `cached_blob`
 // mutate without any lock and rely on idempotence + JSC's own synchronization.
+// (`Send` is auto-derived: `UnsafeCell<T: Send>` is `Send`.)
 unsafe impl Sync for Instance {}
-unsafe impl Send for Instance {}
 
 static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 

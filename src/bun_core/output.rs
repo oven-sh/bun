@@ -72,9 +72,9 @@ pub struct OutputSinkVTable {
     pub read: unsafe fn(fd: Fd, buf: &mut [u8]) -> Result<usize, crate::Error>,
 }
 
-// SAFETY: vtable is a bag of `fn` pointers (all `Sync`); the struct holds no
-// interior mutability. Required so the link-time `extern static` below is legal.
-unsafe impl Sync for OutputSinkVTable {}
+// `OutputSinkVTable` is auto-`Sync`: every field is an `unsafe fn(...)`
+// pointer, and fn pointers are `Send + Sync`. No `unsafe impl` needed.
+const _: fn() = || { fn assert_sync<T: Sync>() {} assert_sync::<OutputSinkVTable>(); };
 
 unsafe extern "Rust" {
     /// Link-time output sink. Defined `#[no_mangle]` in `bun_sys`

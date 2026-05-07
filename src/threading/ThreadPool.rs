@@ -1408,9 +1408,9 @@ pub mod node {
         array: [AtomicPtr<Node>; CAPACITY],
     }
 
-    // SAFETY: Buffer is a lock-free SPMC ring; all cross-thread access is via atomics.
-    unsafe impl core::marker::Sync for Buffer {}
-    unsafe impl Send for Buffer {}
+    // `Buffer` is auto-`Send + Sync`: every field is an atomic
+    // (`AtomicU32`/`AtomicPtr<Node>`). No `unsafe impl` needed.
+    const _: fn() = || { fn assert<T: Send + core::marker::Sync>() {} assert::<Buffer>(); };
 
     impl Default for Buffer {
         fn default() -> Self {

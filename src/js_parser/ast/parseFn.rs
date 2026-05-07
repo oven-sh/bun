@@ -1,4 +1,5 @@
 use bun_logger as logger;
+use bun_alloc::ArenaVecExt as _;
 
 use crate::ast as js_ast;
 use crate::ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
@@ -220,7 +221,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
         // PERF(port): Zig used ArrayListUnmanaged backed by p.allocator (arena).
-        let mut args = bumpalo::collections::Vec::<G::Arg>::new_in(p.allocator);
+        let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.allocator);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {

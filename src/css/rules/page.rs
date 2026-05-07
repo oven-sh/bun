@@ -4,7 +4,7 @@ use crate::{DeclarationBlock, PrintErr, Printer};
 
 // PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` fed by
 // `input.allocator()`. Phase B threads `'bump` and switches to
-// `bumpalo::collections::Vec<'bump, T>` crate-wide; until then `Vec<T>`.
+// `bun_alloc::ArenaVec<'bump, T>` crate-wide; until then `Vec<T>`.
 type ArrayList<T> = Vec<T>;
 
 /// A [page selector](https://www.w3.org/TR/css-page-3/#typedef-page-selector)

@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_imports)]
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 
 use crate::Result;

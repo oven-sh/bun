@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code)]
+use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena as Bump;
 use bun_string::strings;
 

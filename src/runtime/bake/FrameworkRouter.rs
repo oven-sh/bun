@@ -2,6 +2,7 @@
 //! configuration. Agnostic to all different paradigms. Supports incrementally
 //! updating for DevServer, or serializing to a binary for use in production.
 
+use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 use core::mem::size_of;
 

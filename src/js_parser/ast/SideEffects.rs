@@ -4,7 +4,7 @@ use crate::ast::p::P;
 use crate::ast::e::CallUnwrap;
 use crate::ast::symbol;
 use crate::parser::JsxT;
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
 // PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
 // take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete

@@ -18,7 +18,7 @@ use bun_str::lexer as identifier;
 use bun_logger::js_ast::{E, Expr, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_str::strings;
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 pub struct JSON5Parser<'a> {
     source: &'a [u8],

@@ -1,4 +1,5 @@
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
+use bun_alloc::ArenaVecExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
 use crate::ungate_support::js_meta::JSMetaListExt as _;
@@ -149,7 +150,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // PERF(port): was temp_allocator.dupe — `G::Arg` is not Copy in Rust
             let dup_args: &mut [G::Arg] = {
-                let mut v = bumpalo::collections::Vec::with_capacity_in(
+                let mut v = bun_alloc::ArenaVec::with_capacity_in(
                     clousure_args.const_slice().len(),
                     temp_allocator,
                 );
@@ -518,8 +519,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         match flags.wrap {
             WrapKind::Cjs => {
                 // Only include the arguments that are actually used
-                let mut args: bumpalo::collections::Vec<'_, G::Arg> =
-                    bumpalo::collections::Vec::with_capacity_in(
+                let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
+                    bun_alloc::ArenaVec::with_capacity_in(
                         if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                             2
                         } else {

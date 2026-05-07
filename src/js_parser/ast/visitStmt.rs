@@ -16,7 +16,7 @@ use crate::ast::ts;
 use crate::lexer as js_lexer;
 use crate::flags;
 use bun_string::strings;
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.allocator`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -66,10 +66,10 @@ fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
 // reclaims both at end-of-parse.
 // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
 #[inline]
-fn stmts_to_list<'a>(allocator: &'a bumpalo::Bump, ptr: *mut [Stmt]) -> StmtList<'a> {
+fn stmts_to_list<'a>(allocator: &'a bun_alloc::Arena, ptr: *mut [Stmt]) -> StmtList<'a> {
     // SAFETY: arena-owned slice valid for 'a; Stmt is Copy.
     let slice: &[Stmt] = unsafe { &*ptr };
-    BumpVec::from_iter_in(slice.iter().copied(), allocator)
+    bun_alloc::vec_from_iter_in(slice.iter().copied(), allocator)
 }
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
@@ -1387,7 +1387,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // SAFETY: arena-owned slice valid for 'a.
                         let repl: &[Stmt] = unsafe { &*p.commonjs_replacement_stmts };
                         if stmts.is_empty() {
-                            *stmts = BumpVec::from_iter_in(repl.iter().copied(), p.allocator);
+                            *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.allocator);
                         } else {
                             stmts.extend_from_slice(repl);
                         }

@@ -8,9 +8,9 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
-use bun_alloc::Arena;
+use bun_alloc::{Arena, ArenaVecExt as _};
 use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};
 use bun_core::{Environment, Output};
 use bun_logger as logger;
@@ -49,7 +49,7 @@ use crate::repl_transforms;
 
 // Type aliases matching the Zig `const List = std.ArrayListUnmanaged;` etc.
 // In this AST crate, lists are arena-backed.
-type BumpVec<'a, T> = bumpalo::collections::Vec<'a, T>;
+type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
@@ -1160,7 +1160,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // sanitized-identifier formatter into the bump arena.
                     let name: &'a [u8] = {
                         use core::fmt::Write as _;
-                        let mut buf = bumpalo::collections::String::new_in(self.allocator);
+                        let mut buf = bun_alloc::ArenaString::new_in(self.allocator);
                         write!(
                             &mut buf,
                             "{}",
@@ -1926,7 +1926,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .path
                 .name
                 .non_unique_name_string_base();
-            let mut buf = bumpalo::collections::String::new_in(allocator);
+            let mut buf = bun_alloc::ArenaString::new_in(allocator);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
             buf.into_bump_str().as_bytes()
         };
@@ -2860,7 +2860,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // runtime require to the user symbol via the IS_GENERATED merge path.
         // Runtime equivalent of `generated_symbol_name!("__require")`:
         let hash = bun_wyhash::hash(b"__require");
-        let hashed: &'a [u8] = bumpalo::format!(
+        let hashed: &'a [u8] = bun_alloc::arena_format!(
             in self.allocator,
             "{}_{}",
             bstr::BStr::new(b"__require".as_slice()),
@@ -3537,7 +3537,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // TODO: not sure how to handle macro remappings for namespace imports
         } else {
             let path_name = fs::PathName::init(path.text);
-            let name: &'a [u8] = bumpalo::format!(
+            let name: &'a [u8] = bun_alloc::arena_format!(
                 in self.allocator,
                 "import_{}",
                 bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
@@ -4048,14 +4048,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
-            StrictModeFeature::EvalOrArguments => bumpalo::format!(
+            StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.allocator,
                 "Declarations with the name \"{}\"",
                 bstr::BStr::new(detail)
             )
             .into_bump_str()
             .as_bytes(),
-            StrictModeFeature::ReservedWord => bumpalo::format!(
+            StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
                 in self.allocator,
                 "\"{}\" is a reserved word and",
                 bstr::BStr::new(detail)
@@ -4083,7 +4083,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 _ => {}
             }
             if why.is_empty() {
-                why = bumpalo::format!(
+                why = bun_alloc::arena_format!(
                     in self.allocator,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
                     bstr::BStr::new(self.source.text_for_range(where_))
@@ -4198,7 +4198,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Runtime equivalent of `generated_symbol_name!` (Zig comptime concat).
         // Same bytes as the macro produces; arena-owned for symbol lifetime.
         let hash = bun_wyhash::hash(name);
-        let hashed: &'a [u8] = bumpalo::format!(in self.allocator, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+        let hashed: &'a [u8] = bun_alloc::arena_format!(in self.allocator, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
         self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, hashed)
     }
 
@@ -4511,7 +4511,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // PORT NOTE: Zig used a fixed `std.Io.Writer` over a 32 KiB stack buffer.
         // Rust's `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
         // bump-backed `String` instead — same single contiguous text output.
-        let mut panic_stream = bumpalo::collections::String::with_capacity_in(32 * 1024, self.allocator);
+        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.allocator);
 
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
@@ -4619,7 +4619,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let allocator = self.allocator;
         let mut opts = PrependTempRefsOpts::default();
-        let mut part_stmts = BumpVec::from_iter_in(stmts.iter().copied(), allocator);
+        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), allocator);
         // PORT NOTE: Zig used ListManaged.fromOwnedSlice; we copy into a bump vec.
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
@@ -6767,7 +6767,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             default_name.unwrap()
         } else {
             self.temp_ref_count += 1;
-            bumpalo::format!(in self.allocator, "__bun_temp_ref_{:x}$", self.temp_ref_count)
+            bun_alloc::arena_format!(in self.allocator, "__bun_temp_ref_{:x}$", self.temp_ref_count)
                 .into_bump_str()
                 .as_bytes()
         };
@@ -7548,7 +7548,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice())) {
                 use core::fmt::Write as _;
-                let mut buf = bumpalo::collections::String::new_in(allocator);
+                let mut buf = bun_alloc::ArenaString::new_in(allocator);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
                 break 'brk self
                     .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes())

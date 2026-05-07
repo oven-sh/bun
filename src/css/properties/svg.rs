@@ -50,7 +50,7 @@ enum StrokeDasharray {
     None,
     /// Specifies a dashing pattern to use.
     // PERF(port): css is an arena crate; Zig used ArrayListUnmanaged. Revisit
-    // bumpalo::collections::Vec<'bump, LengthPercentage> in Phase B.
+    // bun_alloc::ArenaVec<'bump, LengthPercentage> in Phase B.
     Values(Vec<LengthPercentage>),
 }
 

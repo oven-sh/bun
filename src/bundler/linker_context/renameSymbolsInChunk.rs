@@ -17,7 +17,7 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 // TODO(port): narrow error set
 // TODO(port): bundler is an AST crate (PORTING.md §Allocators) — verify whether caller passes
 // an arena vs default_allocator for the dropped `allocator: std.mem.Allocator` param; if arena,
-// thread `bump: &'bump Bump` and switch working Vecs to bumpalo::collections::Vec<'bump, T>.
+// thread `bump: &'bump Bump` and switch working Vecs to bun_alloc::ArenaVec<'bump, T>.
 pub fn rename_symbols_in_chunk(
     c: &mut LinkerContext,
     chunk: &mut Chunk,

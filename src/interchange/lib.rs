@@ -1,3 +1,4 @@
+#![feature(allocator_api)]
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 UN-GATE
 //   Phase-A draft bodies are progressively un-gated and made to compile.

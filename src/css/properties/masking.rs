@@ -132,7 +132,7 @@ pub struct Polygon {
     pub fill_rule: FillRule,
     /// The points of each vertex of the polygon.
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
-    // `bumpalo::collections::Vec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
+    // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
     // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
     // plain Vec<Point> until Phase B verifies the allocator.
     pub points: Vec<Point>,

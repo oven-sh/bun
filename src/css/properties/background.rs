@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code, unused_macros)]
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::{Parser, Printer, PrintErr, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext};
 use crate::properties::{Property, PropertyId, PropertyIdTag};
@@ -625,7 +626,7 @@ pub struct BackgroundHandler {
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
     // TODO(port): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.allocator`
-    // (CSS arena). Should be `bumpalo::collections::Vec<'bump, Property>`; thread `'bump` on
+    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; thread `'bump` on
     // BackgroundHandler in Phase B.
     pub decls: Vec<Property>,
     pub flushed_properties: BackgroundProperty,

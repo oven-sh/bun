@@ -4,6 +4,7 @@
 //! role as a framework, Bake is tool for frameworks to build on top of.
 #![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
 
+use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // = bumpalo::Bump

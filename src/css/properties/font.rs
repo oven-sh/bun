@@ -20,6 +20,7 @@
 
 #![allow(unused_imports, dead_code)]
 
+use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;
 use crate::compat::Feature;
 use crate::error::ParserError;
@@ -381,10 +382,10 @@ impl FontFamily {
             unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
         let value: *const [u8] = input.expect_ident()? as *const [u8];
         // AST crate: ArrayListUnmanaged fed input.allocator() (arena) → bumpalo Vec
-        let mut string: Option<bumpalo::collections::Vec<'_, u8>> = None;
+        let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| s as *const [u8])) {
             if string.is_none() {
-                let mut s = bumpalo::collections::Vec::<u8>::new_in(bump);
+                let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
                 // SAFETY: arena-owned slice valid for 'bump.
                 s.extend_from_slice(unsafe { &*value });
                 string = Some(s);
@@ -424,7 +425,7 @@ impl FontFamily {
                     .is_ok()
                 {
                     // AST crate: std.Io.Writer.Allocating on dest.allocator (arena) → bumpalo Vec
-                    let mut id = bumpalo::collections::Vec::<u8>::new_in(dest.allocator);
+                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.allocator);
                     let mut first = true;
                     for slice in val.split(|b| *b == b' ') {
                         if first {

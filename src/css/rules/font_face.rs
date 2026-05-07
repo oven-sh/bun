@@ -6,7 +6,7 @@ use crate::css_values::url::Url;
 use crate::{PrintErr, Printer};
 
 // PERF(port): Zig used `std.ArrayListUnmanaged` fed by the CSS arena allocator.
-// Phase B should swap to `bumpalo::collections::Vec<'bump, T>` and thread `'bump`.
+// Phase B should swap to `bun_alloc::ArenaVec<'bump, T>` and thread `'bump`.
 type ArrayList<T> = Vec<T>;
 
 // ──────────────────────────────────────────────────────────────────────────

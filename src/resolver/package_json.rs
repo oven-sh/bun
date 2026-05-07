@@ -17,7 +17,7 @@ use bun_sys::Fd;
 
 use crate::fs;
 use crate as resolver;
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 use bun_wyhash::Wyhash;
 
 // ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────

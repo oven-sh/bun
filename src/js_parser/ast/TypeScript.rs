@@ -66,7 +66,7 @@ pub enum Metadata {
     MIdentifier(Ref),
     // TODO(port): Zig used `std.ArrayListUnmanaged(Ref)`. This is an AST crate;
     // if this list is arena-backed in practice, switch to
-    // `bumpalo::collections::Vec<'bump, Ref>` in Phase B.
+    // `bun_alloc::ArenaVec<'bump, Ref>` in Phase B.
     MDot(Vec<Ref>),
 }
 

@@ -1,6 +1,7 @@
+use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;
 pub use css::Error;
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 use css::{CssResult as Result, PrintErr, Printer};
 
 // PORT NOTE: every leaf property module is currently a `handler_stub!` ZST in
@@ -23,7 +24,7 @@ use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
 // const GridHandler = css.css_properties.g
 
-pub type DeclarationList<'bump> = bumpalo::collections::Vec<'bump, css::Property>;
+pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
 /// A CSS declaration block.
 ///
@@ -40,7 +41,7 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
-// SAFETY: `bumpalo::collections::Vec<'bump, T>` is `!Send`/`!Sync` because it
+// SAFETY: `bun_alloc::ArenaVec<'bump, T>` is `!Send`/`!Sync` because it
 // holds a raw `NonNull<T>` and `&'bump Bump` (Bump is `!Sync`). After parsing,
 // the CSS AST is treated as an immutable, owned tree shared read-only across
 // the bundler thread pool (Zig passes the same arena-backed AST between
@@ -311,11 +312,11 @@ impl<'bump> DeclarationBlock<'bump> {
         // for a struct it deep-clones each field. `Property::deep_clone` is
         // the inherent per-variant impl in properties_generated.rs.
         Self {
-            important_declarations: bun_alloc::ArenaVec::from_iter_in(
+            important_declarations: bun_alloc::vec_from_iter_in(
                 self.important_declarations.iter().map(|p| p.deep_clone(bump)),
                 bump,
             ),
-            declarations: bun_alloc::ArenaVec::from_iter_in(
+            declarations: bun_alloc::vec_from_iter_in(
                 self.declarations.iter().map(|p| p.deep_clone(bump)),
                 bump,
             ),

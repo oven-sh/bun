@@ -5,7 +5,7 @@ use crate::css_values::ident::DashedIdent;
 use crate::{PrintErr, Printer};
 
 // PERF(port): Zig used arena-backed `std.ArrayListUnmanaged` via `input.allocator()`.
-// Phase B: thread `bump: &'bump Bump` and switch to `bumpalo::collections::Vec<'bump, T>`
+// Phase B: thread `bump: &'bump Bump` and switch to `bun_alloc::ArenaVec<'bump, T>`
 // across the css crate in one pass (cascades lifetimes through every rule type).
 // Same pass must also restore the dropped `std.mem.Allocator` param on `deep_clone(&self)`
 // and `ParserOptions::default()` as `bump: &'bump Bump` — css is an AST crate, so the

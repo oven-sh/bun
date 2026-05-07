@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use std::io::Write as _;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
 // TYPE_ONLY: bun_bundler::options::Format → bun_options_types::Format
 use bun_options_types::Format;

@@ -167,5 +167,5 @@ pub use crate::ast::g::Class;
 //   source:     src/js_parser/ast/CharFreq.zig (137 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      compile() threads &'bump Bump to NameMinifier::init (arena-backed per caller in bundler/linker_context); NameMinifier assumed <'bump> with head/tail as bumpalo::collections::Vec<'bump, u8> and DEFAULT_HEAD/DEFAULT_TAIL consts; align(1) on freqs not preserved
+//   notes:      compile() threads &'bump Bump to NameMinifier::init (arena-backed per caller in bundler/linker_context); NameMinifier assumed <'bump> with head/tail as bun_alloc::ArenaVec<'bump, u8> and DEFAULT_HEAD/DEFAULT_TAIL consts; align(1) on freqs not preserved
 // ──────────────────────────────────────────────────────────────────────────

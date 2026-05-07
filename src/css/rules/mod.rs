@@ -1,3 +1,4 @@
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 
 use css::PrintErr;
@@ -121,7 +122,7 @@ pub enum CssRule<R> {
 }
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
-// `bumpalo::collections::Vec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
+// `bun_alloc::ArenaVec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
 // leaf rule payloads, both of which suppress the auto-traits. Those containers
 // uniquely own their storage exactly like `Vec<T>`, and post-parse the tree is
 // shared read-only across the bundler thread pool (mirrors Zig, which freely
@@ -132,7 +133,7 @@ unsafe impl<R: Sync> Sync for CssRule<R> {}
 
 /// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
 pub struct CssRuleList<R> {
-    // PERF(port): was `bumpalo::collections::Vec<'bump, CssRule<'bump, R>>`;
+    // PERF(port): was `bun_alloc::ArenaVec<'bump, CssRule<'bump, R>>`;
     // arena threading restored when leaf rules un-gate.
     pub v: Vec<CssRule<R>>,
 }
@@ -191,11 +192,11 @@ pub(super) mod dc {
         bump: &'bump Arena,
     ) -> crate::DeclarationBlock<'bump> {
         crate::DeclarationBlock {
-            important_declarations: bun_alloc::ArenaVec::from_iter_in(
+            important_declarations: bun_alloc::vec_from_iter_in(
                 this.important_declarations.iter().map(|p| property(p, bump)),
                 bump,
             ),
-            declarations: bun_alloc::ArenaVec::from_iter_in(
+            declarations: bun_alloc::vec_from_iter_in(
                 this.declarations.iter().map(|p| property(p, bump)),
                 bump,
             ),

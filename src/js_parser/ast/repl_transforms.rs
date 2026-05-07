@@ -5,8 +5,8 @@
 //! - Wraps code with await in async IIFE with variable hoisting
 //! - Hoists declarations for variable persistence across REPL lines
 
-use bumpalo::collections::Vec as BumpVec;
-use bumpalo::Bump;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_alloc::Arena as Bump;
 
 use bun_logger as logger;
 

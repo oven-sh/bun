@@ -1945,7 +1945,7 @@ impl<'a> LinkerContext<'a> {
                         let original_name: &[u8] = unsafe { &*symbol.original_name };
                         // PERF(port): was stack-fallback alloc. The hash itself
                         // is short-lived; use a scratch bump.
-                        let scratch = ::bumpalo::Bump::new();
+                        let scratch = ::bun_alloc::Arena::new();
                         let path_hash = ::bun_base64::wyhash_url_safe(
                             &scratch,
                             // use path relative to cwd for determinism

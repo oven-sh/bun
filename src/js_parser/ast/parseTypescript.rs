@@ -17,7 +17,7 @@ use crate::parser::{JsxT, ParseStatementOptions, Ref, ScopeOrder};
 use crate::ast::op::Level;
 use bun_logger as logger;
 use bun_string::strings;
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.

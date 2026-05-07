@@ -1,4 +1,5 @@
 use bun_collections::{ArrayHashMap, BabyList};
+use bun_alloc::ArenaVecExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstField as AstField;
 use crate::ungate_support::js_meta::JSMetaField;
 use crate::Graph::InputFileListExt as _;
@@ -606,7 +607,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let import_record_index =
                             u32::try_from(cross_chunk_imports.len as usize).unwrap();
 
-                        let mut clauses = bumpalo::collections::Vec::<js_ast::ClauseItem>::with_capacity_in(
+                        let mut clauses = bun_alloc::ArenaVec::<js_ast::ClauseItem>::with_capacity_in(
                             cross_chunk_import.sorted_import_items.len as usize,
                             c.allocator(),
                         );

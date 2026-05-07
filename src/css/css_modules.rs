@@ -1,6 +1,6 @@
 use core::fmt::Arguments;
 
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
 

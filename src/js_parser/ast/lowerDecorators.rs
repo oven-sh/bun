@@ -10,6 +10,7 @@
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
 use core::ptr::NonNull;
+use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{BabyList, HashMap};
 use bun_logger as logger;
@@ -19,7 +20,7 @@ use crate::ast::p::P;
 use crate::ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtNodeList, Symbol};
 use crate::parser::{JsxT, Ref, ARGUMENTS_STR as arguments_str};
 
-type BumpVec<'a, T> = bumpalo::collections::Vec<'a, T>;
+type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
 // Zig: `pub fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -315,7 +316,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(n) = n {
             // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
             // bump String and copy the bytes.
-            let s = bumpalo::format!(in self.allocator, "{}", n);
+            let s = bun_alloc::arena_format!(in self.allocator, "{}", n);
             v.extend_from_slice(s.as_bytes());
         }
         v.into_bump_slice()

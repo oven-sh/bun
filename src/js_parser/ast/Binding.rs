@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena;
+use bun_alloc::{Arena, ArenaVecExt as _};
 use bun_logger as logger;
 
 use crate::ast::b::B;
@@ -223,7 +223,7 @@ impl Binding {
                 let bump = wrapper.allocator();
                 let items = b.items();
                 let len = items.len();
-                let mut exprs = bumpalo::collections::Vec::with_capacity_in(len, bump);
+                let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
                 let mut i: usize = 0;
                 while i < len {
                     let item = &items[i];
@@ -255,7 +255,7 @@ impl Binding {
                 let bump = wrapper.allocator();
                 let props_in = b.properties();
                 let mut properties =
-                    bumpalo::collections::Vec::with_capacity_in(props_in.len(), bump);
+                    bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
                 for item in props_in.iter() {
                     properties.push(G::Property {
                         flags: item.flags,

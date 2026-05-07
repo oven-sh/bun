@@ -26,7 +26,7 @@ pub struct Symbols<'bump> {
     /// The counter system.
     pub system: SymbolsType,
     /// The symbols.
-    pub symbols: bumpalo::collections::Vec<'bump, Symbol>,
+    pub symbols: bun_alloc::ArenaVec<'bump, Symbol>,
 }
 
 /// A single [symbol](https://www.w3.org/TR/css-counter-styles-3/#funcdef-symbols) as used in the

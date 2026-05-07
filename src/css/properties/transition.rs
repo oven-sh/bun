@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code, unused_macros)]
+use bun_alloc::ArenaVecExt as _;
 use crate::SmallList;
 use crate::Printer;
 use crate::PrintErr;

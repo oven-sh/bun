@@ -1,7 +1,7 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, unused_unsafe, clippy::all)]
 use core::mem;
 
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use bun_core::{err, Error};
 use bun_logger as logger;

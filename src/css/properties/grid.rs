@@ -535,7 +535,7 @@ impl GridTemplateAreas {
     const HTML_SPACE_CHARACTERS: &[u8] = &[0x0020, 0x0009, 0x000a, 0x000c, 0x000d];
 
     fn parse_string<'bump>(
-        bump: &'bump bumpalo::Bump,
+        bump: &'bump bun_alloc::Arena,
         s: &[u8],
         tokens: &mut SmallList<Option<*const [u8]>, 1>,
     ) -> Result<u32, ()> {

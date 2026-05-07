@@ -19,7 +19,7 @@ fn generate_temp_ref<'p, const TS: bool, J: JsxT, const SCAN: bool>(
     let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
     let name: &'p [u8] = (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
         p.temp_ref_count += 1;
-        bumpalo::format!(in p.allocator, "__bun_temp_ref_{:x}$", p.temp_ref_count)
+        bun_alloc::arena_format!(in p.allocator, "__bun_temp_ref_{:x}$", p.temp_ref_count)
             .into_bump_str()
             .as_bytes()
     });

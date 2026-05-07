@@ -7,10 +7,15 @@ use bun_logger as logger;
 use bun_string::strings;
 
 use crate::ast as js_ast;
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::side_effects::SideEffects;
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol, B};
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::G::Property;
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::p::P;
+use bun_alloc::ArenaVecExt as _;
 use crate::flags as Flags;
 use crate::lexer as js_lexer;
 use crate::parser::{
@@ -2326,7 +2331,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // want a custom arena Vec that can. Left as a copy with PERF note.
         // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
         let mut stmts_list =
-            bumpalo::collections::Vec::from_iter_in(dupe.iter().copied(), p.allocator);
+            bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.allocator);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()

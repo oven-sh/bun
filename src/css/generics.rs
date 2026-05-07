@@ -37,8 +37,8 @@ use crate::values::size::Size2D;
 use crate::values::rect::Rect;
 
 // `ArrayList(T)` in the Zig is `std.ArrayListUnmanaged(T)` fed the parser arena.
-// In this AST crate that maps to `bumpalo::collections::Vec<'bump, T>`.
-pub type ArrayList<'bump, T> = bumpalo::collections::Vec<'bump, T>;
+// In this AST crate that maps to `bun_alloc::ArenaVec<'bump, T>`.
+pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // DeepClone

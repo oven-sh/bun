@@ -9,6 +9,7 @@
 use core::mem::{offset_of, MaybeUninit};
 
 use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, BabyList, HashMap};
 use bun_logger::Loc;
 use bun_string::strings;
@@ -70,7 +71,7 @@ impl LinkerContext<'_> {
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
-        let mut aliases = bumpalo::collections::Vec::<&[u8]>::with_capacity_in(
+        let mut aliases = bun_alloc::ArenaVec::<&[u8]>::with_capacity_in(
             unsafe { (*resolved_exports).count() },
             allocator,
         );
@@ -325,7 +326,7 @@ impl LinkerContext<'_> {
 
         // 1 property per export
         let mut properties =
-            bumpalo::collections::Vec::<G::Property>::with_capacity_in(export_aliases.len(), allocator);
+            bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), allocator);
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
         ns_export_symbol_uses

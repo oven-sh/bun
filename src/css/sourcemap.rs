@@ -5,7 +5,7 @@ pub struct SourceMap {
 }
 
 pub struct SourceMapInner {
-    // PERF(port): ArrayListUnmanaged in CSS arena crate — using Vec<T>; may need bumpalo::collections::Vec<'bump, T> in Phase B
+    // PERF(port): ArrayListUnmanaged in CSS arena crate — using Vec<T>; may need bun_alloc::ArenaVec<'bump, T> in Phase B
     pub sources: Vec<*const [u8]>,
     pub sources_content: Vec<*const [u8]>,
     pub names: Vec<*const [u8]>,

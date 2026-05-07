@@ -24,7 +24,7 @@ type CResult<T> = css::Result<T>;
 // TODO(port): arena lifetimes. The Zig code threads `parser.allocator` / `input.allocator()`
 // (a bump arena) through every allocation. Phase A uses `Vec`/`Box` and a `Str` alias for
 // source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
-// `bumpalo::collections::Vec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
+// `bun_alloc::ArenaVec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
 // PERF(port): was arena bulk-free — profile in Phase B.
 //
 // NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match

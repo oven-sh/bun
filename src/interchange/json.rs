@@ -1,7 +1,7 @@
 use core::cell::RefCell;
 
-use bumpalo::Bump;
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::Arena as Bump;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;

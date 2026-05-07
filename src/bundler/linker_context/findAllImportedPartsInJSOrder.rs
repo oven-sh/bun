@@ -21,7 +21,7 @@ pub fn find_all_imported_parts_in_js_order(
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
     let mut parts_prefix_shared: Vec<PartRange> = Vec::new();
     // PERF(port): temp_allocator dropped — bundler is an AST crate, so per PORTING.md these arena-fed
-    // scratch lists should become `bumpalo::collections::Vec<'bump, PartRange>` with a threaded
+    // scratch lists should become `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded
     // `&'bump Bump`; deferred to Phase B (introduces lifetimes on this fn + visitor). Profile in Phase B.
     for (index, chunk) in chunks.iter_mut().enumerate() {
         match &chunk.content {

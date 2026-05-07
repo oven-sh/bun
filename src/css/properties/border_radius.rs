@@ -1,3 +1,4 @@
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::Printer;
 use crate::PrintErr;

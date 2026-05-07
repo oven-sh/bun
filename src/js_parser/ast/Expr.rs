@@ -14,6 +14,7 @@ use bun_logger as logger;
 use bun_logger::Loc;
 use bun_string::{self as strings, ZStr};
 
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::{
     self as js_ast, ASTMemoryAllocator, DebugOnlyDisabler, E, G, Op, Ref, Stmt, S,
 };
@@ -2245,7 +2246,7 @@ impl Data {
                 // SAFETY: `properties` is an arena-owned `*mut [Property]` (Zig: `[]Property`).
                 let src_props: &[G::Property] = unsafe { &*el.properties };
                 let mut properties =
-                    bumpalo::collections::Vec::with_capacity_in(src_props.len(), bump);
+                    bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
                     properties.push(prop.deep_clone(bump)?);
                 }
@@ -2316,7 +2317,7 @@ impl Data {
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
             Data::EArrow(el) => {
-                let mut args = bumpalo::collections::Vec::with_capacity_in(el.args.len(), bump);
+                let mut args = bun_alloc::ArenaVec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
                     args.push(el.args[i].deep_clone(bump)?);
                 }

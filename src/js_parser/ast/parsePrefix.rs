@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+use bun_alloc::ArenaVecExt as _;
 use bun_logger as logger;
 use bun_string::strings;
 
@@ -690,8 +691,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // PERF(port): was arena-backed ArrayList — profile in Phase B
-        let mut items: bumpalo::collections::Vec<'_, Expr> =
-            bumpalo::collections::Vec::new_in(p.allocator);
+        let mut items: bun_alloc::ArenaVec<'_, Expr> =
+            bun_alloc::ArenaVec::new_in(p.allocator);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = logger::Loc::default();
 
@@ -788,8 +789,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // PERF(port): was arena-backed ArrayList — profile in Phase B
-        let mut properties: bumpalo::collections::Vec<'_, G::Property> =
-            bumpalo::collections::Vec::new_in(p.allocator);
+        let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
+            bun_alloc::ArenaVec::new_in(p.allocator);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread: logger::Loc = logger::Loc::default();
 

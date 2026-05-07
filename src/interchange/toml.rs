@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;

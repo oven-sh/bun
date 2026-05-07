@@ -27,3 +27,4 @@ bun_collections.workspace = true
 # no cycle.
 bun_wyhash.workspace = true
 bumpalo.workspace = true
+bun_alloc.workspace = true

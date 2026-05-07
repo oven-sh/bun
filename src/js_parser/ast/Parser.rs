@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::BabyList;
@@ -34,7 +35,7 @@ pub type TypeScriptImportScanner<'a> = P<'a, true, JsxNone, true>;
 pub type TSXImportScanner<'a> = P<'a, true, JsxReact, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
-type BumpVec<'bump, T> = bumpalo::collections::Vec<'bump, T>;
+type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
 pub struct Parser<'a> {
     pub options: Options<'a>,
@@ -554,7 +555,7 @@ impl<'a> Parser<'a> {
         // backing storage to an `ArrayList(allocator)`. The Rust BabyList
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
-        p.symbols = BumpVec::from_iter_in(symbols_.move_to_list_managed().into_iter(), p.allocator);
+        p.symbols = bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.allocator);
 
         p.prepare_for_visit_pass()?;
 

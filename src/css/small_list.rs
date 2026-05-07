@@ -78,7 +78,7 @@ impl<T, const N: usize> Default for SmallList<T, N> {
 }
 
 // TODO(port): css is an AST crate (PORTING.md §Allocators) — `std.mem.Allocator` params should
-// become `bump: &'bump Bump` and ArrayListUnmanaged → `bumpalo::collections::Vec<'bump, T>`.
+// become `bump: &'bump Bump` and ArrayListUnmanaged → `bun_alloc::ArenaVec<'bump, T>`.
 // Dropped here because the heap path needs realloc/free (incompatible with bumpalo's bump-pointer
 // model). Phase B must reconcile: either thread `&'bump Bump` and leak-on-reset for the heap path,
 // or confirm SmallList callers in css always use the global allocator (not the parser arena).
@@ -152,7 +152,7 @@ impl<T, const N: usize> SmallList<T, N> {
     }
 
     /// NOTE: This will deinit the list
-    // TODO(port): bumpalo::collections::Vec<'bump, T> in css arena context (see impl-block note)
+    // TODO(port): bun_alloc::ArenaVec<'bump, T> in css arena context (see impl-block note)
     pub fn from_list(list: Vec<T>) -> Self {
         if list.capacity() > N {
             let cap = u32::try_from(list.capacity()).unwrap();
@@ -183,7 +183,7 @@ impl<T, const N: usize> SmallList<T, N> {
         this
     }
 
-    // TODO(port): bumpalo::collections::Vec<'bump, T> in css arena context.
+    // TODO(port): bun_alloc::ArenaVec<'bump, T> in css arena context.
     /// Transfers the buffer from `list` without freeing it (Zig
     /// `fromListNoDeinit` took the list by value; the caller relinquished it).
     /// Taking `Vec<T>` by value here matches that contract; the Vec's Drop is

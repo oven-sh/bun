@@ -1166,7 +1166,7 @@ pub const ARGUMENTS_STR: &[u8] = b"arguments";
 // While the names for Expr, Binding, and Stmt are directly copied from esbuild, those were likely inspired by Go's parser.
 // which is another example of a very fast parser.
 
-pub type ScopeOrderList<'bump> = bumpalo::collections::Vec<'bump, Option<ScopeOrder<'bump>>>;
+pub type ScopeOrderList<'bump> = bun_alloc::ArenaVec<'bump, Option<ScopeOrder<'bump>>>;
 
 // kept as a static reference
 pub const EXPORTS_STRING_NAME: &[u8] = b"exports";
@@ -1908,8 +1908,8 @@ impl InvalidLoc {
     }
 }
 
-pub type LocList<'bump> = bumpalo::collections::Vec<'bump, InvalidLoc>;
-pub type StmtList<'bump> = bumpalo::collections::Vec<'bump, Stmt>;
+pub type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
+pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation

@@ -2,7 +2,7 @@
 //! AST visitor pass: visits statements, expressions, bindings, function bodies,
 //! classes, and declarations. This is the second pass after parsing.
 
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use crate::ast as js_ast;
 use crate::ast::{
     AssignTarget, Binding, BindingNodeIndex, Expr, ExprData, ExprNodeList, LocRef, Scope, Stmt,

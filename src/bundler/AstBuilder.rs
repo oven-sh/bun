@@ -8,7 +8,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
 use bun_collections::BabyList;

@@ -9,7 +9,7 @@
 
 use core::fmt;
 
-use bun_alloc::{AllocError, Arena, ArenaVec};
+use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_logger::{self as logger, Loc, Log, Source};
 use bun_string::{strings, ZStr};
 
@@ -245,7 +245,7 @@ use core::fmt;
 use core::ptr;
 use std::io::Write as _;
 
-use bun_alloc::{AllocError, Arena, ArenaVec};
+use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output};

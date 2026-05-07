@@ -100,6 +100,38 @@ impl MimallocArena {
         }
     }
 
+    /// `bumpalo::Bump::allocated_bytes` parity — total bytes currently in use
+    /// in this heap. Walks the heap's areas (not its individual blocks); cost
+    /// is O(areas), which is cheap. Intended for GC `estimatedSize` reporting.
+    pub fn allocated_bytes(&self) -> usize {
+        extern "C" fn visit(
+            _heap: *const mimalloc::Heap,
+            area: *const mimalloc::mi_heap_area_t,
+            _block: *mut c_void,
+            _block_size: usize,
+            arg: *mut c_void,
+        ) -> bool {
+            // SAFETY: mimalloc passes a valid `area` for each heap area when
+            // `visit_all_blocks == false`; `arg` is the `&mut usize` we passed.
+            unsafe {
+                let total = &mut *arg.cast::<usize>();
+                *total += (*area).used.saturating_mul((*area).full_block_size);
+            }
+            true
+        }
+        let mut total: usize = 0;
+        // SAFETY: `self.heap` is live; `visit` upholds the callback contract.
+        unsafe {
+            mimalloc::mi_heap_visit_blocks(
+                self.heap.as_ptr(),
+                false,
+                Some(visit),
+                (&mut total as *mut usize).cast(),
+            );
+        }
+        total
+    }
+
     /// Zig: `MimallocArena.ownsPtr()` → `mi_heap_contains(heap, p)`.
     #[inline]
     pub fn owns_ptr(&self, p: *const c_void) -> bool {

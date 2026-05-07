@@ -1,4 +1,5 @@
 #![allow(unused_imports, dead_code, unused_macros)]
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;

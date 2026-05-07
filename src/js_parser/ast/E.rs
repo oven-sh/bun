@@ -5,7 +5,7 @@
 use core::cmp::Ordering;
 use core::fmt;
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 use phf::phf_map;
 
 use bun_alloc::{AllocError, Arena};
@@ -16,6 +16,7 @@ use bun_options_types::ImportRecord;
 use bun_string::strings;
 use bun_string::ZigString;
 
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::{
     self as js_ast, Expr, ExprNodeIndex, ExprNodeList, Flags, G, Op, OptionalChain, Ref, StoreRef,
 };
@@ -1375,7 +1376,7 @@ impl EString {
             return;
         }
         let mut bytes =
-            bumpalo::collections::Vec::<u8>::with_capacity_in(self.rope_len as usize, bump);
+            bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
@@ -1647,7 +1648,7 @@ impl EString {
             let v = strings::to_utf8_alloc(self.slice16());
             bump.alloc_slice_copy(&v)
         };
-        let mut buf = bumpalo::collections::Vec::<u8>::with_capacity_in(bytes.len() + 1, bump);
+        let mut buf = bun_alloc::ArenaVec::<u8>::with_capacity_in(bytes.len() + 1, bump);
         buf.extend_from_slice(bytes);
         buf.push(0);
         let s = buf.into_bump_slice();
@@ -1818,7 +1819,7 @@ impl Template {
         }
 
         let mut parts =
-            bumpalo::collections::Vec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
+            bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
             // Zig `var part = part.*` — field-wise copy (TemplatePart is not `Copy` only

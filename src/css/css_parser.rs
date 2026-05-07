@@ -4,6 +4,7 @@
 //! arena-backed in the Zig original. Phase A keeps `&'bump Bump` threading
 //! where it matters and drops `Allocator` params elsewhere.
 
+use bun_alloc::ArenaVecExt as _;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
@@ -2581,7 +2582,7 @@ impl<AtRule> StyleSheet<AtRule> {
         let project_root = options.project_root;
         let mut printer = Printer::new(
             allocator,
-            bumpalo::collections::Vec::new_in(allocator),
+            bun_alloc::ArenaVec::new_in(allocator),
             writer,
             options,
             import_info,
@@ -3013,7 +3014,7 @@ impl StyleAttribute {
         let mut dest: Vec<u8> = Vec::new();
         let mut printer = Printer::new(
             allocator,
-            bumpalo::collections::Vec::new_in(allocator),
+            bun_alloc::ArenaVec::new_in(allocator),
             &mut dest,
             options,
             import_info,
@@ -5812,7 +5813,7 @@ impl WriteAll for Vec<u8> {
     }
 }
 
-impl<'b> WriteAll for bumpalo::collections::Vec<'b, u8> {
+impl<'b> WriteAll for bun_alloc::ArenaVec<'b, u8> {
     type Error = core::convert::Infallible;
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> Result<(), Self::Error> {
@@ -5839,7 +5840,7 @@ impl Dimension {
 
 pub enum CopyOnWriteStr<'a> {
     Borrowed(&'a [u8]),
-    Owned(bumpalo::collections::Vec<'a, u8>),
+    Owned(bun_alloc::ArenaVec<'a, u8>),
 }
 
 impl<'a> CopyOnWriteStr<'a> {
@@ -5847,7 +5848,7 @@ impl<'a> CopyOnWriteStr<'a> {
         match self {
             CopyOnWriteStr::Borrowed(b) => {
                 let mut list =
-                    bumpalo::collections::Vec::with_capacity_in(b.len() + slice.len(), allocator);
+                    bun_alloc::ArenaVec::with_capacity_in(b.len() + slice.len(), allocator);
                 list.extend_from_slice(b);
                 list.extend_from_slice(slice);
                 // PERF(port): was appendSliceAssumeCapacity
@@ -6420,7 +6421,7 @@ pub mod to_css {
         // PERF: think about how cheap this is to create
         let mut printer = Printer::new(
             allocator,
-            bumpalo::collections::Vec::new_in(allocator),
+            bun_alloc::ArenaVec::new_in(allocator),
             &mut s,
             options,
             import_info,

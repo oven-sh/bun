@@ -1,4 +1,5 @@
 use bun_core::Error;
+use bun_alloc::ArenaVecExt as _;
 use crate::ast::{ClauseItem, Expr, LocRef, E};
 use crate::ast::expr::Data as ExprData;
 use crate::ast::op::Level;
@@ -114,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
         // TODO(port): narrow error set
-        let mut items = bumpalo::collections::Vec::<ClauseItem>::new_in(p.allocator);
+        let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.allocator);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
@@ -294,7 +295,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let p = self;
         // TODO(port): narrow error set
         let mut items =
-            bumpalo::collections::Vec::<ClauseItem>::with_capacity_in(1, p.allocator);
+            bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.allocator);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         let mut first_non_identifier_loc = logger::Loc { start: 0 };

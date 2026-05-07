@@ -15,6 +15,7 @@
 //!   - `u32`: Length of function name (0 for unavailable)
 //!   - `[n]u8`: Function name
 
+use bun_alloc::ArenaVecExt as _;
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export

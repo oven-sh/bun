@@ -1,4 +1,5 @@
 use core::mem::offset_of;
+use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, BabyList};
@@ -122,7 +123,7 @@ pub fn compute_chunks(
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 // PORT NOTE: Zig used a Formatter struct; build the byte key directly since
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
-                let mut v = bumpalo::collections::Vec::new_in(temp);
+                let mut v = bun_alloc::ArenaVec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
                 v.extend_from_slice(entry_bits.bytes(this.graph.entry_points.len()));
                 break 'brk v.into_bump_slice();

@@ -165,7 +165,7 @@ pub enum StyleQuery {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
-        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec crate-wide.
+        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -244,7 +244,7 @@ pub enum ContainerCondition {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
-        // Phase B decides bumpalo::collections::Vec<'bump, _> vs global Vec crate-wide.
+        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.

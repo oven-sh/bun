@@ -168,6 +168,18 @@ pub type Bump = bumpalo::Bump;
 /// via `mi_free`/`mi_heap_realloc_aligned`; reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = Vec<T, &'a MimallocArena>;
 pub use mimalloc_arena::{vec_from_iter_in, ArenaString, ArenaVecExt};
+
+/// `bumpalo::format!` parity — `arena_format!(in arena, "...", ..)` →
+/// [`ArenaString`].
+#[macro_export]
+macro_rules! arena_format {
+    (in $arena:expr, $($arg:tt)*) => {{
+        let mut __s = $crate::ArenaString::new_in($arena);
+        ::core::fmt::Write::write_fmt(&mut __s, ::core::format_args!($($arg)*))
+            .expect("ArenaString::write_fmt is infallible");
+        __s
+    }};
+}
 /// `typed_arena::Arena<T>` — typed slab with stable addresses (AST node Store).
 pub type TypedArena<T> = typed_arena::Arena<T>;
 

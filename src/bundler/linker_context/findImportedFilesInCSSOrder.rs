@@ -1,4 +1,5 @@
 use bstr::BStr;
+use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena;
 use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
@@ -972,7 +973,7 @@ fn debug_css_order_impl(
                 for (j, condition) in entry.conditions.slice_const().iter().enumerate() {
                     let mut printer = Printer::new(
                         &arena,
-                        bumpalo::collections::Vec::new_in(&arena),
+                        bun_alloc::ArenaVec::new_in(&arena),
                         &mut writer,
                         PrinterOptions::default(),
                         Some(ImportInfo {

@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use bumpalo::collections::Vec as BumpVec;
+use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::BabyList;
 use bun_options_types::ImportRecord;
 

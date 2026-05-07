@@ -1,3 +1,4 @@
+use bun_alloc::ArenaVecExt as _;
 use crate::css_parser as css;
 
 // blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
@@ -122,7 +123,7 @@ impl<'a> PropertyHandlerContext<'a> {
     #[inline]
     fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
-        bun_alloc::ArenaVec::from_iter_in(
+        bun_alloc::vec_from_iter_in(
             list.iter().map(|p| p.deep_clone(bump)),
             bump,
         )

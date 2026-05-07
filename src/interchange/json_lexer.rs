@@ -21,7 +21,7 @@
 
 #![allow(dead_code)]
 
-use bumpalo::Bump;
+use bun_alloc::Arena as Bump;
 
 use bun_logger as logger;
 use bun_logger::js_ast;

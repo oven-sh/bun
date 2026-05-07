@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_imports, unused_macros)]
+use bun_alloc::ArenaVecExt as _;
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::prefixes::Feature;

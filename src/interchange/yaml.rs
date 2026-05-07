@@ -30,7 +30,7 @@ impl YAML {
     pub fn parse(
         source: &logger::Source,
         log: &mut logger::Log,
-        bump: &bumpalo::Bump,
+        bump: &bun_alloc::Arena,
     ) -> Result<Expr, YamlParseError> {
         // Zig: `bun.analytics.Features.yaml_parse += 1;` — the MOVE_DOWN'd
         // counter API is `yaml_parse_inc()` (atomic fetch_add by 1, no arg).
@@ -105,7 +105,7 @@ impl From<YamlParseError> for bun_core::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<Enc: Encoding>(bump: &bumpalo::Bump, input: &[Enc::Unit]) -> ParseResult<Enc> {
+pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
     // PORT NOTE: allocator param accepted for Zig signature parity; `Parser`
     // currently uses the global allocator (`// allocator dropped`).
     let _ = bump;

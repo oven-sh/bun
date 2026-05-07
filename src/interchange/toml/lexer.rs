@@ -1,6 +1,7 @@
 use core::fmt;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
+use bun_alloc::ArenaVecExt as _;
 // MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)
 use bun_logger::js_ast;
 use bun_logger as logger;
@@ -943,7 +944,7 @@ impl<'a> Lexer<'a> {
                     if needs_slow_pass {
                         let text = &self.source.contents[slice_lo..slice_hi];
                         let mut array_list =
-                            bumpalo::collections::Vec::with_capacity_in(text.len(), self.bump);
+                            bun_alloc::ArenaVec::with_capacity_in(text.len(), self.bump);
                         if is_multiline_string_literal {
                             self.decode_escape_sequences::<true>(start, text, &mut array_list)?;
                         } else {
@@ -1002,7 +1003,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         start: usize,
         text: &[u8],
-        buf: &mut bumpalo::collections::Vec<'a, u8>,
+        buf: &mut bun_alloc::ArenaVec<'a, u8>,
     ) -> Result<(), Error> {
         // PORT NOTE: Zig copied `*buf_` into a local and `defer`-wrote it back.
         // In Rust we operate on `buf` directly via &mut.

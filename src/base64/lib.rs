@@ -909,7 +909,7 @@ pub mod zig_base64 {
 
 // TODO: replace with bun's hash
 pub fn wyhash_url_safe<'a>(
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     args: core::fmt::Arguments<'_>,
     at_start: bool,
 ) -> &'a [u8] {

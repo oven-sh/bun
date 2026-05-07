@@ -1560,7 +1560,7 @@ pub struct Printer<
 
     /// Arena for transient allocations during printing (rope flattening,
     /// UTF-16→UTF-8 transcoding). Zig: `p.options.allocator`.
-    pub bump: &'a bumpalo::Bump,
+    pub bump: &'a bun_alloc::Arena,
 }
 
 /// The handling of binary expressions is convoluted because we're using
@@ -6151,7 +6151,7 @@ where
 
     pub fn init(
         writer: W,
-        bump: &'a bumpalo::Bump,
+        bump: &'a bun_alloc::Arena,
         import_records: &'a [ImportRecord],
         opts: Options<'a>,
         renamer: rename::Renamer<'a, 'a>,
@@ -6788,7 +6788,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
     symbols: js_ast::ast::symbol::Map,
     source: &'a logger::Source,
@@ -7000,7 +7000,7 @@ pub fn print_json<W: WriterTrait>(
     // `import_records` and `symbols` for the no-op renamer; the body then calls
     // `printExpr(expr, ...)` directly without ever walking those parts. Rust
     // constructs the same empty inputs without round-tripping through `Ast`.
-    let bump = bumpalo::Bump::new();
+    let bump = bun_alloc::Arena::new();
     // SAFETY: borrowed lists are empty / read-only and never freed (the
     // resulting `Map` is moved into a `NoOpRenamer` whose drop is a no-op for
     // borrowed BabyLists).
@@ -7038,7 +7038,7 @@ pub fn print_json<W: WriterTrait>(
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     target: bundle_opts::Target,
     ast: &Ast,
     source: &logger::Source,
@@ -7067,7 +7067,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 
 pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     target: bundle_opts::Target,
     ast: &Ast,
     source: &logger::Source,
@@ -7090,7 +7090,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
 /// The real one
 pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM: bool, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     ast: &Ast,
     source: &logger::Source,
     opts: Options<'a>,
@@ -7179,7 +7179,7 @@ pub fn print_with_writer_and_platform<'a, W: WriterTrait, const IS_BUN_PLATFORM:
 
 pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
-    bump: &'a bumpalo::Bump,
+    bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
     symbols: js_ast::ast::symbol::Map,
     source: &'a logger::Source,

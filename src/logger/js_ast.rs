@@ -362,11 +362,11 @@ pub mod E {
             self.string(bump).expect("OOM")
         }
         pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
+            use bun_alloc::ArenaVecExt as _;
             if self.next.is_none() || !self.is_utf8() {
                 return;
             }
             let mut bytes =
-            use bun_alloc::ArenaVecExt as _;
                 bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
             bytes.extend_from_slice(self.data);
             let mut str_ = self.next;

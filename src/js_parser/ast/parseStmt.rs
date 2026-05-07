@@ -1,4 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
+use bun_alloc::ArenaVecExt as _;
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
@@ -331,7 +332,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.expect(T::TOpenBrace)?;
-            let mut cases = bumpalo::collections::Vec::<js_ast::Case>::new_in(p.allocator);
+            let mut cases = bun_alloc::ArenaVec::<js_ast::Case>::new_in(p.allocator);
             let mut found_default = false;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowAll,
@@ -1708,7 +1709,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 match &stmt.data {
                                     js_ast::StmtData::SLocal(local) => {
                                         let mut _decls =
-                                            bumpalo::collections::Vec::<G::Decl>::with_capacity_in(
+                                            bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
                                                 local.decls.len as usize,
                                                 p.allocator,
                                             );

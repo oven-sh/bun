@@ -1,5 +1,6 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
+use bun_alloc::ArenaVecExt as _;
 use std::io::Write as _;
 
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports

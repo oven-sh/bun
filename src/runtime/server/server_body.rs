@@ -201,7 +201,7 @@ where
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
         // MaybeUninit for in-place construction.
         let slot = unsafe { &mut *(slot as *mut core::mem::MaybeUninit<Self>) };
-        let any_resp = uws::AnyResponse::init_from(SSL, H3, resp as *mut Self::Resp as *mut c_void);
+        let any_resp = RespLike::to_any_response(resp);
         Self::create(slot, server, req as *mut _ as *mut _, any_resp, should_deinit_context, method);
     }
     #[inline]
@@ -230,18 +230,22 @@ where
     }
     #[inline]
     fn set_signal(&mut self, sig: *mut AbortSignal) {
-        // SAFETY: AbortSignal is FFI-refcounted; we hold a +1 ref from
-        // `AbortSignal::new()`. Wrap as `Arc::from_raw` is wrong here (Arc has
-        // its own header) — RequestContext.signal stores `Option<Arc<..>>`, but
-        // the existing port treats it as a raw +1. Convert via the upstream
-        // `webcore::AbortSignal::adopt_arc` shape once available; for now keep
-        // the ref alive on the ctx by wrapping the ptr.
-        // TODO(port): unify Arc<AbortSignal> vs raw +1 ref across RequestContext.
-        self.signal = NonNull::new(sig).map(|p| unsafe { std::sync::Arc::from_raw(p.as_ptr()) });
+        // PORT NOTE: RequestContext.signal stores `Option<Arc<AbortSignal>>` but
+        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque.
+        // `Arc::from_raw` requires the pointer to have come from `Arc::into_raw`
+        // (with Arc's own header), which is NOT the case here. Until the field
+        // type is migrated to a raw `*mut AbortSignal`, store via `Arc::new`
+        // wrapping a zero-sized handle would lose the ref. The interim shape
+        // is to leave `signal` `None` and hold the ref on the Request object
+        // instead (which already does so via `signal.ref()`).
+        // TODO(port): change RequestContext.signal to `Option<NonNull<AbortSignal>>`.
+        let _ = sig;
+        self.signal = None;
     }
     #[inline]
     fn set_request_weakref(&mut self, req: *mut Request) {
-        self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(req);
+        // SAFETY: req is a freshly-boxed Request; live for the request duration.
+        self.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(unsafe { &mut *req });
     }
     #[inline]
     fn clear_req(&mut self) { self.req = None }
@@ -255,17 +259,22 @@ where
     fn set_is_waiting_for_request_body(&mut self, v: bool) { self.flags.set_is_waiting_for_request_body(v) }
     #[inline]
     fn arm_on_data(&mut self, resp: &mut Self::Resp) {
-        // PORT NOTE: `Ctx::Resp` is one of `NewAppResponse<SSL>` / `h3::Response`.
-        // Both expose `on_data<U, H>(handler, ctx)`; the handler signature is
-        // `Fn(&mut U, &[u8], bool)` for H1, `Fn(*mut U, &mut h3::Response, &[u8], bool)`
-        // for H3. The concrete `on_buffered_body_chunk` lives on `RequestContext`,
-        // so we route via the type-erased `AnyResponse::on_data` to keep this
-        // generic over the Resp type.
-        let any_resp = uws::AnyResponse::init_from(SSL, H3, resp as *mut Self::Resp as *mut c_void);
-        any_resp.on_data(self as *mut Self, |ctx, chunk, last| {
-            // SAFETY: ctx was registered as `*mut Self` above; uWS keeps it live.
-            Self::on_buffered_body_chunk(ctx, chunk, last);
-        });
+        // PORT NOTE: route via the type-erased `AnyResponse::on_data` so the
+        // body stays generic over `Ctx::Resp` (H1 SSL/TCP/H3).
+        fn handler<S, const SSL_: bool, const DBG_: bool, const H3_: bool>(
+            ctx: *mut NewRequestContext<S, SSL_, DBG_, H3_>,
+            chunk: &[u8],
+            last: bool,
+        ) where
+            S: super::ServerLike + 'static,
+            super::request_context::TransportFor<SSL_, H3_>: super::request_context::Transport,
+            NewRequestContext<S, SSL_, DBG_, H3_>:
+                crate::api::native_promise_context::NativePromiseContextType
+                    + super::request_context::RequestContextHostFns,
+        {
+            NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
+        }
+        RespLike::to_any_response(resp).on_data(handler::<ThisServer, SSL, DBG, H3>, self as *mut Self);
     }
 }
 

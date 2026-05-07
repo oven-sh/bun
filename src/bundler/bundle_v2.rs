@@ -45,9 +45,9 @@ use crate::{Index, IndexInt, LinkerContext};
 // ── re-exports for the B-1 inline `pub mod bundle_v2 { … }` shim surface ──
 pub use crate::options::Loader;
 pub use crate::ParseTask;
-/// Stub: see gated `BundleThread` module (`BundleThread.zig` — owns the worker
-/// pool + completion queue for `BundleV2`).
-pub struct BundleThread(());
+/// `BundleThread` (BundleThread.zig) — owns the worker pool + completion
+/// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
+pub use crate::BundleThread::BundleThread;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
@@ -209,9 +209,9 @@ impl<'a> BundleV2<'a> {
                     return unsafe { p.as_mut() };
                 }
                 // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
-                // PORT NOTE: `initialize_client_transpiler` lives in the
-                // gated draft below; until that un-gates, this path panics.
-                panic!("Failed to initialize client transpiler: not yet wired");
+                return self.initialize_client_transpiler().unwrap_or_else(|e| {
+                    panic!("Failed to initialize client transpiler: {}", e.name())
+                });
             }
             return &mut *self.transpiler;
         }
@@ -1592,7 +1592,7 @@ impl<'a> BundleV2<'a> {
     }
 
     #[cold]
-    fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
+    pub fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
         // bundle_v2.zig:198-241.
         //
         // PORT NOTE: Zig does `client_transpiler.* = this_transpiler.*` (bitwise

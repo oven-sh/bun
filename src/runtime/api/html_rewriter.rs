@@ -1685,7 +1685,9 @@ impl WrapperLike for DocType {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("DocType", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount.
+        unsafe { Self::to_js_ptr(this, g) }
     }
 }
 
@@ -1769,7 +1771,9 @@ impl WrapperLike for DocEnd {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("DocEnd", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount.
+        unsafe { Self::to_js_ptr(this, g) }
     }
 }
 
@@ -1918,7 +1922,9 @@ impl WrapperLike for Comment {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("Comment", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount.
+        unsafe { Self::to_js_ptr(this, g) }
     }
 }
 
@@ -2087,7 +2093,9 @@ impl WrapperLike for EndTag {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("EndTag", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount.
+        unsafe { Self::to_js_ptr(this, g) }
     }
 }
 
@@ -2554,8 +2562,9 @@ impl Element {
         // SAFETY: attr_iter is a fresh Box::into_raw allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
         self.attribute_iterators.push(attr_iter);
-        // attr_iter is live (refcount==2 now); wrap it as the JS wrapper's m_ctx.
-        wrap_ptr_as_js!("AttributeIterator", attr_iter, global_object)
+        // SAFETY: attr_iter is live (refcount==2 now); ownership is shared with
+        // the GC wrapper via the intrusive refcount (`finalize` → `deref`).
+        unsafe { AttributeIterator::to_js_ptr(attr_iter, global_object) }
     }
 }
 
@@ -2565,7 +2574,9 @@ impl WrapperLike for Element {
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("Element", this, g)
+        // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
+        // ownership is shared with the GC wrapper via the intrusive refcount.
+        unsafe { Self::to_js_ptr(this, g) }
     }
     fn invalidate(&mut self) { Element::invalidate(self) }
     const HAS_INVALIDATE: bool = true;

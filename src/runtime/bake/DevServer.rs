@@ -1255,11 +1255,20 @@ impl DevServer {
 
     /// Deferred one tick so that the server can be up faster
     fn scan_initial_routes(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): blocked_on: framework_router::FrameworkRouter::scan_all —
-        // the keystone `FrameworkRouter` in mod.rs has no `scan_all`; the body
-        // version (`framework_router_body::FrameworkRouter`) is a distinct type.
-        let _ = &mut self.server_transpiler.resolver;
-        let _ = &mut self.router;
+        // PORT NOTE: reshaped for borrowck — Zig passed `dev` as the
+        // `InsertionContext` while also borrowing `&mut dev.router` and
+        // `&mut dev.server_transpiler.resolver`. Reborrow each via the raw
+        // self-ptr (the three are disjoint fields of the heap-stable `*self`).
+        let self_ptr = self as *mut Self;
+        // SAFETY: `router`, `server_transpiler.resolver`, and the
+        // `InsertionHandler` callbacks (touch `server_graph`/`route_lookup`)
+        // are disjoint fields of `*self_ptr`.
+        unsafe {
+            (*self_ptr).router.scan_all(
+                &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
+                framework_router::insertion_context::wrap(&mut *self_ptr),
+            )?;
+        }
 
         self.server_graph.ensure_stale_bit_capacity(true)?;
         self.client_graph.ensure_stale_bit_capacity(true)?;

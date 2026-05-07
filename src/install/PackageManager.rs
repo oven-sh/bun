@@ -749,6 +749,21 @@ static mut CWD_BUF: PathBuffer = PathBuffer::ZEROED;
 static mut ROOT_PACKAGE_JSON_PATH_BUF: PathBuffer = PathBuffer::ZEROED;
 pub static mut ROOT_PACKAGE_JSON_PATH: &ZStr = ZStr::EMPTY; // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
 
+/// SAFETY: caller must guarantee main-thread exclusive access (Zig: process-global
+/// `var cwd_buf: bun.PathBuffer`, only touched during single-threaded `init()`).
+/// `&raw mut` avoids the Rust-2024 `static_mut_refs` denial; the materialized
+/// `&'static mut` is sound under the same single-writer contract Zig relies on.
+#[inline]
+unsafe fn cwd_buf() -> &'static mut PathBuffer {
+    unsafe { &mut *(&raw mut CWD_BUF) }
+}
+
+/// SAFETY: same single-threaded-`init()` contract as [`cwd_buf`].
+#[inline]
+unsafe fn root_package_json_path_buf() -> &'static mut PathBuffer {
+    unsafe { &mut *(&raw mut ROOT_PACKAGE_JSON_PATH_BUF) }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────

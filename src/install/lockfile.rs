@@ -3209,6 +3209,15 @@ impl Default for PatchedDep {
 }
 
 impl PatchedDep {
+    /// Construct with just `path` set (Zig: `.{ .path = path }`). Exists because
+    /// the explicit-padding / private-hash fields make the `..Default::default()`
+    /// struct-update form unusable from sibling modules.
+    pub fn with_path(path: SemverString) -> Self {
+        let mut this = Self::default();
+        this.path = path;
+        this
+    }
+
     pub fn set_patchfile_hash(&mut self, val: Option<u64>) {
         self.patchfile_hash_is_null = val.is_none();
         self.__patchfile_hash = val.unwrap_or(0);

@@ -840,10 +840,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     let patch_hash = semver::string::Builder::string_hash(&patch_join_buf);
                     lockfile.patched_dependencies.put(
                         patch_hash,
-                        crate::lockfile_real::PatchedDep {
-                            path: patch.value.path,
-                            ..Default::default()
-                        },
+                        crate::lockfile_real::PatchedDep::with_path(patch.value.path),
                     )?;
                 }
 

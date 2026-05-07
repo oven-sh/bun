@@ -818,7 +818,7 @@ impl<'a> TablePrinter<'a> {
                         // (INIT = Some), so `data` is initialized.
                         let data = unsafe { node.as_mut().data.assume_init_mut() };
                         if data.capacity() > 512 {
-                            data.clear_and_free();
+                            data.deinit();
                         } else {
                             data.clear();
                         }
@@ -1670,7 +1670,7 @@ pub mod formatter {
                 unsafe { node.as_mut().data = core::mem::MaybeUninit::new(map) };
                 let data = unsafe { node.as_mut().data.assume_init_mut() };
                 if data.capacity() > 512 {
-                    data.clear_and_free();
+                    data.deinit();
                 } else {
                     data.clear();
                 }

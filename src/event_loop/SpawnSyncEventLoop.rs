@@ -58,6 +58,33 @@ pub struct SpawnSyncVTable {
 
 pub static SPAWN_SYNC_VTABLE: AtomicPtr<SpawnSyncVTable> = AtomicPtr::new(core::ptr::null_mut());
 
+/// RAII scope that sets `vm.suppress_microtask_drain = true` for its lifetime
+/// and restores the prior value on drop (mirrors Zig's
+/// `defer vm.suppress_microtask_drain = prev`).
+struct SuppressMicrotaskDrain {
+    vm: *mut (),
+    prev: bool,
+}
+
+impl SuppressMicrotaskDrain {
+    /// # Safety
+    /// `vm` must be a valid `*mut jsc::VirtualMachine` that outlives the guard.
+    #[inline]
+    unsafe fn new(vm: *mut ()) -> Self {
+        // SAFETY: vtable contract — caller guarantees `vm` is valid.
+        let prev = unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, true) };
+        Self { vm, prev }
+    }
+}
+
+impl Drop for SuppressMicrotaskDrain {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `vm` was valid at construction and outlives this guard by contract.
+        unsafe { (vt().vm_swap_suppress_microtask_drain)(self.vm, self.prev) };
+    }
+}
+
 #[inline]
 fn vt() -> &'static SpawnSyncVTable {
     let p = SPAWN_SYNC_VTABLE.load(Ordering::Relaxed);
@@ -345,15 +372,10 @@ impl SpawnSyncEventLoop {
         // reaches drainMicrotasksWithGlobal, we must already have the flag set.
         // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
         // via the task queue, but we set the flag here uniformly for safety.
-        let vm = self.vm;
-        // SAFETY: vtable contract — `vm` is a valid backref set in `init`/`prepare`;
+        // SAFETY: vtable contract — `self.vm` is a valid backref set in `init`/`prepare`;
         // the VM outlives this SpawnSyncEventLoop by construction.
-        let prev_suppress = unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, true) };
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: same as above.
-            unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, prev_suppress) };
-        });
-        // PORT NOTE: Zig `defer` restores at scope exit; scopeguard mirrors that.
+        let _suppress = unsafe { SuppressMicrotaskDrain::new(self.vm) };
+        // PORT NOTE: Zig `defer` restores at scope exit; RAII Drop mirrors that.
 
         // Tick the isolated uws loop with the specified timeout
         // This will only process I/O related to this subprocess

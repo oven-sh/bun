@@ -2097,10 +2097,10 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
         // borrows of `this` are released, and the pointee (owned by the parent
         // `TopLevelRuleParser`) strictly outlives this frame.
         let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
-        let _composes_refs_guard = scopeguard::guard((), move |()| {
+        scopeguard::defer! {
             // SAFETY: see PORT NOTE above — no aliasing borrow live at drop.
             unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
-        });
+        }
         // allow composes if:
         // - NOT in nested style rules
         // - AND there is only one class selector

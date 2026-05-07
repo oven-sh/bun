@@ -1293,13 +1293,11 @@ mod tests {
     use super::*;
 
     fn expect_printed_json(_contents: &[u8], expected: &[u8]) -> Result<(), bun_core::Error> {
-        Expr::data_store_create();
-        Stmt::data_store_create();
-        // TODO(port): Expr.Data.Store.create / reset — map to typed-arena API.
-        let _reset = scopeguard::guard((), |_| {
-            Expr::data_store_reset();
-            Stmt::data_store_reset();
-        });
+        // Zig: Expr.Data.Store.create(); Stmt.Data.Store.create(); defer { ..reset() }.
+        // RAII: `DataStoreScope` resets both thread-local AST stores on entry and on
+        // every exit path (including `?`). `data_store_create()` is a no-op in the
+        // T2 `bun_logger::js_ast` shim, so the entry-reset is equivalent.
+        let _store_scope = js_ast::DataStoreScope::new();
 
         let mut contents = vec![0u8; _contents.len() + 1];
         contents[.._contents.len()].copy_from_slice(_contents);

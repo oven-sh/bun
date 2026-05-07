@@ -409,12 +409,11 @@ impl Timeout {
     fn dispatch(vm: *mut VirtualMachine, signal_ptr: *mut AbortSignal) {
         // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
         let event_loop = unsafe { (*vm).event_loop() };
+        // PORT NOTE: `loop.enter(); defer loop.exit();` — RAII guard `exit`s on
+        // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
+        // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         // SAFETY: per above; `enter`/`exit` mutate per-thread bookkeeping only.
-        unsafe { (*event_loop).enter() };
-        // PORT NOTE: `defer loop.exit()` — scopeguard so `exit` runs even if
-        // `signal` unwinds. The closure re-derives `&mut *event_loop` instead of
-        // capturing the outer `&mut` so borrowck doesn't see two live `&mut`.
-        let _guard = scopeguard::guard((), move |_| unsafe { (*event_loop).exit() });
+        let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(event_loop) };
         // signalAbort() releases the extra ref from timeout() after all
         // abort work completes, so we must not unref here.
         // SAFETY: signal_ptr is held alive by the extra ref documented above;

@@ -1177,9 +1177,10 @@ fn console_print_runtime_object_inner<const C: bool>(
     value: JSValue,
     name_buf: &mut [u8; 512],
 ) -> JsResult<bool> {
-    use bun_jsc::ConsoleFormatter as _;
-    use crate::webcore::{Request, Response};
-    use crate::api::Archive;
+    use core::fmt::Write as _;
+    use bun_jsc::{ConsoleFormatter as _, JsClass as _};
+    use crate::api::{Archive, BuildArtifact};
+    use crate::webcore::{Blob, Request, Response, S3Client};
 
     macro_rules! pf {
         ($s:literal) => {
@@ -1200,15 +1201,19 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
         return Ok(true);
     }
-    // TODO(b2-blocked): `BuildArtifact`/`S3Client` need `JsClass`/`from_js`
-    // downcasts before they can be matched here (spec ConsoleObject.zig).
-    if let Some(blob) = value.as_::<bun_jsc::webcore_types::Blob>() {
+    if let Some(build) = value.as_::<BuildArtifact>() {
         let mut w = IoAsFmt(writer_);
-        let _ = crate::webcore::blob_ext::write_format::<_, _, C>(
-            unsafe { &mut *blob },
-            formatter,
-            &mut w,
-        );
+        let _ = unsafe { &mut *build }.write_format::<_, _, C>(formatter, &mut w);
+        return Ok(true);
+    }
+    if let Some(blob) = value.as_::<Blob>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        return Ok(true);
+    }
+    if let Some(s3client) = value.as_::<S3Client>() {
+        let mut w = IoAsFmt(writer_);
+        let _ = unsafe { &*s3client }.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
     if let Some(archive) = value.as_::<Archive>() {

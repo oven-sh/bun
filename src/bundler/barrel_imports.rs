@@ -380,12 +380,13 @@ pub fn schedule_barrel_deferred_imports(
     // below. SAFETY: the map is not mutated for the duration of this fn.
     let path_to_source_index_map: Option<*const crate::PathToSourceIndexMap::PathToSourceIndexMap> =
         if dev_handle.is_some() {
-            Some(this.path_to_source_index_map(result.ast.target) as *const _)
+            Some(this.path_to_source_index_map(result_ast_target) as *const _)
         } else {
             None
         };
 
-    let file_import_records = &result.ast.import_records;
+    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
+    let file_import_records = unsafe { &*file_import_records };
 
     // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
     // two `import { X } from 'mod'` statements become one, and the second
@@ -414,7 +415,8 @@ pub fn schedule_barrel_deferred_imports(
         }
     }
 
-    for ni in result.ast.named_imports.values() {
+    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
+    for ni in unsafe { &*file_named_imports }.values() {
         if ni.import_record_index >= file_import_records.len {
             continue;
         }
@@ -519,7 +521,8 @@ pub fn schedule_barrel_deferred_imports(
     // PERF(port): was stack-fallback (8192) — profile in Phase B
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
-    for ni in result.ast.named_imports.values() {
+    // SAFETY: see PORT NOTE above — read-only deref valid through Phase 2.
+    for ni in unsafe { &*file_named_imports }.values() {
         if ni.import_record_index >= file_import_records.len {
             continue;
         }
@@ -599,7 +602,7 @@ pub fn schedule_barrel_deferred_imports(
     // This handles the case where file A requests export "d" from file B,
     // but B hadn't been parsed when A's BFS ran, so B's export * records
     // were empty and the propagation stopped.
-    let this_source_index = result.source.index.0;
+    let this_source_index = result_source_index;
     if let Some(existing) = this.requested_exports.get(&this_source_index) {
         match existing {
             RequestedExports::All => queue.push(BarrelWorkItem {

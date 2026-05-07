@@ -1,5 +1,6 @@
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use bun_alloc::Arena; // bumpalo::Bump re-export (was MimallocArena)
 use bun_alloc::mimalloc;
@@ -14,8 +15,11 @@ use bun_schema::api;
 use bun_schema::Reader as ApiReader;
 use bun_schema::Writer as ApiWriter;
 
+// Zig: `export var code_buffer_ptr: ?[*]const u8 = null;` — exported wasm
+// global. `AtomicPtr<u8>` has the same in-memory representation as `*mut u8`
+// (`repr(C)` over a single word) so the JS host still reads a plain pointer.
 #[unsafe(no_mangle)]
-pub static mut code_buffer_ptr: *const u8 = core::ptr::null();
+pub static code_buffer_ptr: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
 pub const BINDGEN: bool = true;
 
@@ -201,7 +205,8 @@ static mut TRANSFORM_RESPONSE: MaybeUninit<api::TransformResponse> = MaybeUninit
 static mut OUTPUT_FILES: [MaybeUninit<api::OutputFile>; 1] = [MaybeUninit::uninit()];
 static mut BUFFER_WRITER: MaybeUninit<js_printer::BufferWriter> = MaybeUninit::uninit();
 static mut WRITER: MaybeUninit<js_printer::BufferPrinter> = MaybeUninit::uninit();
-static mut DEFINE: MaybeUninit<*mut define_mod::Define> = MaybeUninit::uninit();
+// Init-once pointer (PORTING.md: pointer → AtomicPtr). Null until `init()`.
+static DEFINE: AtomicPtr<define_mod::Define> = AtomicPtr::new(core::ptr::null_mut());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_malloc(size: usize) -> u64 {
@@ -232,14 +237,15 @@ static mut OUTPUT_STREAM_BUF: [u8; 16384] = [0; 16384];
 // `std::io::Cursor<&mut [u8]>` here. Left as cursors over the static buffers.
 static mut ERROR_STREAM_BUF: [u8; 16384] = [0; 16384];
 static mut OUTPUT_SOURCE: MaybeUninit<bun_core::output::Source> = MaybeUninit::uninit();
-static mut INIT_COUNTER: usize = 0;
+// Counter (PORTING.md: counter → AtomicUsize). wasm32 is single-threaded so
+// `Relaxed` is plenty; this just gates first-call init.
+static INIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init(heapsize: u32) {
     // SAFETY: wasm32 single-threaded; exclusive access to module statics.
     unsafe {
-        let counter = INIT_COUNTER;
-        INIT_COUNTER = INIT_COUNTER.wrapping_add(1);
+        let counter = INIT_COUNTER.fetch_add(1, Ordering::Relaxed);
         if counter == 0 {
             // reserve 256 MB upfront
             mimalloc::mi_option_set(mimalloc::Option::AllowDecommit, 0);
@@ -252,9 +258,12 @@ pub extern "C" fn init(heapsize: u32) {
             bw.buffer.grow_by(1024).expect("unreachable");
             BUFFER_WRITER.write(bw);
             WRITER.write(js_printer::BufferPrinter::init(core::ptr::read(BUFFER_WRITER.as_ptr())));
-            DEFINE.write(Box::into_raw(Box::new(
-                define_mod::Define::init(None, None).expect("unreachable"),
-            )));
+            DEFINE.store(
+                Box::into_raw(Box::new(
+                    define_mod::Define::init(None, None).expect("unreachable"),
+                )),
+                Ordering::Relaxed,
+            );
             // TODO(port): Output.Source.init wants writer streams; wire FixedBufferStream in Phase B.
             OUTPUT_SOURCE.write(bun_core::output::Source::init(
                 &mut OUTPUT_STREAM_BUF[..],
@@ -565,7 +574,7 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
 
     // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
     // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
-    let define = unsafe { &*DEFINE.assume_init() };
+    let define = unsafe { &*DEFINE.load(Ordering::Relaxed) };
     let mut parser = js_parser::Parser::init(
         js_parser::Options {
             jsx: Default::default(),
@@ -647,7 +656,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
 
     // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
     // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
-    let define = unsafe { &*DEFINE.assume_init() };
+    let define = unsafe { &*DEFINE.load(Ordering::Relaxed) };
     let mut parser = js_parser::Parser::init(
         js_parser::Options { jsx: Default::default(), ..Default::default() },
         log,
@@ -749,7 +758,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
 
     // SAFETY: DEFINE initialized in `init()`; wasm32 single-threaded so this is the
     // sole live borrow of the boxed Define. Parser only reads it (`&'a Define`).
-    let define = unsafe { &*DEFINE.assume_init() };
+    let define = unsafe { &*DEFINE.load(Ordering::Relaxed) };
     let mut parser = js_parser::Parser::init(
         js_parser::Options { jsx: Default::default(), ..Default::default() },
         log,

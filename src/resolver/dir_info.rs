@@ -183,7 +183,8 @@ impl DirInfo {
     }
 
     pub fn get_parent(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.parent).map(|p| p as *mut _)
+        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
+        unsafe { (*hash_map_instance()).at_index(self.parent).map(|p| p as *mut _) }
     }
 
     /// Returns a raw `*mut DirInfo` into the BSSMap singleton. The enclosing
@@ -193,7 +194,8 @@ impl DirInfo {
     ///
     /// SAFETY: caller must hold the resolver mutex.
     pub unsafe fn get_enclosing_browser_scope(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.enclosing_browser_scope).map(|p| p as *mut _)
+        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
+        unsafe { (*hash_map_instance()).at_index(self.enclosing_browser_scope).map(|p| p as *mut _) }
     }
 }
 
@@ -206,15 +208,17 @@ impl DirInfo {
 static DIR_INFO_MAP: bun_core::RacyCell<Option<NonNull<HashMap>>> =
     bun_core::RacyCell::new(None);
 
+/// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
+/// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline]
-pub fn hash_map_instance() -> &'static mut HashMap {
+pub fn hash_map_instance() -> *mut HashMap {
     // SAFETY: matches Zig's lazy global singleton; resolver init runs single-threaded
     // before any concurrent access.
     unsafe {
         if (*DIR_INFO_MAP.get()).is_none() {
-            *DIR_INFO_MAP.get() = Some(NonNull::from(HashMap::init()));
+            *DIR_INFO_MAP.get() = Some(HashMap::init());
         }
-        (*DIR_INFO_MAP.get()).unwrap().as_mut()
+        (*DIR_INFO_MAP.get()).unwrap().as_ptr()
     }
 }
 

@@ -647,7 +647,9 @@ impl PosixBufferedReader {
 
             if parent._buffer.capacity() == 0 {
                 // Use stack buffer for streaming
-                let stack_buffer = parent.vtable.event_loop().pipe_read_buffer();
+                // SAFETY: per-loop scratch buffer; single-threaded event loop,
+                // sole live `&mut` for the read below.
+                let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
@@ -809,7 +811,9 @@ impl PosixBufferedReader {
         let streaming = parent.vtable.is_streaming_enabled();
 
         if streaming {
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer();
+            // SAFETY: per-loop scratch buffer; single-threaded event loop,
+            // sole live `&mut` for the read below.
+            let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
             let stack_buffer_len = stack_buffer.len();
             while parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
@@ -903,7 +907,9 @@ impl PosixBufferedReader {
             }
         } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer();
+            // SAFETY: per-loop scratch buffer; single-threaded event loop,
+            // sole live `&mut` for the read below.
+            let stack_buffer = unsafe { &mut *parent.vtable.event_loop().pipe_read_buffer() };
 
             // Unlike the block of code following this one, only handle the non-streaming case.
             debug_assert!(!streaming);

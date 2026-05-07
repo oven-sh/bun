@@ -9,9 +9,11 @@ use bun_str::strings;
 pub static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> =
     bun_core::RacyCell::new(None);
 /// `convert_env_to_wtf8` will set this to the original value of `std.os.environ`.
-// SAFETY: written exactly once at program startup before any threads are spawned.
-pub static ORIG_ENVIRON: bun_core::RacyCell<Option<&'static mut [*mut c_char]>> =
-    bun_core::RacyCell::new(None);
+// SAFETY: written exactly once at program startup before any threads are
+// spawned. Stored as a raw fat pointer (no `&mut` aliasing assertion); null
+// data-pointer means "unset".
+pub static ORIG_ENVIRON: bun_core::RacyCell<*mut [*mut c_char]> =
+    bun_core::RacyCell::new(core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0));
 
 #[cfg(feature = "ci_assert")]
 static ENV_CONVERTED: core::sync::atomic::AtomicBool =
@@ -95,7 +97,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     unsafe {
         WTF8_ENV_BUF.write(Some(Box::leak(wtf8_buf)));
         // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
-        *ORIG_ENVIRON.get() = Some(bun_core::os::take_environ());
+        *ORIG_ENVIRON.get() = bun_core::os::take_environ() as *mut [*mut c_char];
         bun_core::os::set_environ(envp_nonnull_slice);
     }
 

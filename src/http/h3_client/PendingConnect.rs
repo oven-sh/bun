@@ -135,7 +135,8 @@ impl PendingConnect {
         let s = unsafe { &mut *session };
         s.closed = true;
         if let Some(ctx) = super::client_context::ClientContext::get() {
-            ctx.unregister(s);
+            // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+            unsafe { (*ctx.as_ptr()).unregister(s) };
         }
         while !s.pending.is_empty() {
             let stream = s.pending[0];

@@ -470,13 +470,12 @@ impl ByteRangeMapping {
     /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
     /// coverage data was recorded on this thread.
     ///
-    /// SAFETY: the returned `&'static mut` borrows the thread-local `Box`,
-    /// which is pinned for the thread's lifetime and never re-entered while
-    /// the caller holds it (single-threaded CLI report path). Phase B may
-    /// tighten this to a scoped guard.
-    pub fn map() -> Option<&'static mut ByteRangeMappingHashMap> {
-        // SAFETY: see doc comment — thread-local, no concurrent access.
-        thread_map_opt().map(|mut p| unsafe { p.as_mut() })
+    /// The pointer borrows the thread-local `Box`, which is pinned for the
+    /// thread's lifetime and never re-entered while the caller holds it
+    /// (single-threaded CLI report path). Callers reborrow per-access —
+    /// PORTING.md §Global mutable state.
+    pub fn map() -> Option<NonNull<ByteRangeMappingHashMap>> {
+        thread_map_opt()
     }
 
     pub fn is_less_than(_: (), a: &ByteRangeMapping, b: &ByteRangeMapping) -> bool {

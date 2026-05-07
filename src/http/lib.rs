@@ -856,10 +856,14 @@ impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
     fn set_timeout_minutes(&self, minutes: c_uint) { uws::NewSocketHandler::<SSL>::set_timeout_minutes(self, minutes) }
 }
 
+/// Raw pointer to the HTTP-thread abort tracker. Callers reborrow per-access —
+/// PORTING.md §Global mutable state.
 #[inline]
-fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+fn abort_tracker() -> *mut ArrayHashMap<u32, uws::AnySocket> {
     // SAFETY: same single-thread invariant as http_thread()
-    unsafe { (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) }
+    unsafe {
+        (*SOCKET_ASYNC_HTTP_ABORT_TRACKER.get()).get_or_insert_with(ArrayHashMap::new) as *mut _
+    }
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
@@ -1321,13 +1325,15 @@ impl<'a> HTTPClient<'a> {
             } else {
                 uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
             };
-            let _ = abort_tracker().put(self.async_http_id, any);
+            // SAFETY: HTTP-thread only; per-statement reborrow.
+            let _ = unsafe { &mut *abort_tracker() }.put(self.async_http_id, any);
         }
     }
 
     pub fn unregister_abort_tracker(&mut self) {
         if self.signals.aborted.is_some() {
-            let _ = abort_tracker().swap_remove(&self.async_http_id);
+            // SAFETY: HTTP-thread only; per-statement reborrow.
+            let _ = unsafe { &mut *abort_tracker() }.swap_remove(&self.async_http_id);
         }
     }
 
@@ -2146,7 +2152,8 @@ impl<'a> HTTPClient<'a> {
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
-                        if !ctx.connect(self, self.url.hostname, alt_port) {
+                        // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+                        if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, alt_port) } {
                             self.fail(err!(ConnectionRefused));
                         }
                         self.complete_connecting_process();
@@ -2173,7 +2180,8 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             };
-            if !ctx.connect(self, self.url.hostname, self.url.get_port_auto()) {
+            // SAFETY: leaked Box, process-lifetime; HTTP-thread only.
+            if !unsafe { (*ctx.as_ptr()).connect(self, self.url.hostname, self.url.get_port_auto()) } {
                 self.fail(err!(ConnectionRefused));
             }
             self.complete_connecting_process();

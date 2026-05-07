@@ -102,7 +102,9 @@ pub mod debug {
         pub compile_unit_name: Box<[u8]>,
     }
     /// Zig: `debug.getSelfDebugInfo()`. No backend yet — always errors.
-    pub fn get_self_debug_info() -> Result<&'static mut SelfInfo, bun_core::Error> {
+    /// Returns `*mut` (PORTING.md §Global mutable state); callers reborrow
+    /// per-access.
+    pub fn get_self_debug_info() -> Result<*mut SelfInfo, bun_core::Error> {
         Err(bun_core::err!("MissingDebugInfo"))
     }
     /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.
@@ -2244,7 +2246,8 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
     'attempt_dump: {
         // Windows has issues with opening the PDB file sometimes.
         let debug_info = match debug::get_self_debug_info() {
-            Ok(d) => d,
+            // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
+            Ok(d) => unsafe { &mut *d },
             Err(err) => {
                 let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\nFallback trace:\n", bstr::BStr::new(err.name()));
                 break 'attempt_dump;
@@ -2272,7 +2275,8 @@ pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
     {
         // Assume debug symbol tooling is reliable.
         let debug_info = match debug::get_self_debug_info() {
-            Ok(d) => d,
+            // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
+            Ok(d) => unsafe { &mut *d },
             Err(err) => {
                 let _ = write!(stderr, "Unable to dump stack trace: Unable to open debug info: {}\n", bstr::BStr::new(err.name()));
                 return;

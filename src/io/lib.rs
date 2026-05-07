@@ -1178,11 +1178,11 @@ impl EventLoopHandle {
     /// streaming pipe reads. Routed through a link-time extern since T2 cannot
     /// name `bun_event_loop::EventLoopHandle`'s layout.
     #[inline]
-    pub fn pipe_read_buffer(self) -> &'static mut [u8] {
+    pub fn pipe_read_buffer(self) -> *mut [u8] {
         // SAFETY: link-time extern. The buffer is owned by the
-        // (single-threaded) event loop and outlives the caller's read tick;
-        // `'static` matches the Zig `*[256 * 1024]u8` borrow.
-        unsafe { &mut *__bun_io_pipe_read_buffer(self) }
+        // (single-threaded) event loop and outlives the caller's read tick.
+        // Callers reborrow per-access — PORTING.md §Global mutable state.
+        unsafe { __bun_io_pipe_read_buffer(self) }
     }
 }
 

@@ -1593,14 +1593,15 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// Heap-allocate and initialize a fresh instance. The once-guard (Zig's
     /// `loaded` flag) is the *caller's* responsibility — use `bss_list!` for
     /// the canonical per-monomorphization singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // Zig: `default_allocator.create(Self)` — route through mimalloc.
         // SAFETY: FFI — mi_malloc returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit` → `impl Drop for BSSList` below (PORTING.md: never expose `pub fn deinit`).
@@ -1802,13 +1803,14 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_string_list!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: just frees `instance`. Handled by dropping the singleton Box in Phase B.
@@ -2063,13 +2065,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map_inner!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: `self.index.deinit(allocator)` then free instance.
@@ -2263,13 +2266,14 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
     /// responsibility — use `bss_map!` for the canonical singleton.
-    pub fn init() -> &'static mut Self {
+    pub fn init() -> NonNull<Self> {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
         let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
-        assert!(!ptr.is_null(), "OOM");
+        let ptr = NonNull::new(ptr).expect("OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
-        unsafe { Self::init_at(ptr); &mut *ptr }
+        unsafe { Self::init_at(ptr.as_ptr()) };
+        ptr
     }
 
     // Zig `deinit`: `self.map.deinit()` then free instance — both handled by Drop.

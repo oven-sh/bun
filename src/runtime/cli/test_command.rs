@@ -211,21 +211,9 @@ pub fn write_test_status_line(status: bun_test::Execution::Result, writer: &mut 
     }
 }
 
-/// `Output::error_writer()` / `Output::writer()` return `*mut io::Writer`; the
-/// callers in this file want `&mut io::Writer` so `bun_io::Write` methods
-/// resolve. Single-threaded CLI use only.
-#[inline]
-fn err_w() -> &'static mut bun_core::io::Writer {
-    // SAFETY: process-wide stderr writer; CLI is single-threaded for the
-    // duration of these calls and `error_writer()` always returns a valid
-    // pointer into the static stdio table.
-    unsafe { &mut *Output::error_writer() }
-}
-#[inline]
-fn out_w() -> &'static mut bun_core::io::Writer {
-    // SAFETY: see `err_w`.
-    unsafe { &mut *Output::writer() }
-}
+// `Output::error_writer()` / `Output::writer()` already return an unbounded
+// `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
+// reborrows. Call sites use the `Output` accessors directly.
 
 /// Local shim: `bun_io::Write` over the vtable-erased `bun_core::io::Writer`
 /// (stderr/stdout). Upstream `bun_core::io::Writer` does not implement
@@ -1218,7 +1206,7 @@ impl CommandLineReporter {
         if let Some(idx) = worker_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line);
         } else {
-            let _ = err_w().write_all(formatted_line);
+            let _ = Output::error_writer().write_all(formatted_line);
         }
 
         let Some(this) = buntest.reporter else { return; }; // command line reporter is missing! uh oh!
@@ -1307,6 +1295,9 @@ impl CommandLineReporter {
         }
 
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+        // collection loop below (single-threaded CLI report path).
+        let map = unsafe { &mut *map.as_ptr() };
         // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
         // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
         // `Copy`, so collect mutable borrows into the thread-local map instead
@@ -1330,6 +1321,9 @@ impl CommandLineReporter {
     /// workers to emit a fragment the coordinator merges.
     pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_str::ZStr) -> Result<(), bun_core::Error> {
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
+        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+        // collection loop below (single-threaded CLI report path).
+        let map = unsafe { &mut *map.as_ptr() };
         // PORT NOTE: see `generate_code_coverage` — collect borrows, not bitwise copies.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
@@ -1440,7 +1434,7 @@ impl CommandLineReporter {
             0
         };
 
-        let mut console = CoreIoWriteAdapter(err_w());
+        let mut console = CoreIoWriteAdapter(Output::error_writer());
         let base_fraction = opts.fractions;
         let mut failing = false;
 
@@ -1729,7 +1723,7 @@ impl TestCommand {
 
         if !ctx.test_options.test_worker {
             // print the version so you know its doing stuff if it takes a sec
-            let w = out_w();
+            let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
             let _ = w.write_all(&if colors {
                 Output::pretty_fmt::<true>(const_format::concatcp!("<r><b>bun test <r><d>v", Global::package_json_version_with_sha, "<r>"))
@@ -2296,7 +2290,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests skipped:<r>\n", reporter.summary().skip);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.skips_to_repeat_buf);
             }
 
@@ -2308,7 +2302,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests todo:<r>\n", reporter.summary().todo);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.todos_to_repeat_buf);
             }
 
@@ -2320,7 +2314,7 @@ impl TestCommand {
                 pretty_error!("\n<r><d>{} tests failed:<r>\n", reporter.summary().fail);
                 Output::flush();
 
-                let error_writer = err_w();
+                let error_writer = Output::error_writer();
                 let _ = error_writer.write_all(&reporter.failures_to_repeat_buf);
             }
         }
@@ -2623,7 +2617,7 @@ impl TestCommand {
                 // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
                 let log = unsafe { &mut *log_ptr.as_ptr() };
                 if log.errors > 0 {
-                    let _ = log.print(err_w() as *mut bun_core::io::Writer);
+                    let _ = log.print(Output::error_writer() as *mut bun_core::io::Writer);
                     log.msgs.clear();
                     log.errors = 0;
                 }

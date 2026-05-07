@@ -437,7 +437,8 @@ pub fn cached_git_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], patc
 
 pub fn cached_git_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
     cached_git_folder_name_print(
-        cached_package_folder_name_buf(),
+        // SAFETY: thread-local scratch; single-threaded install.
+        unsafe { &mut *cached_package_folder_name_buf() },
         this.lockfile.str(&repository.resolved),
         patch_hash,
     )
@@ -451,7 +452,8 @@ pub fn cached_git_folder_name_print_auto(this: &PackageManager, repository: &Rep
     if !repository.repo.is_empty() && !repository.committish.is_empty() {
         let string_buf = this.lockfile.buffers.string_bytes.as_slice();
         return buf_print_z(
-            cached_package_folder_name_buf(),
+            // SAFETY: thread-local scratch; single-threaded install.
+        unsafe { &mut *cached_package_folder_name_buf() },
             format_args!(
                 "@G@{}{}{}",
                 repository.committish.fmt(string_buf),
@@ -480,7 +482,8 @@ pub fn cached_github_folder_name_print<'a>(buf: &'a mut [u8], resolved: &[u8], p
 
 pub fn cached_github_folder_name(this: &PackageManager, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
     cached_github_folder_name_print(
-        cached_package_folder_name_buf(),
+        // SAFETY: thread-local scratch; single-threaded install.
+        unsafe { &mut *cached_package_folder_name_buf() },
         this.lockfile.str(&repository.resolved),
         patch_hash,
     )
@@ -493,7 +496,8 @@ pub fn cached_github_folder_name_print_auto(this: &PackageManager, repository: &
 
     if !repository.owner.is_empty() && !repository.repo.is_empty() && !repository.committish.is_empty() {
         return cached_github_folder_name_print_guess(
-            cached_package_folder_name_buf(),
+            // SAFETY: thread-local scratch; single-threaded install.
+        unsafe { &mut *cached_package_folder_name_buf() },
             this.lockfile.buffers.string_bytes.as_slice(),
             repository,
             patch_hash,
@@ -577,7 +581,8 @@ fn cached_github_folder_name_print_guess<'a>(
 }
 
 pub fn cached_npm_package_folder_name(this: &PackageManager, name: &[u8], version: Semver::Version, patch_hash: Option<u64>) -> &'static ZStr {
-    cached_npm_package_folder_name_print(this, cached_package_folder_name_buf(), name, version, patch_hash)
+    // SAFETY: thread-local scratch; single-threaded install.
+    cached_npm_package_folder_name_print(this, unsafe { &mut *cached_package_folder_name_buf() }, name, version, patch_hash)
 }
 
 // TODO: normalize to alphanumeric
@@ -669,7 +674,8 @@ pub fn cached_tarball_folder_name_print<'a>(buf: &'a mut [u8], url: &[u8], patch
 }
 
 pub fn cached_tarball_folder_name(this: &PackageManager, url: SemverString, patch_hash: Option<u64>) -> &'static ZStr {
-    cached_tarball_folder_name_print(cached_package_folder_name_buf(), this.lockfile.str(&url), patch_hash)
+    // SAFETY: thread-local scratch; single-threaded install.
+    cached_tarball_folder_name_print(unsafe { &mut *cached_package_folder_name_buf() }, this.lockfile.str(&url), patch_hash)
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -1213,13 +1219,14 @@ fn verbose_install() -> bool {
 
 /// Thread-local cached folder-name buffer accessor. Zig used a plain
 /// `threadlocal var [bun.MAX_PATH_BYTES]u8`; the Rust port stores it behind a
-/// `RefCell` and exposes a raw `*mut PathBuffer`.
+/// `RefCell` and exposes a raw `*mut PathBuffer`. Callers reborrow per-access —
+/// PORTING.md §Global mutable state.
 #[inline]
-fn cached_package_folder_name_buf() -> &'static mut [u8] {
+fn cached_package_folder_name_buf() -> *mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the
     // thread-local cell outlives all callers and only one `&mut` is taken at a
     // time per call site (Zig also reused this buffer non-reentrantly).
-    unsafe { (&mut *super::cached_package_folder_name_buf()).as_mut_slice() }
+    unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() as *mut [u8] }
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

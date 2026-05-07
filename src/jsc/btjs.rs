@@ -659,23 +659,23 @@ mod zig_std_debug {
     // ── std.debug.getSelfDebugInfo ───────────────────────────────────────
     // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
     // btjs is only called from lldb on a stopped process, so no concurrent
-    // access; the `&'static mut` it hands out is exclusive for that frame.
+    // access; callers reborrow the returned `*mut` per-access.
     static SELF_DEBUG_INFO: bun_core::RacyCell<Option<SelfInfo>> =
         bun_core::RacyCell::new(None);
 
     /// Port of `std.debug.getSelfDebugInfo`. NOT thread-safe (the Zig original
     /// has the same `TODO multithreaded awareness` caveat); btjs is only called
     /// from lldb on a stopped process.
-    pub fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
+    pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
         // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
         // mutable global; this is debug-only and invoked from a stopped process.
         unsafe {
             let slot = &mut *SELF_DEBUG_INFO.get();
             if let Some(info) = slot {
-                return Ok(info);
+                return Ok(info as *mut _);
             }
             *slot = Some(SelfInfo::open()?);
-            Ok(slot.as_mut().unwrap())
+            Ok(slot.as_mut().unwrap() as *mut _)
         }
     }
 }
@@ -782,7 +782,8 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let w = &mut result_writer;
 
     let debug_info: &mut SelfInfo = match get_self_debug_info() {
-        Ok(di) => di,
+        // SAFETY: lazy debug-only singleton; lldb stopped-process, sole `&mut`.
+        Ok(di) => unsafe { &mut *di },
         Err(err) => {
             if write!(
                 w,
@@ -1167,7 +1168,7 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
 #[inline]
-fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
+fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
     zig_std_debug::get_self_debug_info()
 }
 #[cfg(debug_assertions)]

@@ -31,23 +31,6 @@ bun_output::declare_scope!(bunx, visible);
 
 pub struct BunxCommand;
 
-/// `bun_paths::PathBuffer` re-exports `bun_core::PathBuffer`; identity helper
-/// kept so existing call sites stay textually unchanged.
-#[inline]
-fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer { buf }
-
-/// Port of `Stat.mtime().sec` for `libc::stat` — `bun_sys::Stat` is a bare
-/// `libc::stat` alias with no `.mtime()` accessor, so shim the seconds field
-/// here per-platform (mirrors `stat_mtime` in `src/sys/PosixStat.rs`).
-#[cfg(not(windows))]
-#[inline]
-fn stat_mtime_sec(s: &bun_sys::Stat) -> i64 {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    { s.st_mtime as i64 }
-    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "dragonfly"))]
-    { s.st_mtimespec.tv_sec as i64 }
-}
-
 /// bunx-specific options parsed from argv.
 //
 // PORT NOTE: string fields borrow from `argv` (process-lifetime). Phase A forbids
@@ -451,7 +434,7 @@ impl BunxCommand {
                         Ok(s) => s,
                         Err(_) => break 'is_stale true,
                     };
-                    break 'is_stale bun_core::time::timestamp() - stat_mtime_sec(&stat) > Self::SECONDS_CACHE_VALID;
+                    break 'is_stale bun_core::time::timestamp() - bun_sys::stat_mtime(&stat).sec > Self::SECONDS_CACHE_VALID;
                 }
             };
 
@@ -931,7 +914,7 @@ impl BunxCommand {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
-                                break 'is_stale bun_core::time::timestamp() - stat_mtime_sec(&stat) > Self::SECONDS_CACHE_VALID;
+                                break 'is_stale bun_core::time::timestamp() - bun_sys::stat_mtime(&stat).sec > Self::SECONDS_CACHE_VALID;
                             }
                         };
 

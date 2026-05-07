@@ -547,6 +547,14 @@ pub fn exit(code: u32) -> ! {
 }
 
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
+    raise_ignoring_panic_handler_raw(sig as c_int)
+}
+
+/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Zig's
+/// `SignalCode` is a *non-exhaustive* `enum(u8)`, so callers may forward any
+/// signal byte (incl. Linux RT signals 32..=64) that has no `crate::SignalCode`
+/// discriminant. Mirrors `raiseIgnoringPanicHandler(@enumFromInt(sig))`.
+pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
 
@@ -566,14 +574,14 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
             sa.sa_sigaction = libc::SIG_DFL;
             libc::sigemptyset(&mut sa.sa_mask);
             sa.sa_flags = libc::SA_RESETHAND;
-            let _ = libc::sigaction(sig as c_int, &sa, core::ptr::null_mut());
+            let _ = libc::sigaction(sig, &sa, core::ptr::null_mut());
         }
     }
 
     // kill self
     // SAFETY: raise + abort are well-defined; abort is the noreturn fallback.
     unsafe {
-        let _ = libc::raise(sig as c_int);
+        let _ = libc::raise(sig);
         libc::abort();
     }
 }

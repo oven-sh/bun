@@ -2,10 +2,8 @@
 //! code for `Bun.spawnSync`
 
 use core::ffi::{c_int, c_void};
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
-use std::sync::Arc;
 
 use bun_ptr::{RefCount, RefCounted, RefPtr};
 
@@ -181,7 +179,7 @@ pub struct Subprocess<'a> {
 // to support `..Default::default()` struct-update syntax in
 // `js_bun_spawn_bindings::spawn_maybe_sync`. That call site now fills every
 // field explicitly (see PORT NOTE there), so the impl is dead and has been
-// removed — `ManuallyDrop<Arc<Process>>` has no sound placeholder anyway.
+// removed — `*mut Process` has no sound placeholder anyway.
 
 // ── local extension shims for upstream types missing methods ────────────────
 // `JSValue::push` exists in JSValue.zig but not yet in bun_jsc::JSValue. Wrap
@@ -1671,5 +1669,5 @@ pub mod testing_apis {
 //   source:     src/runtime/api/bun/subprocess.zig (1024 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      Subprocess gained <'a> (terminal/global_this per LIFETIMES.tsv); ref/deref via bun_ptr::RefCount<Self> + RefCounted impl; PROCESS_EXIT_VTABLE wired for §Dispatch; process held in ManuallyDrop<Arc<Process>> so finalize releases at Zig timing; on_process_exit defers reshaped to manual calls at return points.
+//   notes:      Subprocess gained <'a> (terminal/global_this per LIFETIMES.tsv); ref/deref via bun_ptr::RefCount<Self> + RefCounted impl; PROCESS_EXIT_VTABLE wired for §Dispatch; process held as raw *mut Process (intrusive ThreadSafeRefCount, matches Zig *Process) so finalize releases at Zig timing; on_process_exit defers reshaped to manual calls at return points.
 // ──────────────────────────────────────────────────────────────────────────

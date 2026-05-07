@@ -1450,7 +1450,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
             this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr { js: ConcurrentTask::from_callback(
                 this,
-                |p| unsafe { (&mut *p).run_from_js_thread().map_err(|_| core::ptr::null_mut()) },
+                |p| unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) },
             ) });
         } else {
             this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr { mini:

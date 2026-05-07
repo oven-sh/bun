@@ -629,7 +629,8 @@ impl HashResult {
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
     /// and forwards to `run_from_js`.
     fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p.cast::<HashResult>()).map_err(|_| core::ptr::null_mut())
+        Self::run_from_js(p.cast::<HashResult>())
+            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
     }
 
     // TODO(port): bun.JSTerminated!void — confirm error type name in bun_jsc.
@@ -986,7 +987,8 @@ impl VerifyResult {
     /// Type-erased shim matching `AnyTask.callback`'s ABI; recovers `*mut Self`
     /// and forwards to `run_from_js`.
     fn run_from_js_erased(p: *mut core::ffi::c_void) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p.cast::<VerifyResult>()).map_err(|_| core::ptr::null_mut())
+        Self::run_from_js(p.cast::<VerifyResult>())
+            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
     }
 
     pub fn run_from_js(this: *mut VerifyResult) -> Result<(), jsc::JsTerminated> {

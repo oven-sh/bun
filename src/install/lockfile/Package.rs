@@ -134,14 +134,16 @@ pub trait ResolverContext {
 
     /// Zig: `resolver.resolve(builder, json)` — produces the package's
     /// `Resolution`. Only called when `!IS_VOID`.
+    ///
+    /// No default body: Zig enforced this at comptime (a non-void resolver
+    /// without `resolve` failed to compile). Each concrete resolver supplies
+    /// its own body; `()` returns the zero-value `Resolution` to mirror Zig's
+    /// "void leaves `package.resolution` uninitialized" path.
     fn resolve<SemverIntType: VersionInt>(
         &mut self,
-        _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
-        // Default: callers gate on `!IS_VOID`; non-void resolvers must override.
-        todo!("blocked_on: ResolverContext::resolve impl for {}", core::any::type_name::<Self>())
-    }
+        builder: &mut StringBuilder<'_>,
+        json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
     // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
@@ -161,6 +163,18 @@ pub trait ResolverContext {
 
 impl ResolverContext for () {
     const IS_VOID: bool = true;
+
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        _builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        // Zig: `if (comptime ResolverContext != void) { … }` — the void
+        // resolver never assigned `package.resolution`, so it kept its
+        // zero-initialized value. The call site still gates on `!IS_VOID`,
+        // but provide the equivalent behavior for trait completeness.
+        Ok(ResolutionType::default())
+    }
 }
 
 // ─── MultiArrayElement ───────────────────────────────────────────────────────

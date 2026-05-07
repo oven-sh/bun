@@ -815,13 +815,15 @@ impl FetchTasklet {
 
         // PORT NOTE: Zig `AnyTask.New(Holder, cb)` monomorphized a `*anyopaque -> void` shim
         // per (Type, Callback). Rust `AnyTask` stores `fn(*mut c_void) -> bun_event_loop::JsResult<()>`
-        // (cycle-broken erased error); write the type-erased shims by hand and erase the
-        // `JsTerminated` payload to `*mut ()`.
+        // (low-tier `ErasedJsError` discriminant); write the type-erased shims by hand and
+        // map `JsTerminated` to the `Terminated` tag so the dispatcher unwinds correctly.
         fn resolve_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::resolve(p as *mut Holder).map_err(|_| core::ptr::null_mut())
+            Holder::resolve(p as *mut Holder)
+                .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
         fn reject_erased(p: *mut c_void) -> ElJsResult<()> {
-            Holder::reject(p as *mut Holder).map_err(|_| core::ptr::null_mut())
+            Holder::reject(p as *mut Holder)
+                .map_err(|_| bun_event_loop::ErasedJsError::Terminated)
         }
 
         let holder = Box::into_raw(Box::new(Holder {

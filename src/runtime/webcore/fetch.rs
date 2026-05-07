@@ -156,6 +156,41 @@ fn s3_credentials_from_env(env: &bun_dotenv::S3Credentials) -> bun_s3_signing::S
     )
 }
 
+/// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`. Zig had
+/// `defer { if (signal) |sig| sig.unref(); }` covering every exit path; this is
+/// the Rust equivalent. `take()` disarms the guard when ownership is handed to
+/// `FetchOptions`.
+struct SignalRef(Option<NonNull<AbortSignal>>);
+impl SignalRef {
+    #[inline]
+    fn take(&mut self) -> Option<*mut AbortSignal> {
+        self.0.take().map(|p| p.as_ptr())
+    }
+}
+impl Drop for SignalRef {
+    fn drop(&mut self) {
+        if let Some(sig) = self.0.take() {
+            // SAFETY: `sig` was obtained from `AbortSignal::ref_()` which bumped
+            // the C++ intrusive refcount; this releases that +1.
+            unsafe { sig.as_ref() }.unref();
+        }
+    }
+}
+
+/// RAII guard for the `+1` `FetchHeaders` ref returned by
+/// `FetchHeaders::create_from_js`. Zig had `defer { if (fetch_headers_to_deref) |fh| fh.deref() }`;
+/// this releases the ref on every exit path of `extract_headers`.
+struct FetchHeadersRef(Option<NonNull<FetchHeaders>>);
+impl Drop for FetchHeadersRef {
+    fn drop(&mut self) {
+        if let Some(fh) = self.0.take() {
+            // SAFETY: `fh` came from `FetchHeaders::create_from_js` which
+            // returns a +1-ref `NonNull<FetchHeaders>`.
+            unsafe { (*fh.as_ptr()).deref() };
+        }
+    }
+}
+
 /// `Blob.Any` accessor shim — Zig union-field access `body.AnyBlob.Blob`.
 trait AnyBlobExt {
     fn blob(&self) -> &Blob;
@@ -210,16 +245,20 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 
     let mut allocated = false;
     let mime_type = MimeType::MimeType::init(data_url.mime_type, true, Some(&mut allocated));
-    // PORT NOTE: `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is `*const [u8]`.
+    // PORT NOTE: `mime_type.value` is `Cow<'static, [u8]>`; Blob.content_type is
+    // `*const [u8]` discriminated by `content_type_allocated` (Blob's Drop reclaims
+    // via `Box::from_raw` when set). Use `Box::into_raw` (paired alloc/free), not
+    // `Box::leak`.
     blob.content_type = match mime_type.value {
         std::borrow::Cow::Borrowed(s) => s as *const [u8],
-        std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()) as *const [u8],
+        std::borrow::Cow::Owned(v) => {
+            blob.content_type_allocated = true;
+            Box::into_raw(v.into_boxed_slice()) as *const [u8]
+        }
     };
-    if allocated {
-        blob.content_type_allocated = true;
-    }
+    debug_assert_eq!(allocated, blob.content_type_allocated);
 
-    let mut response = Box::new(Response::init(
+    let response = Box::into_raw(Box::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
@@ -230,9 +269,12 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         },
         data_url.url.dupe_ref(),
         false,
-    ));
+    )));
 
-    JSPromise::resolved_promise_value(global_this, response.to_js(global_this))
+    // Ownership of the boxed Response is transferred to the JS GC via
+    // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
+    // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
+    JSPromise::resolved_promise_value(global_this, Response::make_maybe_pooled(global_this, response))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

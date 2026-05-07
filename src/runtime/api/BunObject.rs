@@ -3651,8 +3651,7 @@ pub mod JSZstd {
             job_ref.any_task = jsc::AnyTask::AnyTask {
                 ctx: core::ptr::NonNull::new(job.cast::<c_void>()),
                 callback: |p: *mut c_void| {
-                    ZstdJob::run_from_js(p.cast::<ZstdJob>())
-                        .map_err(|_| core::ptr::null_mut::<()>())
+                    ZstdJob::run_from_js(p.cast::<ZstdJob>()).map_err(Into::into)
                 },
             };
             job_ref.poll.ref_(bun_aio::posix_event_loop::get_vm_ctx(

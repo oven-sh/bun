@@ -1483,20 +1483,40 @@ pub mod js_bundler {
                 bstr::BStr::new(&self.path)
             );
 
-            // Notify the bundler thread about the deferral. This will decrement
-            // the pending item counter and increment the deferred counter.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs
+            // Notify the *bundler thread* about the deferral. This must land
+            // on `parse_task.ctx.loop()` (the loop running BundleV2), which is
+            // distinct from `js_loop_for_plugins()` (the plugin host's JS loop)
+            // when `Bun.build` runs the bundler on its own Mini event loop.
+            //
+            // `linker.r#loop` is currently erased to `Option<NonNull<()>>`, so
+            // the Js/Mini discriminant is recovered from `completion.is_some()`:
+            // `Bun.build` always runs the bundle thread under a Mini loop and
+            // sets `completion`; bake/DevServer drives BundleV2 on the JS loop
+            // and does not set `completion`.
+            // SAFETY: parse_task.ctx and bv2 are valid backrefs.
             unsafe {
-                // CYCLEBREAK: bundler routes plugin work via `js_loop_for_plugins`
-                // (the Js arm of AnyEventLoop) — `linker.r#loop` is erased and the
-                // Mini arm is not reachable for plugin defers in T6. PORT NOTE:
-                // when AnyEventLoop is reified on BundleV2, restore the Mini path.
-                (*self.bv2)
-                    .js_loop_for_plugins()
-                    .enqueue_task_concurrent(ConcurrentTask::from_callback(
-                        (*self.parse_task).ctx,
+                let ctx = (*self.parse_task).ctx;
+                if (*ctx).completion.is_some() {
+                    // .mini arm — `mini.enqueueTaskConcurrentWithExtraCtx(
+                    //   Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`.
+                    // The bundle-thread loop is type-erased; routing requires
+                    // `AnyEventLoop` to be reified on `BundleV2.r#loop`. Fail
+                    // loudly rather than mis-route onto the JS thread (which
+                    // would violate `thread_lock.assert_locked()` inside
+                    // `on_notify_defer`).
+                    bun_core::todo_panic!(
+                        "JSBundler.Load.onDefer: Mini-loop dispatch — BundleV2.r#loop \
+                         is erased; restore once AnyEventLoop is reified on the linker"
+                    );
+                } else {
+                    // .js arm — bake/DevServer; the bundle loop *is* the plugin
+                    // host's JS loop, so `enqueue_on_js_loop_for_plugins` lands on
+                    // the right thread.
+                    (*ctx).enqueue_on_js_loop_for_plugins(ConcurrentTask::from_callback(
+                        ctx,
                         on_notify_defer_raw,
                     ));
+                }
 
                 Ok((*bv2_plugin(self.bv2)).append_defer_promise())
             }

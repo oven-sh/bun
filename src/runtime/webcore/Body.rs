@@ -1469,6 +1469,13 @@ impl Value {
         // PORT NOTE: reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else { unreachable!() };
 
+        // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; `to_readable_stream`
+        // transfers ownership of the heap allocation to the JS wrapper's `m_ctx`
+        // (freed by the GC finalizer). Release the Box via `into_raw` — this is
+        // an FFI ownership hand-off, not a leak.
+        let reader: *mut webcore::readable_stream::NewSource<ByteStream> = Box::into_raw(reader);
+        // SAFETY: freshly allocated; JS wrapper takes ownership below.
+        let reader = unsafe { &mut *reader };
         let context_ptr: *mut ByteStream = &mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
@@ -1541,15 +1548,7 @@ impl Value {
 
 // ────────────────────────────────────────────────────────────────────────────
 // JSC-integration: extract / BodyMixin (host-fn methods) / ValueBufferer.
-// TODO(b2-blocked): bun_jsc::* — host_fn proc-macro, JSValue/JSPromise methods,
-// bun_core::form_data, ArrayBufferSink, blob::read_file. The BodyMixin trait
-// is referenced by Response/Request as a marker — a stub trait is provided
-// outside this gate so `impl BodyMixin for Response/Request {}` type-checks.
 // ────────────────────────────────────────────────────────────────────────────
-
-mod _jsc_gated {
-use super::*;
-use crate::webcore::sink::{self, ArrayBufferSink};
 
 // PORT NOTE: Zig `ArrayBufferSink.JSSink` is a nested type from `Sink.JSSink(@This(), name)`.
 // Rust uses a free generic `sink::JSSink<T>` (inherent associated types are unstable).
@@ -1575,7 +1574,11 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// and optionally override `get_body_readable_stream` (Zig `@hasDecl` check).
 pub trait BodyMixin: BodyOwnerJs + Sized {
     fn get_body_value(&mut self) -> &mut Value;
-    fn get_fetch_headers(&self) -> Option<&FetchHeaders>;
+    /// Zig: `Type.getFetchHeaders(this) -> ?*FetchHeaders`. `FetchHeaders` is an
+    /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
+    /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
+    /// avoids deriving `&mut T` from `&T` at the call sites (UB).
+    fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
     fn get_form_data_encoding(&mut self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     /// Default: None. Override to enable the `@hasDecl(Type, "getBodyReadableStream")` paths.
@@ -1948,14 +1951,10 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = self.get_fetch_headers() {
-                // SAFETY: `fast_get` only writes a stack out-param via FFI; the
-                // `&FetchHeaders` is an opaque C++ ZST handle (interior-mutable),
-                // so re-deriving `&mut` from the raw handle pointer is sound — no
-                // Rust-side state is aliased. Zig spec takes `?*FetchHeaders`.
-                #[allow(invalid_reference_casting)]
-                let fetch_headers =
-                    unsafe { &mut *(fetch_headers as *const FetchHeaders as *mut FetchHeaders) };
+            if let Some(mut fetch_headers) = BodyMixin::get_fetch_headers(self) {
+                // SAFETY: `fetch_headers` is a live C++ FetchHeaders handle (Zig: `?*FetchHeaders`);
+                // `fast_get` only writes a stack out-param via FFI.
+                let fetch_headers = unsafe { fetch_headers.as_mut() };
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                     let content_slice = content_type.to_slice();
                     let mut allocated = false;
@@ -2268,14 +2267,23 @@ impl<'a> ValueBufferer<'a> {
         debug_assert!(buffer_stream.sink.signal.is_dead());
 
         // PORT NOTE: reshaped for borrowck — capture the `signal.ptr` slot as a raw
-        // pointer before passing `&mut buffer_stream.sink` to FFI (Zig aliased both).
+        // pointer before passing `buffer_stream` to FFI (Zig aliased both).
         let signal_ptr_slot: *mut *mut c_void =
             (&mut buffer_stream.sink.signal.ptr) as *mut Option<NonNull<c_void>> as *mut *mut c_void;
 
+        // Zig passes `buffer_stream` (the `*ArrayBufferSink.JSSink` wrapper). The
+        // Rust `assign_to_stream` takes `&mut T` and casts to `*mut c_void`; since
+        // `JSSink<T>` is `#[repr(transparent)]` over `T`, `&mut buffer_stream.sink`
+        // and `buffer_stream as *mut JSSink<T>` are address-identical. Reborrow the
+        // wrapper through the inner field via the transparent guarantee.
+        // SAFETY: `JSSink<T>` is `#[repr(transparent)]` (single field `sink: T`).
+        let inner: &mut ArrayBufferSink = unsafe {
+            &mut *(buffer_stream as *mut ArrayBufferJSSink as *mut ArrayBufferSink)
+        };
         let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
             global_this,
             stream.value,
-            &mut buffer_stream.sink,
+            inner,
             signal_ptr_slot,
         );
 
@@ -2332,11 +2340,11 @@ impl<'a> ValueBufferer<'a> {
         let readable_stream = 'brk: {
             if let Some(stream) = locked.readable.get(self.global) {
                 // keep the stream alive until we're done with it
-                // PORT NOTE: Zig copied the Strong by value (struct copy). Rust's
-                // `readable_stream::Strong` is non-Clone (owns a GC root), so create
-                // a fresh strong ref to the same stream value instead.
-                self.readable_stream_ref =
-                    webcore::readable_stream::Strong::init(stream, self.global);
+                // Zig: `sink.readable_stream_ref = locked.readable;` — bitwise struct
+                // copy that aliases the same Strong. Transfer ownership: `*value =
+                // .Used` below would otherwise drop `locked.readable` anyway, so
+                // moving the existing GC root preserves the Zig refcount balance.
+                self.readable_stream_ref = core::mem::take(&mut locked.readable);
                 break 'brk Some(stream);
             }
             if let Some(stream) = owned_readable_stream {

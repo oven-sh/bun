@@ -1935,18 +1935,10 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
-// verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
-// ──────────────────────────────────────────────────────────────────────────
-
-mod _gated_impl {
-    include!("VirtualMachine.gated.rs");
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Options / IPC / per-thread printer — supporting types referenced by the
-// formerly-gated impl below. Field set mirrors VirtualMachine.zig:1204
-// (`Options`) and :3899 (`IPCInstanceUnion` / `IPCInstance`).
+// impl below. Field set mirrors VirtualMachine.zig:1204 (`Options`) and
+// :3899 (`IPCInstanceUnion` / `IPCInstance`).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Spec VirtualMachine.zig:1204 `Options`. `allocator` dropped per
@@ -2504,8 +2496,16 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                // continue to default handler
-                drain(self);
+                // continue to default handler — but spec VirtualMachine.zig
+                // :667-669 RETURNS on `error.JSTerminated` from this drain
+                // (the VM is dead; don't bump the counter or invoke the
+                // handler).
+                // SAFETY: `event_loop` is a self-pointer into this VM.
+                if let Err(JsError::Terminated) =
+                    unsafe { (*self.event_loop()).drain_microtasks() }
+                {
+                    return;
+                }
             }
         }
         self.unhandled_error_counter += 1;
@@ -2802,11 +2802,11 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:1495 `initBake`.
     pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
-            args: alloc::vec::Vec::new(),
-            graph: core::ptr::null_mut(),
             smol: opts.smol,
+            mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            ..Default::default()
         };
         // PORT NOTE: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
@@ -3402,12 +3402,16 @@ impl VirtualMachine {
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
         // PORT NOTE: Zig `defer { restore old_log }` — restored on every path
-        // below before return.
+        // below before return. `vm.log` is set unconditionally in `init` and
+        // never cleared (Zig stores `*logger.Log`, always non-null), so the
+        // `Option` is purely a zeroed-init nicety; deref is sound.
+        let old_log_ptr = old_log
+            .expect("vm.log set in init")
+            .as_ptr();
         let restore = |jsc_vm: &mut VirtualMachine| {
             jsc_vm.log = old_log;
-            // SAFETY: `old_log` outlives the VM (set in `init`).
-            jsc_vm.transpiler.resolver.log =
-                unsafe { &mut *old_log.map(|p| p.as_ptr()).unwrap_or(core::ptr::null_mut()) };
+            // SAFETY: `old_log` outlives the VM (Box::leak in `init`).
+            jsc_vm.transpiler.resolver.log = unsafe { &mut *old_log_ptr };
         };
 
         let resolve_result = jsc_vm._resolve(

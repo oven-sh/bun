@@ -1171,22 +1171,6 @@ pub mod dispatch {
         }
     }
 
-    /// Erased handle to the JS-thread event loop (jsc::EventLoop). Cold path
-    /// (per plugin callback). PERF(port): was inline switch.
-    pub struct JsEventLoopHandle {
-        pub owner: *mut (),
-        pub vtable: &'static JsEventLoopVTable,
-    }
-    pub struct JsEventLoopVTable {
-        pub enqueue_task_concurrent: unsafe fn(*mut (), *mut bun_event_loop::ConcurrentTask::ConcurrentTask),
-    }
-    impl JsEventLoopHandle {
-        #[inline]
-        pub fn enqueue_task_concurrent(&self, task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask) {
-            unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
-        }
-    }
-
     /// Bytecode generation hook (jsc::CachedBytecode + jsc::initialize +
     /// VirtualMachine::set_is_bundler_thread_for_bytecode_cache). Registered
     /// by runtime at init; null = bytecode disabled.

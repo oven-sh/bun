@@ -400,7 +400,7 @@ impl Job {
         job_ref.any_task = AnyTask {
             ctx: NonNull::new(job.cast::<c_void>()),
             callback: |ctx: *mut c_void| {
-                Job::run_from_js(ctx.cast::<Job>()).map_err(|_| core::ptr::null_mut())
+                Job::run_from_js(ctx.cast::<Job>()).map_err(Into::into)
             },
         };
         // PORT NOTE: KeepAlive::ref_ now takes an aio EventLoopCtx; the JS-loop ctx is fetched

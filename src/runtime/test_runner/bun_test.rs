@@ -905,10 +905,11 @@ impl<'a> BunTest<'a> {
         }));
         // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
         // PORT NOTE: `jsc::ManagedTask` re-exports the *module*; struct is `ManagedTask::ManagedTask`.
-        // `bun_event_loop::JsResult` erases the error to `*mut ()` (lower-tier
-        // crate can't name `jsc::JsError`); shim the callback signature.
-        fn call_erased(this: *mut RunTestsTask) -> core::result::Result<(), *mut ()> {
-            RunTestsTask::call(this).map_err(|_| core::ptr::null_mut())
+        // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError` tag (lower-tier
+        // crate can't name `jsc::JsError`); shim the callback signature preserving the
+        // discriminant so `report_error_or_terminate` branches correctly.
+        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
+            RunTestsTask::call(this).map_err(Into::into)
         }
         let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, call_erased);
         let vm = global_this.bun_vm();

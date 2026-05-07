@@ -3689,7 +3689,7 @@ declare module "bun" {
     /**
      * Inspect the internals of Redis objects
      * @param subcommand The subcommand (ENCODING, FREQ, IDLETIME, REFCOUNT, HELP)
-     * @param key The key to inspect
+     * @param args The key to inspect (and any subcommand-specific arguments)
      * @returns Promise that resolves with the subcommand's result
      *
      * @example

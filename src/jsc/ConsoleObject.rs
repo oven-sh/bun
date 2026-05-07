@@ -253,11 +253,10 @@ pub enum MessageType {
 
 use bun_threading::Mutex;
 
-/// `globalThis.bunVM().console` — `VirtualMachine.console` is currently typed
-/// `*mut c_void` (the `Box<ConsoleObject>` is erased to break the dep cycle
-/// while `VirtualMachine.rs` is half-gated). This is the single re-entry point
-/// that casts it back; every body below goes through it instead of touching
-/// the field directly.
+/// `globalThis.bunVM().console` — `VirtualMachine.console` is typed
+/// `*mut c_void` (erased so `virtual_machine.rs` need not name this module's
+/// type). This is the single re-entry point that casts it back; every body
+/// below goes through it instead of touching the field directly.
 #[inline]
 fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // SAFETY: `VirtualMachine.console` is initialized once at VM construction
@@ -5544,15 +5543,7 @@ pub extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     _len: usize,
 ) {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    // PORT NOTE: `JSGlobalObject::generate_heap_snapshot` lives in the gated
-    // export directly until that module un-gates.
-    unsafe extern "C" {
-        fn JSC__JSGlobalObject__generateHeapSnapshot(this: *const JSGlobalObject) -> JSValue;
-    }
-    // SAFETY: `global_this` is a live `JSGlobalObject*`; C++ side has no extra
-    // preconditions.
-    let snapshot: [JSValue; 1] =
-        [unsafe { JSC__JSGlobalObject__generateHeapSnapshot(global_this) }];
+    let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
     // SAFETY: re-entry into our own host shim with a stack-local args slice.
     unsafe {
         message_with_type_and_level(

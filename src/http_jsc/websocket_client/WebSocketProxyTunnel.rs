@@ -131,6 +131,21 @@ impl SocketUnion {
 
 type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 
+/// RAII owner for a scoped `WebSocketProxyTunnel` refcount bump
+/// (Zig: `this.ref(); defer this.deref();`). Constructed via
+/// [`WebSocketProxyTunnel::ref_scope`]; releases the ref on Drop.
+#[must_use = "dropping immediately releases the scoped ref"]
+struct TunnelRefGuard(*mut WebSocketProxyTunnel);
+
+impl Drop for TunnelRefGuard {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `ref_scope` took a ref on a live Box-allocated tunnel, so
+        // `self.0` is still live here and `deref` has valid write provenance.
+        unsafe { WebSocketProxyTunnel::deref(self.0) };
+    }
+}
+
 impl WebSocketProxyTunnel {
     // Intrusive refcount (bun.ptr.RefCount) — ref/deref delegate to IntrusiveRc machinery.
     pub fn ref_(&self) {

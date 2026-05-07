@@ -89,6 +89,28 @@ impl Default for MaxHeapAllocator {
     fn default() -> Self { Self::init() }
 }
 
+/// RAII guard returned by [`MaxHeapAllocator::scope`]. Derefs to the underlying
+/// allocator so callers can hand out `&mut MaxHeapAllocator` (or a derived
+/// `&dyn Allocator`) for the duration of the scope, and resets it on drop.
+pub struct MaxHeapScope<'a> {
+    inner: &'a mut MaxHeapAllocator,
+}
+
+impl core::ops::Deref for MaxHeapScope<'_> {
+    type Target = MaxHeapAllocator;
+    fn deref(&self) -> &Self::Target { self.inner }
+}
+
+impl core::ops::DerefMut for MaxHeapScope<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target { self.inner }
+}
+
+impl Drop for MaxHeapScope<'_> {
+    fn drop(&mut self) {
+        self.inner.reset();
+    }
+}
+
 // `Allocator` is a marker trait carrying `type_id()`; the vtable methods above
 // are inherent (no dynamic dispatch needed for a single-allocation arena).
 impl Allocator for MaxHeapAllocator {}

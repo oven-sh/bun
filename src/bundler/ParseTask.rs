@@ -2677,11 +2677,12 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     // owned by the BundleThread / runtime for the duration of the bundle.
     let r#loop = unsafe { (*worker.ctx).linker.r#loop };
     worker.unget();
-    let Some(any_loop) = r#loop else {
-        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
-        on_complete(result);
-        return;
-    };
+    // Zig `worker.ctx.loop().*` is non-optional (.zig:1416) — `BundleV2::init`
+    // always sets `linker.r#loop` before scheduling any ParseTask. Running
+    // `on_complete` inline on the worker thread would violate
+    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
+    // bundler graph, which is owned by the main/bundler thread).
+    let any_loop = r#loop.expect("BundleV2.linker.loop must be set before scheduling ParseTask");
     // SAFETY: BACKREF — `any_loop` outlives this parse task.
     match unsafe { &mut *any_loop.as_ptr() } {
         bun_event_loop::AnyEventLoop::Js { owner, vtable } => {

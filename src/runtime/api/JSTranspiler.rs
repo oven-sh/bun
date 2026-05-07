@@ -1481,9 +1481,8 @@ impl JSTranspiler {
             prev_macro_context: Some(prev_macro_context),
         };
 
-        // `MacroJSCtx` is the cycle-break `*mut ()` alias for `JSValue` (see
-        // bundler_jsc/PluginRunner.zig:4). Encode the value bits directly.
-        let macro_js_ctx: MacroJSCtx = js_ctx_value.0 as *mut ();
+        // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
+        let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0);
         let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
         // SAFETY: `transpiler.log` was just set to `&mut log` above.
         let log_ref = unsafe { &mut *self.transpiler.log };

@@ -215,8 +215,26 @@ pub enum MessageLevel {
     Error = 2,
     Debug = 3,
     Info = 4,
-    // Zig: `_` (non-exhaustive). Phase B may need a raw `u32` newtype if C++
-    // ever passes out-of-range values.
+}
+
+impl MessageLevel {
+    /// Zig spec is `enum(u32) { ..., _ }` (non-exhaustive). Taking the
+    /// exhaustive Rust enum directly across the C ABI would be instant UB if
+    /// JSC ever passes an out-of-range discriminant, so the
+    /// `Bun__ConsoleObject__messageWithTypeAndLevel` shim accepts a raw `u32`
+    /// and routes through here. Unknown values fold to `Log` — no Zig codepath
+    /// branches on the `_` case, so any clamp is spec-equivalent.
+    #[inline]
+    pub const fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::Log,
+            1 => Self::Warning,
+            2 => Self::Error,
+            3 => Self::Debug,
+            4 => Self::Info,
+            _ => Self::Log,
+        }
+    }
 }
 
 #[repr(u32)]
@@ -236,6 +254,32 @@ pub enum MessageType {
     Profile = 11,
     ProfileEnd = 12,
     Image = 13,
+}
+
+impl MessageType {
+    /// See [`MessageLevel::from_raw`] — Zig spec is non-exhaustive
+    /// (`enum(u32) { ..., _ }`); fold unknown discriminants to `Log` so the
+    /// FFI boundary never constructs an invalid enum value.
+    #[inline]
+    pub const fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::Log,
+            1 => Self::Dir,
+            2 => Self::DirXML,
+            3 => Self::Table,
+            4 => Self::Trace,
+            5 => Self::StartGroup,
+            6 => Self::StartGroupCollapsed,
+            7 => Self::EndGroup,
+            8 => Self::Clear,
+            9 => Self::Assert,
+            10 => Self::Timing,
+            11 => Self::Profile,
+            12 => Self::ProfileEnd,
+            13 => Self::Image,
+            _ => Self::Log,
+        }
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -5552,14 +5596,27 @@ pub extern "C" fn Bun__ConsoleObject__screenshot(
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     ctype: *mut ConsoleObject,
-    message_type: MessageType,
-    level: MessageLevel,
+    // Zig spec types both as non-exhaustive `enum(u32) { ..., _ }`. Taking the
+    // exhaustive Rust enums by value at the C ABI would be UB on an
+    // out-of-range discriminant, so accept the raw `u32` (matching the C++
+    // header in `bindings/headers.h`) and clamp via `from_raw`.
+    message_type: u32,
+    level: u32,
     global: &JSGlobalObject,
     vals: *const JSValue,
     len: usize,
 ) {
     // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe { message_with_type_and_level(ctype, message_type, level, global, vals, len) };
+    unsafe {
+        message_with_type_and_level(
+            ctype,
+            MessageType::from_raw(message_type),
+            MessageLevel::from_raw(level),
+            global,
+            vals,
+            len,
+        )
+    };
 }
 
 

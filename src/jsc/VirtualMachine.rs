@@ -1352,6 +1352,16 @@ pub struct RuntimeHooks {
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_for_vm: unsafe fn(vm: *mut VirtualMachine),
+    /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
+    /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
+    /// live above `bun_jsc`; the high tier downcasts the trait-object data
+    /// pointer and returns the lazily-decoded map (already strong-ref'd via
+    /// the returned `Arc`). [`resolve_source_mapping`] caches it into
+    /// `source_mappings` so subsequent lookups hit the fast path.
+    pub load_standalone_sourcemap: unsafe fn(
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+        path: &[u8],
+    ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec
     /// Debugger.zig:351. Walks `Jest.runner.?.bun_test_root.active_file`'s
     /// scope tree and emits `reportTestFoundWithLocation` for every test

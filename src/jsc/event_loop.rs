@@ -1082,7 +1082,9 @@ impl EventLoop {
 /// Testing API to expose event loop state
 #[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    let vm_ref = global_object.bun_vm();
+    // SAFETY: bun_vm() returns the live owning VM for this global; we only read
+    // fields and call &-methods on it for the duration of this host fn.
+    let vm_ref = unsafe { &*global_object.bun_vm() };
     // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
     let event_loop = unsafe { &*vm_ref.event_loop() };
     let result = JSValue::create_empty_object(global_object, 3);

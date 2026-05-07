@@ -355,7 +355,7 @@ impl<'a> Parser<'a> {
             Err(e) => {
                 if e == err!("StackOverflow") {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log.add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
+                    p.log().add_error(Some(p.source), p.lexer.loc(), b"Maximum call stack size exceeded")?;
                     return Ok(());
                 }
                 return Err(e);
@@ -643,16 +643,15 @@ impl<'a> Parser<'a> {
         // double-free hazard.
         let Parser { options, lexer, log, source, define, bump } = self;
 
-        // The unique `&'a mut Log` currently lives in `lexer.log` (a child of
-        // the `log` raw pointer per `Parser::init`); read through it so we
-        // don't pop its tag before it's moved into `P::init` below.
-        let orig_error_count = lexer.log.errors;
+        // `lexer.log` is `NonNull<Log>` aliasing `log`; reborrow at the use site.
+        // SAFETY: pointee outlives `'a` (enforced by `Parser::init`).
+        let orig_error_count = unsafe { (*log.as_ptr()).errors };
+        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
+        // field docs), so handing the same raw pointer to both is defined —
+        // matches Zig's two-aliasing-`*Log` model with no `&mut` materialized.
         let mut p = P::<TS, JX, false>::init(
             bump,
-            // SAFETY: handing the unique `&'a mut Log` to the inner parser;
-            // matches Zig's two-`*Log` aliasing model (P also receives the
-            // lexer which holds the same Log).
-            unsafe { &mut *log.as_ptr() },
+            log,
             source,
             define,
             lexer,

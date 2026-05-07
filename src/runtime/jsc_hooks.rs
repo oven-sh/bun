@@ -4024,23 +4024,18 @@ unsafe fn resolve_hook(
     let source_utf8 = source.to_utf8();
 
     // Spec :1913-1925 — `PluginRunner.onResolveJSC`.
-    // PORT NOTE: `vm.plugin_runner` is the low-tier data record
-    // (`bun_bundler::transpiler::PluginRunner`, type-erased `global_object`);
-    // the JSC-aware behaviour lives on `bun_bundler_jsc::PluginRunner`. We
-    // rebuild the latter from the live global here — `on_resolve_jsc` only
-    // reads `self.global_object`, so a stack temporary is exact.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { (*vm).plugin_runner.is_some() } {
-        use bun_bundler_jsc::PluginRunner::PluginRunner as JscPluginRunner;
-        if JscPluginRunner::could_be_plugin(specifier_utf8.slice()) {
-            let namespace = JscPluginRunner::extract_namespace(specifier_utf8.slice());
+        use bun_bundler_jsc::PluginRunner as plugin_runner;
+        if plugin_runner::could_be_plugin(specifier_utf8.slice()) {
+            let namespace = plugin_runner::extract_namespace(specifier_utf8.slice());
             let after_namespace = if namespace.is_empty() {
                 specifier_utf8.slice()
             } else {
                 &specifier_utf8.slice()[namespace.len() + 1..]
             };
-            let runner = JscPluginRunner { global_object: global_ref };
-            match runner.on_resolve_jsc(
+            match plugin_runner::on_resolve_jsc(
+                global_ref,
                 bun_string::String::init(namespace),
                 bun_string::String::borrow_utf8(after_namespace),
                 source,

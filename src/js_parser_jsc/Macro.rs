@@ -795,18 +795,19 @@ impl<'a> Run<'a> {
 
                 // encode into utf16 so the printer escapes the string correctly
                 // PERF(port): was allocator.alloc(u16, len) — profile in Phase B
-                let mut utf16_bytes: Vec<u16> = vec![0u16; bun_str.length()];
-                // SAFETY: `[u16]` reinterpreted as `[u8]` of double length.
-                let out_bytes = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        utf16_bytes.as_mut_ptr().cast::<u8>(),
-                        utf16_bytes.len() * 2,
-                    )
+                //
+                // Zig went through `bun.String.encodeInto(out, .utf16le)`
+                // (string.zig:630), which lives in `bun_runtime::webcore::
+                // encoding` (forward dep from here). For the fixed
+                // `.utf16le` target the body is just: UTF-16 → memcpy,
+                // Latin-1 → byte-widen. JS-sourced WTF strings are never
+                // UTF-8-tagged (the Zig path `@panic`ed on that anyway),
+                // so inline the two arms.
+                let utf16_bytes: Vec<u16> = if bun_str.is_utf16() {
+                    bun_str.utf16().to_vec()
+                } else {
+                    bun_str.latin1().iter().map(|&b| b as u16).collect()
                 };
-                let encoded_bytes = bun_str
-                    .encode_into(out_bytes, bun_string::encoding::Encoding::Utf16le)
-                    .unwrap_or(0);
-                utf16_bytes.truncate(encoded_bytes / 2);
                 // PORT NOTE: `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the Phase-A `Str` convention). Copy into
                 // the `MacroContext` bump arena — Zig used `this.allocator`

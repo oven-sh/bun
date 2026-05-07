@@ -1040,6 +1040,22 @@ impl From<String> for OwnedString {
         Self(s)
     }
 }
+impl Default for OwnedString {
+    #[inline]
+    fn default() -> Self {
+        Self(String::EMPTY)
+    }
+}
+impl Clone for OwnedString {
+    /// Bumps the WTF refcount (or copies a `ZigString` into a fresh
+    /// WTF::StringImpl) and wraps the resulting +1 in a new `OwnedString`.
+    /// Mirrors Zig's `s.clone()` followed by an implicit `defer deref` on the
+    /// new value.
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 impl core::fmt::Display for OwnedString {
     #[inline]
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

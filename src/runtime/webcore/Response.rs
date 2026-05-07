@@ -481,7 +481,9 @@ impl Response {
 
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        let js_value = js::to_js_unchecked(global_object, self as *mut Self as *mut ());
+        // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
+        // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
+        let js_value = js::to_js(self as *mut Self as *mut (), global_object);
         self.js_ref = JsRef::init_weak(js_value);
 
         self.check_body_stream_ref(global_object);

@@ -176,27 +176,12 @@ pub fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
             }
             let options = args.next_eat();
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-            // SAFETY: `store_ptr` is live for the duration of `blob`. `unlink`
-            // takes the parent `Store` as `NonNull` (raw) so the `&mut S3`
-            // receiver borrow into `store.data` is not invalidated by a
-            // concurrent shared reborrow of the same allocation.
-            unsafe {
-                (*store_ptr)
-                    .data
-                    .as_s3_mut()
-                    .unlink(NonNull::new_unchecked(store_ptr), global, options)
-            }
+            let store = blob.store.as_ref().unwrap();
+            store.data.as_s3().unlink(store, global, options)
         }
         PathOrBlob::Blob(blob) => {
-            let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-            // SAFETY: see above.
-            unsafe {
-                (*store_ptr)
-                    .data
-                    .as_s3_mut()
-                    .unlink(NonNull::new_unchecked(store_ptr), global, args.next_eat())
-            }
+            let store = blob.store.as_ref().unwrap();
+            store.data.as_s3().unlink(store, global, args.next_eat())
         }
     }
 }

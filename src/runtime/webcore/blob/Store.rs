@@ -73,20 +73,19 @@ pub trait S3Ext {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
-    /// `store` is the heap `Store` that owns `self` (`self == &mut store.data.S3`).
-    /// Passed as `NonNull` (raw) rather than `&Store` because the caller already
-    /// holds `&mut self` into `store.data` — materialising a `&Store` over the
-    /// same allocation would invalidate that unique borrow under Stacked Borrows.
+    /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
+    /// Neither impl mutates `self`, so a shared receiver lets callers hold the
+    /// natural `&Store` alongside `&S3` without Stacked-Borrows gymnastics.
     fn unlink(
-        &mut self,
-        store: NonNull<Store>,
+        &self,
+        store: &Store,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
-    /// See `unlink` for why `store` is `NonNull<Store>` instead of `&Store`.
+    /// See `unlink` — `self` is read-only; `store` is the owning `Store`.
     fn list_objects(
-        &mut self,
-        store: NonNull<Store>,
+        &self,
+        store: &Store,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -333,8 +332,8 @@ impl S3Ext for S3 {
     }
 
     fn unlink(
-        &mut self,
-        store: NonNull<Store>,
+        &self,
+        store: &Store,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -408,7 +407,7 @@ impl S3Ext for S3 {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
-                store: unsafe { StoreRef::retained(store) },
+                store: unsafe { StoreRef::retained(NonNull::from(store)) },
                 global: global_this as *const _,
             })) as *mut c_void,
             proxy,
@@ -419,8 +418,8 @@ impl S3Ext for S3 {
     }
 
     fn list_objects(
-        &mut self,
-        store: NonNull<Store>,
+        &self,
+        store: &Store,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -508,7 +507,7 @@ impl S3Ext for S3 {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount (Zig: `store.ref()`).
-            store: unsafe { StoreRef::retained(store) },
+            store: unsafe { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
             global: global_this as *const _,
         }));

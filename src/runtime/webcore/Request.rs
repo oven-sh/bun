@@ -68,10 +68,18 @@ const _: () = {
             unsafe { __from_js_direct(value) }.map(|p| p.as_ptr())
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+            // Route through the inherent `Request::to_js` so the Zig override
+            // semantics (Request.zig:229-236) are preserved for generic
+            // `<T: JsClass>::to_js` callers too: `calculate_estimated_byte_size`,
+            // `js_ref = .init_weak(...)`, and `check_body_stream_ref` must all
+            // run, otherwise the wrapper reports size 0 and any Locked-body
+            // ReadableStream is never migrated into the GC slot.
             let ptr = Box::into_raw(Box::new(self));
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the
-            // C++ wrapper (freed via `RequestClass__finalize`).
-            unsafe { __create(global, ptr) }
+            // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
+            // `to_js` hands it to the C++ wrapper which takes ownership (freed
+            // via `RequestClass__finalize`). Same pattern as `do_clone`.
+            let _ = __create; // keep the linked symbol referenced for codegen parity
+            unsafe { Request::to_js(&mut *ptr, global) }
         }
         fn get_constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             // SAFETY: `global` is a live JSC global; C++ reads its cached

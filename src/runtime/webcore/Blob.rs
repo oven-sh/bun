@@ -1193,12 +1193,8 @@ impl BlobExt for Blob {
         validate_writable_blob(global_this, self)?;
 
         let store = self.store.as_ref().unwrap();
-        // SAFETY: `StoreRef::as_ptr` is never null (wraps `NonNull<Store>`).
-        let store_nn = unsafe { NonNull::new_unchecked(store.as_ptr()) };
-        match store.data_mut() {
-            // Pass the parent `Store` as `NonNull` (raw): `s3` is `&mut` into
-            // `store.data`, so a `&Store` reborrow here would be a SB violation.
-            store::Data::S3(s3) => s3.unlink(store_nn, global_this, args.next_eat()),
+        match &store.data {
+            store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
             store::Data::File(file) => file.unlink(global_this),
             store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
         }

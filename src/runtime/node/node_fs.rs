@@ -5248,7 +5248,7 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph_get() {
                     if let Some(file) = graph.find(path.as_bytes()) {
-                        let contents: &[u8] = file.contents();
+                        let contents: &[u8] = file.contents.as_bytes();
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with

@@ -1,7 +1,3 @@
-#![allow(dead_code, unused_imports)]
-// PORT NOTE: dead_code/unused_imports suppressed while exec bodies are
-// `todo!()`-gated on bun_install::package_manager_real un-gating.
-
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::io::Write as _;
@@ -9,8 +5,12 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::HashMap;
+use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_install::{PackageID, PackageManager};
+use bun_install::dependency::Behavior;
+use bun_install::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
+use bun_install::lockfile::{self, Lockfile};
+use bun_install::{package_manager, CommandLineArguments, PackageID, PackageManager, Subcommand};
 use bun_semver as semver;
 use bun_str::strings;
 
@@ -110,6 +110,16 @@ fn compare_dependents(a: &DependentInfo, b: &DependentInfo) -> bool {
     }
 
     a.name[..] < b.name[..]
+}
+
+fn cmp_dependents(a: &DependentInfo, b: &DependentInfo) -> Ordering {
+    if compare_dependents(a, b) {
+        Ordering::Less
+    } else if compare_dependents(b, a) {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -286,32 +296,31 @@ impl WhyCommand {
     }
 
     pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `PackageManager::CommandLineArguments::parse` and
-        // `PackageManager::init` live in the gated `bun_install::package_manager_real`
-        // module; the active `PackageManager` is a stub with no `CommandLineArguments`/
-        // `Subcommand`/`init`. Body restored when reconciler-6 un-gates.
-        let _ = ctx;
-        todo!("blocked_on: bun_install::PackageManager::{{CommandLineArguments,Subcommand,init}}");
+        let cli = CommandLineArguments::parse(Subcommand::Why)?;
+        // PORT NOTE: capture the few `cli` fields we read after `init` consumes it.
+        let positionals = cli.positionals;
+        let top_only = cli.top_only;
 
-        {
-            let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Why)?;
-            let (pm, _) = PackageManager::init(ctx, &cli, PackageManager::Subcommand::Why)?;
+        let (pm_ptr, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
+        // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
+        // non-null and exclusively owned by this thread for the command's
+        // duration (mirrors Zig's `*PackageManager`).
+        let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
-            if cli.positionals.len() < 1 {
+        if positionals.is_empty() {
+            Self::print_usage();
+            Global::exit(1);
+        }
+
+        if positionals[0] == b"why" {
+            if positionals.len() < 2 {
                 Self::print_usage();
                 Global::exit(1);
             }
-
-            if cli.positionals[0].as_ref() == b"why" {
-                if cli.positionals.len() < 2 {
-                    Self::print_usage();
-                    Global::exit(1);
-                }
-                return Self::exec_with_manager(ctx, pm, &cli.positionals[1], cli.top_only);
-            }
-
-            Self::exec_with_manager(ctx, pm, &cli.positionals[0], cli.top_only)
+            return Self::exec_with_manager(ctx, pm, positionals[1], top_only);
         }
+
+        Self::exec_with_manager(ctx, pm, positionals[0], top_only)
     }
 
     pub fn exec_from_pm(
@@ -324,11 +333,6 @@ impl WhyCommand {
             Global::exit(1);
         }
 
-        // PORT NOTE: `pm.options.top_only` lives on the gated real Options struct;
-        // the active `PackageManagerOptionsStub` lacks it.
-        let _ = (ctx, pm);
-        todo!("blocked_on: bun_install::PackageManagerOptionsStub::top_only");
-
         Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
     }
 
@@ -338,31 +342,43 @@ impl WhyCommand {
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `pm.lockfile` is now reachable on the stub, but the body
-        // below also needs `Lockfile::load_from_cwd` / `LoadResult::ok` /
-        // `pm.options.depth` / `Resolution::fmt` / `packages.get(idx)` —
-        // all still on the gated `package_manager_real` / `lockfile_real`
-        // modules. Body restored when those un-gate.
-        let _ = (ctx, &pm.lockfile, package_pattern, top_only);
-        todo!("blocked_on: bun_install::lockfile::Lockfile::load_from_cwd / PackageManagerOptionsStub::depth (package_manager_real un-gate, reconciler-6)");
+        // PORT NOTE: reshaped for borrowck — Zig calls
+        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which aliases
+        // `*PackageManager` with `*Lockfile`. Detach the `Box<Lockfile>` from `pm`
+        // so `load_from_cwd` can take `Option<&mut PackageManager>` without
+        // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
+        // up front so we never need `pm` again once `lockfile` is borrowed.
+        let depth_opt = pm.options.depth;
+        // SAFETY: `ctx.log` is set by `Command::create` for every subcommand and
+        // is non-null for the command's lifetime; no other `&mut Log` is live here.
+        let log = unsafe { &mut *ctx.log };
 
-        {
-        let load_lockfile = pm.lockfile.load_from_cwd(pm, &mut ctx.log, true);
+        let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
+        let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+        // After error handling, `load_lockfile` is `Ok` and only borrows
+        // `lockfile_box` (the `pm`/`log` borrows ended at the call boundary).
+        // Drop the result and work against `lockfile_box` directly.
+        drop(load_lockfile);
 
         if top_only {
             MAX_DEPTH.store(1, AtomicOrdering::Relaxed);
-        } else if let Some(depth) = pm.options.depth {
+        } else if let Some(depth) = depth_opt {
             MAX_DEPTH.store(depth, AtomicOrdering::Relaxed);
         } else {
             MAX_DEPTH.store(100, AtomicOrdering::Relaxed);
         }
 
-        let lockfile = load_lockfile.ok.lockfile;
+        let lockfile: &Lockfile = &lockfile_box;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
         let dependencies_items = lockfile.buffers.dependencies.as_slice();
         let resolutions_items = lockfile.buffers.resolutions.as_slice();
+
+        let pkg_names = packages.items_name();
+        let pkg_dep_slices = packages.items_dependencies();
+        let pkg_res_slices = packages.items_resolutions();
+        let pkg_resolution = packages.items_resolution();
 
         // PERF(port): was arena bulk-free — Zig used ArenaAllocator for all_dependents
         // and per-dep string dupes. Now using global allocator + Drop.
@@ -375,15 +391,14 @@ impl WhyCommand {
         let glob = GlobPattern::init(package_pattern);
 
         for pkg_idx in 0..packages.len() {
-            let pkg = packages.get(pkg_idx);
-            let pkg_name = pkg.name.slice(string_bytes);
+            let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
             if pkg_name.is_empty() {
                 continue;
             }
 
-            let dependencies = pkg.dependencies.get(dependencies_items);
-            let resolutions = pkg.resolutions.get(resolutions_items);
+            let dependencies = pkg_dep_slices[pkg_idx].get(dependencies_items);
+            let resolutions = pkg_res_slices[pkg_idx].get(resolutions_items);
 
             for (dep_idx, dependency) in dependencies.iter().enumerate() {
                 let target_id = resolutions[dep_idx];
@@ -391,14 +406,13 @@ impl WhyCommand {
                     continue;
                 }
 
-                let dependents_entry = all_dependents.entry(target_id).or_insert_with(Vec::new);
+                let dependents_entry = all_dependents.entry(target_id).or_default();
 
                 let mut dep_version_buf: Vec<u8> = Vec::new();
-                // TODO(port): MultiArrayList column access `packages.items(.resolution)` — exact Rust API TBD
                 write!(
                     &mut dep_version_buf,
                     "{}",
-                    packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_core::fmt::PathSep::Auto)
+                    pkg_resolution[pkg_idx].fmt(string_bytes, PathSep::Auto)
                 )
                 .expect("unreachable");
                 let dep_pkg_version: Box<[u8]> = dep_version_buf.into_boxed_slice();
@@ -406,13 +420,15 @@ impl WhyCommand {
                 let spec: Box<[u8]> =
                     Box::<[u8]>::from(dependency.version.literal.slice(string_bytes));
 
-                let dep_type = if dependency.behavior.dev {
+                let dep_type = if dependency.behavior.contains(Behavior::DEV) {
                     DependencyType::Dev
-                } else if dependency.behavior.optional && dependency.behavior.peer {
+                } else if dependency.behavior.contains(Behavior::OPTIONAL)
+                    && dependency.behavior.contains(Behavior::PEER)
+                {
                     DependencyType::OptionalPeer
-                } else if dependency.behavior.optional {
+                } else if dependency.behavior.contains(Behavior::OPTIONAL) {
                     DependencyType::Optional
-                } else if dependency.behavior.peer {
+                } else if dependency.behavior.contains(Behavior::PEER) {
                     DependencyType::Peer
                 } else {
                     DependencyType::Prod
@@ -436,11 +452,10 @@ impl WhyCommand {
             }
 
             let mut version_buf: Vec<u8> = Vec::new();
-            // TODO(port): MultiArrayList column access `packages.items(.resolution)` — exact Rust API TBD
             write!(
                 &mut version_buf,
                 "{}",
-                packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_core::fmt::PathSep::Auto)
+                pkg_resolution[pkg_idx].fmt(string_bytes, PathSep::Auto)
             )
             .expect("unreachable");
             let version: Box<[u8]> = version_buf.into_boxed_slice();
@@ -464,35 +479,26 @@ impl WhyCommand {
         }
 
         for target_version in &target_versions {
-            let target_pkg = packages.get(target_version.pkg_id as usize);
-            let target_name = target_pkg.name.slice(string_bytes);
+            let target_name =
+                pkg_names[target_version.pkg_id as usize].slice(string_bytes);
             Output::prettyln(format_args!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),
                 BStr::new(&target_version.version)
             ));
 
-            if let Some(dependents) = all_dependents.get_mut(&target_version.pkg_id) {
+            if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
                 if dependents.is_empty() {
                     Output::prettyln(format_args!("<d>  └─ No dependents found<r>"));
                 } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
                     Output::prettyln(format_args!("<d>  └─ (deeper dependencies hidden)<r>"));
                 } else {
-                    let mut ctx_data =
-                        TreeContext::init(string_bytes, top_only, &all_dependents);
+                    let mut ctx_data = TreeContext::init(string_bytes, top_only, &all_dependents);
                     // PORT NOTE: reshaped for borrowck — Zig sorted via mutable
                     // `dependents.items` while also holding `&all_dependents` in ctx_data.
                     // Clone the slice to sort independently.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
-                    sorted.sort_by(|a, b| {
-                        if compare_dependents(a, b) {
-                            Ordering::Less
-                        } else if compare_dependents(b, a) {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Equal
-                        }
-                    });
+                    sorted.sort_by(cmp_dependents);
 
                     let len = sorted.len();
                     for (dep_idx, dep) in sorted.iter().enumerate() {
@@ -521,6 +527,9 @@ impl WhyCommand {
             Output::prettyln(format_args!(""));
             Output::flush();
         }
+
+        // Restore detached lockfile back onto the manager singleton.
+        pm.lockfile = lockfile_box;
 
         Ok(())
     }
@@ -603,16 +612,7 @@ fn print_dependency_tree(
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
         let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
-
-        sorted_dependents.sort_by(|a, b| {
-            if compare_dependents(a, b) {
-                Ordering::Less
-            } else if compare_dependents(b, a) {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
-            }
-        });
+        sorted_dependents.sort_by(cmp_dependents);
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {
@@ -672,7 +672,9 @@ fn print_dependency_tree(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/cli/why_command.zig (492 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Output::pretty/prettyln assumed fn(format_args!); MultiArrayList column API + PackageManager/Semver paths need Phase-B wiring; mutable global → AtomicUsize; defer-remove + in-place sort reshaped for borrowck.
+//   confidence: high
+//   todos:      0
+//   notes:      Output::pretty/prettyln take format_args!; mutable global → AtomicUsize;
+//               defer-remove + in-place sort reshaped for borrowck; lockfile detached
+//               from pm to avoid aliased &mut in load_from_cwd.
 // ──────────────────────────────────────────────────────────────────────────

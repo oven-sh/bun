@@ -410,6 +410,19 @@ impl EventLoopHandle {
         }
     }
 
+}
+
+/// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`
+/// accepts `EventLoopHandle` directly. Kept here (not in `bun_uws`) because
+/// `bun_uws` is a lower tier than `bun_event_loop` and cannot name this enum.
+impl bun_uws::ParentEventLoopHandle for EventLoopHandle {
+    #[inline]
+    fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
+        EventLoopHandle::into_tag_ptr(self)
+    }
+}
+
+impl EventLoopHandle {
     /// Zig: `loop.internal_loop_data.setParentEventLoop(jsc.EventLoopHandle.init(..))`.
     /// Convenience wrapper so callers don't need both `bun_uws::InternalLoopDataExt`
     /// (the trait) and the `*mut Loop` deref dance in scope.

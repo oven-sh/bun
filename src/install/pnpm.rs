@@ -1363,7 +1363,7 @@ fn parse_append_package_dependencies(
                     alias.map(|a| a.hash).unwrap_or(name.hash),
                     version_sliced.slice,
                     &version_sliced,
-                    log,
+                    Some(&mut *log),
                     None,
                 ) {
                     Some(v) => v,
@@ -1516,7 +1516,7 @@ fn parse_append_importer_dependencies(
                         name.hash,
                         specifier_sliced.slice,
                         &specifier_sliced,
-                        log,
+                        Some(&mut *log),
                         None,
                     ) {
                         Some(v) => v,

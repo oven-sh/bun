@@ -1558,7 +1558,7 @@ impl<'a> PackageInstaller<'a> {
 
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir);
 
-            let install_result: PackageInstall::Result = match resolution.tag {
+            let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
                     installer.install_from_link(self.skip_delete, destination_dir)
                 }

@@ -781,7 +781,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Server,
-            &mut *addr_of_mut!((*p).server_transpiler).cast::<MaybeUninit<Transpiler>>(),
+            &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
             return Err(global.throw_error(err, generic_action));
@@ -791,7 +791,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Client,
-            &mut *addr_of_mut!((*p).client_transpiler).cast::<MaybeUninit<Transpiler>>(),
+            &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
             return Err(global.throw_error(err, generic_action));
@@ -802,7 +802,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 log,
                 bake::Mode::Development,
                 bake::Graph::Ssr,
-                &mut *addr_of_mut!((*p).ssr_transpiler).cast::<MaybeUninit<Transpiler>>(),
+                &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
                 return Err(global.throw_error(err, generic_action));

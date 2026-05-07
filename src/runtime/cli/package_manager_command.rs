@@ -409,7 +409,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
-                fd.fd().close();
+                fd.close();
 
                 let mut had_err = false;
 

@@ -32,7 +32,7 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
     if arguments.len() < 2 {
-        return Err(global.throw("Expected two arguments", format_args!("")));
+        return Err(global.throw(format_args!("Expected two arguments")));
     }
 
     let left_string = arguments[0].to_js_string(global)?;
@@ -43,27 +43,27 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let right = unsafe { &*right_string }.to_slice(global);
 
     if !strings::is_all_ascii(left.slice()) {
-        return Ok(JSValue::js_number(0));
+        return Ok(JSValue::js_number_from_int32(0));
     }
     if !strings::is_all_ascii(right.slice()) {
-        return Ok(JSValue::js_number(0));
+        return Ok(JSValue::js_number_from_int32(0));
     }
 
     let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
     let right_result = Version::parse(SlicedString::init(right.slice(), right.slice()));
 
     if !left_result.valid {
-        return Err(global.throw(
+        return Err(global.throw(format_args!(
             "Invalid SemVer: {}\n",
-            format_args!("{}", bstr::BStr::new(left.slice())),
-        ));
+            bstr::BStr::new(left.slice()),
+        )));
     }
 
     if !right_result.valid {
-        return Err(global.throw(
+        return Err(global.throw(format_args!(
             "Invalid SemVer: {}\n",
-            format_args!("{}", bstr::BStr::new(right.slice())),
-        ));
+            bstr::BStr::new(right.slice()),
+        )));
     }
 
     let left_version = left_result.version.max();
@@ -71,9 +71,9 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     Ok(
         match left_version.order_without_build(right_version, left.slice(), right.slice()) {
-            Ordering::Equal => JSValue::js_number(0),
-            Ordering::Greater => JSValue::js_number(1),
-            Ordering::Less => JSValue::js_number(-1),
+            Ordering::Equal => JSValue::js_number_from_int32(0),
+            Ordering::Greater => JSValue::js_number_from_int32(1),
+            Ordering::Less => JSValue::js_number_from_int32(-1),
         },
     )
 }

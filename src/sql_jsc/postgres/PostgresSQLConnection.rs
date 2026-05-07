@@ -1050,7 +1050,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
                 Err(_) => return Ok(JSValue::ZERO),
             }
         } else {
-            return Err(global_object.throw_invalid_arguments("tls must be a boolean or an object"));
+            return Err(global_object.throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
         };
 
         if global_object.has_exception() {

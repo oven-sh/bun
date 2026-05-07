@@ -3,6 +3,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include "JSDOMFile.h"
 
 using namespace JSC;
@@ -61,11 +62,20 @@ public:
         if (JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value)))
             return true;
 
-        // A direct Blob instance must not match `instanceof File` even though the
-        // default prototype-chain check below would say true (File.prototype is
-        // currently the same object as Blob.prototype). Real Files are caught
-        // above via JSDOMFile__hasInstance.
-        if (value.inherits<WebCore::JSBlob>())
+        // A direct Blob instance must not match `instanceof File` even though
+        // the default prototype-chain check below would say true (File.prototype
+        // is currently the same object as Blob.prototype). Real Files are caught
+        // above via JSDOMFile__hasInstance. Unwrap proxies so a proxy wrapping a
+        // Blob is also rejected — without this, defaultHasInstance would forward
+        // through the proxy's [[GetPrototypeOf]] back to Blob.prototype and (due
+        // to the prototype aliasing) declare it `instanceof File`.
+        JSObject* unwrapped = asObject(value);
+        while (auto* proxy = dynamicDowncast<ProxyObject>(unwrapped)) {
+            unwrapped = proxy->target();
+            if (!unwrapped)
+                break;
+        }
+        if (unwrapped && unwrapped->inherits<WebCore::JSBlob>())
             return false;
 
         // Fall back to the standard OrdinaryHasInstance check so proxies whose

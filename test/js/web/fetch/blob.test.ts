@@ -355,6 +355,21 @@ describe("File `instanceof` checks", () => {
     expect(blob instanceof Blob).toBe(true);
   });
 
+  test("a transparent Proxy wrapping a Blob is not instanceof File", () => {
+    // The "blob is not a File" invariant must survive a Proxy wrapper. Without
+    // unwrapping, defaultHasInstance would forward through the proxy back to
+    // Blob.prototype (which equals File.prototype internally) and incorrectly
+    // declare the proxy `instanceof File`. Browsers and Node both return false.
+    const blob = new Blob(["hi"]);
+    const proxy = new Proxy(blob, {});
+    expect(proxy instanceof File).toBe(false);
+    expect(proxy instanceof Blob).toBe(true);
+
+    // Nested proxies must unwrap all the way down to the underlying Blob.
+    const nested = new Proxy(new Proxy(blob, {}), {});
+    expect(nested instanceof File).toBe(false);
+  });
+
   test("primitives and non-objects are not instanceof File", () => {
     expect((null as any) instanceof File).toBe(false);
     expect((undefined as any) instanceof File).toBe(false);

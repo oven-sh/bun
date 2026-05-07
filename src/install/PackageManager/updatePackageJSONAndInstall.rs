@@ -1,6 +1,4 @@
 use core::fmt;
-use core::ptr::null_mut;
-use core::sync::atomic::{AtomicPtr, Ordering};
 use std::borrow::Cow;
 
 use bstr::BStr;
@@ -8,19 +6,6 @@ use bstr::BStr;
 use bun_core::{err, Error, Global, Output};
 // MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install (see install/lib.rs).
 use crate::ShellCompletions;
-
-/// Hook (GENUINE b0): bun_runtime::cli::BuildCommand::exec — runs the bundler's
-/// dependencies-scanner pass for `bun install --analyze`. Registered by
-/// bun_runtime::init(). Signature:
-/// `unsafe fn(ctx: *mut (), fetcher: *mut ()) -> Result<(), Error>`
-/// where `ctx` is `Command::Context` and `fetcher` is
-/// `*mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner`.
-pub static BUILD_COMMAND_EXEC_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
-
-/// Hook (GENUINE b0): bun_runtime::cli::Cli::log_mut — global CLI log accessor used to
-/// flush parser errors on InstallFailed. Registered by bun_runtime::init().
-/// Signature: `unsafe fn() -> *mut bun_logger::Log`.
-pub static CLI_LOG_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 use crate::bun_fs::FileSystem;
 use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;

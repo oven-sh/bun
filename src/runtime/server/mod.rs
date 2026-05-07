@@ -275,13 +275,16 @@ pub enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     // TODO(b2-blocked): `Pending(Vec<ServePluginsCallback>)` once JSBundler is real.
     Pending,
-    Loaded(jsc::JSBundler),
+    /// `*JSBundler.Plugin` — the C++ `BunPlugin` handle. Same payload type as
+    /// `server_body::ServePluginsState::Loaded` so `GetOrStartLoadResult::Ready`
+    /// (re-exported from server_body) can borrow it directly.
+    Loaded(Box<crate::api::js_bundler::Plugin>),
     Err(jsc::Strong),
 }
 
 pub enum PluginsResult<'a> {
     Pending,
-    Found(Option<&'a jsc::JSBundler>),
+    Found(Option<&'a crate::api::js_bundler::Plugin>),
     Err(jsc::JSValue),
 }
 
@@ -610,9 +613,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // SAFETY: hive slot is live; `ref_()` bumps the slot's refcount and
-        // hands back the same pointer.
-        let _ = unsafe { (*body_hive).ref_() };
+        // PORT NOTE: in Zig the +1 from `body.ref()` is *moved into*
+        // `Request.init(..., body.ref())` so the JS Request and the
+        // RequestContext share one hive slot. `webcore::Request.body` is
+        // currently `Box<BodyValue>` (see Request.rs:95) and cannot adopt the
+        // hive ref yet, so we deliberately do NOT bump `(*body_hive).ref_()`
+        // here — doing so without an owner would leak the slot on every
+        // request. The hive slot's initial ref_count=1 is held by
+        // `ctx.request_body` and released in `RequestContext::deinit`.
+        let _ = body_hive;
         // TODO(port): `Request.body` is currently `Box<BodyValue>` (see
         // Request.rs:95) — Zig stores `*Body.Value.HiveRef` so the request
         // and the RequestContext share one body slot. Until that field is
@@ -2036,7 +2045,7 @@ impl AnyServer {
         // PORT NOTE: `mod.rs::ServePlugins` and `server_body::ServePlugins` are
         // mid-reconciliation duplicates. The mod.rs state machine is simpler
         // (no Pending callback list), so map directly.
-        any_server_dispatch!(self, |s| match &s.plugins {
+        any_server_dispatch!(self, |s| match s.plugins.as_deref() {
             None => GetOrStartLoadResult::Ready(None),
             Some(p) => match &p.state {
                 ServePluginsState::Unqueued(_) | ServePluginsState::Pending => {
@@ -2044,7 +2053,8 @@ impl AnyServer {
                     // the unified type, store `_callback` and kick the loader.
                     GetOrStartLoadResult::Pending
                 }
-                ServePluginsState::Loaded(_) => GetOrStartLoadResult::Ready(None),
+                // server.zig:349 `.loaded => |plugins| return .{ .ready = plugins }`
+                ServePluginsState::Loaded(b) => GetOrStartLoadResult::Ready(Some(b.as_ref())),
                 ServePluginsState::Err(_) => GetOrStartLoadResult::Err,
             },
         })

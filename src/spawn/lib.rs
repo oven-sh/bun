@@ -60,6 +60,9 @@ pub mod process {
 // `bun_runtime::api::bun::subprocess` and is dispatched at runtime.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
+    use core::ffi::c_void;
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
     use bun_sys::Fd;
 
     pub use super::StdioKind;
@@ -954,11 +957,65 @@ pub struct RunResult {
     pub stderr: Vec<u8>,
 }
 
-/// Port of `std.process.Child.run`. Blocking spawn that captures stdout/stderr.
+/// Port of `std.process.Child.run` — blocking spawn that captures stdout/stderr.
 ///
-/// TODO(port): wire to `bun_runtime::api::bun::process::sync::spawn` once the
-/// runtime crate is reachable here without a cycle. Typed stub for now so
-/// `bun_install::repository` type-checks.
-pub fn run(_opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
-    todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle)")
+/// PORT NOTE: Zig's `repository.exec` called `std.process.Child.run` directly;
+/// per `src/CLAUDE.md` ("Prefer Bun APIs over std") and the `std::process` ban
+/// in PORTING.md, this is rewritten on top of [`sync::spawn`] (= `bun.spawnSync`).
+/// The argv/envp marshalling below mirrors `std.process.Child.spawnPosix`:
+/// each arg is NUL-terminated, the array is NULL-terminated, and env entries
+/// are flattened to `KEY=VALUE\0`.
+pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+    // ── envp: HashMap<String,String> → `[*:null]?[*:0]const u8` ──
+    // Own the `KEY=VALUE\0` backing storage in `env_buf`; `envp` points into it
+    // and is kept alive for the duration of the `sync::spawn` call.
+    let mut env_buf: Vec<Vec<u8>> = Vec::with_capacity(opts.env_map.len());
+    for (k, v) in opts.env_map {
+        let mut entry = Vec::with_capacity(k.len() + 1 + v.len() + 1);
+        entry.extend_from_slice(k.as_bytes());
+        entry.push(b'=');
+        entry.extend_from_slice(v.as_bytes());
+        entry.push(0);
+        env_buf.push(entry);
+    }
+    let mut envp: Vec<*const c_char> =
+        env_buf.iter().map(|e| e.as_ptr().cast::<c_char>()).collect();
+    envp.push(core::ptr::null());
+
+    // ── argv: &[&[u8]] → Vec<Box<[u8]>> (sync::Options owns its argv) ──
+    let argv: Vec<Box<[u8]>> = opts.argv.iter().map(|a| Box::<[u8]>::from(*a)).collect();
+
+    let sync_opts = sync::Options {
+        argv,
+        envp: Some(envp.as_ptr()),
+        stdin: sync::Stdio::Ignore,
+        stdout: sync::Stdio::Buffer,
+        stderr: sync::Stdio::Buffer,
+        ..Default::default()
+    };
+
+    // `!Maybe(Result)` → outer `Result<_, bun_core::Error>` for the Zig `try`,
+    // inner `Maybe` for the syscall error.
+    let result = match sync::spawn(&sync_opts)? {
+        Ok(r) => r,
+        Err(sys_err) => return Err(sys_err.into()),
+    };
+
+    // Keep envp backing storage alive until the child has been waited on.
+    drop(envp);
+    drop(env_buf);
+
+    // Map `bun.spawn.Status` → `std.process.Child.Term` (the subset
+    // `repository.exec` matches on — `.Exited`/else).
+    let term = match result.status {
+        Status::Exited { code, .. } => Term::Exited(u32::from(code)),
+        Status::Signaled(sig) => Term::Signal(u32::from(sig as u8)),
+        Status::Err(_) | Status::Running => Term::Unknown(0),
+    };
+
+    Ok(RunResult {
+        term,
+        stdout: result.stdout,
+        stderr: result.stderr,
+    })
 }

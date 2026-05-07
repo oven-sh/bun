@@ -228,17 +228,17 @@ impl SharedEnv {
             if cloned.get(b"GIT_ASKPASS").is_none() {
                 let config = SloppyGlobalGitConfig::get();
                 if !config.has_askpass {
-                    cloned.put(b"GIT_ASKPASS", b"echo");
+                    bun_core::handle_oom(cloned.put(b"GIT_ASKPASS", b"echo"));
                 }
             }
 
             if cloned.get(b"GIT_SSH_COMMAND").is_none() {
                 let config = SloppyGlobalGitConfig::get();
                 if !config.has_ssh_command {
-                    cloned.put(
+                    bun_core::handle_oom(cloned.put(
                         b"GIT_SSH_COMMAND",
                         b"ssh -oStrictHostKeyChecking=accept-new",
-                    );
+                    ));
                 }
             }
 
@@ -408,7 +408,7 @@ impl Repository {
 
     pub fn format_as(
         &self,
-        label: &[u8],
+        label: &str,
         buf: &[u8],
         writer: &mut impl fmt::Write,
     ) -> fmt::Result {
@@ -422,7 +422,7 @@ impl Repository {
 
     pub fn fmt_store_path<'a>(
         &'a self,
-        label: &'a [u8],
+        label: &'a str,
         string_buf: &'a [u8],
     ) -> StorePathFormatter<'a> {
         StorePathFormatter {
@@ -432,7 +432,7 @@ impl Repository {
         }
     }
 
-    pub fn fmt<'a>(&'a self, label: &'a [u8], buf: &'a [u8]) -> Formatter<'a> {
+    pub fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a> {
         Formatter {
             repository: self,
             buf,
@@ -925,13 +925,13 @@ impl Repository {
 
 pub struct StorePathFormatter<'a> {
     repo: &'a Repository,
-    label: &'a [u8],
+    label: &'a str,
     string_buf: &'a [u8],
 }
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label))?;
+        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
 
         if !self.repo.owner.is_empty() {
             write!(
@@ -968,7 +968,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 }
 
 pub struct Formatter<'a> {
-    label: &'a [u8],
+    label: &'a str,
     buf: &'a [u8],
     repository: &'a Repository,
 }
@@ -977,7 +977,7 @@ impl<'a> fmt::Display for Formatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[cfg(debug_assertions)]
         debug_assert!(!self.label.is_empty());
-        write!(writer, "{}", BStr::new(self.label))?;
+        writer.write_str(self.label)?;
 
         let repo = self.repository.repo.slice(self.buf);
         if !self.repository.owner.is_empty() {

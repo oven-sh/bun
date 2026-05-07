@@ -47,7 +47,8 @@ use super::{
     Package,
     tree,
 };
-use super::package::Meta;
+use super::package::{Meta, PackageField, PackageSliceExt as _};
+use super::PackageIDSlice;
 
 /// `core::fmt::Write` → `bun_io::Write` bridge for callees that take
 /// `impl fmt::Write` (e.g. `Negatable::to_json`, `Bin::to_json`). The
@@ -315,7 +316,7 @@ impl Stringifier {
             while let Some(node) = pkgs_iter.next(None) {
                 tree_sort_buf.push((
                     Box::<[DependencyID]>::from(node.dependencies),
-                    Box::<[u8]>::from(node.relative_path),
+                    Box::<[u8]>::from(node.relative_path.as_bytes()),
                     node.depth,
                 ));
 
@@ -347,7 +348,7 @@ impl Stringifier {
                         let name_and_version = temp_buf.as_slice();
                         let name_and_version_hash = StringBuilder::string_hash(name_and_version);
 
-                        if let Some(patch) = lockfile.patched_dependencies.get(name_and_version_hash) {
+                        if let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                             found_patched_dependencies.insert(
                                 name_and_version_hash,
                                 (Box::<[u8]>::from(name_and_version), patch.path),
@@ -453,9 +454,7 @@ impl Stringifier {
                 *indent += 1;
 
                 let mut iter = lockfile.catalogs.groups.iter();
-                while let Some(entry) = iter.next() {
-                    let catalog_name = entry.key();
-                    let catalog_deps = entry.value();
+                while let Some((catalog_name, catalog_deps)) = iter.next() {
 
                     Self::write_indent(writer, indent)?;
                     write!(writer, "{}: {{\n", catalog_name.fmt_json(buf, Default::default()))?;
@@ -1060,7 +1059,7 @@ impl Stringifier {
                 bun_core::fmt::format_json_string_utf8(pkg_names[pkg_id as usize].slice(buf), Default::default()),
             )?;
 
-            if let Some(version) = workspace_versions.get(pkg_name_hashes[pkg_id as usize]) {
+            if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id as usize]) {
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
@@ -1419,7 +1418,7 @@ pub fn parse_into_binary_lockfile(
         lockfile.saved_config_version = match ConfigVersion::from_expr(&config_version_expr) {
             Some(v) => Some(v),
             None => {
-                log.add_error(source, config_version_expr.loc, "Invalid \"configVersion\". Expected a number")?;
+                log.add_error(Some(source), config_version_expr.loc, b"Invalid \"configVersion\". Expected a number")?;
                 return Err(ParseError::InvalidConfigVersion);
             }
         };
@@ -1577,10 +1576,12 @@ pub fn parse_into_binary_lockfile(
                 ..Default::default()
             };
 
-            let entry = lockfile.catalogs.default.get_or_put_context(
-                dep_name,
-                string_array_hash_context(lockfile, None),
-            )?;
+            // PORT NOTE: Zig threaded a `String.arrayHashContext(lockfile, null)`
+            // through `getOrPutContext`; the Rust `ArrayHashMap<String, _>` hashes
+            // the `String` handle directly, so the unit context is folded into
+            // plain `get_or_put`.
+            let _ = string_array_hash_context(lockfile, None);
+            let entry = lockfile.catalogs.default.get_or_put(dep_name)?;
 
             if entry.found_existing {
                 log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
@@ -1659,10 +1660,8 @@ pub fn parse_into_binary_lockfile(
                     ..Default::default()
                 };
 
-                let entry = group.get_or_put_context(
-                    dep_name,
-                    string_array_hash_context(lockfile, None),
-                )?;
+                let _ = string_array_hash_context(lockfile, None);
+                let entry = group.get_or_put(dep_name)?;
 
                 if entry.found_existing {
                     log.add_error(Some(source), key.loc, b"Duplicate catalog entry")?;
@@ -1778,9 +1777,8 @@ pub fn parse_into_binary_lockfile(
             root_pkg.name_hash = name_hash;
         }
 
-        root_pkg.dependencies = DependencySlice { off, len };
-        root_pkg.resolutions = DependencySlice { off, len };
-        // TODO(port): confirm field names of DependencySlice / ResolutionSlice
+        root_pkg.dependencies = DependencySlice::new(off, len);
+        root_pkg.resolutions = PackageIDSlice::new(off, len);
 
         root_pkg.meta.id = 0;
         lockfile.packages.append(root_pkg)?;
@@ -1827,8 +1825,8 @@ pub fn parse_into_binary_lockfile(
                     None,
                 )?;
 
-                pkg.dependencies = DependencySlice { off, len };
-                pkg.resolutions = DependencySlice { off, len };
+                pkg.dependencies = DependencySlice::new(off, len);
+                pkg.resolutions = PackageIDSlice::new(off, len);
 
                 if let Some(bin_expr) = value.get(b"bin") {
                     pkg.bin = Bin::parse_append(&bin_expr, &mut string_buf, &mut lockfile.buffers.extern_strings)?;
@@ -1839,7 +1837,7 @@ pub fn parse_into_binary_lockfile(
                 // there should be no duplicates
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(name);
+                let entry = pkg_map.get_or_put(name)?;
                 if entry.found_existing {
                     log.add_error_fmt(source, key.loc, format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)))?;
                     return Err(ParseError::InvalidWorkspaceObject);
@@ -2099,8 +2097,8 @@ pub fn parse_into_binary_lockfile(
                             None,
                         )?;
 
-                        pkg.dependencies = DependencySlice { off, len };
-                        pkg.resolutions = DependencySlice { off, len };
+                        pkg.dependencies = DependencySlice::new(off, len);
+                        pkg.resolutions = PackageIDSlice::new(off, len);
 
                         if let Some(bin) = deps_os_cpu_libc_bin_bundle_obj.get(b"bin") {
                             pkg.bin = Bin::parse_append(&bin, &mut string_buf, &mut lockfile.buffers.extern_strings)?;

@@ -124,7 +124,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 **Baseline (cache, only first time):** \`cat ${DIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); test -f ${DIAG}/\$slug.baseline || USE_SYSTEM_BUN=1 timeout 15 bun test {} > ${DIAG}/\$slug.baseline 2>&1'\`
 
-**Probe (parallel 16):** \`cat ${DIAG}/all.txt | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${DIAG}/results-r${round}.txt'\`
+**Probe (parallel 16):** ${round === 1 ? `\`cat ${DIAG}/all.txt` : `Only re-run previously-failing files (round-${round - 1} failures + 10 random previously-passing for regression check): \`{ cat ${DIAG}/failing-r${round - 1}.txt; shuf -n 10 ${DIAG}/passing.txt; }`} | xargs -P 16 -I{} sh -c 'slug=\$(echo {}|tr / _); timeout 15 ./build/debug/bun-debug test {} > ${DIAG}/\$slug.log 2>&1; echo "{}|\$?" >> ${DIAG}/results-r${round}.txt'\`. Write \`${DIAG}/failing-r${round}.txt\` and update \`${DIAG}/passing.txt\` (cumulative).
 
 **Triage (ONE shell pipeline, no per-file writes):** \`while IFS='|' read f rc; do slug=...; passing if rc==0 && pass-count matches baseline; else echo "{file,kind,summary}" to failing.json; done < results-r${round}.txt\`. kind: rc>=128→crash, rc==124→hang, else→diverge. summary = first 2 ✗ lines from .log (or backtrace tail for crash).
 

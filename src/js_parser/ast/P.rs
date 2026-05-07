@@ -241,7 +241,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     pub macro_: MacroState<'a>,
     pub allocator: &'a Bump,
     pub options: ParserOptions<'a>,
-    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log()` and
+    /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log` and
     /// `lexer.log`); Rust cannot store two `&'a mut Log` to one allocation
     /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
     /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
@@ -719,11 +719,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log(&self) -> &mut logger::Log {
-        // SAFETY: `self.log()` was created from an `&'a mut Log` that outlives
+        // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
         // `'a` (and therefore `self`). `self.lexer.log` aliases the same
         // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
         // exists to be invalidated by this transient reborrow.
-        unsafe { &mut *self.log().as_ptr() }
+        unsafe { &mut *self.log.as_ptr() }
     }
 
     // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies

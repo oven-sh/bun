@@ -2406,10 +2406,45 @@ fn run_with_source_code(
         js_parser::options::ServerComponents::None
     };
 
-    // TODO(port): TYPE_ONLY divergence — `transpiler.options.framework:
-    // Option<&bake_types::Framework>` vs `opts.framework:
-    // Option<&js_parser::options::Framework>`.
-    opts.framework = None;
+    // CYCLEBREAK: `transpiler.options.framework: Option<&bake_types::Framework>`
+    // vs `opts.framework: Option<&js_parser::options::Framework>` — both
+    // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
+    // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc
+    // so `opts` can borrow it.
+    opts.framework = topts.framework.map(|f| {
+        let projected = js_parser::options::Framework {
+            is_built_in_react: f.is_built_in_react,
+            server_components: f.server_components.as_ref().map(|sc| {
+                js_parser::options::FrameworkServerComponents {
+                    separate_ssr_graph: sc.separate_ssr_graph,
+                    server_runtime_import: std::borrow::Cow::Owned(
+                        sc.server_runtime_import.to_vec(),
+                    ),
+                    server_register_client_reference: std::borrow::Cow::Owned(
+                        sc.server_register_client_reference.to_vec(),
+                    ),
+                    // bake_types subset omits these — keep parser-side defaults.
+                    server_register_server_reference: std::borrow::Cow::Borrowed(
+                        b"registerServerReference",
+                    ),
+                    client_register_server_reference: std::borrow::Cow::Borrowed(
+                        b"registerServerReference",
+                    ),
+                }
+            }),
+            // bake_types subset omits `react_fast_refresh`; the bundler gates
+            // fast-refresh via `topts.react_fast_refresh` (already read into
+            // `opts.features.react_fast_refresh` above).
+            react_fast_refresh: None,
+        };
+        // SAFETY: ARENA — bump outlives the parse; `'static` erasure per
+        // `leak_static` convention.
+        unsafe {
+            core::mem::transmute::<&js_parser::options::Framework, &'static _>(
+                bump.alloc(projected),
+            )
+        }
+    });
 
     opts.ignore_dce_annotations =
         topts.ignore_dce_annotations && !task.source_index.is_runtime();

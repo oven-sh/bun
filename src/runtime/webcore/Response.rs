@@ -886,7 +886,12 @@ impl Response {
     fn destroy(this: *mut Response) {
         // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
         unsafe {
-            // Drop owned fields in place (Init, Body, BunString, JsRef all impl Drop)
+            // Drop owned fields in place. `Init`'s drop glue releases `headers`
+            // (HeadersRef::Drop → C++ deref) and `status_text` (OwnedString::Drop
+            // → WTF deref); `url` is `OwnedString` (WTF deref); `JsRef` drop glue
+            // releases the `Strong` variant. Mirrors Zig `destroy` (Response.zig
+            // :457-460): `init.deinit()` / `body.deinit()` / `url.deref()` /
+            // `js_ref.deinit()`.
             core::ptr::drop_in_place(&mut (*this).init);
             core::ptr::drop_in_place(&mut (*this).body);
             core::ptr::drop_in_place(&mut (*this).url);

@@ -640,6 +640,32 @@ impl Value {
         &mut parent.ref_().value
     }
 
+    /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
+    ///
+    /// Port of the `Body.Value` special-case in `JSValue.as()` (JSValue.zig:449):
+    /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
+    /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
+    /// cannot be used. Instead, try both wrapper classes and return the inner
+    /// body pointer.
+    ///
+    /// Returns a raw pointer (mirrors Zig `?*Body.Value`); the storage is owned
+    /// by the JSC heap cell and outlives the call only as long as `value` is
+    /// kept alive by the caller.
+    pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
+        if value.is_empty_or_undefined_or_null() {
+            return None;
+        }
+        if let Some(req) = value.as_::<crate::webcore::Request>() {
+            // SAFETY: `as_` returns a live JSC-owned `*mut Request`.
+            return Some(unsafe { &mut *req }.get_body_value() as *mut Value);
+        }
+        if let Some(res) = value.as_::<crate::webcore::Response>() {
+            // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
+            return Some(unsafe { &mut *res }.get_body_value() as *mut Value);
+        }
+        None
+    }
+
     pub fn tag(&self) -> Tag {
         match self {
             Value::Blob(_) => Tag::Blob,
@@ -663,6 +689,25 @@ impl Value {
 }
 
 impl Value {
+    /// `JSValue.as(jsc.WebCore.Body.Value)` (JSValue.zig:449) — Zig
+    /// special-cases this type in the generic `as`: a `Body.Value` is never
+    /// itself a JS class, so instead of a downcast it returns the body slot of
+    /// the wrapping `Request`/`Response` (if `value` is one). Expressed here as
+    /// an associated fn rather than a `JsClass` impl because `to_js`/
+    /// `from_js_direct` are meaningless for this enum and `JsClass` lives in
+    /// `bun_jsc` (which can't see `Request`/`Response`).
+    pub fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
+        if let Some(req) = value.as_::<crate::webcore::Request>() {
+            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
+            return Some(unsafe { &mut *req }.get_body_value());
+        }
+        if let Some(res) = value.as_::<crate::webcore::Response>() {
+            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
+            return Some(unsafe { &mut *res }.get_body_value());
+        }
+        None
+    }
+
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.

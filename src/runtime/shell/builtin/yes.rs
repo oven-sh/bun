@@ -100,8 +100,13 @@ impl Yes {
             // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
             // `taskErrorToString` and routes through `writeFailingError`.
             if let Err(e) = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk) {
-                let buf =
-                    Builtin::task_error_to_string(interp, cmd, super::Kind::Yes, &e).to_vec();
+                let buf = Builtin::task_error_to_string(
+                    interp,
+                    cmd,
+                    crate::shell::builtin::Kind::Yes,
+                    &e,
+                )
+                .to_vec();
                 return Self::write_failing_error(interp, cmd, &buf, 1);
             }
         }

@@ -648,7 +648,7 @@ impl Builtin {
     fn js_body_value(jsval: crate::jsc::JSValue) -> Option<*mut crate::webcore::body::Value> {
         if let Some(response) = jsval.as_::<crate::webcore::Response>() {
             // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-            return Some(unsafe { &mut (*response).body.value });
+            return Some(unsafe { &mut *response }.get_body_value());
         }
         if let Some(request) = jsval.as_::<crate::webcore::Request>() {
             // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.

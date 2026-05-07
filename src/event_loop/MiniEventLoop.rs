@@ -77,13 +77,13 @@ unsafe impl bun_threading::unbounded_queue::Node for AnyTaskWithExtraContext {
     unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
         // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).load(ordering)
+            (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).load(ordering)
         }
     }
     unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
         // SAFETY: `*mut Self` and `AtomicPtr<Self>` share layout.
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const AtomicPtr<Self>)).store(ptr, ordering)
+            (*core::ptr::addr_of!((*item).next).cast::<AtomicPtr<Self>>()).store(ptr, ordering)
         }
     }
 }
@@ -173,8 +173,7 @@ pub fn init_global(
     // port stores it as `AtomicPtr<Loader<'static>>`.
     global.env = env.map(NonNull::from).or_else(|| {
         NonNull::new(
-            dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)
-                as *mut DotEnvLoader<'static>,
+            dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire).cast::<DotEnvLoader<'static>>(),
         )
     });
     if global.env.is_none() {
@@ -274,7 +273,7 @@ impl<'a> MiniEventLoop<'a> {
             // SAFETY: ensured `Some` just above; `Box` deref yields a stable
             // heap address independent of `*this`.
             match &mut *slot {
-                Some(b) => &mut **b as *mut FilePollStore,
+                Some(b) => &raw mut **b,
                 None => core::hint::unreachable_unchecked(),
             }
         }

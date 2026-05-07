@@ -30,7 +30,7 @@ pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
         // SAFETY: `ctx` is exactly the `*mut T` registered by
         // `register_deferred_microtask_with_type_unchecked` below;
         // `DeferredTaskQueue::run` feeds it back unchanged.
-        T::on_auto_flush(ctx as *mut T)
+        T::on_auto_flush(ctx.cast::<T>())
     }
     trampoline::<T>
 }
@@ -66,7 +66,7 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     debug_assert!(this.auto_flusher().registered);
     // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally; the
     // *check* is debug-only but the side effect must run in release too.
-    let removed = deferred.unregister_task(NonNull::new(this as *mut T as *mut c_void));
+    let removed = deferred.unregister_task(NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()));
     debug_assert!(removed);
     this.auto_flusher().registered = false;
 }
@@ -78,7 +78,7 @@ pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     debug_assert!(!this.auto_flusher().registered);
     this.auto_flusher().registered = true;
     let found_existing = deferred.post_task(
-        NonNull::new(this as *mut T as *mut c_void),
+        NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()),
         erase_flush_callback::<T>(),
     );
     debug_assert!(!found_existing);

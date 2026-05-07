@@ -115,7 +115,7 @@ impl TopExceptionScope {
         // side asserts size/alignment match.
         unsafe {
             TopExceptionScope__construct(
-                &mut self.bytes,
+                &raw mut self.bytes,
                 global,
                 src.fn_name,
                 src.file,
@@ -127,7 +127,7 @@ impl TopExceptionScope {
 
         #[cfg(feature = "ci_assert")]
         {
-            self.location = &self.bytes[0] as *const u8;
+            self.location = core::ptr::from_ref::<u8>(&self.bytes[0]);
         }
     }
 
@@ -140,7 +140,7 @@ impl TopExceptionScope {
         #[cfg(feature = "ci_assert")]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__assertNoException(&mut self.bytes) };
+        unsafe { TopExceptionScope__assertNoException(&raw mut self.bytes) };
         unreachable!("assertionFailure called without a pending exception");
     }
 
@@ -154,14 +154,14 @@ impl TopExceptionScope {
         #[cfg(feature = "ci_assert")]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { NonNull::new(TopExceptionScope__pureException(&mut self.bytes)) }
+        unsafe { NonNull::new(TopExceptionScope__pureException(&raw mut self.bytes)) }
     }
 
     pub fn clear_exception(&mut self) {
         #[cfg(feature = "ci_assert")]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__clearException(&mut self.bytes) }
+        unsafe { TopExceptionScope__clearException(&raw mut self.bytes) }
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
@@ -170,7 +170,7 @@ impl TopExceptionScope {
         #[cfg(feature = "ci_assert")]
         debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes)) }
+        unsafe { NonNull::new(TopExceptionScope__exceptionIncludingTraps(&raw mut self.bytes)) }
     }
 
     /// Intended for use with `?`. Returns if there is already a pending exception or if traps cause
@@ -244,7 +244,7 @@ impl TopExceptionScope {
         #[cfg(feature = "ci_assert")]
         debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__destruct(&mut this.bytes) };
+        unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
         // this.bytes = undefined; — no-op in Rust
     }
 }

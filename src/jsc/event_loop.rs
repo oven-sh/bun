@@ -777,7 +777,7 @@ impl EventLoop {
         // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
         // exposes `into_tag_ptr()` — go straight to the sys-level setter.
         let (tag, ptr) =
-            EventLoopHandle::init((self as *mut EventLoop).cast::<()>()).into_tag_ptr();
+            EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>()).into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
         unsafe { (*uws::Loop::get()).internal_loop_data.set_parent_raw(tag, ptr) };
     }
@@ -935,11 +935,11 @@ impl EventLoop {
         if !loop_.is_active() {
             if self.forever_timer.is_none() {
                 let mut t =
-                    uws::Timer::create(loop_, (self as *mut EventLoop).cast::<core::ffi::c_void>());
+                    uws::Timer::create(loop_, std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>());
                 // SAFETY: t is a fresh non-null timer handle
                 unsafe {
                     t.as_mut().set(
-                        (self as *mut EventLoop).cast::<core::ffi::c_void>(),
+                        std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
                         Some(noop_forever_timer),
                         1000 * 60 * 4,
                         1000 * 60 * 4,
@@ -962,8 +962,7 @@ impl EventLoop {
     pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
         // owned by C++ that outlives this VM (BACKREF — see field decl).
         let worker = unsafe {
-            &*((*self.vm()).worker.expect("worker is not initialized")
-                as *const crate::web_worker::WebWorker)
+            &*(*self.vm()).worker.expect("worker is not initialized").cast::<crate::web_worker::WebWorker>()
         };
         match promise.status() {
             PromiseStatus::Pending => {
@@ -1115,11 +1114,11 @@ pub fn __bun_js_event_loop_file_polls(owner: *mut ()) -> *mut Async::file_poll::
     // same VM (see `EventLoopHandle::file_polls` doc).
     let vm = unsafe { (*el(owner)).vm() };
     unsafe {
-        (*vm)
+        std::ptr::from_mut((*vm)
             .rare_data()
             .file_polls_
             .get_or_insert_with(|| Box::new(Async::file_poll::Store::init()))
-            .as_mut() as *mut _
+            .as_mut())
     }
 }
 
@@ -1145,7 +1144,7 @@ pub fn __bun_js_event_loop_uws_loop(owner: *mut ()) -> *mut uws::Loop {
 pub fn __bun_js_event_loop_pipe_read_buffer(owner: *mut ()) -> *mut [u8] {
     // SAFETY: `owner` is a live `*mut EventLoop`; `pipe_read_buffer` reaches
     // VM-owned scratch. Return a raw fat ptr — see method SAFETY doc re aliasing.
-    unsafe { (*el(owner)).pipe_read_buffer() as *mut [u8] }
+    unsafe { std::ptr::from_mut::<[u8]>((*el(owner)).pipe_read_buffer()) }
 }
 
 #[unsafe(no_mangle)]
@@ -1224,7 +1223,7 @@ pub fn __bun_js_event_loop_env(owner: *mut ()) -> *mut bun_dotenv::Loader<'stati
 pub fn __bun_js_event_loop_top_level_dir(owner: *mut ()) -> *const [u8] {
     // SAFETY: `owner` is a live `*mut EventLoop`; `vm()` is its owning VM. The
     // `fs.top_level_dir` slice is borrowed for the VM lifetime.
-    unsafe { (*(*(*el(owner)).vm()).transpiler.fs).top_level_dir as *const [u8] }
+    unsafe { std::ptr::from_ref::<[u8]>((*(*(*el(owner)).vm()).transpiler.fs).top_level_dir) }
 }
 
 #[unsafe(no_mangle)]

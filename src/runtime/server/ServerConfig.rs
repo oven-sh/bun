@@ -359,7 +359,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         // SAFETY: uWS invokes this with non-null `resp`/`req` for the duration
         // of the callback; `user_data` is the `entry` pointer registered below,
         // kept alive by the route table for the lifetime of the app.
-        let route = user_data as *mut T;
+        let route = user_data.cast::<T>();
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
         // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
         // selects the matching `AnyResponse` variant for the comptime SSL flag.
@@ -377,7 +377,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         user_data: *mut core::ffi::c_void,
     ) {
         // SAFETY: see `handler` above.
-        let route = user_data as *mut T;
+        let route = user_data.cast::<T>();
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
         let any_resp = if SSL {
             bun_uws_sys::AnyResponse::SSL(resp.cast())
@@ -387,7 +387,7 @@ pub fn apply_static_route<const SSL: bool, T>(
         unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
-    let user_data = entry as *mut core::ffi::c_void;
+    let user_data = entry.cast::<core::ffi::c_void>();
     app.head(path, Some(head::<SSL, T>), user_data);
     match method {
         http_method::Optional::Any => {

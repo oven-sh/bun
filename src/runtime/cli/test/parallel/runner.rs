@@ -243,7 +243,7 @@ pub fn run_as_coordinator(
     // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
     // Access workers through `coord.workers` to avoid a second &mut on the Vec.
     {
-        let coord_ptr = &coord as *const Coordinator<'_> as *const Coordinator<'static>;
+        let coord_ptr = (&raw const coord).cast::<Coordinator<'static>>();
         for w in coord.workers.iter_mut() {
             w.coord = coord_ptr;
         }
@@ -297,16 +297,16 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
         buf.write_fmt(args).map_err(|_| bun_core::err!("FormatFailed"))?;
         buf.push(0);
         // TODO(port): leaks — was arena-backed
-        Ok(Box::leak(buf.into_boxed_slice()).as_ptr() as *const c_char)
+        Ok(Box::leak(buf.into_boxed_slice()).as_ptr().cast::<c_char>())
     };
     let dupe_z = |s: &[u8]| -> *const c_char {
         let mut buf = Vec::with_capacity(s.len() + 1);
         buf.extend_from_slice(s);
         buf.push(0);
         // TODO(port): leaks — was arena-backed
-        Box::leak(buf.into_boxed_slice()).as_ptr() as *const c_char
+        Box::leak(buf.into_boxed_slice()).as_ptr().cast::<c_char>()
     };
-    let lit = |s: &'static [u8]| -> *const c_char { s.as_ptr() as *const c_char };
+    let lit = |s: &'static [u8]| -> *const c_char { s.as_ptr().cast::<c_char>() };
 
     argv.push(
         bun_core::self_exe_path()
@@ -399,7 +399,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrP
     ];
     for (flag, values) in multi_value_flags {
         for value in values {
-            argv.push(flag.as_ptr() as *const c_char);
+            argv.push(flag.as_ptr().cast::<c_char>());
             argv.push(dupe_z(value));
         }
     }
@@ -562,7 +562,7 @@ impl<'a> WorkerLoop<'a> {
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
-            WORKER_CMDS = Some(&mut self.cmds as *mut WorkerCommands);
+            WORKER_CMDS = Some(&raw mut self.cmds);
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer

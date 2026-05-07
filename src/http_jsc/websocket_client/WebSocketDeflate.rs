@@ -187,13 +187,13 @@ impl PerMessageDeflate {
         // z_stream for the duration of the call; zlibVersion() returns a valid C string.
         let compress_err = unsafe {
             zlib::deflateInit2_(
-                &mut self_.compress_stream,
+                &raw mut self_.compress_stream,
                 Z_DEFAULT_COMPRESSION,                          // level
                 Z_DEFLATED,                                     // method
                 -(self_.params.client_max_window_bits as c_int), // windowBits
                 Z_DEFAULT_MEM_LEVEL,                            // memLevel
                 Z_DEFAULT_STRATEGY,                             // strategy
-                zlib::zlibVersion() as *const u8,
+                zlib::zlibVersion().cast::<u8>(),
                 c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
             )
         };
@@ -208,9 +208,9 @@ impl PerMessageDeflate {
         // z_stream for the duration of the call; zlibVersion() returns a valid C string.
         let decompress_err = unsafe {
             zlib::inflateInit2_(
-                &mut self_.decompress_stream,
+                &raw mut self_.decompress_stream,
                 -(self_.params.server_max_window_bits as c_int), // windowBits
-                zlib::zlibVersion() as *const u8,
+                zlib::zlibVersion().cast::<u8>(),
                 c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
             )
         };
@@ -276,7 +276,7 @@ impl PerMessageDeflate {
             // SAFETY: decompress_stream was initialized by inflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_with_trailer kept alive on stack);
             // next_out is valid for avail_out bytes (spare capacity of `out`).
-            let res = unsafe { zlib::inflate(&mut self.decompress_stream, zlib::FlushValue::NoFlush) };
+            let res = unsafe { zlib::inflate(&raw mut self.decompress_stream, zlib::FlushValue::NoFlush) };
             let written = spare_len - self.decompress_stream.avail_out as usize;
             // SAFETY: zlib initialized `written` bytes at the start of spare capacity.
             unsafe { out.set_len(out.len() + written) };
@@ -304,7 +304,7 @@ impl PerMessageDeflate {
 
         if self.params.server_no_context_takeover == 1 {
             // SAFETY: decompress_stream was initialized by inflateInit2_ in init().
-            unsafe { zlib::inflateReset(&mut self.decompress_stream) };
+            unsafe { zlib::inflateReset(&raw mut self.decompress_stream) };
         }
 
         Ok(())
@@ -325,7 +325,7 @@ impl PerMessageDeflate {
             // SAFETY: compress_stream was initialized by deflateInit2_ in init();
             // next_in is valid for avail_in bytes (in_buf borrowed for this call);
             // next_out is valid for avail_out bytes (spare capacity of `out`).
-            let res = unsafe { zlib::deflate(&mut self.compress_stream, zlib::FlushValue::SyncFlush) };
+            let res = unsafe { zlib::deflate(&raw mut self.compress_stream, zlib::FlushValue::SyncFlush) };
             let written = spare_len - self.compress_stream.avail_out as usize;
             // SAFETY: zlib initialized `written` bytes at the start of spare capacity.
             unsafe { out.set_len(out.len() + written) };
@@ -346,7 +346,7 @@ impl PerMessageDeflate {
 
         if self.params.client_no_context_takeover == 1 {
             // SAFETY: compress_stream was initialized by deflateInit2_ in init().
-            unsafe { zlib::deflateReset(&mut self.compress_stream) };
+            unsafe { zlib::deflateReset(&raw mut self.compress_stream) };
         }
 
         Ok(())
@@ -359,8 +359,8 @@ impl Drop for PerMessageDeflate {
         // (or are zeroed on the init() error path, in which case *End is a defined
         // no-op returning Z_STREAM_ERROR). Called exactly once via Drop.
         unsafe {
-            zlib::deflateEnd(&mut self.compress_stream);
-            zlib::inflateEnd(&mut self.decompress_stream);
+            zlib::deflateEnd(&raw mut self.compress_stream);
+            zlib::inflateEnd(&raw mut self.decompress_stream);
         }
         // Zig: self.allocator.destroy(self) — handled by Box drop at the owner.
     }

@@ -16,7 +16,7 @@ use super::generate_code_for_file_in_chunk_js::{generate_code_for_file_in_chunk_
 pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {
-        &*(task as *mut u8)
+        &*task.cast::<u8>()
             .sub(offset_of!(PendingPartRange, task))
             .cast::<PendingPartRange>()
     };
@@ -39,7 +39,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
     // so no mutable reference is materialized here.
     let bv2: &BundleV2 = unsafe {
-        &*(c_ptr as *const u8)
+        &*c_ptr.cast::<u8>()
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
@@ -178,7 +178,7 @@ fn generate_compile_result_for_js_chunk_impl(
             // SAFETY: multiple threads update this counter; treat &mut usize as &AtomicUsize
             // (same layout, monotonic add only).
             let atomic: &AtomicUsize =
-                unsafe { &*(bytes_ptr as *mut usize as *const AtomicUsize) };
+                unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
             let _ = atomic.fetch_add(code_len, Ordering::Relaxed);
         }
     }

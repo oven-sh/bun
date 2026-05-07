@@ -510,7 +510,7 @@ mod json {
             let s = BunString::create_external::<*mut bool>(
                 json_data,
                 true,
-                &mut was_ascii_string_freed as *mut bool,
+                &raw mut was_ascii_string_freed,
                 json_ipc_data_string_free_cb,
             );
             if s.tag() == bun_string::Tag::Dead {
@@ -1005,7 +1005,7 @@ impl SendQueue {
         if was_open && self.after_close_task.is_none() {
             // PORT NOTE: `bun_event_loop::JsResult` erases the error to `*mut ()`;
             // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
-            let task = ManagedTask::new(self as *mut SendQueue, |p| {
+            let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
                 let _ = Self::_on_after_ipc_closed(p);
                 Ok(())
             });
@@ -1064,7 +1064,7 @@ impl SendQueue {
             return;
         }
         // PORT NOTE: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
-        let task = ManagedTask::new(self as *mut SendQueue, |p| {
+        let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
             let _ = Self::_close_socket_task(p);
             Ok(())
         });
@@ -1579,7 +1579,7 @@ impl SendQueue {
         log!("configureServer");
         // SAFETY: ipc_pipe is a live uv_pipe_t handed in by the caller.
         unsafe {
-            (*ipc_pipe).data = (self as *mut SendQueue).cast();
+            (*ipc_pipe).data = core::ptr::from_mut(self).cast();
             (*ipc_pipe).unref();
         }
         self.socket = SocketUnion::Open(ipc_pipe);
@@ -1589,7 +1589,7 @@ impl SendQueue {
             _ => unreachable!(),
         };
         // SAFETY: pipe is the live uv handle just stored in self.socket.
-        unsafe { (*pipe).data = (self as *mut SendQueue).cast() };
+        unsafe { (*pipe).data = core::ptr::from_mut(self).cast() };
 
         // SAFETY: pipe is the live uv handle just stored in self.socket.
         let stream: *mut uv::uv_stream_t = unsafe { (*pipe).as_stream() };

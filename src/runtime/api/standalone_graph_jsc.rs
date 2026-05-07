@@ -37,7 +37,7 @@ impl FileJsc for File {
             // `shared_view()`.
             let bytes = unsafe {
                 Bytes::from_raw_parts(
-                    contents.as_ptr() as *mut u8,
+                    contents.as_ptr().cast_mut(),
                     contents.len() as SizeType,
                     contents.len() as SizeType,
                     bun_alloc::basic::C_ALLOCATOR,
@@ -69,7 +69,7 @@ impl FileJsc for File {
                 // guarantees liveness for the process lifetime.
                 let store = unsafe { &mut *store_ptr };
                 store.mime_type = mime;
-                b.content_type = store.mime_type.value.as_ref() as *const [u8];
+                b.content_type = std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref());
                 b.content_type_was_set = true;
                 b.content_type_allocated = false;
             }

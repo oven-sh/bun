@@ -3233,7 +3233,7 @@ pub fn CreateHardLinkW(
         CreateHardLinkW_raw(
             new_file_name,
             existing_file_name,
-            security_attributes.map_or(ptr::null_mut(), |p| p as *mut _),
+            security_attributes.map_or(ptr::null_mut(), core::ptr::from_mut),
         )
     };
     #[cfg(debug_assertions)]
@@ -3472,7 +3472,7 @@ pub fn user_unique_id() -> u32 {
     let name = &buf[0..size as usize];
     bun_output::scoped_log!(windowsUserUniqueId, "username: {}", bun_core::fmt::utf16(name));
     // SAFETY: u16 slice -> byte slice
-    let bytes = unsafe { core::slice::from_raw_parts(name.as_ptr() as *const u8, name.len() * 2) };
+    let bytes = unsafe { core::slice::from_raw_parts(name.as_ptr().cast::<u8>(), name.len() * 2) };
     bun_wyhash::hash32(bytes)
 }
 
@@ -3721,7 +3721,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
         // The Windows API makes this mutable, but it will not mutate here.
-        Buffer: sub_path_w.as_ptr() as *mut u16,
+        Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
 
     if sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
@@ -3781,7 +3781,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         ntdll::NtSetInformationFile(
             tmp_handle,
             &mut io,
-            (&mut info) as *mut _ as *mut c_void,
+            core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<windows::FILE_DISPOSITION_INFORMATION_EX>() as u32,
             windows::FileInformationClass::FileDispositionInformationEx,
         )
@@ -3804,7 +3804,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             ntdll::NtSetInformationFile(
                 tmp_handle,
                 &mut io,
-                (&mut file_dispo) as *mut _ as *mut c_void,
+                core::ptr::from_mut(&mut file_dispo).cast::<c_void>(),
                 size_of::<windows::FILE_DISPOSITION_INFORMATION>() as u32,
                 windows::FileInformationClass::FileDispositionInformation,
             )
@@ -4121,7 +4121,7 @@ pub fn become_watcher_manager() -> ! {
         externs::SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
-            (&mut jeli) as *mut _ as *mut c_void,
+            core::ptr::from_mut(&mut jeli).cast::<c_void>(),
             size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )
     } == 0
@@ -4189,7 +4189,7 @@ pub fn spawn_watcher_child(
             p.as_mut_ptr(),
             0,
             PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
-            (&mut job_local) as *mut _ as *mut c_void,
+            core::ptr::from_mut(&mut job_local).cast::<c_void>(),
             size_of::<HANDLE>(),
             ptr::null_mut(),
             ptr::null_mut(),
@@ -4272,7 +4272,7 @@ pub fn spawn_watcher_child(
         lpAttributeList: p.as_mut_ptr(),
     };
     // SAFETY: procinfo is POD
-    unsafe { ptr::write_bytes(procinfo as *mut _ as *mut u8, 0, size_of::<win32::PROCESS_INFORMATION>()); }
+    unsafe { ptr::write_bytes(core::ptr::from_mut(procinfo).cast::<u8>(), 0, size_of::<win32::PROCESS_INFORMATION>()); }
     // SAFETY: all pointers valid; envbuf double-NUL terminated
     let rc = unsafe {
         kernel32::CreateProcessW(
@@ -4282,9 +4282,9 @@ pub fn spawn_watcher_child(
             ptr::null_mut(),
             1,
             flags,
-            envbuf.as_mut_ptr() as *mut c_void,
+            envbuf.as_mut_ptr().cast::<c_void>(),
             ptr::null(),
-            (&mut startupinfo) as *mut _ as *mut win32::STARTUPINFOW,
+            core::ptr::from_mut(&mut startupinfo).cast::<win32::STARTUPINFOW>(),
             procinfo,
         )
     };
@@ -4350,7 +4350,7 @@ pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
         ntdll::NtSetInformationFile(
             fd.cast(),
             &mut io,
-            (&mut info) as *mut _ as *mut c_void,
+            core::ptr::from_mut(&mut info).cast::<c_void>(),
             size_of::<win32::FILE_DISPOSITION_INFORMATION_EX>() as u32,
             win32::FileInformationClass::FileDispositionInformationEx,
         )

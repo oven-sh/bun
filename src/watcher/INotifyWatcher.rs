@@ -116,7 +116,7 @@ impl Event {
         // which outlives the returned borrow.
         unsafe {
             let name_first_char_ptr =
-                (&self.name_len as *const u32 as *const u8).add(size_of::<u32>());
+                (&raw const self.name_len).cast::<u8>().add(size_of::<u32>());
             let len = libc::strlen(name_first_char_ptr.cast());
             ZStr::from_raw(name_first_char_ptr, len)
         }
@@ -277,7 +277,7 @@ impl INotifyWatcher {
                                 system::ppoll(
                                     fds.as_mut_ptr(),
                                     fds.len(),
-                                    &timespec,
+                                    &raw const timespec,
                                     core::ptr::null(),
                                 )
                             };

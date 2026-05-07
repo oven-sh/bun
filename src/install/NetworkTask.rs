@@ -106,7 +106,7 @@ unsafe impl bun_threading::unbounded_queue::Node for NetworkTask {
         ordering: core::sync::atomic::Ordering,
     ) -> *mut Self {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .load(ordering)
         }
     }
@@ -117,7 +117,7 @@ unsafe impl bun_threading::unbounded_queue::Node for NetworkTask {
         ordering: core::sync::atomic::Ordering,
     ) {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .store(ptr, ordering)
         }
     }
@@ -262,7 +262,7 @@ impl NetworkTask {
         // field access goes through `addr_of!` and the cross-thread
         // `wake_raw` path, mirroring `TarballStream::finish` /
         // `isolated_install::Installer::Task::callback`.
-        let pm = this.package_manager as *mut PackageManager;
+        let pm = this.package_manager.cast_mut();
         // Zig: `defer this.package_manager.wake();` — moved to end of fn (no
         // early returns past this point).
 
@@ -386,7 +386,7 @@ impl NetworkTask {
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
+        let pm = unsafe { &mut *self.package_manager.cast_mut() };
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with; Zig dereferences `this.package_manager.log`.
         let log = pm.log_mut();
@@ -516,7 +516,7 @@ impl NetworkTask {
                 // outlives the request (Zig leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
                 let appended = header_builder.content.append(last_modified);
-                last_modified = unsafe { &*(appended as *const [u8]) };
+                last_modified = unsafe { &*std::ptr::from_ref::<[u8]>(appended) };
             }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -538,7 +538,7 @@ impl NetworkTask {
             // SAFETY: header_buf is &'static str; StringBuilder borrows it
             // mutably in type but is never written to on this path.
             header_builder.content = StringBuilder {
-                ptr: NonNull::new(header_buf.as_ptr() as *mut u8),
+                ptr: NonNull::new(header_buf.as_ptr().cast_mut()),
                 len: header_buf.len(),
                 cap: header_buf.len(),
             };
@@ -552,7 +552,7 @@ impl NetworkTask {
         // because the HTTP thread reads them concurrently; the Zig source
         // passes raw slices under the same ownership contract. See the
         // identical pattern in `s3/simple_request.rs`.
-        let url = URL::parse(unsafe { &*(&*self.url_buf as *const [u8]) });
+        let url = URL::parse(unsafe { &*(&raw const *self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
         let headers_buf: &'static [u8] = unsafe {
@@ -616,7 +616,7 @@ impl NetworkTask {
             // `self.callback`. Both outlive the HTTP request; Zig stores the
             // raw slice under the same contract.
             self.unsafe_http_client.client.if_modified_since =
-                unsafe { &*(last_modified as *const [u8]) };
+                unsafe { &*std::ptr::from_ref::<[u8]>(last_modified) };
         }
 
         Ok(())
@@ -673,7 +673,7 @@ impl NetworkTask {
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
         // SAFETY: BACKREF — PackageManager owns this task and outlives it.
-        let pm = unsafe { &mut *(self.package_manager as *mut PackageManager) };
+        let pm = unsafe { &mut *self.package_manager.cast_mut() };
 
         let tarball_url = tarball_.url.slice();
         self.url_buf = if tarball_url.is_empty() {
@@ -748,7 +748,7 @@ impl NetworkTask {
         // `'static` borrow because the HTTP thread reads it concurrently; the
         // Zig source passes a raw slice under the same ownership contract. See
         // the identical pattern in `for_manifest` above.
-        let url = URL::parse(unsafe { &*(&*self.url_buf as *const [u8]) });
+        let url = URL::parse(unsafe { &*(&raw const *self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),

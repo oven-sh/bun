@@ -171,7 +171,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     .expect("caller did not init hook storage. any function can have react hooks!");
                 // SAFETY: storage_ptr points at stack storage on the caller's frame; valid here.
                 match unsafe { &mut *storage_ptr.as_ptr() }.as_mut() {
-                    Some(h) => h as *mut _,
+                    Some(h) => std::ptr::from_mut(h),
                     None => core::ptr::null_mut(),
                 }
             };
@@ -185,7 +185,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         func.body = G::FnBody {
-            stmts: stmts.into_bump_slice_mut() as *mut [Stmt],
+            stmts: std::ptr::from_mut::<[Stmt]>(stmts.into_bump_slice_mut()),
             loc: body_loc,
         };
 
@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .get_ptr(name)
                             .map(|r| {
                                 (
-                                    r as *const crate::parser::Runtime::ReplaceableExport,
+                                    std::ptr::from_ref::<crate::parser::Runtime::ReplaceableExport>(r),
                                     r.is_replace(),
                                 )
                             });
@@ -338,7 +338,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // When hooks are immediately assigned to something, we need to hash the binding.
                     if let Some(last_hook) = self.react_refresh.last_hook_seen {
                         if let Some(call) = decl.value.unwrap().data.e_call() {
-                            if core::ptr::eq(last_hook, &*call) {
+                            if core::ptr::eq(last_hook, &raw const *call) {
                                 // PORT NOTE: disjoint field borrows — `react_refresh.hook_ctx_storage`
                                 // and `symbols` are independent fields of `P`.
                                 // SAFETY: hook_ctx_storage points at stack storage on the
@@ -424,7 +424,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .features
                         .replace_exports
                         .get_ptr(name)
-                        .map(|r| r as *const crate::parser::Runtime::ReplaceableExport)
+                        .map(|r| std::ptr::from_ref::<crate::parser::Runtime::ReplaceableExport>(r))
                     {
                         // blocked_on: P::replace_decl_and_possibly_remove is -gated
                         //   (P.rs); un-gate this call when it lands.
@@ -758,7 +758,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         self.s(
-            S::Block { stmts: stmts as *mut [Stmt], close_brace_loc: logger::Loc::EMPTY },
+            S::Block { stmts: std::ptr::from_mut::<[Stmt]>(stmts), close_brace_loc: logger::Loc::EMPTY },
             loc,
         )
     }
@@ -787,7 +787,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.pop_scope();
         let items: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         if let StmtData::SBlock(mut b) = new_stmt.data {
-            b.stmts = items as *mut [Stmt];
+            b.stmts = std::ptr::from_mut::<[Stmt]>(items);
         }
         if self.options.features.minify_syntax {
             // PORT NOTE: reshaped for borrowck — `stmts` was consumed above; in Zig
@@ -856,7 +856,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // moment we hand it to `fn_only_data_visit.class_name_ref`; all other reads/writes
         // go through the raw pointer so two `&mut Ref` to the same allocation never
         // coexist (the field's `&mut` is restored/overwritten before any read here).
-        let shadow_ref_ptr: *mut Ref = self.allocator.alloc(Ref::NONE) as *mut Ref;
+        let shadow_ref_ptr: *mut Ref = std::ptr::from_mut::<Ref>(self.allocator.alloc(Ref::NONE));
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -1011,7 +1011,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     // PORT NOTE: Zig keeps a `*E.Function` into property.value's
                                     // arena slot, then re-reads it after visit_expr overwrites the
                                     // value below. We mirror via raw ptr.
-                                    constructor_function_ = Some(&mut *e_func as *mut E::Function);
+                                    constructor_function_ = Some(&raw mut *e_func);
                                     constructor_function = constructor_function_;
                                 }
                             }
@@ -1042,7 +1042,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if constructor_function_.is_some() {
                             if let Some(value) = property.value {
                                 if let ExprData::EFunction(mut e_func) = value.data {
-                                    constructor_function = Some(&mut *e_func as *mut E::Function);
+                                    constructor_function = Some(&raw mut *e_func);
                                 }
                             }
                         }
@@ -1143,7 +1143,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // SAFETY: in-bounds; arena-owned; no Drop on Property.
                             unsafe {
                                 class_body.push(core::ptr::read(
-                                    (old_props as *mut G::Property).add(i),
+                                    old_props.cast::<G::Property>().add(i),
                                 ));
                             }
                         }
@@ -1459,7 +1459,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             data.func.name = None;
                             // SAFETY: `G::Fn`'s fields are POD (`*mut [T]`, ints, flags) but
                             // lacks `derive(Copy)`; bitwise read matches Zig struct copy.
-                            let func = unsafe { core::ptr::read(&data.func) };
+                            let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
                         }

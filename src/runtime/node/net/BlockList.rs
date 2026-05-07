@@ -104,7 +104,7 @@ impl BlockList {
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = Box::into_raw(Box::new(Self {
             ref_count: AtomicU32::new(1),
-            global_this: global as *const _,
+            global_this: std::ptr::from_ref(global),
             da_rules: Vec::new(),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
@@ -399,7 +399,7 @@ impl BlockList {
         this.ref_();
         let writer = StructuredCloneWriter { ctx, impl_: write_bytes };
         // Error = `!` (Zig: `error{}`), so no `?` needed.
-        writer.write_int_le((this as *mut Self) as usize);
+        writer.write_int_le(std::ptr::from_mut::<Self>(this) as usize);
     }
 
     pub fn on_structured_clone_deserialize(

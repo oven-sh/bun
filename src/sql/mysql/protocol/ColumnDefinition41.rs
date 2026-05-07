@@ -129,7 +129,7 @@ impl ColumnDefinition41 {
         // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
         // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
         // is borrowed, so feed it a Temporary view of the same bytes.
-        let name_view = Data::Temporary(self.name.slice() as *const [u8]);
+        let name_view = Data::Temporary(std::ptr::from_ref::<[u8]>(self.name.slice()));
         self.name_or_index = ColumnIdentifier::init(name_view)?;
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet

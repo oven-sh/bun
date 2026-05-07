@@ -183,7 +183,7 @@ impl CleanupHook {
         ctx: *mut c_void,
         func: CleanupHookFunction,
     ) -> CleanupHook {
-        CleanupHook { ctx, func, global_this: global_this as *const _ }
+        CleanupHook { ctx, func, global_this: std::ptr::from_ref(global_this) }
     }
 }
 
@@ -614,7 +614,7 @@ impl AWSSignatureCache {
 fn s3_rare_data() -> *mut RareData {
     let vm = VirtualMachine::get_main_thread_vm().unwrap_or_else(VirtualMachine::get_mut_ptr);
     // SAFETY: `vm` is the live per-thread (or main-thread) VM.
-    unsafe { (*vm).rare_data() as *mut RareData }
+    unsafe { std::ptr::from_mut::<RareData>((*vm).rare_data()) }
 }
 
 #[unsafe(no_mangle)]
@@ -768,7 +768,7 @@ impl RareData {
             // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
             // value must not move after init; allocate the Box first, init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
-            SpawnSyncEventLoop::init(&mut *boxed, vm as *mut VirtualMachine as *mut ());
+            SpawnSyncEventLoop::init(&mut *boxed, core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>());
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
@@ -1119,7 +1119,7 @@ impl Drop for RareData {
                 // SAFETY: embedded by-value group, previously `init`'d; the
                 // loop has already unlinked it (close_all_socket_groups ran),
                 // so destroy reduces to the empty-list debug asserts.
-                unsafe { SocketGroup::destroy(g as *mut SocketGroup) };
+                unsafe { SocketGroup::destroy(std::ptr::from_mut::<SocketGroup>(g)) };
             }
         });
     }

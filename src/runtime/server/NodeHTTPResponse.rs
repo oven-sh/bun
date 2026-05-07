@@ -339,7 +339,7 @@ impl NodeHTTPResponse {
         // PORT NOTE: reshaped for borrowck — extend handler lifetime past &mut self method calls.
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
-            unsafe { &mut *(ws_handler as *mut _) };
+            unsafe { &mut *std::ptr::from_mut(ws_handler) };
         let socket_value = self.get_server_socket_value();
         if socket_value.is_empty() {
             return false;
@@ -516,7 +516,7 @@ impl NodeHTTPResponse {
         // Don't overwrite WebSocket user data
         if !self.flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response {
-                raw_response.on_timeout(on_timeout_shim, self as *mut Self);
+                raw_response.on_timeout(on_timeout_shim, std::ptr::from_mut::<Self>(self));
             }
         }
         // detach and
@@ -728,7 +728,7 @@ fn write_head_internal(
                 status_message.as_ptr(),
                 status_message.len(),
                 headers,
-                (*tcp) as *mut c_void,
+                (*tcp).cast::<c_void>(),
             );
         },
         uws::AnyResponse::SSL(ssl) => unsafe {
@@ -738,7 +738,7 @@ fn write_head_internal(
                 status_message.as_ptr(),
                 status_message.len(),
                 headers,
-                (*ssl) as *mut c_void,
+                (*ssl).cast::<c_void>(),
             );
         },
         uws::AnyResponse::H3(_) => {
@@ -861,7 +861,7 @@ impl NodeHTTPResponse {
         }
         self.flags.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
         let raw = self.raw_response.unwrap();
-        raw.on_data(on_buffer_paused_shim, self as *mut Self);
+        raw.on_data(on_buffer_paused_shim, std::ptr::from_mut::<Self>(self));
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]
@@ -913,7 +913,7 @@ impl NodeHTTPResponse {
         }
         self.set_on_aborted_handler();
         let raw = self.raw_response.unwrap();
-        raw.on_data(on_data_shim, self as *mut Self);
+        raw.on_data(on_data_shim, std::ptr::from_mut::<Self>(self));
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
         let mut result: JSValue = JSValue::TRUE;
 
@@ -1401,7 +1401,7 @@ impl NodeHTTPResponse {
                             global_object,
                             callback_value.with_async_context_if_needed(global_object),
                         );
-                        raw_response.on_writable(on_drain_shim, self as *mut Self);
+                        raw_response.on_writable(on_drain_shim, std::ptr::from_mut::<Self>(self));
                     }
 
                     // PERF(port): @intCast — bounded by min().
@@ -1541,7 +1541,7 @@ impl NodeHTTPResponse {
         );
         self.flags.insert(Flags::HAS_CUSTOM_ON_DATA);
         if let Some(raw_response) = self.raw_response {
-            raw_response.on_data(on_data_shim, self as *mut Self);
+            raw_response.on_data(on_data_shim, std::ptr::from_mut::<Self>(self));
         }
         self.flags.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
 
@@ -1737,7 +1737,7 @@ impl NodeHTTPResponse {
         self.promise.deinit();
         // SAFETY: self was allocated via Box::into_raw in `create`; refcount is zero so no
         // other references remain.
-        unsafe { drop(Box::from_raw(self as *mut Self)) };
+        unsafe { drop(Box::from_raw(std::ptr::from_mut::<Self>(self))) };
     }
 
     // Intrusive refcount helpers (mirrors Zig `bun.ptr.RefCount(@This(), ...)` mixin).

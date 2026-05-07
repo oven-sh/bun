@@ -479,7 +479,7 @@ fn p(a: &Archive) -> *mut Archive {
     // SAFETY: `Archive` is an opaque zero-sized FFI marker whose real storage
     // lives on the C heap. `_p: UnsafeCell<_>` at offset 0 grants interior
     // mutability, so a `*mut` derived from `&Archive` carries write provenance.
-    a._p.get() as *mut Archive
+    a._p.get().cast::<Archive>()
 }
 
 impl Archive {
@@ -829,12 +829,12 @@ impl Archive {
         let mut buff: *const c_void = core::ptr::null();
         let mut size: usize = 0;
         // SAFETY: archive_read_data_block writes buff/size/offset; pointers are valid.
-        let r = unsafe { archive_read_data_block(p(self), &mut buff, &mut size, offset) };
+        let r = unsafe { archive_read_data_block(p(self), &raw mut buff, &raw mut size, offset) };
         if r == ArchiveResult::Eof {
             return None;
         }
         if r != ArchiveResult::Ok {
-            return Some(Block { bytes: &[] as *const [u8], offset: *offset, result: r });
+            return Some(Block { bytes: std::ptr::from_ref::<[u8]>(&[]), offset: *offset, result: r });
         }
         // SAFETY: libarchive guarantees buff[0..size] is valid until the next read call.
         let ptr = buff.cast::<u8>();
@@ -1077,7 +1077,7 @@ fn ep(e: &ArchiveEntry) -> *mut ArchiveEntry {
     // SAFETY: `ArchiveEntry` is an opaque zero-sized FFI marker; `_p: UnsafeCell<_>`
     // at offset 0 grants interior mutability so the derived `*mut` carries write
     // provenance for the C-side allocation.
-    e._p.get() as *mut ArchiveEntry
+    e._p.get().cast::<ArchiveEntry>()
 }
 
 impl ArchiveEntry {
@@ -1796,7 +1796,7 @@ impl GrowingBuffer {
 
     pub unsafe extern "C" fn open_callback(_a: *mut struct_archive, client_data: *mut c_void) -> c_int {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+        let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
         this.list.clear();
         this.had_error = false;
         0
@@ -1809,7 +1809,7 @@ impl GrowingBuffer {
         length: usize,
     ) -> la_ssize_t {
         // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open*.
-        let this = unsafe { &mut *(client_data as *mut GrowingBuffer) };
+        let this = unsafe { &mut *client_data.cast::<GrowingBuffer>() };
         if buff.is_null() || length == 0 {
             return 0;
         }

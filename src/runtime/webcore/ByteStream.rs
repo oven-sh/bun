@@ -345,7 +345,7 @@ impl ByteStream {
         // SAFETY: `self` is always the `context` field of a `Source` (ReadableStream.NewSource);
         // ByteStream is never constructed standalone.
         unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(Source, context))
                 .cast::<Source>()
         }
@@ -354,7 +354,7 @@ impl ByteStream {
     fn parent_const(&self) -> &Source {
         // SAFETY: same invariant as `parent` — `self` is the `context` field of a `Source`.
         unsafe {
-            &*(self as *const Self as *const u8)
+            &*std::ptr::from_ref::<Self>(self).cast::<u8>()
                 .sub(offset_of!(Source, context))
                 .cast::<Source>()
         }
@@ -401,10 +401,10 @@ impl ByteStream {
         }
 
         // TODO(port): lifetime — storing a raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer = buffer as *mut [u8];
+        self.pending_buffer = std::ptr::from_mut::<[u8]>(buffer);
         self.set_value(view);
 
-        streams::Result::Pending(&mut self.pending)
+        streams::Result::Pending(&raw mut self.pending)
         // TODO(port): `streams::Result::Pending` carries `*streams.Result.Pending` in Zig (raw
         // backref). Phase B: decide on `NonNull<streams::Pending>` vs index.
     }

@@ -31,7 +31,7 @@ use crate::{Chunk, CompileResult, Index};
 pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task is the `task` field embedded in a PendingPartRange (intrusive task node).
     let part_range: &PendingPartRange = unsafe {
-        &*(task as *mut u8)
+        &*task.cast::<u8>()
             .sub(offset_of!(PendingPartRange, task))
             .cast::<PendingPartRange>()
     };
@@ -54,7 +54,7 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // `Worker::get` only needs `&BundleV2` (it reads `graph.pool` and serializes via mutex),
     // so no mutable reference is materialized here.
     let bv2: &crate::BundleV2 = unsafe {
-        &*(c_ptr as *const u8)
+        &*c_ptr.cast::<u8>()
             .sub(offset_of!(crate::BundleV2, linker))
             .cast::<crate::BundleV2>()
     };
@@ -140,14 +140,14 @@ fn generate_compile_result_for_css_chunk_impl(
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.
     let symbols: &bun_logger::symbol::Map = unsafe {
-        &*(&c.graph.symbols as *const _ as *const bun_logger::symbol::Map)
+        &*(&raw const c.graph.symbols).cast::<bun_logger::symbol::Map>()
     };
     // CYCLEBREAK: `LocalsResultsMap` = `ArrayHashMap<bun_logger::Ref, *const [u8]>`;
     // `c.mangled_props` is `ArrayHashMap<bun_js_parser::Ref, Box<[u8]>>`. Both `Ref`s are
     // newtype-`u64` and `Box<[u8]>`/`*const [u8]` are both `(ptr, len)` fat ptrs — same
     // layout, used read-only by the printer.
     let local_names: &LocalsResultsMap = unsafe {
-        &*(&c.mangled_props as *const _ as *const LocalsResultsMap)
+        &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
     };
     // SAFETY: parse_graph is a backref into BundleV2.graph, valid for the bundle lifetime.
     let parse_graph = unsafe { &*c.parse_graph };
@@ -276,7 +276,7 @@ fn generate_compile_result_for_css_chunk_impl(
                     // SAFETY: multiple threads update this counter; treat *usize as AtomicUsize
                     // (Zig: @atomicRmw(usize, bytes_ptr, .Add, output.len, .monotonic))
                     let atomic: &AtomicUsize =
-                        unsafe { &*(bytes_ptr as *mut usize as *const AtomicUsize) };
+                        unsafe { &*std::ptr::from_mut::<usize>(bytes_ptr).cast_const().cast::<AtomicUsize>() };
                     let _ = atomic.fetch_add(output.len(), Ordering::Relaxed);
                 }
             }

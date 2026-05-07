@@ -380,7 +380,7 @@ impl JSBundleCompletionTask {
 
         // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at
         // construction; valid for the lifetime of the VirtualMachine.
-        let env = unsafe { &mut *(self.env as *mut bun_dotenv::Loader) };
+        let env = unsafe { &mut *self.env.cast::<bun_dotenv::Loader>() };
 
         let result = match to_executable(
             &compile_options.compile_target,
@@ -1076,11 +1076,11 @@ impl CompletionStruct for JSBundleCompletionTask {
             ..Default::default()
         };
 
-        let log: *mut logger::Log = &mut self.log;
+        let log: *mut logger::Log = &raw mut self.log;
         // SAFETY: `self.env` is the per-VM dotenv loader stashed at
         // construction; cast erases `'_` (bun_dotenv::Loader is invariant on
         // its arena lifetime, but `Transpiler::init` only stores the pointer).
-        let env = self.env as *mut bun_dotenv::Loader<'static>;
+        let env = self.env.cast::<bun_dotenv::Loader<'static>>();
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
@@ -1135,7 +1135,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // returns). `BundleV2.file_map: Option<&'a FileMap>` — erase to `'a`.
         bv2.file_map = self.file_map().map(|p| unsafe { &*p.as_ptr() });
 
-        self.set_transpiler(&mut *bv2 as *mut BundleV2<'_>);
+        self.set_transpiler(&raw mut *bv2);
 
         // Snapshot entry points as `&[&[u8]]` (Zig `keys()` is `[][]const u8`).
         let entry_points: Vec<&[u8]> =

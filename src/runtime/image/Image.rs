@@ -658,7 +658,7 @@ impl Image {
                     // bytes live in the JS heap, not in `ab`. `this_value`
                     // keeps the buffer alive for this JS-thread call — see fn
                     // doc + TODO(port) above re: borrow-into-JS-heap.
-                    unsafe { &*(ab.byte_slice() as *const [u8]) }
+                    unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
             Source::Path(_) | Source::Blob(_) => None,
@@ -697,7 +697,7 @@ impl Image {
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
                 // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe { JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) } {
+                match unsafe { JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len) } {
                     0 => Err(PinError::Detached),
                     // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
                     // by definition — dupe instead of forcing JSC to copy via
@@ -728,7 +728,7 @@ impl Image {
                             // unpinned in `then()` via `Input::release()`.
                             let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
                             Ok(Input {
-                                bytes: bytes as *const [u8],
+                                bytes: std::ptr::from_ref::<[u8]>(bytes),
                                 pinned: v,
                                 ..Default::default()
                             })
@@ -739,8 +739,8 @@ impl Image {
             }
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
-            Source::Owned(b) => Ok(Input { bytes: b.as_slice() as *const [u8], ..Default::default() }),
-            Source::Path(p) => Ok(Input { path: Some(p.as_zstr() as *const ZStr), ..Default::default() }),
+            Source::Owned(b) => Ok(Input { bytes: std::ptr::from_ref::<[u8]>(b.as_slice()), ..Default::default() }),
+            Source::Path(p) => Ok(Input { path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())), ..Default::default() }),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -1033,7 +1033,7 @@ impl Image {
             }
         };
         let job = Box::new(PipelineTask {
-            image: self as *mut Image,
+            image: std::ptr::from_mut::<Image>(self),
             global,
             // Struct copy — the worker reads its own snapshot so further chained
             // calls on the JS side between schedule and completion don't race.
@@ -1126,7 +1126,7 @@ impl Image {
         // temporary (only `then()` does — Image.zig:1092). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
-            image: self as *mut Image,
+            image: std::ptr::from_mut::<Image>(self),
             global,
             pipeline: self.pipeline,
             input,
@@ -1203,7 +1203,7 @@ impl<'a> BlobReadChain<'a> {
         image.pending_tasks += 1;
 
         let chain = Box::new(BlobReadChain {
-            image: image as *mut Image,
+            image: std::ptr::from_mut::<Image>(image),
             global,
             kind,
             deliver,
@@ -1217,7 +1217,7 @@ impl<'a> BlobReadChain<'a> {
         let raw = Box::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        blob.read_bytes_to_handler(unsafe { &mut *raw }, global)
+        blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
             .map_err(jsc::JsError::from)?;
         Ok(promise)
     }
@@ -1295,7 +1295,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
         // and free the allocation (mirrors Zig `bun.destroy(self)`).
-        let boxed = unsafe { Box::from_raw(self as *mut Self) };
+        let boxed = unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
 }
@@ -1346,7 +1346,7 @@ pub struct Input {
 impl Default for Input {
     fn default() -> Self {
         Self {
-            bytes: &[] as *const [u8],
+            bytes: std::ptr::from_ref::<[u8]>(&[]),
             path: None,
             pinned: JSValue::ZERO,
             copied: None,
@@ -1652,7 +1652,7 @@ impl<'a> PipelineTask<'a> {
                     // `from_bytes` signature only — JS takes ownership.
                     let mut_slice = unsafe {
                         core::slice::from_raw_parts_mut(
-                            out.bytes.as_ptr() as *mut u8,
+                            out.bytes.as_ptr().cast::<u8>(),
                             out_slice.len(),
                         )
                     };
@@ -1674,9 +1674,9 @@ impl<'a> PipelineTask<'a> {
                     // Blob.Store frees via an Allocator; dupe for that path.
                     let owned = out_slice.to_vec();
                     // SAFETY: explicit free in lieu of suppressed `Drop`.
-                    unsafe { (out.free)(out.bytes.as_ptr() as *mut _, core::ptr::null_mut()) };
+                    unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                     let mut blob = Blob::init(owned, global);
-                    blob.content_type = format.mime().as_bytes() as *const [u8];
+                    blob.content_type = std::ptr::from_ref::<[u8]>(format.mime().as_bytes());
                     blob.content_type_was_set = true;
                     // UFCS to pick the consuming `JsClass::to_js(self, _)`
                     // (heap-promotes via `Blob::new`) over the inherent

@@ -562,7 +562,7 @@ impl<'a> PackageInstaller<'a> {
                 // under stacked-borrows).
                 // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
                 // never writes through it while `node_modules_path` is borrowed.
-                let nm_ptr: *mut AbsPath = &mut node_modules_path;
+                let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: self.options.bin_path,
@@ -573,8 +573,8 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .map(|p| p as *const AbsPath)
-                        .unwrap_or(nm_ptr as *const AbsPath),
+                        .map(|p| std::ptr::from_ref::<AbsPath>(p))
+                        .unwrap_or(nm_ptr.cast_const()),
                     node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
@@ -757,7 +757,7 @@ impl<'a> PackageInstaller<'a> {
                     let package_id =
                         self.lockfile.buffers.resolutions.as_slice()[context.dependency_id as usize];
                     let name = self.names[package_id as usize];
-                    let resolution = &self.resolutions[package_id as usize] as *const Resolution;
+                    let resolution = &raw const self.resolutions[package_id as usize];
                     self.node_modules.tree_id = context.tree_id;
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
@@ -902,12 +902,12 @@ impl<'a> PackageInstaller<'a> {
         // not freed for the lifetime of this `PackageInstaller` (only grows, which is why
         // this fn exists — to re-point after growth).
         let mut packages = self.lockfile.packages.slice();
-        self.metas = unsafe { &*(packages.items_meta() as *const [_]) };
-        self.names = unsafe { &*(packages.items_name() as *const [_]) };
-        self.pkg_name_hashes = unsafe { &*(packages.items_name_hash() as *const [_]) };
-        self.bins = unsafe { &*(packages.items_bin() as *const [_]) };
-        self.resolutions = unsafe { &mut *(packages.items_resolution_mut() as *mut [_]) };
-        self.pkg_dependencies = unsafe { &*(packages.items_dependencies() as *const [_]) };
+        self.metas = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_meta()) };
+        self.names = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_name()) };
+        self.pkg_name_hashes = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_name_hash()) };
+        self.bins = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_bin()) };
+        self.resolutions = unsafe { &mut *std::ptr::from_mut::<[_]>(packages.items_resolution_mut()) };
+        self.pkg_dependencies = unsafe { &*std::ptr::from_ref::<[_]>(packages.items_dependencies()) };
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -978,7 +978,7 @@ impl<'a> PackageInstaller<'a> {
                 let callback_package_id =
                     self.lockfile.buffers.resolutions.as_slice()[context.dependency_id as usize];
                 let callback_resolution =
-                    &self.resolutions[callback_package_id as usize] as *const Resolution;
+                    &raw const self.resolutions[callback_package_id as usize];
                 self.node_modules.tree_id = context.tree_id;
                 // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
@@ -1126,7 +1126,7 @@ impl<'a> PackageInstaller<'a> {
         // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes (Zig
         // slices don't enforce noalias). Derive BOTH from a single `*mut PathBuffer`
         // so neither `&mut` invalidates the other under stacked-borrows.
-        let subpath_buf_ptr: *mut PathBuffer = &mut self.destination_dir_subpath_buf;
+        let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
         let destination_dir_subpath: &mut ZStr = {
             let alias_slice = alias.slice(string_buf!());
             // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
@@ -1228,8 +1228,8 @@ impl<'a> PackageInstaller<'a> {
         // pointers so `installer`'s lifetime is independent of `&mut self`.
         // SAFETY: BACKREF — none of these fields are dropped, moved, or resized while
         // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
-        let node_modules_ptr: *const NodeModulesFolder = &self.node_modules;
-        let lockfile_ptr: *const Lockfile = &*self.lockfile;
+        let node_modules_ptr: *const NodeModulesFolder = &raw const self.node_modules;
+        let lockfile_ptr: *const Lockfile = &raw const *self.lockfile;
         let mut installer = PackageInstall {
             progress: if self.manager.options.log_level.show_progress() {
                 Some(progress!(self))
@@ -2212,7 +2212,7 @@ impl<'a> PackageInstaller<'a> {
         let name = self.names[package_id as usize];
         // SAFETY: resolution points into self.resolutions which is not resized here.
         // TODO(port): reshape to avoid raw ptr aliasing &mut self.
-        let resolution = &self.resolutions[package_id as usize] as *const Resolution;
+        let resolution = &raw const self.resolutions[package_id as usize];
 
         const NEEDS_VERIFY: bool = true;
         const IS_PENDING_PACKAGE_INSTALL: bool = false;

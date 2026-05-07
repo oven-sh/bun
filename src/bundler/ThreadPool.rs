@@ -244,7 +244,7 @@ impl ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire()) } else { None },
             // BACKREF: lifetime erased behind the raw pointer.
-            v2: (v2 as *const V2).cast(),
+            v2: std::ptr::from_ref::<V2>(v2).cast(),
             worker_pool_is_owned: false,
             workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
         }
@@ -335,17 +335,17 @@ impl ThreadPool {
             match parse_task.stage {
                 ParseTaskStage::NeedsParse(_) => {
                     // SAFETY: worker_pool valid for lifetime of self.
-                    schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
+                    schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&raw mut parse_task.task));
                 }
                 ParseTaskStage::NeedsSourceCode => {
                     // SAFETY: io_pool is Some when uses_io_pool(); points to live static.
                     let io = unsafe { self.io_pool.unwrap_unchecked().as_ref() };
-                    schedule_fn(io, ThreadPoolLib::Batch::from(&mut parse_task.io_task));
+                    schedule_fn(io, ThreadPoolLib::Batch::from(&raw mut parse_task.io_task));
                 }
             }
         } else {
             // SAFETY: worker_pool valid for lifetime of self.
-            schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
+            schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&raw mut parse_task.task));
         }
     }
 
@@ -472,7 +472,7 @@ impl Worker {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: task points to Worker.deinit_task; offset_of recovers the parent.
         let this: *mut Worker = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(Worker, deinit_task))
                 .cast::<Worker>()
         };
@@ -483,7 +483,7 @@ impl Worker {
 
     pub fn deinit_soon(&mut self) {
         if let Some(thread) = unsafe { self.thread.as_ref() } {
-            thread.push_idle_task(&mut self.deinit_task);
+            thread.push_idle_task(&raw mut self.deinit_task);
         }
     }
 
@@ -547,7 +547,7 @@ impl Worker {
     }
 
     pub fn init(&mut self, v2: &BundleV2<'_>) {
-        self.ctx = (v2 as *const BundleV2<'_>).cast();
+        self.ctx = std::ptr::from_ref::<BundleV2<'_>>(v2).cast();
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {
@@ -561,7 +561,7 @@ impl Worker {
         self.heap.write(ThreadLocalArena::new());
         // Self-referential — `allocator` borrows `self.heap`.
         // SAFETY: heap was just initialized on the line above.
-        self.allocator = unsafe { self.heap.assume_init_ref() } as *const ThreadLocalArena;
+        self.allocator = std::ptr::from_ref::<ThreadLocalArena>(unsafe { self.heap.assume_init_ref() });
 
         let allocator = self.allocator;
 
@@ -582,7 +582,7 @@ impl Worker {
             transpiler: MaybeUninit::uninit(),
             other_transpiler: None,
         });
-        self.ctx = (ctx as *const BundleV2<'_>).cast();
+        self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
         // PERF(port): was `bun.ArenaAllocator.init(this.allocator)` — using a
         // fresh Bump (no nested-arena type yet).
         self.temporary_arena.write(bun_alloc::Arena::new());
@@ -623,7 +623,7 @@ impl Worker {
         // — see transpiler.rs:54-66). Out of scope here (resolver/lib.rs).
         // SAFETY: `t.fs` points at the process-lifetime `Fs::FileSystem`
         // singleton (transpiler.rs `Transpiler::init`); outlives every worker.
-        t.resolver.fs = unsafe { &mut *t.fs };
+        t.resolver.fs = unsafe { &raw mut *t.fs };
         // SAFETY: `allocator` points at `Worker.heap` (initialized in `create`)
         // which outlives `WorkerData`; lifetime erased to `'static` to match the
         // slot's erased `Transpiler<'static>`.

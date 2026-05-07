@@ -81,7 +81,7 @@ pub fn testing_impl(
     // NOTE on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below, so erasing `&arena -> &'static Bump` here matches the
     // crate-wide `unsafe { &*(allocator as *const Bump) }` pattern.
-    let alloc: &'static Arena = unsafe { &*(&arena as *const Arena) };
+    let alloc: &'static Arena = unsafe { &*(&raw const arena) };
 
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
@@ -124,7 +124,7 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref: &'static mut Log = unsafe { &mut *(&mut log as *mut Log) };
+    let log_ref: &'static mut Log = unsafe { &mut *(&raw mut log) };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
@@ -340,7 +340,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // `stylesheet` below, so erasing `&arena -> &'static Bump` here matches
     // the existing `unsafe { &*(allocator as *const Bump) }` pattern in
     // bun_css (declaration.rs / context.rs / css_parser.rs).
-    let alloc: &'static Arena = unsafe { &*(&arena as *const Arena) };
+    let alloc: &'static Arena = unsafe { &*(&raw const arena) };
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.

@@ -418,7 +418,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
         #[cfg(feature = "alloc_scopes")]
         {
             // TODO(port): see LockedState::assert_owned note re: anytype slice handling.
-            self.state.lock().assert_owned(ptr as *const u8);
+            self.state.lock().assert_owned(ptr.cast::<u8>());
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;
@@ -427,7 +427,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     pub fn assert_unowned<T: ?Sized>(&self, ptr: *const T) {
         #[cfg(feature = "alloc_scopes")]
         {
-            self.state.lock().assert_unowned(ptr as *const u8);
+            self.state.lock().assert_unowned(ptr.cast::<u8>());
         }
         #[cfg(not(feature = "alloc_scopes"))]
         let _ = ptr;
@@ -474,7 +474,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
                 std_alloc.vtable,
             );
             // SAFETY: vtable check above proves `std_alloc.ptr` is a `*State` we boxed in `init`.
-            break 'blk unsafe { &*(std_alloc.ptr as *const State) };
+            break 'blk unsafe { &*std_alloc.ptr.cast::<State>() };
         };
 
         #[cfg(feature = "alloc_scopes")]
@@ -664,19 +664,19 @@ pub const FREE_TRACE_LIMITS: WriteStackTraceLimits = WriteStackTraceLimits {
 unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ret_addr: usize) -> *mut u8 {
     // SAFETY: `ctx` is the `*State` we stored in `Borrowed::allocator()`; vtable is only ever
     // paired with that pointer.
-    let raw_state: &State = unsafe { &*(ctx as *const State) };
+    let raw_state: &State = unsafe { &*ctx.cast::<State>() };
     raw_state.lock().alloc(len, alignment, ret_addr).unwrap_or(core::ptr::null_mut())
 }
 
 unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ret_addr: usize) {
     // SAFETY: see `vtable_alloc`.
-    let raw_state: &State = unsafe { &*(ctx as *const State) };
+    let raw_state: &State = unsafe { &*ctx.cast::<State>() };
     raw_state.lock().free(buf, alignment, ret_addr);
 }
 
 #[inline]
 pub fn is_instance(allocator: StdAllocator) -> bool {
-    ENABLED && core::ptr::eq(allocator.vtable, &VTABLE)
+    ENABLED && core::ptr::eq(allocator.vtable, &raw const VTABLE)
 }
 
 #[inline]

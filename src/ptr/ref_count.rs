@@ -290,7 +290,7 @@ impl<T: RefCounted> RefCount<T> {
             {
                 // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(self_ as *const u8, size_of::<T>())
+                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
                 };
                 // SAFETY: count is &*get_ref_count(self_); we need &mut for deinit
                 unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
@@ -326,13 +326,13 @@ impl<T: RefCounted> RefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T (Zig: @fieldParentPtr)
             let ptr: *mut T = unsafe {
-                (self as *mut Self as *mut u8)
+                std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of_ref_count::<T, Self>())
                     .cast::<T>()
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),
-                ptr as *mut c_void,
+                ptr.cast::<c_void>(),
                 self.raw_count.get(),
             );
         }
@@ -382,16 +382,16 @@ impl<T: RefCounted> AnyRefCounted for T {
     }
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { (*T::get_ref_count(this as *mut Self)).has_one_ref() }
+        unsafe { (*T::get_ref_count(this.cast_mut())).has_one_ref() }
     }
     unsafe fn rc_assert_no_refs(this: *const Self) {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { (*T::get_ref_count(this as *mut Self)).assert_no_refs() }
+        unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
     #[cfg(debug_assertions)]
     unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
         // SAFETY: caller contract — `this` points to a live T
-        unsafe { &mut (*T::get_ref_count(this)).debug as *mut _ }
+        unsafe { &raw mut (*T::get_ref_count(this)).debug }
     }
 }
 
@@ -472,7 +472,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             {
                 // SAFETY: self_ is live; reinterpreting as bytes for debug tracking
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(self_ as *const u8, size_of::<T>())
+                    core::slice::from_raw_parts(self_.cast::<u8>(), size_of::<T>())
                 };
                 // SAFETY: we hold the last ref; exclusive access
                 unsafe { (*T::get_ref_count(self_)).debug.deinit(bytes, return_address()) };
@@ -514,13 +514,13 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T (Zig: @fieldParentPtr)
             let ptr: *mut T = unsafe {
-                (self as *mut Self as *mut u8)
+                std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of_ref_count_ts::<T, Self>())
                     .cast::<T>()
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),
-                ptr as *mut c_void,
+                ptr.cast::<c_void>(),
                 self.raw_count.load(Ordering::SeqCst),
             );
         }
@@ -553,7 +553,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     #[doc(hidden)]
     #[inline]
     pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
-        &mut self.debug as *mut _
+        &raw mut self.debug
     }
 
     // PORT NOTE: `getRefCount` / `is_ref_count` / `ref_count_options` — see
@@ -805,7 +805,7 @@ macro_rules! impl_thread_safe_any_ref_counted {
             unsafe fn rc_has_one_ref(this: *const Self) -> bool {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .has_one_ref()
                 }
             }
@@ -813,7 +813,7 @@ macro_rules! impl_thread_safe_any_ref_counted {
             unsafe fn rc_assert_no_refs(this: *const Self) {
                 // SAFETY: caller contract — `this` points to a live Self.
                 unsafe {
-                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this as *mut Self))
+                    (*<Self as $crate::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .assert_no_refs()
                 }
             }
@@ -1014,7 +1014,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
         {
             // SAFETY: data is live (we hold a ref)
             let debug = unsafe { &mut *T::rc_debug_data(self.data.as_ptr()) };
-            debug.track_in_scope(scope, self.data.as_ptr() as *mut c_void, size_of::<T>(), ret_addr);
+            debug.track_in_scope(scope, self.data.as_ptr().cast::<c_void>(), size_of::<T>(), ret_addr);
         }
     }
 
@@ -1271,7 +1271,7 @@ impl<Count: CountLoad> DebugData<Count> {
         // SAFETY: count_pointer was set in acquire_with_count and points into
         // the sibling raw_count field, which lives as long as self.
         let rc = unsafe { debug.count_pointer.unwrap().as_ref() }.load_count();
-        debug.dump(None, data.as_mut_ptr() as *mut c_void, rc);
+        debug.dump(None, data.as_mut_ptr().cast::<c_void>(), rc);
     }
 
     fn get_scope_extra_vtable(&self) -> &'static allocation_scope::ExtraVTable {
@@ -1316,11 +1316,11 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
         ret_addr: usize,
     ) {
         // PORT NOTE: reshaped for borrowck — capture self ptr before guard borrows lock.
-        let self_ptr = self as *mut Self as *mut c_void;
+        let self_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         let vtable = self.get_scope_extra_vtable();
         let _guard = self.lock.lock();
         // SAFETY: data_ptr/data_size describe a live T allocation
-        let bytes = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_size) };
+        let bytes = unsafe { core::slice::from_raw_parts(data_ptr.cast::<u8>(), data_size) };
         scope.track_external_allocation(
             bytes,
             ret_addr,
@@ -1398,7 +1398,7 @@ fn generic_dump(
     for (_, entry) in map.iter() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         // TODO(b0-genuine): was dump_stack_trace(trace, AllocationScope::TRACE_LIMITS)
-        dump_stack_hook(&entry.acquired_at, 0);
+        dump_stack_hook(&raw const entry.acquired_at, 0);
         i += 1;
         if i >= 3 {
             bun_core::pretty_error!("  {} omitted ...\n", map.len() - i);
@@ -1417,7 +1417,7 @@ fn generic_dump(
 // TODO(port): callers that passed non-ref-counted T must simply not call this.
 pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
     // SAFETY: `ptr` is a live reference to T
-    unsafe { T::rc_assert_no_refs(ptr as *const T) }
+    unsafe { T::rc_assert_no_refs(std::ptr::from_ref::<T>(ptr)) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

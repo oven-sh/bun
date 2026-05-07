@@ -397,7 +397,7 @@ pub mod E {
                 let s16 = self.slice16();
                 // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
                 let bytes = unsafe {
-                    core::slice::from_raw_parts(s16.as_ptr() as *const u8, s16.len() * 2)
+                    core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
                 };
                 bun_wyhash::hash(bytes)
             }

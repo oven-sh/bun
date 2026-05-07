@@ -1372,7 +1372,7 @@ impl MediaType {
         if eq(name, b"all") { return MediaType::All; }
         if eq(name, b"print") { return MediaType::Print; }
         if eq(name, b"screen") { return MediaType::Screen; }
-        MediaType::Custom(name as *const [u8])
+        MediaType::Custom(std::ptr::from_ref::<[u8]>(name))
     }
 }
 

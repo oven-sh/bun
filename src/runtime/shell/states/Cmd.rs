@@ -264,7 +264,7 @@ impl Cmd {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;
                     }
-                    let atom: *const ast::Atom = &args[idx as usize];
+                    let atom: *const ast::Atom = &raw const args[idx as usize];
                     let io = interp.as_cmd(this).io.clone();
                     let child = Expansion::init(
                         interp,

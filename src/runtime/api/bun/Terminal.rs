@@ -347,14 +347,14 @@ impl Terminal {
         // refcount mixin only reads/writes the `ref_count` field via shared
         // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
         // materialized).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self as *const Self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
 
     pub fn deref_(&mut self) {
         // SAFETY: `self` is the unique live reference at this call site; the
         // RefCount mixin runs `destructor()` (→ deinit_and_destroy) iff the
         // count hits zero.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(self as *mut Self) };
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     /// Internal initialization - shared by constructor and createFromSpawn
@@ -416,7 +416,7 @@ impl Terminal {
         let terminal = unsafe { &mut *terminal };
 
         // Set reader parent
-        let parent_ptr = terminal as *mut Terminal as *mut c_void;
+        let parent_ptr = std::ptr::from_mut::<Terminal>(terminal).cast::<c_void>();
         terminal.reader.set_parent(parent_ptr);
 
         // Set writer parent
@@ -827,11 +827,11 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
     let result = unsafe {
         openpty_fn(
-            &mut master_fd,
-            &mut slave_fd,
+            &raw mut master_fd,
+            &raw mut slave_fd,
             core::ptr::null_mut(),
             core::ptr::null(),
-            &winsize,
+            &raw const winsize,
         )
     };
     if result != 0 {
@@ -905,8 +905,8 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             // cfsetispeed/cfsetospeed (the portable way to set both).
             // SAFETY: `t` is a fully-initialized termios from tcgetattr.
             unsafe {
-                libc::cfsetispeed(&mut t, libc::B38400);
-                libc::cfsetospeed(&mut t, libc::B38400);
+                libc::cfsetispeed(&raw mut t, libc::B38400);
+                libc::cfsetospeed(&raw mut t, libc::B38400);
             }
 
             let _ = sys::posix::tcsetattr(slave_fd, sys::posix::TCSA::Now, &t);
@@ -1430,7 +1430,7 @@ impl Terminal {
                 libc::ioctl(
                     self.master_fd.native(),
                     TIOCSWINSZ as _,
-                    &winsize as *const IoctlWinsize,
+                    &raw const winsize,
                 )
             };
             if ioctl_result != 0 {
@@ -1553,7 +1553,7 @@ impl Terminal {
         // address of the stored bun_jsc::EventLoopHandle.
         self.writer.update_ref(
             bun_io::EventLoopHandle(
-                &self.event_loop_handle as *const EventLoopHandle as *mut c_void,
+                (&raw const self.event_loop_handle).cast_mut().cast::<c_void>(),
             ),
             add,
         );
@@ -1782,7 +1782,7 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let len = duped.len();
-        let ptr = Box::into_raw(duped) as *mut u8;
+        let ptr = Box::into_raw(duped).cast::<u8>();
         // SAFETY: ptr/len from Box::into_raw above; ownership transfers to JSC.
         let bytes = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
         let data = MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
@@ -1892,7 +1892,7 @@ impl BufferedReaderParent for Terminal {
         // (registered by bun_runtime::init) can recover it.
         // SAFETY: see on_read_chunk; shared-only read.
         bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
         )
     }
 }
@@ -1928,7 +1928,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         // the address of the stored `bun_jsc::EventLoopHandle` so the
         // (runtime-registered) FilePoll vtable can recover it.
         bun_io::EventLoopHandle(
-            unsafe { &raw const (*this).event_loop_handle } as *mut core::ffi::c_void,
+            unsafe { &raw const (*this).event_loop_handle }.cast_mut().cast::<core::ffi::c_void>(),
         )
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {

@@ -301,14 +301,14 @@ impl<'a> Subprocess<'a> {
     #[inline]
     pub fn ref_(&mut self) {
         // SAFETY: &mut self → live *mut Self.
-        unsafe { RefCount::<Self>::ref_(self as *mut Self) }
+        unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) }
     }
     /// Intrusive `deref()` — Zig's `pub const deref = ref_count.deref`.
     /// May free `self`; do not use `self` after calling.
     #[inline]
     pub fn deref(&mut self) {
         // SAFETY: &mut self → live *mut Self; destructor handles the Box.
-        unsafe { RefCount::<Self>::deref(self as *mut Self) }
+        unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) }
     }
 }
 
@@ -391,7 +391,7 @@ unsafe fn on_process_exit_thunk(
     // forwarded as the raw `*mut Process` (not a `&Process` reborrow) so
     // `on_process_exit` can hand it to `VirtualMachine::on_subprocess_exit`
     // without a const→mut provenance cast.
-    let this: &mut Subprocess = unsafe { &mut *(owner as *mut Subprocess) };
+    let this: &mut Subprocess = unsafe { &mut *owner.cast::<Subprocess>() };
     let rusage_ref: &Rusage = unsafe { &*rusage };
     this.on_process_exit(process, status, rusage_ref);
 }
@@ -962,7 +962,7 @@ impl Subprocess<'_> {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: single JS thread; `timer_all()` points into the boxed
             // per-thread `RuntimeState`.
-            unsafe { (*Self::timer_all()).remove(&mut self.event_loop_timer) };
+            unsafe { (*Self::timer_all()).remove(&raw mut self.event_loop_timer) };
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1072,8 +1072,8 @@ impl Subprocess<'_> {
             if pipe
                 .signal
                 .ptr
-                .map(|p| p.as_ptr() as *const c_void)
-                == Some(self as *const Self as *const c_void)
+                .map(|p| p.as_ptr().cast_const())
+                == Some(std::ptr::from_ref::<Self>(self).cast::<c_void>())
             {
                 // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
                 // through `*FileSink` here.
@@ -1206,7 +1206,7 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 if !called {
-                    Writable::finalize(self as *mut Self);
+                    Writable::finalize(std::ptr::from_mut::<Self>(self));
                 } else {
                     self.stdin.close();
                 }
@@ -1262,7 +1262,7 @@ impl Subprocess<'_> {
             // `spawn_maybe_sync`); it stays live until `unref()` below.
             let signal: &AbortSignal = unsafe { signal.as_ref() };
             signal.pending_activity_unref();
-            signal.clean_native_bindings(self as *mut Self as *mut c_void);
+            signal.clean_native_bindings(std::ptr::from_mut::<Self>(self).cast::<c_void>());
             signal.unref();
         }
     }
@@ -1295,7 +1295,7 @@ impl Subprocess<'_> {
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: single JS thread; `timer_all()` points into the boxed
             // per-thread `RuntimeState`.
-            unsafe { (*Self::timer_all()).remove(&mut this.event_loop_timer) };
+            unsafe { (*Self::timer_all()).remove(&raw mut this.event_loop_timer) };
         }
         this.set_event_loop_timer_refd(false);
 

@@ -541,7 +541,7 @@ impl FilePoll {
         // `&mut Store` and `&mut FilePoll` would form overlapping unique borrows.
         // Coerce to a raw pointer here (Zig `*FilePoll` semantics) and let
         // `Store::put` access fields via raw-pointer ops.
-        polls.put(self as *mut FilePoll, vm, was_ever_registered);
+        polls.put(std::ptr::from_mut::<FilePoll>(self), vm, was_ever_registered);
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -682,7 +682,7 @@ impl FilePoll {
         }
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll as *mut _ as usize,
+            std::ptr::from_mut(poll) as usize,
             poll.generation_number,
             fd
         );
@@ -797,7 +797,7 @@ impl FilePoll {
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             self.generation_number,
             <&'static str>::from(flag),
             fd
@@ -850,7 +850,7 @@ impl FilePoll {
             };
 
             // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &mut event) };
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -876,7 +876,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -885,7 +885,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -894,7 +894,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -903,7 +903,7 @@ impl FilePoll {
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::ADD | one_shot_flag,
                     ext: [self.generation_number as u64, 0],
                 },
@@ -1109,7 +1109,7 @@ impl FilePoll {
 
         syslog!(
             "unregister: FilePoll(0x{:x}, generation_number={}) {}{} ({})",
-            self as *mut _ as usize,
+            std::ptr::from_mut(self) as usize,
             self.generation_number,
             <&'static str>::from(flag),
             if both_directions { "+writable" } else { "" },
@@ -1139,7 +1139,7 @@ impl FilePoll {
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1148,7 +1148,7 @@ impl FilePoll {
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1157,7 +1157,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1166,7 +1166,7 @@ impl FilePoll {
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 },
@@ -1181,7 +1181,7 @@ impl FilePoll {
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as u64,
+                    udata: Pollable::init(self).ptr() as u64,
                     flags: EV::DELETE,
                     ext: [0, 0],
                 };
@@ -1511,12 +1511,12 @@ impl Store {
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
         );
-        vm.set_after_event_loop_callback(Some(callback), self as *mut Store as *mut c_void);
+        vm.set_after_event_loop_callback(Some(callback), std::ptr::from_mut::<Store>(self).cast::<c_void>());
     }
 
     unsafe extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
         // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { &mut *(ctx as *mut Store) };
+        let this = unsafe { &mut *ctx.cast::<Store>() };
         this.process_deferred_frees();
     }
 }
@@ -1668,7 +1668,7 @@ impl LinuxWaker {
     pub fn wake(&self) {
         let bytes: usize = 1;
         // SAFETY: usize is 8 bytes; reinterpret as [u8; 8].
-        let buf = unsafe { &*(&bytes as *const usize as *const [u8; 8]) };
+        let buf = unsafe { &*(&raw const bytes).cast::<[u8; 8]>() };
         let _ = bun_sys::write(self.fd, buf);
     }
 }
@@ -1756,7 +1756,7 @@ impl KEventWaker {
         debug_assert!(kq > -1);
         let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
         // SAFETY: FFI call; buf outlives the machport.
-        let machport = unsafe { io_darwin_create_machport(kq, machport_buf.as_mut_ptr() as *mut c_void, 1024) };
+        let machport = unsafe { io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024) };
         if machport == 0 {
             return Err(bun_core::err!("MachportCreationFailed"));
         }
@@ -1813,7 +1813,7 @@ impl Closer {
     unsafe fn on_close(task: *mut work_pool::Task) {
         // SAFETY: task points to Closer.task; recover the parent via offset_of.
         let closer = unsafe {
-            (task as *mut u8).sub(core::mem::offset_of!(Closer, task)) as *mut Closer
+            task.cast::<u8>().sub(core::mem::offset_of!(Closer, task)).cast::<Closer>()
         };
         // PORT NOTE: Zig `defer bun.destroy(closer)` — recover Box and let it drop after fd.close().
         // SAFETY: closer was Box::into_raw'd in Closer::close; reclaim ownership here.

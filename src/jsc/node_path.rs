@@ -264,7 +264,7 @@ impl PathOrFileDescriptor {
                 // SAFETY: `Fd` is POD; reinterpret as bytes for hashing.
                 let bytes = unsafe {
                     core::slice::from_raw_parts(
-                        (fd as *const bun_sys::Fd).cast::<u8>(),
+                        std::ptr::from_ref::<bun_sys::Fd>(fd).cast::<u8>(),
                         core::mem::size_of::<bun_sys::Fd>(),
                     )
                 };

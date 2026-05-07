@@ -257,7 +257,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     binding: Binding::alloc(
                         bump,
                         b::Array {
-                            items: esm_decls.into_bump_slice_mut() as *mut [ArrayBinding],
+                            items: std::ptr::from_mut::<[ArrayBinding]>(esm_decls.into_bump_slice_mut()),
                             has_spread: false,
                             is_single_line: true,
                         },

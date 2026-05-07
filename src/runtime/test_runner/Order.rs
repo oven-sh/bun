@@ -33,7 +33,7 @@ impl Order {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(&mut **test_callback as *mut ExecutionEntry)?
+                self.generate_order_test(&raw mut **test_callback)?
             }
         }
         Ok(())
@@ -145,7 +145,7 @@ impl Order {
                     // decide whether test_runner keeps an arena or tracks these for cleanup.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (Box::into_raw) so its Strong/Box fields are never dropped twice.
-                    let src: *const ExecutionEntry = &*p.before_each[i - 1];
+                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     let cloned = Box::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -166,7 +166,7 @@ impl Order {
                 for entry in p.after_each.iter() {
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
-                    let src: *const ExecutionEntry = &**entry;
+                    let src: *const ExecutionEntry = &raw const **entry;
                     let cloned = Box::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
@@ -318,7 +318,7 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
 /// real — see the SAFETY note at the call site in `generate_all_order`.
 #[inline(always)]
 fn box_inner_mut<T>(b: &Box<T>) -> *mut T {
-    core::ptr::from_ref::<T>(&**b) as *mut T
+    core::ptr::from_ref::<T>(&**b).cast_mut()
 }
 
 #[derive(Default)]

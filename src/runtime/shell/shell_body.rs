@@ -307,7 +307,7 @@ impl<'a> GlobalJS<'a> {
         //   `globalThis.bunVMConcurrently().enqueueTaskConcurrent(ConcurrentTask.create(Task.init(task)))`
         // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
         // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
-        let vm = self.global_this.bun_vm_concurrently() as *const VirtualMachine as *mut VirtualMachine;
+        let vm = self.global_this.bun_vm_concurrently().cast_const().cast_mut();
         let concurrent =
             bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
         // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
@@ -416,7 +416,7 @@ impl<'a> GlobalMini<'a> {
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
         // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
         unsafe {
-            (*(self.mini as *const MiniEventLoop<'a> as *mut MiniEventLoop<'a>))
+            (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
                 .enqueue_task_concurrent(anytask)
         };
     }

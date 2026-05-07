@@ -715,7 +715,7 @@ pub mod command {
         unsafe {
             (*(&raw mut CONTEXT_DATA)).write(ContextData {
                 args: bun_options_types::schema::api::TransformOptions::default(),
-                log: log as *mut logger::Log,
+                log: std::ptr::from_mut::<logger::Log>(log),
                 start_time: START_TIME,
                 ..Default::default()
             });

@@ -146,7 +146,7 @@ impl<'a> Writable<'a> {
         // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         let evtloop = bun_event_loop::EventLoopHandle::init(
-            event_loop as *const EventLoop as *mut (),
+            std::ptr::from_ref::<EventLoop>(event_loop).cast_mut().cast::<()>(),
         );
 
         #[cfg(windows)]
@@ -314,14 +314,14 @@ impl<'a> Writable<'a> {
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(
                     evtloop,
-                    subprocess as *mut Subprocess<'a>,
+                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                     result,
                     super::Source::Blob(blob),
                 )))
             }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
                 evtloop,
-                subprocess as *mut Subprocess<'a>,
+                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                 result,
                 super::Source::ArrayBuffer(core::mem::take(array_buffer)),
             ))),
@@ -405,14 +405,14 @@ impl<'a> Writable<'a> {
                         subprocess.flags.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
                     }
                     if pipe.signal.ptr
-                        == NonNull::new(subprocess as *mut Subprocess as *mut c_void)
+                        == NonNull::new(std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>())
                     {
                         pipe.signal.clear();
                     }
                     pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
-                            subprocess as *mut Subprocess as *const c_void,
+                            std::ptr::from_mut::<Subprocess>(subprocess).cast::<c_void>(),
                         )),
                     )
                 }
@@ -438,7 +438,7 @@ impl<'a> Writable<'a> {
 
         // The signal back-pointer is the `*mut Subprocess` (see SignalHandler
         // impl below / `to_js`); compare against that, not the `stdin` address.
-        let parent_ptr = NonNull::new(subprocess as *mut c_void);
+        let parent_ptr = NonNull::new(subprocess.cast::<c_void>());
         // SAFETY: sole live borrow of `stdin`.
         match unsafe { &mut *stdin } {
             Writable::Pipe(pipe_nn) => {
@@ -510,7 +510,7 @@ impl<'a> SignalHandler for Subprocess<'a> {
     fn on_close(&mut self, err: Option<bun_sys::Error>) {
         // Decay to a raw pointer immediately; `on_close` reborrows disjoint
         // fields and the whole struct in sequence, never overlapping.
-        Writable::on_close(self as *mut Self, err)
+        Writable::on_close(std::ptr::from_mut::<Self>(self), err)
     }
     fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     fn on_start(&mut self) {}

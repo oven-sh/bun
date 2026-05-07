@@ -118,7 +118,7 @@ mod zig_std_debug {
             // arches without an asm! mapping yet. fp-walk will fail its alignment
             // sanity check and terminate cleanly.
             let probe = 0u8;
-            &probe as *const u8 as usize
+            core::ptr::from_ref::<u8>(&probe) as usize
         }
     }
 
@@ -163,7 +163,7 @@ mod zig_std_debug {
                         let remote = libc::iovec { iov_base: address as *mut c_void, iov_len: buf.len() };
                         // SAFETY: iovecs point to valid memory for their stated lengths.
                         let bytes_read =
-                            unsafe { libc::process_vm_readv(pid, &local, 1, &remote, 1, 0) };
+                            unsafe { libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0) };
                         if bytes_read >= 0 {
                             return bytes_read as usize == buf.len();
                         }
@@ -482,7 +482,7 @@ mod zig_std_debug {
                 data: *mut c_void,
             ) -> c_int {
                 // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-                let context = unsafe { &mut *(data as *mut Ctx) };
+                let context = unsafe { &mut *data.cast::<Ctx>() };
                 // SAFETY: dl_iterate_phdr passes a valid info pointer.
                 let info = unsafe { &*info };
                 // The base address is too high
@@ -520,7 +520,7 @@ mod zig_std_debug {
             }
 
             // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
-            unsafe { libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void) };
+            unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
 
             if !ctx.found {
                 return Err(err!("MissingDebugInfo"));
@@ -566,7 +566,7 @@ mod zig_std_debug {
             let _ = self.base_address;
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
-            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
                 // rather than erroring, so the caller still prints the address line.
@@ -615,7 +615,7 @@ mod zig_std_debug {
             data: *mut c_void,
         ) -> c_int {
             // SAFETY: dl_iterate_phdr passes a valid info pointer; data is &mut Ctx.
-            let context = unsafe { &mut *(data as *mut Ctx) };
+            let context = unsafe { &mut *data.cast::<Ctx>() };
             // SAFETY: dl_iterate_phdr passes a valid info pointer.
             let info = unsafe { &*info };
             if context.address < info.dlpi_addr as usize {
@@ -646,7 +646,7 @@ mod zig_std_debug {
         }
 
         // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
-        unsafe { libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void) };
+        unsafe { libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>()) };
         ctx.name
     }
 
@@ -775,7 +775,7 @@ pub extern "C" fn dumpBtjsTrace() -> *const c_char {
     }
     #[cfg(not(debug_assertions))]
     {
-        b"btjs is disabled in release builds\0".as_ptr() as *const c_char
+        b"btjs is disabled in release builds\0".as_ptr().cast::<c_char>()
     }
 }
 
@@ -794,10 +794,10 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
             )
             .is_err()
             {
-                return b"<oom>\0".as_ptr() as *const c_char;
+                return b"<oom>\0".as_ptr().cast::<c_char>();
             }
             // leak intentionally — caller is lldb and never frees
-            return Box::into_raw(result_writer.into_boxed_slice()) as *const c_char;
+            return Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const();
         }
     };
 
@@ -842,7 +842,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // add null terminator
     result_writer.push(0);
     // leak intentionally — caller is lldb and never frees
-    Box::into_raw(result_writer.into_boxed_slice()) as *const c_char
+    Box::into_raw(result_writer.into_boxed_slice()).cast::<c_char>().cast_const()
 }
 
 #[cfg(debug_assertions)]

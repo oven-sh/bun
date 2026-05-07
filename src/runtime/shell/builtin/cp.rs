@@ -202,7 +202,7 @@ impl Cp {
                     // SAFETY: argv entries are NUL-terminated.
                     let tgt = unsafe { CStr::from_ptr(tgt_ptr) }.to_bytes().to_vec();
                     let operands = 1 + (target - start);
-                    let interp_ptr = interp as *mut Interpreter;
+                    let interp_ptr = std::ptr::from_mut::<Interpreter>(interp);
                     for i in start..target {
                         let p = Builtin::of(interp, cmd).args_slice()[i];
                         // SAFETY: argv entries are NUL-terminated.
@@ -562,9 +562,8 @@ impl ShellCpTask {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
         // is embedded in `ShellCpTask` at `TASK_OFFSET` (Zig: `@fieldParentPtr`).
         let this = unsafe {
-            (task as *mut u8)
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
-                as *mut ShellCpTask
+            task.cast::<u8>()
+                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET).cast::<ShellCpTask>()
         };
         // SAFETY: `this` is a live Box::into_raw'd task; the worker thread
         // has exclusive access until the bounce-back is posted.
@@ -761,8 +760,7 @@ impl ShellCpTask {
         // bookkeeping; the Rust `NewAsyncCpTask` owns its allocations.
         match self.task.event_loop {
             EventLoopHandle::Js { .. } => {
-                let vm_ptr = self.task.event_loop.bun_vm()
-                    as *mut bun_jsc::virtual_machine::VirtualMachine;
+                let vm_ptr = self.task.event_loop.bun_vm().cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 // SAFETY: `Js` arm always has a live VM (set at interpreter
                 // construction); accessed read-only here for the
                 // global-object handle and event-loop pointer — same as Zig's
@@ -776,7 +774,7 @@ impl ShellCpTask {
                     args,
                     // SAFETY: see above — `vm_ptr` is live for the call.
                     unsafe { &mut *vm_ptr },
-                    self as *mut ShellCpTask,
+                    std::ptr::from_mut::<ShellCpTask>(self),
                     false,
                 );
             }
@@ -784,7 +782,7 @@ impl ShellCpTask {
                 let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
                     args,
                     mini,
-                    self as *mut ShellCpTask,
+                    std::ptr::from_mut::<ShellCpTask>(self),
                 );
             }
         }
@@ -884,7 +882,7 @@ impl FlagParser for Opts {
                 self.remove_and_create_new_file_if_not_found = false;
                 Some(ParseFlagResult::ContinueParsing)
             }
-            _ => Some(ParseFlagResult::IllegalOption(&smallflags[i..] as *const [u8])),
+            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }
     }
 }

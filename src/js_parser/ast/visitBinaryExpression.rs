@@ -109,7 +109,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         // PORT NOTE: reshaped for borrowck — `e_` reborrows the arena slot. We need a raw
         // pointer to (a) compare against `p.call_target` by address and (b) re-wrap into
         // `ExprData::EBinary(StoreRef)` at the tail without overlapping the `e_` borrow.
-        let e_ptr: *mut E::Binary = &mut *v.e;
+        let e_ptr: *mut E::Binary = &raw mut *v.e;
         // SAFETY: `v.e` points into the AST arena which outlives this call; same contract
         // as Zig's `*E.Binary`. Detaching to a raw deref keeps the borrow disjoint from `v`.
         let e_ = unsafe { &mut *e_ptr };
@@ -722,7 +722,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
         }
 
         v.is_stmt_expr =
-            matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ as *mut _));
+            matches!(p.stmt_expr_value, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), std::ptr::from_mut(e_)));
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),

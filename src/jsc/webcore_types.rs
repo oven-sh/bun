@@ -93,7 +93,7 @@ impl Default for Blob {
             size: 0,
             offset: 0,
             store: None,
-            content_type: b"" as &'static [u8] as *const [u8],
+            content_type: std::ptr::from_ref::<[u8]>(b"" as &'static [u8]),
             content_type_allocated: false,
             content_type_was_set: false,
             charset: AsciiStatus::Unknown,
@@ -174,9 +174,9 @@ impl Blob {
         // stable for the life of `store` (either `'static` or backed by the heap
         // allocation we hold a ref to in `self.store`).
         let content_type: *const [u8] = if let store::Data::File(ref f) = store.data {
-            f.mime_type.value.as_ref() as *const [u8]
+            std::ptr::from_ref::<[u8]>(f.mime_type.value.as_ref())
         } else {
-            b"" as &'static [u8] as *const [u8]
+            std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
         };
         Blob {
             size,
@@ -382,15 +382,15 @@ impl Blob {
         if self.content_type_allocated {
             // SAFETY: `content_type_allocated` implies `content_type` is a
             // leaked `Box<[u8]>` (mimalloc).
-            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
-            self.content_type = b"" as &'static [u8] as *const [u8];
+            unsafe { drop(Box::from_raw(self.content_type.cast_mut())) };
+            self.content_type = std::ptr::from_ref::<[u8]>(b"" as &'static [u8]);
             self.content_type_allocated = false;
         }
 
         if self.is_heap_allocated() {
             // SAFETY: `self` is the `*mut Blob` originally produced by
             // `Blob::new` (`Box::into_raw`).
-            unsafe { drop(Box::from_raw(self as *mut Blob)) };
+            unsafe { drop(Box::from_raw(std::ptr::from_mut::<Blob>(self))) };
         }
     }
 }
@@ -578,7 +578,7 @@ pub mod store {
         /// `is_temporary` handoff in `read_file`.
         pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
             let len = bytes.len();
-            let ptr = Box::into_raw(bytes) as *mut u8;
+            let ptr = Box::into_raw(bytes).cast::<u8>();
             Bytes {
                 ptr: NonNull::new(ptr),
                 len: len as SizeType,

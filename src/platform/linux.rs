@@ -50,9 +50,9 @@ pub fn splice(
         libc::syscall(
             libc::SYS_splice,
             fd_in as isize as usize,
-            off_in.map_or(0usize, |p| p as *mut i64 as usize),
+            off_in.map_or(0usize, |p| std::ptr::from_mut::<i64>(p) as usize),
             fd_out as isize as usize,
-            off_out.map_or(0usize, |p| p as *mut i64 as usize),
+            off_out.map_or(0usize, |p| std::ptr::from_mut::<i64>(p) as usize),
             len,
             flags as usize,
         )

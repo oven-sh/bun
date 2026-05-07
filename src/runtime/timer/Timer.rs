@@ -321,7 +321,7 @@ impl All {
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
         Some(unsafe {
-            (value as *mut u8)
+            value.cast::<u8>()
                 .sub(offset_of!(TimeoutObject, event_loop_timer))
                 .cast::<TimeoutObject>()
         })
@@ -492,14 +492,14 @@ impl DateHeaderTimer {
             // owned uws loop, which outlives this call.
             unsafe { (*(*vm).uws_loop()).update_date() };
 
-            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
             // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
             // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
             unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
         } else {
             // The date was updated recently, just reschedule for the next second
-            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: see above — disjoint-field access on `All`.
             unsafe { (*Self::timer_all()).insert(elt) };
         }

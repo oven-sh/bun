@@ -60,7 +60,7 @@ impl EventLoopDelayMonitor {
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
         // (same {sec,nsec} layout) until bun_event_loop switches to bun_core::Timespec.
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
         // `fake_timers`, disjoint from `event_loop_delay` which `self` may alias.
         unsafe { (*timer_all()).insert(elt) };
@@ -74,7 +74,7 @@ impl EventLoopDelayMonitor {
         self.enabled = false;
         self.js_histogram = JSValue::ZERO;
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*timer_all()).remove(elt) };
     }
@@ -107,7 +107,7 @@ impl EventLoopDelayMonitor {
         // Reschedule
         let next = now.add_ms(i64::from(self.resolution_ms));
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*timer_all()).insert(elt) };
     }

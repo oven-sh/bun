@@ -279,7 +279,7 @@ impl PackageManager {
         // PORT NOTE: reshaped for borrowck — `self.event_loop.tick_once(self)`
         // would borrow `self` twice. Erase `self` to a raw context pointer
         // first; `tick_once` only forwards it opaquely to task callbacks.
-        let ctx = self as *mut PackageManager as *mut core::ffi::c_void;
+        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         self.event_loop.tick_once(ctx);
     }
 
@@ -290,7 +290,7 @@ impl PackageManager {
         // `self` (the struct that owns `event_loop`), so use the raw-pointer
         // `tick_raw` variant which only holds `&mut event_loop` between
         // `is_done` calls.
-        let ctx = self as *mut PackageManager as *mut core::ffi::c_void;
+        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         let event_loop = core::ptr::addr_of_mut!(self.event_loop);
         // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
         // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
@@ -298,7 +298,7 @@ impl PackageManager {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = unsafe { &mut *(ctx as *mut PackageManager) };
+                let this = unsafe { &mut *ctx.cast::<PackageManager>() };
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }

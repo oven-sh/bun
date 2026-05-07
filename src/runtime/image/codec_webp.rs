@@ -102,14 +102,14 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // allocates the full canvas internally. WebPGetInfo can hand back
     // non-positive on a malformed header; reject before the cast traps.
     // SAFETY: bytes.ptr/len describe a valid readable slice.
-    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &mut cw, &mut ch) } == 0 || cw <= 0 || ch <= 0 {
+    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0 || cw <= 0 || ch <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
     // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
-    let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &mut cw, &mut ch) };
+    let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
     if ptr.is_null() {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -145,7 +145,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     let icc: Option<Vec<u8>> = 'blk: {
         let data = WebPData { bytes: bytes.as_ptr(), size: bytes.len() };
         // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
-        let dmux = unsafe { WebPDemuxInternal(&data, 0, core::ptr::null_mut(), WEBP_DEMUX_ABI_VERSION) };
+        let dmux = unsafe { WebPDemuxInternal(&raw const data, 0, core::ptr::null_mut(), WEBP_DEMUX_ABI_VERSION) };
         if dmux.is_null() {
             break 'blk None;
         }
@@ -160,12 +160,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
         let mut iter: WebPChunkIterator = unsafe { core::mem::zeroed::<WebPChunkIterator>() };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &mut iter) } == 0 {
+        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
         }
         let iter = scopeguard::guard(iter, |mut it| {
             // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
-            unsafe { WebPDemuxReleaseChunkIterator(&mut it) }
+            unsafe { WebPDemuxReleaseChunkIterator(&raw mut it) }
         });
         if iter.chunk.bytes.is_null() {
             break 'blk None;
@@ -184,9 +184,9 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
-        unsafe { WebPEncodeLosslessRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, &mut out) }
+        unsafe { WebPEncodeLosslessRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, &raw mut out) }
     } else {
-        unsafe { WebPEncodeRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, quality as f32, &mut out) }
+        unsafe { WebPEncodeRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, quality as f32, &raw mut out) }
     };
     if len == 0 || out.is_null() {
         return Err(codecs::Error::EncodeFailed);
@@ -226,17 +226,17 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     });
     let img = WebPData { bytes: bitstream.as_ptr(), size: bitstream.len() };
     // SAFETY: mux is live; img points to valid borrowed data.
-    if unsafe { WebPMuxSetImage(mux, &img, 0) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxSetImage(mux, &raw const img, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let icc = WebPData { bytes: profile.as_ptr(), size: profile.len() };
     // SAFETY: mux is live; fourcc reads exactly 4 bytes; icc points to valid borrowed data.
-    if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &icc, 0) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxSetChunk(mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let mut assembled = WebPData::default();
     // SAFETY: mux is live; assembled is a valid out-param.
-    if unsafe { WebPMuxAssemble(mux, &mut assembled) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxAssemble(mux, &raw mut assembled) } != WEBP_MUX_OK {
         // `WebPMuxAssemble` writes a half-built buffer into `assembled` even
         // on failure; its contract says `WebPDataClear` (i.e. `WebPFree`) is
         // safe to call on any return.
@@ -247,7 +247,7 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_prof
     if assembled.bytes.is_null() {
         return Err(codecs::Error::EncodeFailed);
     }
-    let assembled_ptr = assembled.bytes as *mut u8;
+    let assembled_ptr = assembled.bytes.cast_mut();
     // SAFETY: WebPMuxAssemble returns a WebPMalloc-owned buffer of assembled.size bytes on WEBP_MUX_OK.
     let assembled_slice = unsafe { core::slice::from_raw_parts_mut(assembled_ptr, assembled.size) };
     Ok(codecs::Encoded { bytes: NonNull::from(assembled_slice), free: encoded_wrap_free!(WebPFree) })

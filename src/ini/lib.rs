@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
         // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
         // (the underlying `E::Object` lives in the Expr Store, not on `self`).
         let mut head: *mut E::Object =
-            self.out.data.e_object_mut().expect("Parser.out is E.Object") as *mut E::Object;
+            std::ptr::from_mut::<E::Object>(self.out.data.e_object_mut().expect("Parser.out is E.Object"));
 
         // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
@@ -454,11 +454,10 @@ impl<'a> Parser<'a> {
                             break 'treat_as_key;
                         }
                     };
-                    head = parent_object
+                    head = std::ptr::from_mut::<E::Object>(parent_object
                         .data
                         .e_object_mut()
-                        .expect("get_or_put_object returns E.Object")
-                        as *mut E::Object;
+                        .expect("get_or_put_object returns E.Object"));
                     break 'treat_as_key;
                 }
                 if !treat_as_key {
@@ -1062,7 +1061,7 @@ impl<'a> Parser<'a> {
         // SAFETY: `head` is the same allocation as `rope`'s initial value;
         // we walk `rope` forward via `append` while keeping `head` to return.
         // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-        let head: *mut Rope = rope_head as *mut Rope;
+        let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
         let mut rope: *mut Rope = head;
 
         while dot_idx + 1 < key.len() {
@@ -1324,7 +1323,7 @@ pub fn load_npmrc_config(
             }
             Output::flush();
         }
-        let _ = log.print(Output::error_writer() as *mut bun_core::io::Writer);
+        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
     }
 }
 
@@ -1351,7 +1350,7 @@ pub fn load_npmrc(
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
     // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
     // restructure Parser so the bump is passed externally or split borrows.
-    let bump: &Arena = unsafe { &*(&parser.arena as *const Arena) };
+    let bump: &Arena = unsafe { &*(&raw const parser.arena) };
     parser.parse(bump)?;
     // Need to be very, very careful here with strings.
     // They are allocated in the Parser's arena, which of course gets

@@ -260,7 +260,7 @@ impl Default for Group {
         Self {
             head: List::default(),
             tail: None,
-            input: b"" as *const [u8],
+            input: std::ptr::from_ref::<[u8]>(b""),
             flags: FlagsBitSet::init_empty(),
         }
     }
@@ -703,7 +703,7 @@ impl Token {
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
-        input: input as *const [u8],
+        input: std::ptr::from_ref::<[u8]>(input),
         head: List::default(),
         tail: None,
         flags: FlagsBitSet::init_empty(),

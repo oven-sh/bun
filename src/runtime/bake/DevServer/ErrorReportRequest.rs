@@ -451,7 +451,7 @@ fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
     let decoded = strings::decode_hex_to_bytes(&mut out[..size], slice).ok()?;
     debug_assert!(decoded == size);
     // SAFETY: out[..size] is fully initialized by decode_hex_to_bytes; T: Copy.
-    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr() as *const T) })
+    Some(unsafe { ::core::ptr::read_unaligned(out.as_ptr().cast::<T>()) })
 }
 
 /// Instead of decoding the entire file, just decode the desired section.

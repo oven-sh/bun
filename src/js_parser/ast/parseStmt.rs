@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Set current if for next iteration. The S::If was just allocated via Stmt::alloc;
             // recover its arena pointer through the StmtData payload.
             current_if = match if_stmt.data {
-                js_ast::StmtData::SIf(mut s_if) => Some(&mut *s_if as *mut S::If),
+                js_ast::StmtData::SIf(mut s_if) => Some(&raw mut *s_if),
                 _ => unreachable!(),
             };
 
@@ -542,7 +542,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                decls_ptr = decls.slice() as *const _;
+                decls_ptr = std::ptr::from_ref(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KVar,
@@ -557,7 +557,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
-                decls_ptr = decls.slice() as *const _;
+                decls_ptr = std::ptr::from_ref(decls.slice());
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KConst,
@@ -1145,7 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     namespace_ref = p.store_name_in_ref(name)?;
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
-                        original_name: name as *const [u8],
+                        original_name: std::ptr::from_ref::<[u8]>(name),
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;

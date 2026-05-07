@@ -301,7 +301,7 @@ mod linux_impl {
                 ptr.as_ptr().cast(),
                 linux::FutexOp { cmd: linux::FutexCmd::WAIT, private: true },
                 expect,
-                if timeout.is_some() { &ts } else { core::ptr::null() },
+                if timeout.is_some() { &raw const ts } else { core::ptr::null() },
             )
         };
 

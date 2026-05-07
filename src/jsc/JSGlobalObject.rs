@@ -55,7 +55,7 @@ impl GlobalRef {
     /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
     #[inline(always)]
     pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0 as *mut JSGlobalObject
+        self.0.cast_mut()
     }
 }
 
@@ -90,7 +90,7 @@ impl JSGlobalObject {
     /// read-only borrow.
     #[inline(always)]
     pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
-        self._p.get() as *mut JSGlobalObject
+        self._p.get().cast::<JSGlobalObject>()
     }
 
     /// Alias of [`as_mut_ptr`] kept for call-site readability where mutation
@@ -178,13 +178,13 @@ impl JSGlobalObject {
                 self,
                 ms,
                 false,
-                &mut dt.year,
-                &mut dt.month,
-                &mut dt.day,
-                &mut dt.hour,
-                &mut dt.minute,
-                &mut dt.second,
-                &mut dt.weekday,
+                &raw mut dt.year,
+                &raw mut dt.month,
+                &raw mut dt.day,
+                &raw mut dt.hour,
+                &raw mut dt.minute,
+                &raw mut dt.second,
+                &raw mut dt.weekday,
             );
         }
         dt
@@ -226,7 +226,7 @@ impl JSGlobalObject {
         // SAFETY: JSValue is #[repr(transparent)] i64; encoding a cell pointer as
         // a JSValue is the same operation Zig's `@enumFromInt(@intFromPtr(globalThis))`
         // performs.
-        unsafe { core::mem::transmute::<i64, JSValue>(self as *const Self as i64) }
+        unsafe { core::mem::transmute::<i64, JSValue>(std::ptr::from_ref::<Self>(self) as i64) }
     }
 
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
@@ -409,7 +409,7 @@ impl JSGlobalObject {
             // SAFETY: FFI — `buf` is a 256-byte stack buffer; `len` matches its capacity;
             // ERR_error_string_n NUL-terminates within `len` bytes.
             unsafe {
-                bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr() as *mut c_char, buf.len())
+                bun_boringssl::c::ERR_error_string_n(err, buf.as_mut_ptr().cast::<c_char>(), buf.len())
             };
             // Slice up to the NUL terminator (matches Zig's `[:0]u8` slice semantics).
             let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
@@ -577,11 +577,11 @@ impl JSGlobalObject {
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns_ptr: *const BunString =
-            if namespace_.length() > 0 { &namespace_ } else { core::ptr::null() };
+            if namespace_.length() > 0 { &raw const namespace_ } else { core::ptr::null() };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path` borrow stack
         // locals that outlive the call; null `namespace_` is permitted by the C++ side.
         let result = crate::from_js_host_call(self, || unsafe {
-            Bun__runOnLoadPlugins(self, ns_ptr, &path, target)
+            Bun__runOnLoadPlugins(self, ns_ptr, &raw const path, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -598,11 +598,11 @@ impl JSGlobalObject {
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns_ptr: *const BunString =
-            if namespace_.length() > 0 { &namespace_ } else { core::ptr::null() };
+            if namespace_.length() > 0 { &raw const namespace_ } else { core::ptr::null() };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path`/`&source` borrow
         // stack locals that outlive the call; null `namespace_` is permitted by the C++ side.
         let result = crate::from_js_host_call(self, || unsafe {
-            Bun__runOnResolvePlugins(self, ns_ptr, &path, &source, target)
+            Bun__runOnResolvePlugins(self, ns_ptr, &raw const path, &raw const source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -779,7 +779,7 @@ impl JSGlobalObject {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ctx_val` is caller-supplied
         // opaque context; `function` is a valid `extern "C"` fn pointer.
         unsafe {
-            JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val as *mut c_void, function);
+            JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx_val.cast::<c_void>(), function);
         }
     }
 
@@ -1012,7 +1012,7 @@ impl JSGlobalObject {
     /// returns `*VirtualMachine` (mutable); this preserves that intent.
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe() as *mut VirtualMachine
+        self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
     /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
@@ -1039,7 +1039,7 @@ impl JSGlobalObject {
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
                 // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
+                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
             } else {
                 panic!("This thread lacks a Bun VM");
             }
@@ -1050,13 +1050,13 @@ impl JSGlobalObject {
     }
 
     pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {
-        let vm_ptr = self.bun_vm_unsafe() as *mut VirtualMachine;
+        let vm_ptr = self.bun_vm_unsafe().cast::<VirtualMachine>();
 
         if let Some(vm_) = VirtualMachine::get_or_null() {
             #[cfg(debug_assertions)]
             {
                 // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
+                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
             }
             let _ = vm_;
         } else {
@@ -1068,7 +1068,7 @@ impl JSGlobalObject {
 
     /// We can't do the threadlocal check when queued from another thread
     pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe() as *mut VirtualMachine
+        self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
     pub fn handle_rejected_promises(&self) {
@@ -1374,7 +1374,7 @@ impl JSGlobalObject {
         crate::mark_binding();
         let exc = self
             .take_exception(proof)
-            .as_exception(self.vm() as *const VM as *mut VM)
+            .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
             .expect("exception value must be an Exception cell");
         // SAFETY: `as_exception` returned a non-null cell pointer rooted on the VM.
         let _ = report_uncaught_exception(self, unsafe { &*exc });

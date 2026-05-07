@@ -16,11 +16,11 @@ use crate::webcore::blob::Any as AnyBlob;
 unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
     // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
     // scratch state on the C++ side, hence the const→mut cast.
-    unsafe { (*(owner as *mut FetchHeaders)).count(header_count, buf_len) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).count(header_count, buf_len) }
 }
 unsafe fn fh_fast_has(owner: *const (), _name: bun_http::headers::HeaderName) -> bool {
     // SAFETY: see `fh_count`. `Headers::from` only ever queries Content-Type.
-    unsafe { (*(owner as *mut FetchHeaders)).fast_has(HTTPHeaderName::ContentType) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).fast_has(HTTPHeaderName::ContentType) }
 }
 unsafe fn fh_copy_to(
     owner: *const (),
@@ -30,7 +30,7 @@ unsafe fn fh_copy_to(
 ) {
     // SAFETY: see `fh_count`. `bun_http_types::ETag::StringPointer` and
     // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
-    unsafe { (*(owner as *mut FetchHeaders)).copy_to(names.cast(), values.cast(), buf) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names.cast(), values.cast(), buf) }
 }
 
 static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
@@ -43,7 +43,7 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
 #[inline]
 pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
     bun_http::headers::FetchHeadersRef {
-        owner: h as *const FetchHeaders as *const (),
+        owner: std::ptr::from_ref::<FetchHeaders>(h).cast::<()>(),
         vtable: &FETCH_HEADERS_VTABLE,
         _phantom: core::marker::PhantomData,
     }
@@ -53,12 +53,12 @@ pub fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef
 
 unsafe fn ab_has_content_type_from_user(owner: *const ()) -> bool {
     // SAFETY: `owner` is `&AnyBlob` erased.
-    unsafe { (*(owner as *const AnyBlob)).has_content_type_from_user() }
+    unsafe { (*owner.cast::<AnyBlob>()).has_content_type_from_user() }
 }
 unsafe fn ab_content_type(owner: *const ()) -> (*const u8, usize) {
     // SAFETY: `owner` is `&AnyBlob` erased; the returned slice borrows blob
     // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*(owner as *const AnyBlob)).content_type() };
+    let s = unsafe { (*owner.cast::<AnyBlob>()).content_type() };
     (s.as_ptr(), s.len())
 }
 
@@ -70,7 +70,7 @@ static ANY_BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::An
 #[inline]
 pub fn any_blob_ref(b: &AnyBlob) -> bun_http::headers::AnyBlobRef<'_> {
     bun_http::headers::AnyBlobRef {
-        owner: b as *const AnyBlob as *const (),
+        owner: std::ptr::from_ref::<AnyBlob>(b).cast::<()>(),
         vtable: &ANY_BLOB_VTABLE,
         _phantom: core::marker::PhantomData,
     }

@@ -156,14 +156,14 @@ impl ReplCommand {
             // PORT NOTE: ctx is the process-global ContextData; extend the
             // borrow past the local reborrow lifetime via raw ptr (the runner
             // never outlives ctx — global_exit() is `!`).
-            eval_script: unsafe { &*(&*ctx.runtime_options.eval.script as *const [u8]) },
+            eval_script: unsafe { &*(&raw const *ctx.runtime_options.eval.script) },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // TODO(port): @constCast(&arena) — vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never unwinds).
         // Assigned AFTER moving `arena` into `runner` — assigning from the pre-move local would
         // dangle. Model as raw ptr until VM arena ownership is decided in Phase B.
-        unsafe { (*vm).arena = NonNull::new(&mut runner.arena) };
+        unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
         // PORT NOTE: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
         // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
@@ -171,7 +171,7 @@ impl ReplCommand {
         // the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
-            let runner = unsafe { &mut *(ctx as *mut ReplRunner<'_, '_>) };
+            let runner = unsafe { &mut *ctx.cast::<ReplRunner<'_, '_>>() };
             ReplRunner::start(runner);
         }
         // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
@@ -179,7 +179,7 @@ impl ReplCommand {
         unsafe {
             (&*(*vm).global)
                 .vm()
-                .hold_api_lock((&mut runner) as *mut ReplRunner<'_, '_> as *mut c_void, repl_runner_thunk);
+                .hold_api_lock((&raw mut runner).cast::<c_void>(), repl_runner_thunk);
         }
         Ok(())
     }
@@ -193,7 +193,7 @@ impl ReplCommand {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
             // not the &mut), so coerce the `&'static mut Writer` from `error_writer_buffered`.
-            let _ = unsafe { (*log.as_ptr()).print(writer as *mut bun_core::io::Writer) };
+            let _ = unsafe { (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer)) };
         }
     }
 }
@@ -285,7 +285,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // wraps it as `JSError!void` by post-checking `hasException()`. Replicate that here
         // since `Result<(), JsError>` is not FFI-safe across `extern "C"`.
         unsafe {
-            Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr() as *const c_char, cwd.len());
+            Bun__REPL__setupGlobalRequire(vm.global, cwd.as_ptr().cast::<c_char>(), cwd.len());
             if (*vm.global).has_exception() {
                 return Err(bun_jsc::JsError::Thrown);
             }

@@ -82,7 +82,7 @@ impl TimerObjectInternals {
                 // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals`
                 // field of a live `ImmediateObject` (set in `init()`).
                 let parent = unsafe {
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(ImmediateObject, internals))
                         .cast::<ImmediateObject>()
                 };
@@ -93,7 +93,7 @@ impl TimerObjectInternals {
                 // SAFETY: `kind ∈ {SetTimeout, SetInterval}` ⇒ `self` is the
                 // `internals` field of a live `TimeoutObject`.
                 let parent = unsafe {
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(TimeoutObject, internals))
                         .cast::<TimeoutObject>()
                 };
@@ -109,7 +109,7 @@ impl TimerObjectInternals {
             // SAFETY: see `event_loop_timer` — same `@fieldParentPtr` invariant.
             Kind::SetImmediate => unsafe {
                 ImmediateObject::ref_(
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(ImmediateObject, internals))
                         .cast::<ImmediateObject>(),
                 )
@@ -117,7 +117,7 @@ impl TimerObjectInternals {
             // SAFETY: see `event_loop_timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
                 TimeoutObject::ref_(
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(TimeoutObject, internals))
                         .cast::<TimeoutObject>(),
                 )
@@ -132,7 +132,7 @@ impl TimerObjectInternals {
             // SAFETY: see `event_loop_timer`.
             Kind::SetImmediate => unsafe {
                 ImmediateObject::deref(
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(ImmediateObject, internals))
                         .cast::<ImmediateObject>(),
                 )
@@ -140,7 +140,7 @@ impl TimerObjectInternals {
             // SAFETY: see `event_loop_timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
                 TimeoutObject::deref(
-                    (self as *mut Self as *mut u8)
+                    std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(TimeoutObject, internals))
                         .cast::<TimeoutObject>(),
                 )
@@ -275,7 +275,7 @@ impl TimerObjectInternals {
             // of a live `ImmediateObject` (caller contract — see
             // `ImmediateObject::init`).
             let parent = unsafe {
-                (self as *mut Self as *mut u8)
+                std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of!(ImmediateObject, internals))
                     .cast::<ImmediateObject>()
             };
@@ -786,7 +786,7 @@ impl TimerObjectInternals {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
             // of a live `ImmediateObject` (set in `init()`); read-only deref.
             Kind::SetImmediate => unsafe {
-                (*(self as *const Self as *const u8)
+                (*std::ptr::from_ref::<Self>(self).cast::<u8>()
                     .sub(offset_of!(ImmediateObject, internals))
                     .cast::<ImmediateObject>())
                 .event_loop_timer
@@ -794,7 +794,7 @@ impl TimerObjectInternals {
             },
             // SAFETY: as above for `TimeoutObject`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
-                (*(self as *const Self as *const u8)
+                (*std::ptr::from_ref::<Self>(self).cast::<u8>()
                     .sub(offset_of!(TimeoutObject, internals))
                     .cast::<TimeoutObject>())
                 .event_loop_timer

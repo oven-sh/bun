@@ -116,7 +116,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
-        let import_watcher = unsafe { &mut *(self.bun_watcher as *mut ImportWatcher) };
+        let import_watcher = unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() };
         match import_watcher {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
             ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
@@ -157,7 +157,7 @@ impl HotReloaderCtx for VirtualMachine {
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `install_bun_watcher`; the cast recovers the concrete type.
         !matches!(
-            unsafe { &*(self.bun_watcher as *const ImportWatcher) },
+            unsafe { &*self.bun_watcher.cast::<ImportWatcher>() },
             ImportWatcher::None
         )
     }
@@ -181,11 +181,11 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::Hot(watcher)
         });
         let watcher_ptr: *mut Watcher = match &mut *iw {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
             ImportWatcher::None => unreachable!(),
         };
         // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
-        self.bun_watcher = Box::into_raw(iw) as *mut core::ffi::c_void;
+        self.bun_watcher = Box::into_raw(iw).cast::<core::ffi::c_void>();
 
         // Wire the resolver's directory-watch callback at the same time.
         // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
@@ -585,13 +585,13 @@ where
             // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
             // use the raw `(tag, ptr)` constructor.
             (*that).concurrent_task.write(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, that as *mut ()),
+                task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
                 ..Default::default()
             });
             // TODO(port): `&that.concurrent_task` is an interior pointer into a
             // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
             (*self.reloader)
-                .enqueue_task_concurrent((*that).concurrent_task.assume_init_mut() as *mut _);
+                .enqueue_task_concurrent(std::ptr::from_mut((*that).concurrent_task.assume_init_mut()));
         }
         self.count = 0;
     }
@@ -767,7 +767,7 @@ where
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
         // across the loop.
-        let ctx: *mut Watcher = self.get_context() as *mut _;
+        let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
         // `defer ctx.flushEvictions(); defer Output.flush();` — Zig defers run LIFO,
         // so Output.flush() fires first, then ctx.flushEvictions().
         let _flush = scopeguard::guard(ctx, |ctx| {

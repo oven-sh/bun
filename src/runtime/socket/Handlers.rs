@@ -33,7 +33,7 @@ impl AnyPromiseExt for bun_jsc::AnyPromise {
     fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         let p: *mut bun_jsc::JSPromise = match self {
             bun_jsc::AnyPromise::Normal(p) => p,
-            bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+            bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
         };
         // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
         unsafe { Ok((*p).resolve(global, value)?) }
@@ -41,7 +41,7 @@ impl AnyPromiseExt for bun_jsc::AnyPromise {
     fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         let p: *mut bun_jsc::JSPromise = match self {
             bun_jsc::AnyPromise::Normal(p) => p,
-            bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+            bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
         };
         // SAFETY: see `resolve`.
         unsafe { Ok((*p).reject(global, Ok(value))?) }
@@ -154,7 +154,7 @@ impl Handlers {
             if self.mode == SocketMode::Server {
                 // SAFETY: self points to the `handlers` field of a Listener (server mode invariant)
                 let listen_socket: &mut SocketListener = unsafe {
-                    &mut *(self as *mut Handlers as *mut u8)
+                    &mut *std::ptr::from_mut::<Handlers>(self).cast::<u8>()
                         .sub(offset_of!(SocketListener, handlers))
                         .cast::<SocketListener>()
                 };
@@ -174,7 +174,7 @@ impl Handlers {
                 // field when this returns true.
                 // SAFETY: client-mode `self` is always the `Box::into_raw`
                 // allocation; no other live `&`/`&mut` outlives this call.
-                unsafe { drop(Box::from_raw(self as *mut Handlers)) };
+                unsafe { drop(Box::from_raw(std::ptr::from_mut::<Handlers>(self))) };
                 return true;
             }
         }

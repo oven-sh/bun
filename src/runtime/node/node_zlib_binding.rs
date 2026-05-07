@@ -411,7 +411,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // until `run_from_js_thread` runs and calls `deref()`.
         unsafe {
             (*vm.event_loop())
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this as *mut T)));
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<T>(this))));
         }
     }
 
@@ -887,9 +887,9 @@ macro_rules! __impl_compression_stream {
         impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
             type Stream = $ctx;
 
-            #[inline] fn global_this(&self) -> *mut ::bun_jsc::JSGlobalObject { self.global_this as *mut ::bun_jsc::JSGlobalObject }
+            #[inline] fn global_this(&self) -> *mut ::bun_jsc::JSGlobalObject { self.global_this.cast::<::bun_jsc::JSGlobalObject>() }
             #[inline] fn stream_mut(&mut self) -> &mut Self::Stream { &mut self.stream }
-            #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result.map(|p| p as *mut u32) }
+            #[inline] fn write_result_ptr(&mut self) -> Option<*mut u32> { self.write_result.map(|p| p.cast::<u32>()) }
             #[inline] fn poll_ref_mut(&mut self) -> &mut $crate::node::node_zlib_binding::CountedKeepAlive { &mut self.poll_ref }
             #[inline] fn this_value_mut(&mut self) -> &mut ::bun_jsc::StrongOptional { &mut self.this_value }
             #[inline] fn task_mut(&mut self) -> &mut ::bun_jsc::WorkPoolTask { &mut self.task }

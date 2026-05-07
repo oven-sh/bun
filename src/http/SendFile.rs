@@ -43,7 +43,7 @@ impl SendFile {
                 bun_sys::linux::sendfile(
                     socket_fd.native(),
                     self.fd.native(),
-                    &mut signed_offset,
+                    &raw mut signed_offset,
                     self.remain,
                 )
             };

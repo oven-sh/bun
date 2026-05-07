@@ -15,7 +15,7 @@ impl<'a> JSArrayIterator<'a> {
         let mut length: u32 = 0;
         // SAFETY: FFI call into JSC; `value` is a valid JSValue on the stack,
         // `length` is a valid out-param.
-        let elements = unsafe { Bun__JSArray__getContiguousVector(value, &mut length) };
+        let elements = unsafe { Bun__JSArray__getContiguousVector(value, &raw mut length) };
         if !elements.is_null() {
             return Ok(JSArrayIterator {
                 i: 0,

@@ -266,7 +266,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // SAFETY: arena-owned slice → Vec borrowed view (no growth/free).
         let ts_decorators = unsafe {
             ExprNodeList::from_bump_slice(core::slice::from_raw_parts_mut(
-                class_opts.ts_decorators.as_ptr() as *mut Expr,
+                class_opts.ts_decorators.as_ptr().cast_mut(),
                 class_opts.ts_decorators.len(),
             ))
         };
@@ -277,7 +277,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             ts_decorators,
             class_keyword,
             body_loc,
-            properties: properties.into_bump_slice_mut() as *mut [G::Property],
+            properties: std::ptr::from_mut::<[G::Property]>(properties.into_bump_slice_mut()),
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
@@ -1051,7 +1051,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     p.lexer.expect(T::TCloseBracket)?;
                     return Ok(p.b(
                         B::Array {
-                            items: items.into_bump_slice_mut() as *mut [ArrayBinding],
+                            items: std::ptr::from_mut::<[ArrayBinding]>(items.into_bump_slice_mut()),
                             has_spread,
                             is_single_line,
                         },
@@ -1109,7 +1109,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     return Ok(p.b(
                         B::Object {
-                            properties: properties.into_bump_slice_mut() as *mut [B::Property],
+                            properties: std::ptr::from_mut::<[B::Property]>(properties.into_bump_slice_mut()),
                             is_single_line,
                         },
                         loc,
@@ -1478,7 +1478,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             } else {
                                 // SAFETY: arena-owned for 'a → *const [u8]
                                 let bytes = str_.slice8();
-                                let value: *const [u8] = bytes as *const [u8];
+                                let value: *const [u8] = std::ptr::from_ref::<[u8]>(bytes);
                                 stmt = Stmt::alloc(S::Directive { value }, stmt.loc);
                             }
                         }

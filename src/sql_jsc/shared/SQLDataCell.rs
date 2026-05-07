@@ -246,7 +246,7 @@ impl SQLDataCell {
                     // at all call sites) — this branch may be dead; preserved
                     // to match Zig.
                     unsafe {
-                        drop(Box::<[u8]>::from_raw(bs as *mut [u8]))
+                        drop(Box::<[u8]>::from_raw(std::ptr::from_mut::<[u8]>(bs)))
                     };
                 }
             }

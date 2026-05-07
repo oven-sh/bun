@@ -329,7 +329,7 @@ pub fn resolve_maybe_needs_trailing_slash(
         return Ok(());
     };
     let qs = query_string
-        .map(|q| q as *mut bun_string::String)
+        .map(|q| std::ptr::from_mut::<bun_string::String>(q))
         .unwrap_or(core::ptr::null_mut());
     // SAFETY: hook contract — `global` is the live JS-thread global (Zig
     // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
@@ -503,7 +503,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     let mut resolved = ResolvedSource::default();
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `&mut
     // resolved` is a valid out-param.
-    if !unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &mut resolved) } {
+    if !unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded, &raw mut resolved) } {
         return false;
     }
     // SAFETY: C++ passed a valid out-param.

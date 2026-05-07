@@ -181,7 +181,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn end(&mut self) {
         if self.state == ZlibReaderState::Inflating {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(&mut self.zlib) };
+            unsafe { inflateEnd(&raw mut self.zlib) };
             self.state = ZlibReaderState::End;
         }
     }
@@ -210,7 +210,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
             free_func: Some(Self::free),
 
             internal_state: core::ptr::null_mut(),
-            user_data: (&mut *zlib_reader) as *mut Self as *mut c_void,
+            user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
             data_type: DataType::Unknown,
             adler: 0,
@@ -220,9 +220,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
         match unsafe {
             inflateInit2_(
-                &mut zlib_reader.zlib,
+                &raw mut zlib_reader.zlib,
                 15 + 32,
-                zlibVersion() as *const u8,
+                zlibVersion().cast::<u8>(),
                 size_of::<zStream_struct>() as c_int,
             )
         } {
@@ -246,7 +246,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib (static or stream-owned).
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg as *const c_char) }.to_bytes());
+            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }
@@ -294,7 +294,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
             // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
             // SAFETY: self.zlib was initialized via inflateInit2_.
-            let rc = unsafe { inflate(&mut self.zlib, FlushValue::NoFlush) };
+            let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
             self.state = ZlibReaderState::Inflating;
 
             match rc {
@@ -439,7 +439,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         // always free with `inflateEnd`
         if self.state != ZlibReaderArrayListState::End {
             // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(&mut self.zlib) };
+            unsafe { inflateEnd(&raw mut self.zlib) };
             self.state = ZlibReaderArrayListState::End;
         }
     }
@@ -490,7 +490,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             free_func: Some(ZlibAllocator::free),
 
             internal_state: core::ptr::null_mut(),
-            user_data: (&mut *zlib_reader) as *mut Self as *mut c_void,
+            user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
             data_type: DataType::Unknown,
             adler: 0,
@@ -500,9 +500,9 @@ impl<'a> ZlibReaderArrayList<'a> {
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
         match unsafe {
             inflateInit2_(
-                &mut zlib_reader.zlib,
+                &raw mut zlib_reader.zlib,
                 options.window_bits,
-                zlibVersion() as *const u8,
+                zlibVersion().cast::<u8>(),
                 size_of::<zStream_struct>() as c_int,
             )
         } {
@@ -526,7 +526,7 @@ impl<'a> ZlibReaderArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg as *const c_char) }.to_bytes());
+            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }
@@ -579,7 +579,7 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
                 // SAFETY: self.zlib was initialized via inflateInit2_.
-                let rc = unsafe { inflate(&mut self.zlib, FlushValue::NoFlush) };
+                let rc = unsafe { inflate(&raw mut self.zlib, FlushValue::NoFlush) };
                 self.state = ZlibReaderArrayListState::Inflating;
 
                 match rc {
@@ -925,7 +925,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
     pub fn end(&mut self) {
         if self.state != ZlibCompressorArrayListState::End {
             // SAFETY: zlib was initialized via deflateInit2_; safe to end.
-            unsafe { deflateEnd(&mut self.zlib) };
+            unsafe { deflateEnd(&raw mut self.zlib) };
             self.state = ZlibCompressorArrayListState::End;
         }
     }
@@ -963,7 +963,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             free_func: Some(Self::free),
 
             internal_state: core::ptr::null_mut(),
-            user_data: (&mut *zlib_reader) as *mut Self as *mut c_void,
+            user_data: (&raw mut *zlib_reader).cast::<c_void>(),
 
             data_type: DataType::Unknown,
             adler: 0,
@@ -973,20 +973,20 @@ impl<'a> ZlibCompressorArrayList<'a> {
         // SAFETY: zlib_reader.zlib is fully initialized; version/size match the linked zlib.
         match unsafe {
             deflateInit2_(
-                &mut zlib_reader.zlib,
+                &raw mut zlib_reader.zlib,
                 options.level,
                 options.method,
                 if !options.gzip { -options.window_bits } else { options.window_bits + 16 },
                 options.mem_level,
                 options.strategy,
-                zlibVersion() as *const u8,
+                zlibVersion().cast::<u8>(),
                 size_of::<zStream_struct>() as c_int,
             )
         } {
             ReturnCode::Ok => {
                 // SAFETY: zlib initialized; deflateBound returns upper bound on output.
                 let bound = unsafe {
-                    deflateBound(&mut zlib_reader.zlib, uLong::try_from(input.len()).expect("int cast"))
+                    deflateBound(&raw mut zlib_reader.zlib, uLong::try_from(input.len()).expect("int cast"))
                 };
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
@@ -1016,7 +1016,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
     pub fn error_message(&self) -> Option<&[u8]> {
         if !self.zlib.err_msg.is_null() {
             // SAFETY: err_msg is a NUL-terminated C string from zlib.
-            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg as *const c_char) }.to_bytes());
+            return Some(unsafe { CStr::from_ptr(self.zlib.err_msg.cast::<c_char>()) }.to_bytes());
         }
         None
     }
@@ -1068,7 +1068,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 }
 
                 // SAFETY: self.zlib was initialized via deflateInit2_.
-                let rc = unsafe { deflate(&mut self.zlib, FlushValue::Finish) };
+                let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
                 self.state = ZlibCompressorArrayListState::Inflating;
 
                 match rc {

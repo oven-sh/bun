@@ -27,7 +27,7 @@ pub fn generate<'a>(
             data.as_ptr(),
             data.len(),
             out.as_mut_ptr(),
-            &mut outlen,
+            &raw mut outlen,
         )
     }
     .is_null()

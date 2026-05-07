@@ -283,7 +283,7 @@ impl HTMLRewriter {
     pub fn transform_(&mut self, global: &JSGlobalObject, response_value: JSValue) -> JsResult<JSValue> {
         // PORT NOTE: `Response` doesn't yet impl `JsClass`, so use the
         // codegen `from_js` directly instead of `JSValue::as_::<Response>()`.
-        if let Some(response) = webcore::response::js::from_js(response_value).map(|p| p as *mut Response) {
+        if let Some(response) = webcore::response::js::from_js(response_value).map(|p| p.cast::<Response>()) {
             // SAFETY: response is the m_ctx of a live JS Response (response_value
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
@@ -333,7 +333,7 @@ impl HTMLRewriter {
                 return Err(global.throw_value(err));
             }
             out_response_value.ensure_still_alive();
-            let Some(out_response) = webcore::response::js::from_js(out_response_value).map(|p| p as *mut Response) else {
+            let Some(out_response) = webcore::response::js::from_js(out_response_value).map(|p| p.cast::<Response>()) else {
                 return Ok(out_response_value);
             };
             // SAFETY: out_response is the m_ctx of out_response_value (kept alive
@@ -704,7 +704,7 @@ impl BufferOutputSink {
             webcore::Body {
                 value: {
                     let mut pv = webcore::body::PendingValue::new(global);
-                    pv.task = Some(sink as *mut core::ffi::c_void);
+                    pv.task = Some(sink.cast::<core::ffi::c_void>());
                     webcore::body::Value::Locked(pv)
                 },
                 ..Default::default()
@@ -823,7 +823,7 @@ impl BufferOutputSink {
         unsafe {
             (*sink).ref_();
             (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
-                sink as *mut core::ffi::c_void,
+                sink.cast::<core::ffi::c_void>(),
                 // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
                 // `on_finished_buffering` takes `*mut BufferOutputSink`. The
                 // wrapper trampoline restores the concrete type.
@@ -881,7 +881,7 @@ impl BufferOutputSink {
         js_err: Option<webcore::body::ValueError>,
         is_async: bool,
     ) {
-        Self::on_finished_buffering(ctx as *mut BufferOutputSink, bytes, js_err, is_async)
+        Self::on_finished_buffering(ctx.cast::<BufferOutputSink>(), bytes, js_err, is_async)
     }
 
     pub fn on_finished_buffering(
@@ -2419,7 +2419,7 @@ impl Element {
             lolhtml::Element::on_end_tag(
                 self.element,
                 EndTagHandler::ON_END_TAG_HANDLER,
-                end_tag_handler as *mut core::ffi::c_void,
+                end_tag_handler.cast::<core::ffi::c_void>(),
             )
         }
         .is_err()

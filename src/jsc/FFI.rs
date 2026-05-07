@@ -120,7 +120,7 @@ pub fn uint64_to_jsvalue(global_object: *mut c_void, val: u64) -> EncodedJSValue
         return double_to_jsvalue(val as f64);
     }
     // SAFETY: caller passed a non-null *JSGlobalObject erased as anyopaque (matches Zig `.?` unwrap).
-    let global = unsafe { &*(global_object as *mut JSGlobalObject) };
+    let global = unsafe { &*global_object.cast::<JSGlobalObject>() };
     uint64_to_jsvalue_slow(global, val).as_encoded()
 }
 
@@ -133,7 +133,7 @@ pub fn int64_to_jsvalue(global_object: *mut c_void, val: i64) -> EncodedJSValue 
         return double_to_jsvalue(val as f64);
     }
     // SAFETY: caller passed a non-null *JSGlobalObject erased as anyopaque.
-    let global = unsafe { &*(global_object as *mut JSGlobalObject) };
+    let global = unsafe { &*global_object.cast::<JSGlobalObject>() };
     int64_to_jsvalue_slow(global, val).as_encoded()
 }
 

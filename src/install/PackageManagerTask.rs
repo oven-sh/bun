@@ -97,7 +97,7 @@ unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
         ordering: core::sync::atomic::Ordering,
     ) -> *mut Self {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .load(ordering)
         }
     }
@@ -108,7 +108,7 @@ unsafe impl<'a> bun_threading::unbounded_queue::Node for Task<'a> {
         ordering: core::sync::atomic::Ordering,
     ) {
         unsafe {
-            (*(core::ptr::addr_of!((*item).next) as *const core::sync::atomic::AtomicPtr<Self>))
+            (*core::ptr::addr_of!((*item).next).cast::<core::sync::atomic::AtomicPtr<Self>>())
                 .store(ptr, ordering)
         }
     }
@@ -140,7 +140,7 @@ impl Id {
         // SAFETY: reading raw bytes of a POD value for hashing (matches Zig `std.mem.asBytes`)
         hasher.update(unsafe {
             core::slice::from_raw_parts(
-                (&package_version as *const semver::Version).cast::<u8>(),
+                (&raw const package_version).cast::<u8>(),
                 core::mem::size_of::<semver::Version>(),
             )
         });
@@ -162,7 +162,7 @@ impl Id {
         // SAFETY: reading raw bytes of a POD value for hashing
         hasher.update(unsafe {
             core::slice::from_raw_parts(
-                (&package_id as *const PackageID).cast::<u8>(),
+                (&raw const package_id).cast::<u8>(),
                 core::mem::size_of::<PackageID>(),
             )
         });
@@ -208,7 +208,7 @@ impl<'a> Task<'a> {
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
         let this: *mut Task<'a> = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(Task, threadpool_task))
                 .cast::<Task>()
         };
@@ -223,7 +223,7 @@ impl<'a> Task<'a> {
         // inline at the call boundary only — same race as the Zig spec's
         // freely-aliased `*PackageManager`.
         let manager: *mut PackageManager =
-            unsafe { (*this).package_manager as *mut PackageManager };
+            unsafe { (*this).package_manager.cast_mut() };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
 
@@ -289,8 +289,7 @@ impl<'a> Task<'a> {
                     // SAFETY: shared read of `manager.options` (never mutated by
                     // worker threads). Decay to a raw pointer so the `&PackageManager`
                     // autoref does not stay live across the `&mut *manager` below.
-                    let scope = unsafe { (*manager).scope_for_package_name(manifest.name.slice()) }
-                        as *const _;
+                    let scope = std::ptr::from_ref(unsafe { (*manager).scope_for_package_name(manifest.name.slice()) });
                     let package_manifest = match npm::Registry::get_package_metadata(
                         // SAFETY: scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
@@ -548,7 +547,7 @@ impl<'a> Task<'a> {
                 if apply.logger.errors > 0 {
                     // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                    let _ = apply.logger.print(Output::error_writer() as *mut _);
+                    let _ = apply.logger.print(std::ptr::from_mut(Output::error_writer()));
                 }
             }
         }
@@ -559,7 +558,7 @@ impl<'a> Task<'a> {
         // shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
             (*core::ptr::addr_of!((*manager).resolve_tasks))
-                .push(this as *mut Task<'a> as *mut Task<'static>);
+                .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());
             PackageManager::wake_raw(manager);
         }
 

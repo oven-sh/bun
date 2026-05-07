@@ -1403,7 +1403,7 @@ impl EString {
             let s16 = self.slice16();
             // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
             let bytes = unsafe {
-                core::slice::from_raw_parts(s16.as_ptr() as *const u8, s16.len() * 2)
+                core::slice::from_raw_parts(s16.as_ptr().cast::<u8>(), s16.len() * 2)
             };
             bun_wyhash::hash(bytes)
         }
@@ -1555,7 +1555,7 @@ impl EString {
         // SAFETY: caller contract — `other` lives in the AST Store/arena and
         // outlives the next reset; capturing its address as a `StoreRef` is the
         // Zig `*E.String` semantics.
-        let other_ref = unsafe { StoreRef::from_raw(other as *mut EString) };
+        let other_ref = unsafe { StoreRef::from_raw(std::ptr::from_mut::<EString>(other)) };
         if self.next.is_none() {
             self.next = Some(other_ref);
             self.end = Some(other_ref);
@@ -1576,7 +1576,7 @@ impl EString {
     pub fn clone_rope_nodes(s: &EString) -> EString {
         let mut root = s.shallow_clone();
         if root.next.is_some() {
-            let mut current: *mut EString = &mut root;
+            let mut current: *mut EString = &raw mut root;
             let last: *mut EString;
             loop {
                 // SAFETY: `current` is either `&mut root` (first iter) or a
@@ -1783,7 +1783,7 @@ impl Template {
             // address as a `StoreRef` mirrors `.{ .e_template = self }`.
             return Expr {
                 data: crate::ast::expr::Data::ETemplate(unsafe {
-                    StoreRef::from_raw(self as *mut Template)
+                    StoreRef::from_raw(std::ptr::from_mut::<Template>(self))
                 }),
                 loc,
             };

@@ -151,7 +151,7 @@ impl PackageManager {
                             &logger::Source::init_path_string(&json.path[..], &json.buf[..]);
 
                         if let Err(err) = pkg.parse_from_real_manager(
-                            self as *mut PackageManager,
+                            std::ptr::from_mut::<PackageManager>(self),
                             package_json_source,
                             &mut resolver,
                             Features::NPM,
@@ -250,7 +250,7 @@ impl PackageManager {
                 };
 
                 if let Err(err) = package.parse_from_real_manager(
-                    self as *mut PackageManager,
+                    std::ptr::from_mut::<PackageManager>(self),
                     package_json_source,
                     &mut resolver,
                     Features::NPM,

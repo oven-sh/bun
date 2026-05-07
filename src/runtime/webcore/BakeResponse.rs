@@ -60,7 +60,7 @@ pub extern "C" fn BakeResponseClass__constructForSSR(
     // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
     let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
     match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
-        Ok(response) => response as *mut c_void,
+        Ok(response) => response.cast::<c_void>(),
         Err(JsError::Thrown) => core::ptr::null_mut(),
         Err(JsError::OutOfMemory) => {
             let _ = global_object.throw_out_of_memory();

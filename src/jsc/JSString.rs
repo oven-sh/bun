@@ -65,7 +65,7 @@ impl JSString {
 
     pub fn ensure_still_alive(&self) {
         // SAFETY: matches Zig's std.mem.doNotOptimizeAway(this) — JSString is always a cell.
-        core::hint::black_box(self as *const Self);
+        core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
     pub fn get_zig_string(&self, global: &JSGlobalObject) -> ZigString {

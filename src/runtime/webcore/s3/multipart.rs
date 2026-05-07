@@ -245,11 +245,11 @@ impl UploadPart {
             // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
             // StreamBuffer's backing allocation). Reconstruct and drop.
             unsafe {
-                let ptr = (*self.data).as_ptr() as *mut u8;
+                let ptr = (*self.data).as_ptr().cast_mut();
                 drop(Vec::from_raw_parts(ptr, self.allocated_size, self.allocated_size));
             }
         }
-        self.data = b"" as &[u8] as *const [u8];
+        self.data = std::ptr::from_ref::<[u8]>(b"" as &[u8]);
         self.allocated_size = 0;
     }
 
@@ -273,7 +273,7 @@ impl UploadPart {
 
     pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
-        let this = unsafe { &mut *(this as *mut Self) };
+        let this = unsafe { &mut *this.cast::<Self>() };
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
         let ctx = unsafe { &mut *this.ctx };
 
@@ -345,7 +345,7 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
+        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         execute_simple_s3_request(
             &*ctx.credentials,
             s3_simple_request::S3RequestOptions {
@@ -412,7 +412,7 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
-        let this = unsafe { &mut *(this as *mut Self) };
+        let this = unsafe { &mut *this.cast::<Self>() };
         if this.state == State::Finished {
             return Ok(());
         }
@@ -425,7 +425,7 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
-                    let callback_context: *mut c_void = this as *mut Self as *mut c_void;
+                    let callback_context: *mut c_void = std::ptr::from_mut::<Self>(this).cast::<c_void>();
                     execute_simple_s3_request(
                         &*this.credentials,
                         s3_simple_request::S3RequestOptions {
@@ -485,7 +485,7 @@ impl MultiPartUpload {
             // zero set just in case
             for _ in 0..queue_size {
                 queue.push(UploadPart {
-                    data: b"" as &[u8] as *const [u8],
+                    data: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
                     allocated_size: 0,
                     part_number: 0,
                     ctx: self,
@@ -499,16 +499,16 @@ impl MultiPartUpload {
         let (data, allocated_len): (*const [u8], usize) = if needs_clone {
             let owned = Box::<[u8]>::from(chunk);
             let len = owned.len();
-            (Box::into_raw(owned) as *const [u8], len)
+            (Box::into_raw(owned).cast_const(), len)
         } else {
-            (chunk as *const [u8], allocated_size)
+            (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
         };
 
         let part_number = self.current_part_number;
         // PORT NOTE: `defer this.currentPartNumber += 1` hoisted before return
         self.current_part_number += 1;
 
-        let self_ptr = self as *mut Self;
+        let self_ptr = std::ptr::from_mut::<Self>(self);
         let queue_item = &mut self.queue.as_mut().unwrap()[index];
         // always set all struct fields to avoid undefined behavior
         *queue_item = UploadPart {
@@ -520,7 +520,7 @@ impl MultiPartUpload {
             retry: self.options.retry,
             state: PartState::Pending,
         };
-        Some(queue_item as *mut UploadPart)
+        Some(std::ptr::from_mut::<UploadPart>(queue_item))
     }
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
@@ -638,7 +638,7 @@ impl MultiPartUpload {
         result: S3DownloadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
-        let this = this as *mut Self;
+        let this = this.cast::<Self>();
         // PORT NOTE: `defer this.deref()` — guard runs even on early return / error
         let _deref_guard = scopeguard::guard(this, |t| MultiPartUpload::deref_(t));
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
@@ -703,7 +703,7 @@ impl MultiPartUpload {
         result: S3CommitResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
-        let this = this as *mut Self;
+        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -741,7 +741,7 @@ impl MultiPartUpload {
         result: S3UploadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
-        let this = this as *mut Self;
+        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live (final-step ref)
         let this_ref = unsafe { &mut *this };
         scoped_log!(
@@ -781,7 +781,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
+        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         execute_simple_s3_request(
             &*self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -812,7 +812,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
+        let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         execute_simple_s3_request(
             &*self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -843,7 +843,7 @@ impl MultiPartUpload {
             // will auto start later
             self.state = State::MultipartStarted;
             self.ref_();
-            let callback_context: *mut c_void = self as *mut Self as *mut c_void;
+            let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             execute_simple_s3_request(
                 &*self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -903,7 +903,7 @@ impl MultiPartUpload {
                 // we need to know the allocated size to free the memory later
                 let allocated_size = self.buffered.memory_cost();
                 // PORT NOTE: reshaped for borrowck — capture raw slice ptr before calling enqueue_part(&mut self)
-                let slice_ptr = self.buffered.slice() as *const [u8];
+                let slice_ptr = std::ptr::from_ref::<[u8]>(self.buffered.slice());
                 // raw slice pointer carries its length in metadata; no deref needed
                 let slice_len = slice_ptr.len();
 
@@ -941,7 +941,7 @@ impl MultiPartUpload {
             }
 
             // PORT NOTE: reshaped for borrowck — capture raw slice ptr before calling enqueue_part(&mut self)
-            let slice_ptr = &self.buffered.slice()[..len] as *const [u8];
+            let slice_ptr = &raw const self.buffered.slice()[..len];
             // allocated size is the slice len because we dupe the buffer
             // SAFETY: slice_ptr borrows self.buffered which is not mutated until after enqueue_part dupes it
             if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
@@ -987,7 +987,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
-            let callback_context: *mut c_void = self as *mut Self as *mut c_void;
+            let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             let _ = execute_simple_s3_request(
                 &*self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -1053,7 +1053,7 @@ impl MultiPartUpload {
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         self.ref_();
-        let _deref_guard = scopeguard::guard(self as *mut Self, |t| MultiPartUpload::deref_(t));
+        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |t| MultiPartUpload::deref_(t));
 
         if self.state == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

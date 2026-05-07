@@ -1429,7 +1429,7 @@ impl ValkeyClient {
 
         // SAFETY: `JSPromiseStrong::get` is a resolver-style accessor; sole live
         // borrow at this point. We only need the raw pointer for the return value.
-        let js_promise: *mut JSPromise = unsafe { promise.promise.get() } as *mut JSPromise;
+        let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(unsafe { promise.promise.get() });
         if self.flags.failed {
             let _ = promise.reject(
                 global_this,
@@ -1519,7 +1519,7 @@ impl ValkeyClient {
     fn parent(&mut self) -> &mut JSValkeyClient {
         // SAFETY: self points to JSValkeyClient.client (intrusive embed via @fieldParentPtr).
         unsafe {
-            &mut *((self as *mut Self as *mut u8)
+            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(JSValkeyClient, client))
                 .cast::<JSValkeyClient>())
         }

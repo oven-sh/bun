@@ -28,7 +28,7 @@ impl Default for StatHash {
 fn as_bytes<T>(v: &T) -> &[u8] {
     // SAFETY: reinterpreting a value as its raw byte representation; T is POD
     // (mirrors Zig std.mem.asBytes).
-    unsafe { core::slice::from_raw_parts((v as *const T).cast::<u8>(), core::mem::size_of::<T>()) }
+    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
 // Zig `std.posix.Stat.mtime()` — Rust `libc::stat` has no method, project the

@@ -279,7 +279,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         // Zig: ArrayBufferSink.finalize destroys the heap allocation; the
         // `JSSink::finalize` C export owns that path. The trait impl here is
         // the *inner* finalize.
-        Self::finalize(self as *mut Self);
+        Self::finalize(std::ptr::from_mut::<Self>(self));
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);

@@ -66,7 +66,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 
         // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
         let joined_path: &mut PathBuffer = unsafe {
-            &mut *(joined.as_mut_ptr().add(2) as *mut PathBuffer)
+            &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>()
         };
         let mut paths = normalize_package_json_path(
             GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
@@ -314,11 +314,11 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
         // formed for `parse_with_json`.
         let root: Expr = json.root;
-        let source: *const logger::Source = &json.source;
+        let source: *const logger::Source = &raw const json.source;
 
         // SAFETY: see PORT NOTE above on borrow splitting.
         unsafe {
-            let lockfile: *mut Lockfile = &mut *(*manager_ptr).lockfile;
+            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             let log: *mut logger::Log = (*manager_ptr).log;
             package.parse_with_json::<R>(
                 &mut *lockfile,
@@ -353,7 +353,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
         // SAFETY: see PORT NOTE above on borrow splitting.
         unsafe {
-            let lockfile: *mut Lockfile = &mut *(*manager_ptr).lockfile;
+            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             let log: *mut logger::Log = (*manager_ptr).log;
             package.parse::<R>(
                 &mut *lockfile,
@@ -414,10 +414,10 @@ pub fn get_or_put(
         // SAFETY: abs/rel point into `joined` (or a threadlocal buffer) which is mutable here.
         // PORT NOTE: @constCast — rel is always backed by mutable storage.
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(abs.as_ptr() as *mut u8, abs.len())
+            core::slice::from_raw_parts_mut(abs.as_ptr().cast_mut().cast::<u8>(), abs.len())
         });
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
+            core::slice::from_raw_parts_mut(rel.as_ptr().cast_mut(), rel.len())
         });
     }
     let abs_hash = hash(abs.as_bytes());

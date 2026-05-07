@@ -213,7 +213,7 @@ impl String {
         let () = AssertPtrSized::<Ctx>::OK;
         debug_assert!(!bytes.is_empty());
         if bytes.len() >= Self::max_length() {
-            callback(ctx, bytes.as_ptr() as *mut c_void, bytes.len() as u32);
+            callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len() as u32);
             return Self::DEAD;
         }
         // SAFETY: Ctx is pointer-sized (asserted); the C ABI for the callback
@@ -282,7 +282,7 @@ impl String {
         }
         debug_assert_eq!(unsafe { (*s.value.wtf).ref_count() }, 1);
         // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of `len`.
-        let ptr = unsafe { (*s.value.wtf).m_ptr.latin1 as *mut u8 };
+        let ptr = unsafe { (*s.value.wtf).m_ptr.latin1.cast_mut() };
         // SAFETY: `ptr` points at `len` writable bytes owned by the new WTF
         // impl; the `'static` lifetime mirrors Zig's `[]u8` return (lifetime
         // is actually tied to `s` — caller must not outlive it).
@@ -294,7 +294,7 @@ impl String {
             return (s, &mut []);
         }
         debug_assert_eq!(unsafe { (*s.value.wtf).ref_count() }, 1);
-        let ptr = unsafe { (*s.value.wtf).m_ptr.utf16 as *mut u16 };
+        let ptr = unsafe { (*s.value.wtf).m_ptr.utf16.cast_mut() };
         // SAFETY: see `create_uninitialized_latin1`.
         (s, unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
@@ -2044,7 +2044,7 @@ pub mod printer {
         // SAFETY: callers pass 2-byte-aligned even-length input for Utf16.
         let text16: &[u16] = if encoding == StrEncoding::Utf16 {
             unsafe {
-                core::slice::from_raw_parts(text_in.as_ptr() as *const u16, text_in.len() / 2)
+                core::slice::from_raw_parts(text_in.as_ptr().cast::<u16>(), text_in.len() / 2)
             }
         } else {
             &[]

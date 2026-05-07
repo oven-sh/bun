@@ -136,7 +136,7 @@ pub trait HasAutoFlusher: Sized {
 impl AutoFlusher {
     #[inline]
     fn erased_ctx<T>(this: &mut T) -> Option<NonNull<core::ffi::c_void>> {
-        NonNull::new(this as *mut T as *mut core::ffi::c_void)
+        NonNull::new(std::ptr::from_mut::<T>(this).cast::<core::ffi::c_void>())
     }
 
     #[inline]
@@ -147,7 +147,7 @@ impl AutoFlusher {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
             // unchanged.
-            <T as HasAutoFlusher>::on_auto_flush(ctx as *mut T)
+            <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>())
         }
         trampoline::<T>
     }

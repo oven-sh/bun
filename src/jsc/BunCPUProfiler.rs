@@ -76,8 +76,8 @@ pub fn stop_and_write_profile(
     unsafe {
         Bun__stopCPUProfiler(
             vm,
-            if config.json_format { &mut json_string as *mut BunString } else { core::ptr::null_mut() },
-            if config.md_format { &mut text_string as *mut BunString } else { core::ptr::null_mut() },
+            if config.json_format { &raw mut json_string } else { core::ptr::null_mut() },
+            if config.md_format { &raw mut text_string } else { core::ptr::null_mut() },
         );
     }
     // C++ handed back +1 refs into json_string/text_string. `bun_string::String`

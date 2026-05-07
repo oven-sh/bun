@@ -32,7 +32,7 @@ pub fn update_package_json_and_install_catch_error(
             // are on the single CLI thread in the install error path and no other
             // `&mut Log` to it is live for the duration of this `print` call.
             let log = unsafe { (*(&raw mut Cli::LOG_)).assume_init_mut() };
-            let _ = log.print(Output::error_writer() as *mut _);
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
         Err(e) => Err(e),
@@ -124,7 +124,7 @@ pub fn update_package_json_and_install(
             // SAFETY: `ctx` was set to `&mut analyzer as *mut _ as *mut ()` below and
             // outlives the `BuildCommand::exec` call; no other borrow of `analyzer` is
             // live.
-            let analyzer = unsafe { &mut *(ctx as *mut Analyzer) };
+            let analyzer = unsafe { &mut *ctx.cast::<Analyzer>() };
             Analyzer::on_analyze(analyzer, result)
         }
 
@@ -138,13 +138,13 @@ pub fn update_package_json_and_install(
             .collect();
 
         let mut analyzer = Analyzer {
-            ctx: ctx as *mut ContextData,
-            cli: &mut cli as *mut CommandLineArguments,
+            ctx: std::ptr::from_mut::<ContextData>(ctx),
+            cli: &raw mut cli,
             subcommand,
         };
 
         let mut fetcher = DependenciesScanner {
-            ctx: &mut analyzer as *mut Analyzer as *mut (),
+            ctx: (&raw mut analyzer).cast::<()>(),
             entry_points,
             on_fetch: on_fetch_trampoline,
         };

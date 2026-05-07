@@ -130,7 +130,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: `read` only writes initialized `T` into the first `n` slots
         // and returns `n`; we never read an uninitialized slot.
-        let slice = unsafe { &mut *(items.as_mut_ptr() as *mut [T; 1]) };
+        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
         if self.read(slice)? != 1 {
             return Ok(None);
         }
@@ -142,7 +142,7 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     pub fn read_item(&self) -> Result<T, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: see try_read_item.
-        let slice = unsafe { &mut *(items.as_mut_ptr() as *mut [T; 1]) };
+        let slice = unsafe { &mut *items.as_mut_ptr().cast::<[T; 1]>() };
         self.read_all(slice)?;
         // SAFETY: read_all() filled all slots.
         Ok(unsafe { items[0].assume_init_read() })

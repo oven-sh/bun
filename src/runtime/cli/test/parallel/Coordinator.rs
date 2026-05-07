@@ -88,7 +88,7 @@ impl<'a> Coordinator<'a> {
         for v in self.workers.iter_mut() {
             if v.range.len() > most {
                 most = v.range.len();
-                victim = Some(v as *mut Worker);
+                victim = Some(std::ptr::from_mut::<Worker>(v));
             }
         }
         victim
@@ -168,8 +168,8 @@ impl<'a> Coordinator<'a> {
         // retry on the same slot starts with a fresh channel.
         w.ipc = Default::default();
         // The Zig stores a back-pointer; in Rust this is an intrusive backref (raw ptr).
-        w.out = WorkerPipe::new(PipeRole::Stdout, w as *const Worker);
-        w.err = WorkerPipe::new(PipeRole::Stderr, w as *const Worker);
+        w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
+        w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
         match w.start() {
             Ok(()) => {}
             Err(e) => {
@@ -466,8 +466,8 @@ impl<'a> Coordinator<'a> {
             // TODO(port): explicit deinit of ipc/out/err — in Rust these become
             // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
-            w.out = WorkerPipe::new(PipeRole::Stdout, w as *const Worker);
-            w.err = WorkerPipe::new(PipeRole::Stderr, w as *const Worker);
+            w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
+            w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
             w.process = None;
             match w.start() {
                 Ok(()) => {
@@ -734,16 +734,16 @@ pub mod abort_handler {
                 // SAFETY: POD, zero-valid — sigaction with handler=0/flags=0 is SIG_DFL.
                 let mut act: libc::sigaction = core::mem::zeroed();
                 act.sa_sigaction = posix_handler as *const () as usize;
-                libc::sigemptyset(&mut act.sa_mask);
+                libc::sigemptyset(&raw mut act.sa_mask);
                 act.sa_flags = libc::SA_SIGINFO;
                 libc::sigaction(
                     libc::SIGINT,
-                    &act,
+                    &raw const act,
                     (&raw mut PREV_INT).cast::<libc::sigaction>(),
                 );
                 libc::sigaction(
                     libc::SIGTERM,
-                    &act,
+                    &raw const act,
                     (&raw mut PREV_TERM).cast::<libc::sigaction>(),
                 );
             }

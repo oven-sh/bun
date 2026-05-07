@@ -68,9 +68,9 @@ impl Expect {
             }
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
-                global: global as *const _,
+                global: std::ptr::from_ref(global),
                 expected,
-                pass: &mut pass as *mut bool,
+                pass: &raw mut pass,
             };
 
             extern "C" fn same_value_iterator(
@@ -83,7 +83,7 @@ impl Expect {
                 // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
                 // point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
-                let entry = unsafe { &mut *(entry_ as *mut ExpectedEntry) };
+                let entry = unsafe { &mut *entry_.cast::<ExpectedEntry>() };
                 let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
                     return;
                 };
@@ -95,7 +95,7 @@ impl Expect {
 
             value.for_each(
                 global,
-                &mut expected_entry as *mut _ as *mut c_void,
+                (&raw mut expected_entry).cast::<c_void>(),
                 same_value_iterator,
             )?;
         } else {

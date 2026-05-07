@@ -698,7 +698,7 @@ fn handle_getter() -> Option<*mut c_void> {
 fn cstr_as_zstr(s: &'static core::ffi::CStr) -> &'static bun_core::ZStr {
     // SAFETY: CStr guarantees `bytes[len] == 0` and 'static validity — exactly
     // the ZStr invariant.
-    unsafe { bun_core::ZStr::from_raw(s.as_ptr() as *const u8, s.to_bytes().len()) }
+    unsafe { bun_core::ZStr::from_raw(s.as_ptr().cast::<u8>(), s.to_bytes().len()) }
 }
 
 fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {

@@ -164,7 +164,7 @@ macro_rules! extern_crypto_job {
                     pub unsafe fn run_task(task: *mut WorkPoolTask) {
                         // SAFETY: `task` points to `Job.task`; recover parent via offset_of.
                         let job: *mut Job = unsafe {
-                            (task as *mut u8).sub(offset_of!(Job, task)).cast::<Job>()
+                            task.cast::<u8>().sub(offset_of!(Job, task)).cast::<Job>()
                         };
                         // SAFETY: job is live for the duration of the work-pool task.
                         let job = unsafe { &mut *job };
@@ -351,7 +351,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     pub unsafe fn run_task(task: *mut WorkPoolTask) {
         // SAFETY: `task` points to `Self.task`; recover parent via offset_of.
         let job: *mut Self =
-            unsafe { (task as *mut u8).sub(offset_of!(Self, task)).cast::<Self>() };
+            unsafe { task.cast::<u8>().sub(offset_of!(Self, task)).cast::<Self>() };
         // SAFETY: job is live for the duration of the work-pool task.
         let job = unsafe { &mut *job };
         let vm = job.vm;
@@ -405,7 +405,7 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
 
     pub extern "C" fn schedule(this: &mut Self) {
         this.poll.r#ref(vm_ctx());
-        WorkPool::schedule(&mut this.task);
+        WorkPool::schedule(&raw mut this.task);
     }
 }
 
@@ -981,7 +981,7 @@ impl Scrypt {
             maxmem: u64::try_from(maxmem.unwrap()).expect("int cast"),
             keylen: u32::try_from(keylen).expect("int cast"),
             buf: StrongOptional::empty(),
-            result: &mut [] as *mut [u8],
+            result: std::ptr::from_mut::<[u8]>(&mut []),
             err: None,
         };
         // Re-arm errdefer guards now that ownership moved into `ctx`.
@@ -1091,7 +1091,7 @@ impl CryptoJobCtx for Scrypt {
             ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, self.keylen)?;
 
         // to be filled in later
-        self.result = bytes as *mut [u8];
+        self.result = std::ptr::from_mut::<[u8]>(bytes);
         self.buf = StrongOptional::create(buf, global);
         Ok(())
     }
@@ -1261,7 +1261,7 @@ extern "C" fn for_each_hash(
     }
     // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
     let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { &mut *(ctx as *mut CaseInsensitiveAsciiStringArrayHashMap<()>) };
+        unsafe { &mut *ctx.cast::<CaseInsensitiveAsciiStringArrayHashMap<()>>() };
     // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
     // from BoringSSL's static tables.
     let from_bytes = unsafe { core::ffi::CStr::from_ptr(maybe_from) }.to_bytes();
@@ -1279,7 +1279,7 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     unsafe {
         boringssl::c::EVP_MD_do_all_sorted(
             for_each_hash,
-            (&mut hashes) as *mut _ as *mut c_void,
+            (&raw mut hashes).cast::<c_void>(),
         );
     }
 

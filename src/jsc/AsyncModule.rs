@@ -118,7 +118,7 @@ impl Queue {
 
     pub fn vm(&mut self) -> &mut VirtualMachine {
         unsafe {
-            &mut *((self as *mut Self as *mut u8)
+            &mut *(std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(core::mem::offset_of!(VirtualMachine, modules))
                 .cast::<VirtualMachine>())
         }
@@ -246,9 +246,9 @@ impl AsyncModule {
                 Bun__onFulfillAsyncModule(
                     global_this,
                     promise,
-                    &mut errorable,
-                    &mut specifier,
-                    &mut referrer,
+                    &raw mut errorable,
+                    &raw mut specifier,
+                    &raw mut referrer,
                 )
             }
         })
@@ -341,7 +341,7 @@ impl Queue {
         err: bun_core::Error,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { &mut *(ctx as *mut Queue) };
+        let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };
         bun_core::scoped_log!(
             AsyncModule,
             "onDependencyError: {}",
@@ -390,12 +390,12 @@ impl Queue {
     pub fn on_wake_handler(ctx: *mut c_void, _: &mut PackageManager) {
         bun_core::scoped_log!(AsyncModule, "onWake");
         // SAFETY: ctx was registered as *Queue when installing this callback.
-        let this: &mut Queue = unsafe { &mut *(ctx as *mut Queue) };
+        let this: &mut Queue = unsafe { &mut *ctx.cast::<Queue>() };
         // PORT NOTE: reshaped for borrowck — `vm()` derives a `&mut
         // VirtualMachine` from `&mut *this` via `@fieldParentPtr`, which
         // overlaps the `*mut Queue` payload of the concurrent task. Build the
         // task first (it stores only the raw pointer), then enqueue.
-        let task = ConcurrentTaskItem::create_from(this as *mut Queue);
+        let task = ConcurrentTaskItem::create_from(std::ptr::from_mut::<Queue>(this));
         this.vm().enqueue_task_concurrent(task);
     }
 
@@ -718,7 +718,7 @@ impl AsyncModule {
                     Ok(())
                 },
             };
-            jsc_vm.enqueue_task(Task::init(&mut (*clone).any_task));
+            jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
         }
     }
 
@@ -770,9 +770,9 @@ impl AsyncModule {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
-                &mut errorable,
-                &mut spec,
-                &mut ref_,
+                &raw mut errorable,
+                &raw mut spec,
+                &raw mut ref_,
             )
         });
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
@@ -1235,8 +1235,8 @@ impl AsyncModule {
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { &*(self.specifier() as *const [u8]) };
-        let path_text: &[u8] = unsafe { &*(self.path_text() as *const [u8]) };
+        let specifier: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(self.specifier()) };
+        let path_text: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
@@ -1310,7 +1310,7 @@ impl AsyncModule {
         let _writeback = scopeguard::guard(
             (
                 printer_ptr.as_ptr(),
-                &mut printer as *mut bun_js_printer::BufferPrinter,
+                &raw mut printer,
             ),
             |(dst, src)| {
                 // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
@@ -1329,7 +1329,7 @@ impl AsyncModule {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&mut printer) };
+            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
@@ -1372,7 +1372,7 @@ impl AsyncModule {
                     // when `is_watcher_enabled()`; cast recovers the
                     // concrete type (matches VirtualMachine.rs:2301).
                     let watcher = unsafe {
-                        &mut *((*jsc_vm).bun_watcher as *mut crate::hot_reloader::ImportWatcher)
+                        &mut *(*jsc_vm).bun_watcher.cast::<crate::hot_reloader::ImportWatcher>()
                     };
                     // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
                     // forward-decl of `bun_resolver::PackageJSON` (CYCLEBREAK);

@@ -38,7 +38,7 @@ impl CookieMap {
             // through without violating `&JSGlobalObject`'s aliasing guarantees.
             unsafe {
                 CookieMap__write(
-                    self as *mut CookieMap,
+                    std::ptr::from_mut::<CookieMap>(self),
                     global_this.as_ptr(),
                     kind,
                     uws_http_response,
@@ -49,12 +49,12 @@ impl CookieMap {
 
     pub fn deref(&mut self) {
         // SAFETY: self is a valid *mut CookieMap by construction (opaque FFI handle)
-        unsafe { CookieMap__deref(self as *mut CookieMap) }
+        unsafe { CookieMap__deref(std::ptr::from_mut::<CookieMap>(self)) }
     }
 
     pub fn ref_(&mut self) {
         // SAFETY: self is a valid *mut CookieMap by construction (opaque FFI handle)
-        unsafe { CookieMap__ref(self as *mut CookieMap) }
+        unsafe { CookieMap__ref(std::ptr::from_mut::<CookieMap>(self)) }
     }
 }
 

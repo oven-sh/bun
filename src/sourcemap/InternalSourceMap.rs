@@ -148,31 +148,31 @@ impl InternalSourceMap {
     #[inline]
     pub fn total_len(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes (validated by is_valid_blob / producer).
-        unsafe { u64::from_ne_bytes(*(self.data as *const [u8; 8])) as usize }
+        unsafe { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn mapping_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*(self.data.add(8) as *const [u8; 8])) as usize }
+        unsafe { u64::from_ne_bytes(*self.data.add(8).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn input_line_count(self) -> usize {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*(self.data.add(16) as *const [u8; 8])) as usize }
+        unsafe { u64::from_ne_bytes(*self.data.add(16).cast::<[u8; 8]>()) as usize }
     }
 
     #[inline]
     pub fn sync_count(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*(self.data.add(24) as *const [u8; 4])) }
+        unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
     }
 
     #[inline]
     pub fn stream_offset(self) -> u32 {
         // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*(self.data.add(28) as *const [u8; 4])) }
+        unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
     }
 
     pub fn sync_entry(self, index: usize) -> SyncEntry {
@@ -180,7 +180,7 @@ impl InternalSourceMap {
         // SAFETY: index < sync_count, sync entries are laid out contiguously
         // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
         // assumed) so we read unaligned.
-        unsafe { ptr::read_unaligned(self.data.add(off) as *const SyncEntry) }
+        unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
     }
 
     #[inline]
@@ -208,7 +208,7 @@ impl InternalSourceMap {
         // the global allocator with this exact length.
         unsafe {
             drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
-                self.data as *mut u8,
+                self.data.cast_mut(),
                 self.total_len(),
             )));
         }
@@ -437,7 +437,7 @@ impl WindowReader {
         // SAFETY: `start` is a valid window header offset within `bytes` (came
         // from a SyncEntry.byte_offset produced by Builder).
         let b = unsafe { bytes.as_ptr().add(start) };
-        self.bytes = bytes as *const [u8];
+        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.base = b;
         // Clamp `count` so a corrupted header byte cannot drive `next()` past
         // `FindCacheSlot.decoded[SYNC_INTERVAL]`. Well-formed blobs never
@@ -452,11 +452,11 @@ impl WindowReader {
 
         // SAFETY: u16 LE fields at fixed header offsets within the 32-byte header.
         let gen_col_len: usize =
-            unsafe { u16::from_ne_bytes(*(b.add(win_hdr::GEN_COL_LEN_OFF) as *const [u8; 2])) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) } as usize;
         let orig_line_len: usize =
-            unsafe { u16::from_ne_bytes(*(b.add(win_hdr::ORIG_LINE_LEN_OFF) as *const [u8; 2])) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) } as usize;
         let orig_col_len: usize =
-            unsafe { u16::from_ne_bytes(*(b.add(win_hdr::ORIG_COL_LEN_OFF) as *const [u8; 2])) } as usize;
+            unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) } as usize;
 
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
         self.orig_line_exc_pos = self.gen_col_pos + gen_col_len;
@@ -1126,7 +1126,7 @@ impl Builder {
                 // 6×4-byte fields); reinterpreting as bytes is sound.
                 let src = unsafe {
                     core::slice::from_raw_parts(
-                        self.sync_entries.as_ptr() as *const u8,
+                        self.sync_entries.as_ptr().cast::<u8>(),
                         sync_bytes,
                     )
                 };

@@ -389,7 +389,7 @@ pub fn init_watch_trigger() {
         // starts; after that only the watcher thread touches these. See doc
         // on `hot_reloader::WATCH_CHANGED_PATHS`.
         unsafe {
-            jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(set as *mut StringSet);
+            jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(std::ptr::from_mut::<StringSet>(set));
             jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE =
                 Some(Box::leak(Box::new(path)).as_zstr());
         }

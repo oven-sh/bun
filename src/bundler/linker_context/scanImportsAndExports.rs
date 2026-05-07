@@ -635,7 +635,7 @@ pub fn scan_imports_and_exports(
                     // SAFETY: `Map::get` returns a stable `*mut Symbol`; ref is valid.
                     unsafe {
                         (*this.graph.symbols.get(r#ref).unwrap()).original_name =
-                            original_name as *const [u8];
+                            std::ptr::from_ref::<[u8]>(original_name);
                     }
                 }
             }
@@ -650,9 +650,9 @@ pub fn scan_imports_and_exports(
                 && output_format != Format::InternalBakeDev
             {
                 let exports_name =
-                    builder.fmt(format_args!("exports_{}", source.fmt_identifier())) as *const [u8];
+                    std::ptr::from_ref::<[u8]>(builder.fmt(format_args!("exports_{}", source.fmt_identifier())));
                 let module_name =
-                    builder.fmt(format_args!("module_{}", source.fmt_identifier())) as *const [u8];
+                    std::ptr::from_ref::<[u8]>(builder.fmt(format_args!("module_{}", source.fmt_identifier())));
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -707,7 +707,7 @@ pub fn scan_imports_and_exports(
                         let import: &ImportData = &col_ref!(imports_to_bind_list)[id].values()[itb_i];
                         import_source_index = import.data.source_index.get();
                         import_ref = import.data.import_ref;
-                        re_exports_ptr = import.re_exports.slice() as *const [Dependency];
+                        re_exports_ptr = std::ptr::from_ref::<[Dependency]>(import.re_exports.slice());
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
@@ -1294,7 +1294,7 @@ impl ExportStarContext {
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
             'next_export: for ne_i in 0..exports_len {
                 let alias: *const [u8] =
-                    col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref() as *const [u8];
+                    std::ptr::from_ref::<[u8]>(col_ref!(self.named_exports)[other_id].keys()[ne_i].as_ref());
                 let name = col_ref!(self.named_exports)[other_id].values()[ne_i];
 
                 // ES6 export star statements ignore exports named "default"
@@ -1434,7 +1434,7 @@ mod __css_validation {
                 // may alias `css_ast` if a file composes from itself (both `&`).
                 let Some(other_css_ast) =
                     col_ref!(css_asts)[record.source_index.get() as usize].map(|p| unsafe {
-                        &*(p as *const BundlerStyleSheet)
+                        &*p.cast::<BundlerStyleSheet>()
                     })
                 else {
                     continue;
@@ -1627,7 +1627,7 @@ mod __css_validation {
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
                                     .map(|p| unsafe {
-                                        &*(p as *const BundlerStyleSheet)
+                                        &*p.cast::<BundlerStyleSheet>()
                                     })
                                 else {
                                     continue;

@@ -65,7 +65,7 @@ pub fn generate_code_for_lazy_export(
     #[cfg(feature = "css")]
     // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
     let maybe_css_ast: Option<&BundlerStyleSheet> =
-        all_css_asts[source_index as usize].map(|p| unsafe { &*(p as *const BundlerStyleSheet) });
+        all_css_asts[source_index as usize].map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() });
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
     if unsafe { (&*parts).len() } < 1 {
@@ -238,7 +238,7 @@ pub fn generate_code_for_lazy_export(
                                         // SAFETY: type-erased `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
                                         let Some(other_file) =
                                             self.all_css_asts[import_record.source_index.get() as usize]
-                                                .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
+                                                .map(|p| unsafe { &*p.cast::<BundlerStyleSheet>() })
                                         else {
                                             bun_core::handle_oom(self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
@@ -343,7 +343,7 @@ pub fn generate_code_for_lazy_export(
             // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
             // borrow across the `this.log` reborrow inside the Visitor below.
-            let allocator: &Arena = unsafe { &*(this.allocator() as *const Arena) };
+            let allocator: &Arena = unsafe { &*std::ptr::from_ref::<Arena>(this.allocator()) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -482,7 +482,7 @@ pub fn generate_code_for_lazy_export(
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
-                        unsafe { &*(this.allocator() as *const bun_alloc::Arena) };
+                        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.allocator()) };
                     let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
@@ -541,7 +541,7 @@ pub fn generate_code_for_lazy_export(
                 // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                 // across the `&mut self` call to `generate_named_export_in_file` below.
                 let alloc: &bun_alloc::Arena =
-                    unsafe { &*(this.allocator() as *const bun_alloc::Arena) };
+                    unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.allocator()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated = this.generate_named_export_in_file(

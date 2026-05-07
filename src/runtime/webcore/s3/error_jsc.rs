@@ -95,7 +95,7 @@ impl JSS3Error {
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
         // SAFETY: `self` lives for the duration of the FFI call; C++ does not retain the pointer.
-        unsafe { S3Error__toErrorInstance(&self, global) }
+        unsafe { S3Error__toErrorInstance(&raw const self, global) }
     }
 }
 

@@ -67,7 +67,7 @@ impl SecretsJob {
         // SAFETY: task points to SecretsJob.task; SecretsJob was allocated via
         // Box::into_raw in `create` and is alive until run_from_js drops it.
         let job: &mut SecretsJob = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(offset_of!(SecretsJob, task))
                 .cast::<SecretsJob>()
         };
@@ -115,7 +115,7 @@ impl SecretsJob {
         // Phase-D: route through `bun_aio::get_vm_ctx` once the JSC vtable is wired.
         // self.poll.ref_(self.vm);
         let _ = &mut self.poll;
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&raw mut self.task);
     }
 }
 

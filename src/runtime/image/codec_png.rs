@@ -120,13 +120,13 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     }
     let mut ihdr = Ihdr::default();
     // SAFETY: ctx is valid; ihdr is a valid out-ptr.
-    if unsafe { spng_get_ihdr(ctx, &mut ihdr) } != 0 {
+    if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     codecs::guard(ihdr.width, ihdr.height, max_pixels)?;
     let mut size: usize = 0;
     // SAFETY: ctx is valid; size is a valid out-ptr.
-    if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &mut size) } != 0 {
+    if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut out = vec![0u8; size];
@@ -146,7 +146,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
     let mut iccp: Iccp = unsafe { core::mem::zeroed() };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
-    let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &mut iccp) } == 0
+    let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0
         && !iccp.profile.is_null()
     {
@@ -180,12 +180,12 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
         // `profile` is `char*` in libspng; the library reads-only during
         // encode when `user.iccp = 1` (set by spng_set_iccp). Const-cast
         // to fit the extern-struct field type without duping.
-        profile: p.as_ptr() as *mut u8,
+        profile: p.as_ptr().cast_mut(),
     };
     let name = b"ICC Profile";
     iccp.profile_name[..name.len()].copy_from_slice(name);
     // SAFETY: ctx is valid; iccp is fully initialised; libspng only reads from it.
-    let _ = unsafe { spng_set_iccp(ctx, &iccp) };
+    let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
 pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
@@ -213,7 +213,7 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
         ..Default::default()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
+    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     embed_iccp(ctx, icc_profile);
@@ -224,7 +224,7 @@ pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>
     let mut len: usize = 0;
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &mut len, &mut err) };
+    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
     if buf.is_null() {
         return Err(codecs::Error::EncodeFailed);
     }
@@ -280,7 +280,7 @@ pub fn encode_indexed(
         ..Default::default()
     };
     // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
+    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     embed_iccp(ctx, icc_profile);
@@ -299,11 +299,11 @@ pub fn encode_indexed(
         trns.type3_alpha[i] = q.palette[i * 4 + 3];
     }
     // SAFETY: ctx is valid; plte is fully initialised.
-    if unsafe { spng_set_plte(ctx, &plte) } != 0 {
+    if unsafe { spng_set_plte(ctx, &raw const plte) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: ctx is valid; trns is fully initialised.
-    if q.has_alpha && unsafe { spng_set_trns(ctx, &trns) } != 0 {
+    if q.has_alpha && unsafe { spng_set_trns(ctx, &raw const trns) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
 
@@ -315,7 +315,7 @@ pub fn encode_indexed(
     let mut len: usize = 0;
     let mut err: c_int = 0;
     // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &mut len, &mut err) };
+    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
     if buf.is_null() {
         return Err(codecs::Error::EncodeFailed);
     }

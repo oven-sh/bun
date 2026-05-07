@@ -94,7 +94,7 @@ impl File {
     /// Get the File struct from an fs_t pointer using field offset.
     pub unsafe fn from_fs(fs: *mut uv::fs_t) -> *mut File {
         // SAFETY: fs points to File.fs; recover the parent via offset_of.
-        unsafe { (fs as *mut u8).sub(offset_of!(File, fs)).cast::<File>() }
+        unsafe { fs.cast::<u8>().sub(offset_of!(File, fs)).cast::<File>() }
     }
 
     /// Returns true if ready to start a new operation.
@@ -120,7 +120,7 @@ impl File {
         }
 
         // SAFETY: &mut self.fs is a valid uv_fs_t request; uv_req_t is its base.
-        let cancel_result = unsafe { uv::uv_cancel((&mut self.fs as *mut uv::fs_t).cast()) };
+        let cancel_result = unsafe { uv::uv_cancel(core::ptr::from_mut::<uv::fs_t>(&mut self.fs).cast()) };
         if cancel_result == 0 {
             self.state = FileState::Canceling;
         }
@@ -168,7 +168,7 @@ impl File {
         // and reads/frees bytes outside the `fs` field. `&mut self.fs` would
         // narrow provenance to the field under SB/TB and make that UB.
         unsafe {
-            let fs_ptr = (self as *mut File).cast::<uv::fs_t>();
+            let fs_ptr = core::ptr::from_mut::<File>(self).cast::<uv::fs_t>();
             uv::uv_fs_close(
                 uv::Loop::get(),
                 fs_ptr,
@@ -216,7 +216,7 @@ impl Source {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance (Zig: `getHandle` returns `*uv.Handle`).
-            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
+            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }
@@ -226,7 +226,7 @@ impl Source {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance (Zig: `toStream` returns `*uv.uv_stream_t`).
-            Source::Pipe(pipe) => (pipe.as_mut() as *mut Pipe).cast(),
+            Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
         }

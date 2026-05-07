@@ -1366,7 +1366,7 @@ impl Diff {
                             .get_with_path(&mut *log, package_json_path.slice(), Default::default())
                             .unwrap()
                         {
-                            Ok(entry) => (&entry.source as *const _, entry.root),
+                            Ok(entry) => (&raw const entry.source, entry.root),
                             Err(_) => break 'update_mapping false,
                         };
                         // SAFETY: see note above — entry storage is stable for
@@ -1464,7 +1464,7 @@ impl Package<u64> {
         // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
         hasher.update(unsafe {
             core::slice::from_raw_parts(
-                &version as *const _ as *const u8,
+                (&raw const version).cast::<u8>(),
                 mem::size_of::<SemverVersion>(),
             )
         });
@@ -1490,7 +1490,7 @@ impl Package<u64> {
         let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(Output::error_writer() as *mut _);
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Output::pretty_errorln(format_args!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
@@ -1521,7 +1521,7 @@ impl Package<u64> {
         // through the `pm` argument it receives here — no re-entrancy.
         let (lockfile, pm, log) = unsafe {
             let m = &mut *manager;
-            let lockfile: *mut Lockfile = &mut *m.lockfile;
+            let lockfile: *mut Lockfile = &raw mut *m.lockfile;
             let log: *mut logger::Log = m.log;
             (&mut *lockfile, &mut *manager, &mut *log)
         };
@@ -3033,7 +3033,7 @@ pub mod serializer {
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
                     stream.write_all(unsafe {
                         core::slice::from_raw_parts(
-                            &copy as *const _ as *const u8,
+                            (&raw const copy).cast::<u8>(),
                             mem::size_of_val(&copy),
                         )
                     })?;

@@ -187,7 +187,7 @@ impl MimallocArena {
                 self.heap.as_ptr(),
                 false,
                 Some(visit),
-                (&mut total as *mut usize).cast(),
+                (&raw mut total).cast(),
             );
         }
         total
@@ -382,7 +382,7 @@ impl MimallocArena {
     /// this module's vtables?
     #[inline]
     pub fn is_instance(alloc: &crate::StdAllocator) -> bool {
-        core::ptr::eq(alloc.vtable, &HEAP_ALLOCATOR_VTABLE)
+        core::ptr::eq(alloc.vtable, &raw const HEAP_ALLOCATOR_VTABLE)
             || core::ptr::eq(alloc.vtable, crate::basic::C_ALLOCATOR.vtable)
     }
 }

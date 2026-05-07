@@ -116,7 +116,7 @@ impl Mv {
                     });
                     // SAFETY: `task` is heap-allocated and outlives the worker
                     // call (held in `MvState::CheckTarget` below).
-                    unsafe { ShellTask::schedule(&mut *task as *mut ShellMvCheckTargetTask) };
+                    unsafe { ShellTask::schedule(&raw mut *task) };
                     Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
                     return Yield::suspended();
                 }
@@ -251,12 +251,12 @@ impl Mv {
                     if let MvState::Executing { error_signal, tasks, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
-                        let sig = error_signal as *const AtomicBool;
+                        let sig = std::ptr::from_ref::<AtomicBool>(error_signal);
                         for t in tasks.iter_mut() {
                             t.error_signal = sig;
                             // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
                             // `MvState::Executing` for the worker call's lifetime.
-                            unsafe { ShellTask::schedule(&mut **t as *mut ShellMvBatchedTask) };
+                            unsafe { ShellTask::schedule(&raw mut **t) };
                         }
                     }
                     return Yield::suspended();

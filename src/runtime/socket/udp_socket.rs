@@ -80,7 +80,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: socket.user() was set to `*mut UDPSocket` in `udp_socket()` via the `user` arg to
     // `uws::udp::Socket::create`. uws guarantees the user pointer is non-null here.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
+    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
     this.closed = true;
     this.poll_ref.disable();
     this.this_value.downgrade();
@@ -95,7 +95,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
+    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     // SAFETY: globalThis stored at construction; VM outlives socket.
     let global_this = unsafe { &*this.global_this };
@@ -105,7 +105,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: see on_close.
-    let this: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
+    let this: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
     let Some(this_value) = this.this_value.try_get() else { return };
     let Some(callback) = js::on_drain_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -125,7 +125,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
 
 extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketBuffer, packets: c_int) {
     // SAFETY: see on_close.
-    let udp_socket: &mut UDPSocket = unsafe { &mut *((*socket).user() as *mut UDPSocket) };
+    let udp_socket: &mut UDPSocket = unsafe { &mut *(*socket).user().cast::<UDPSocket>() };
     let Some(this_value) = udp_socket.this_value.try_get() else { return };
     let Some(callback) = js::on_data_get_cached(this_value) else { return };
     if callback.is_empty_or_undefined_or_null() {
@@ -150,12 +150,12 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         match peer.ss_family as c_int {
             f if f == inet::AF_INET => {
                 // SAFETY: family == AF_INET so peer is sockaddr_in.
-                let peer4 = unsafe { &*(peer as *const _ as *const sockaddr_in) };
+                let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
                 // SAFETY: libc addr-format fn; src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
                         f,
-                        &peer4.addr as *const _ as *const c_void,
+                        (&raw const peer4.addr).cast::<c_void>(),
                         addr_buf.as_mut_ptr(),
                         addr_buf.len() as c_int,
                     )
@@ -165,12 +165,12 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             }
             f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
-                let peer6 = unsafe { &*(peer as *const _ as *const sockaddr_in6) };
+                let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
                 // SAFETY: libc addr-format fn; src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
                         f,
-                        &peer6.addr as *const _ as *const c_void,
+                        (&raw const peer6.addr).cast::<c_void>(),
                         addr_buf.as_mut_ptr(),
                         addr_buf.len() as c_int,
                     )
@@ -203,9 +203,9 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
                 {
                     let mut buffer = [0u8; IF_NAMESIZE + 1];
                     // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr() as *mut c_char) }.is_null() {
+                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }.is_null() {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
-                        let name = unsafe { core::ffi::CStr::from_ptr(buffer.as_ptr() as *const c_char) }.to_bytes();
+                        let name = unsafe { core::ffi::CStr::from_ptr(buffer.as_ptr().cast::<c_char>()) }.to_bytes();
                         break 'blk BunString::create_format(format_args!(
                             "{}%{}",
                             bstr::BStr::new(span),
@@ -467,7 +467,7 @@ impl UDPSocket {
         let this_ptr = Self::new(Self {
             socket: None,
             config: UDPSocketConfig::default(),
-            global_this: global_this as *const JSGlobalObject,
+            global_this: std::ptr::from_ref::<JSGlobalObject>(global_this),
             loop_: uws::Loop::get(),
             vm,
             this_value: JsRef::empty(),
@@ -536,7 +536,7 @@ impl UDPSocket {
             this.config.port,
             this.config.flags,
             Some(&mut err),
-            this_ptr as *mut c_void,
+            this_ptr.cast::<c_void>(),
         );
         drop(hostname_z);
         this.socket = if created.is_null() { None } else { Some(created) };
@@ -1097,7 +1097,7 @@ impl UDPSocket {
                 if !this.parse_addr(global_this, port, val, &mut addrs[slice_idx])? {
                     return Err(global_this.throw_invalid_arguments(format_args!("Invalid address")));
                 }
-                addr_ptrs[slice_idx] = &addrs[slice_idx] as *const _ as *const c_void;
+                addr_ptrs[slice_idx] = (&raw const addrs[slice_idx]).cast::<c_void>();
             }
             i += 1;
         }
@@ -1198,7 +1198,7 @@ impl UDPSocket {
                 if !this.parse_addr(global_this, dest.port, dest.address, &mut addr)? {
                     return Err(global_this.throw_invalid_arguments(format_args!("Invalid address")));
                 }
-                break 'brk &addr as *const _ as *const c_void;
+                break 'brk (&raw const addr).cast::<c_void>();
             } else {
                 break 'brk core::ptr::null();
             }
@@ -1265,13 +1265,13 @@ impl UDPSocket {
         let bytes_len = address_slice.len() - 1; // exclude trailing NUL
 
         // SAFETY: storage is large enough to hold sockaddr_in.
-        let addr4 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in) };
+        let addr4 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in>() };
         // SAFETY: libc addr-format fn; src is NUL-terminated, dst points to in_addr-sized storage.
         if unsafe {
             inet_pton(
                 inet::AF_INET as c_int,
-                address_slice.as_ptr() as *const c_char,
-                &mut addr4.addr as *mut _ as *mut c_void,
+                address_slice.as_ptr().cast::<c_char>(),
+                (&raw mut addr4.addr).cast::<c_void>(),
             )
         } == 1
         {
@@ -1280,7 +1280,7 @@ impl UDPSocket {
             addr4.family = inet::AF_INET as inet::sa_family_t;
         } else {
             // SAFETY: storage is large enough to hold sockaddr_in6.
-            let addr6 = unsafe { &mut *(storage as *mut _ as *mut sockaddr_in6) };
+            let addr6 = unsafe { &mut *std::ptr::from_mut(storage).cast::<sockaddr_in6>() };
             addr6.scope_id = 0;
 
             if let Some(percent) = address_slice[..bytes_len].iter().position(|&b| b == b'%') {
@@ -1304,7 +1304,7 @@ impl UDPSocket {
                             // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
                             let index = unsafe {
                                 if_nametoindex(
-                                    address_slice.as_ptr().add(percent + 1) as *const c_char
+                                    address_slice.as_ptr().add(percent + 1).cast::<c_char>()
                                 )
                             };
                             if index > 0 {
@@ -1325,8 +1325,8 @@ impl UDPSocket {
             if unsafe {
                 inet_pton(
                     inet::AF_INET6 as c_int,
-                    address_slice.as_ptr() as *const c_char,
-                    &mut addr6.addr as *mut _ as *mut c_void,
+                    address_slice.as_ptr().cast::<c_char>(),
+                    (&raw mut addr6.addr).cast::<c_void>(),
                 )
             } == 1
             {

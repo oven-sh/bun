@@ -147,7 +147,7 @@ pub trait SinkHandler {
 pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
     Sink {
         // SAFETY: type-erased borrow; recovered as *mut T in vtable thunks below.
-        ptr: unsafe { &mut *(handler as *mut T as *mut ()) },
+        ptr: unsafe { &mut *std::ptr::from_mut::<T>(handler).cast::<()>() },
         vtable: VTable::wrap::<T>(),
         status: Status::Ready,
         used: false,
@@ -349,7 +349,7 @@ impl<'a> Sink<'a> {
         }
 
         self.status = Status::Closed;
-        (self.vtable.end)(self.ptr as *mut (), err)
+        (self.vtable.end)(std::ptr::from_mut::<()>(self.ptr), err)
     }
 
     pub fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
@@ -357,7 +357,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_latin1)(self.ptr as *mut (), data);
+        let res = (self.vtable.write_latin1)(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -372,7 +372,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write)(self.ptr as *mut (), data);
+        let res = (self.vtable.write)(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -387,7 +387,7 @@ impl<'a> Sink<'a> {
             return streams::result::Writable::Done;
         }
 
-        let res = (self.vtable.write_utf16)(self.ptr as *mut (), data);
+        let res = (self.vtable.write_utf16)(std::ptr::from_mut::<()>(self.ptr), data);
         self.status = if res.is_done() || self.status == Status::Closed {
             Status::Closed
         } else {
@@ -489,7 +489,7 @@ impl<T: JsSinkAbi> JSSink<T> {
         unsafe {
             T::create_object_extern(
                 global.as_ptr(),
-                object as *mut T as *mut c_void,
+                std::ptr::from_mut::<T>(object).cast::<c_void>(),
                 destructor,
             )
         }
@@ -524,7 +524,7 @@ impl<T: JsSinkAbi> JSSink<T> {
             T::assign_to_stream_extern(
                 global.as_ptr(),
                 stream,
-                ptr as *mut T as *mut c_void,
+                std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
                 jsvalue_ptr,
             )
         }
@@ -1551,7 +1551,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         // pointer directly until the second variant is restored.
         // SAFETY: caller (C++) guarantees a valid non-Detached tag points at a live
         // Subprocess.
-        let subprocess: &mut Subprocess<'_> = unsafe { &mut *(ptr.ptr() as *mut Subprocess<'_>) };
+        let subprocess: &mut Subprocess<'_> = unsafe { &mut *ptr.ptr().cast::<Subprocess<'_>>() };
         subprocess.on_stdin_destroyed();
         return;
     }

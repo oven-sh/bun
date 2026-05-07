@@ -38,7 +38,7 @@ impl Socket {
                 port,
                 options,
                 match err {
-                    Some(e) => e as *mut c_int,
+                    Some(e) => std::ptr::from_mut::<c_int>(e),
                     None => core::ptr::null_mut(),
                 },
                 user_data,
@@ -138,7 +138,7 @@ impl Socket {
                 self,
                 address,
                 match iface {
-                    Some(p) => p as *const sockaddr_storage,
+                    Some(p) => std::ptr::from_ref::<sockaddr_storage>(p),
                     None => core::ptr::null(),
                 },
                 drop as c_int,
@@ -160,7 +160,7 @@ impl Socket {
                 source,
                 group,
                 match iface {
-                    Some(p) => p as *const sockaddr_storage,
+                    Some(p) => std::ptr::from_ref::<sockaddr_storage>(p),
                     None => core::ptr::null(),
                 },
                 drop as c_int,

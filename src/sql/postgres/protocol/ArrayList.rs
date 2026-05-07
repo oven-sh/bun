@@ -34,7 +34,7 @@ pub struct ArrayListCtx<'a> {
 impl<'a> ArrayListCtx<'a> {
     #[inline]
     pub fn new(array: &'a mut Vec<u8>) -> Self {
-        Self { array: array as *mut Vec<u8>, _p: core::marker::PhantomData }
+        Self { array: std::ptr::from_mut::<Vec<u8>>(array), _p: core::marker::PhantomData }
     }
 }
 

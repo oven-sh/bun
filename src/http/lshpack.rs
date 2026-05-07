@@ -75,7 +75,7 @@ impl HPACK {
         let mut header = lshpack_header::default();
         // SAFETY: self is a valid *HPACK from lshpack_wrapper_init; header is a #[repr(C)] out-param.
         let offset = unsafe {
-            lshpack_wrapper_decode(self as *mut HPACK, src.as_ptr(), src.len(), &mut header)
+            lshpack_wrapper_decode(std::ptr::from_mut::<HPACK>(self), src.as_ptr(), src.len(), &raw mut header)
         };
         if offset == 0 {
             return Err(HpackError::UnableToDecode);
@@ -115,7 +115,7 @@ impl HPACK {
         // SAFETY: self is a valid *HPACK; all slices outlive the call.
         let offset = unsafe {
             lshpack_wrapper_encode(
-                self as *mut HPACK,
+                std::ptr::from_mut::<HPACK>(self),
                 name.as_ptr(),
                 name.len(),
                 value.as_ptr(),
@@ -139,7 +139,7 @@ impl HPACK {
     /// so the peer's decoder evicts in lockstep.
     pub fn set_encoder_max_capacity(&mut self, max_capacity: u32) {
         // SAFETY: self is a valid *HPACK from lshpack_wrapper_init.
-        unsafe { lshpack_wrapper_enc_set_max_capacity(self as *mut HPACK, max_capacity as c_uint) };
+        unsafe { lshpack_wrapper_enc_set_max_capacity(std::ptr::from_mut::<HPACK>(self), max_capacity as c_uint) };
     }
 
     /// # Safety

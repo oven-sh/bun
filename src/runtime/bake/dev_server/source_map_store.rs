@@ -501,7 +501,7 @@ impl SourceMapStore {
     /// `Default::default()` instance must never call this).
     pub unsafe fn owner(&mut self) -> *mut DevServer {
         unsafe {
-            (self as *mut Self)
+            std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .sub(offset_of!(DevServer, source_maps))
                 .cast::<DevServer>()
@@ -681,7 +681,7 @@ impl SourceMapStore {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe {
-            &mut *(timer as *mut u8)
+            &mut *timer.cast::<u8>()
                 .sub(offset_of!(SourceMapStore, weak_ref_sweep_timer))
                 .cast::<SourceMapStore>()
         };

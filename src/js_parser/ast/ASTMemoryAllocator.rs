@@ -72,13 +72,13 @@ impl ASTMemoryAllocator {
     }
 
     pub fn push(&mut self) {
-        stmt::data::Store::set_memory_allocator(self as *mut Self);
-        expr::data::Store::set_memory_allocator(self as *mut Self);
+        stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
+        expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
     }
 
     pub fn pop(&mut self) {
         let prev = self.previous;
-        debug_assert!(prev != self as *mut Self);
+        debug_assert!(prev != std::ptr::from_mut::<Self>(self));
         stmt::data::Store::set_memory_allocator(prev);
         expr::data::Store::set_memory_allocator(prev);
         self.previous = ptr::null_mut();
@@ -132,7 +132,7 @@ impl<'a> Scope<'a> {
         self.previous = Some(expr::data::Store::memory_allocator());
 
         let current: *mut ASTMemoryAllocator = match &mut self.current {
-            Some(r) => *r as *mut ASTMemoryAllocator,
+            Some(r) => std::ptr::from_mut::<ASTMemoryAllocator>(*r),
             None => ptr::null_mut(),
         };
 

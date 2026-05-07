@@ -148,7 +148,7 @@ impl QuietWriterAdapter {
     pub fn new_interface(&mut self) -> &mut io::Writer {
         // SAFETY: erased <bun_sys::QuietWrite>::Adapter; bun_sys guarantees
         // the io::Writer is the first field (repr(C)).
-        unsafe { &mut *(self as *mut Self as *mut io::Writer) }
+        unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<io::Writer>() }
     }
 }
 
@@ -428,13 +428,13 @@ impl Source {
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut out.stderr_buffer);
-        out.buffered_stream = out.buffered_stream_backing.new_interface() as *mut _;
-        out.buffered_error_stream = out.buffered_error_stream_backing.new_interface() as *mut _;
+        out.buffered_stream = std::ptr::from_mut(out.buffered_stream_backing.new_interface());
+        out.buffered_error_stream = std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
 
         out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
         out.error_stream_backing = out.raw_error_stream.quiet_writer().adapt_to_new_api(&mut []);
-        out.stream = out.stream_backing.new_interface() as *mut _;
-        out.error_stream = out.error_stream_backing.new_interface() as *mut _;
+        out.stream = std::ptr::from_mut(out.stream_backing.new_interface());
+        out.error_stream = std::ptr::from_mut(out.error_stream_backing.new_interface());
     }
 
     pub fn configure_thread() {
@@ -1054,14 +1054,14 @@ pub fn raw_error_writer() -> StreamType {
 #[allow(clippy::mut_from_ref)]
 pub fn error_writer() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _);
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.error_stream()));
     // SAFETY: pointer escapes the RefCell borrow; see TODO(port) above.
     unsafe { &mut *p }
 }
 
 pub fn error_writer_buffered() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.buffered_error_stream() as *mut _);
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.buffered_error_stream()));
     // SAFETY: see TODO(port) above.
     unsafe { &mut *p }
 }
@@ -1069,7 +1069,7 @@ pub fn error_writer_buffered() -> &'static mut io::Writer {
 // TODO: investigate returning the buffered_error_stream
 pub fn error_stream() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.error_stream() as *mut _);
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.error_stream()));
     // SAFETY: see TODO(port) above.
     unsafe { &mut *p }
 }
@@ -1081,14 +1081,14 @@ pub fn raw_writer() -> StreamType {
 
 pub fn writer() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.stream() as *mut _);
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.stream()));
     // SAFETY: see TODO(port) above.
     unsafe { &mut *p }
 }
 
 pub fn writer_buffered() -> &'static mut io::Writer {
     debug_assert!(SOURCE_SET.get());
-    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| s.buffered_stream() as *mut _);
+    let p: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(s.buffered_stream()));
     // SAFETY: see TODO(port) above.
     unsafe { &mut *p }
 }
@@ -1129,8 +1129,8 @@ pub fn flush() {
         // print (or vice-versa) doesn't BorrowMutError.
         let (bs, bes): (*mut io::Writer, *mut io::Writer) = SOURCE.with_borrow_mut(|s| {
             (
-                s.buffered_stream() as *mut io::Writer,
-                s.buffered_error_stream() as *mut io::Writer,
+                std::ptr::from_mut::<io::Writer>(s.buffered_stream()),
+                std::ptr::from_mut::<io::Writer>(s.buffered_error_stream()),
             )
         });
         // SAFETY: see with_dest_writer — pointers target thread-local backing
@@ -1316,10 +1316,10 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
         Destination::Stdout => {
-            (if buffering { s.buffered_stream() } else { s.stream() }) as *mut _
+            std::ptr::from_mut((if buffering { s.buffered_stream() } else { s.stream() }))
         }
         Destination::Stderr => {
-            (if buffering { s.buffered_error_stream() } else { s.error_stream() }) as *mut _
+            std::ptr::from_mut((if buffering { s.buffered_error_stream() } else { s.error_stream() }))
         }
     });
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local

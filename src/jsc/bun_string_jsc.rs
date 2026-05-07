@@ -47,7 +47,7 @@ unsafe extern "C" {
 // ── bun.String methods ──────────────────────────────────────────────────────
 #[track_caller]
 pub fn transfer_to_js(this: &mut String, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-    let this = this as *mut String;
+    let this = std::ptr::from_mut::<String>(this);
     // SAFETY: FFI call into JSC; `this` is a live *mut String, global_this borrowed for call duration.
     crate::from_js_host_call(global_this, || unsafe {
         BunString__transferToJS(this, global_this.as_ptr())
@@ -81,7 +81,7 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     let scope = ExceptionValidationScope::init(&mut scope_storage, global_object);
     let mut out: String = String::DEAD;
     // SAFETY: FFI call into JSC; `out` is a valid out-param, global_object borrowed for call duration.
-    let ok = unsafe { BunString__fromJS(global_object.as_ptr(), value, &mut out) };
+    let ok = unsafe { BunString__fromJS(global_object.as_ptr(), value, &raw mut out) };
 
     // If there is a pending exception, but stringifying succeeds, we don't return JSError.
     // We do need to always call hasException() to satisfy the need for an exception check.
@@ -124,7 +124,7 @@ pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult
 
 #[track_caller]
 pub fn to_js_by_parse_json(self_: &mut String, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-    let self_ = self_ as *mut String;
+    let self_ = std::ptr::from_mut::<String>(self_);
     // SAFETY: FFI call into JSC; `self_` is a live *mut String, global_object borrowed for call duration.
     crate::from_js_host_call(global_object, || unsafe {
         BunString__toJSON(global_object.as_ptr(), self_)
@@ -160,7 +160,7 @@ pub fn create_format_for_js(
 
 #[track_caller]
 pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult<f64> {
-    let this = this as *mut String;
+    let this = std::ptr::from_mut::<String>(this);
     // SAFETY: FFI call into JSC; `this` is a live *mut String, global_object borrowed for call duration.
     crate::from_js_host_call_generic(global_object, || unsafe {
         Bun__parseDate(global_object.as_ptr(), this)

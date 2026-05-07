@@ -1599,7 +1599,7 @@ impl Map {
                 env_buf[klen] = b'=';
                 env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
                 // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr() as *const c_char);
+                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
                 storage.push(env_buf);
                 i += 1;
             }

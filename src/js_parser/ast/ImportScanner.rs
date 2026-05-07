@@ -23,7 +23,7 @@ pub struct ImportScanner<'a> {
 // fat raw slice pointer at every site.
 #[inline(always)]
 fn raw_str(s: &'static [u8]) -> *const [u8] {
-    s as *const [u8]
+    std::ptr::from_ref::<[u8]>(s)
 }
 
 impl<'a> ImportScanner<'a> {
@@ -75,7 +75,7 @@ impl<'a> ImportScanner<'a> {
                     // at each use site (no operation below grows `p.import_records`, so
                     // the pointer stays valid for this iteration).
                     let record: *mut ImportRecord =
-                        &mut p.import_records.items_mut()[import_record_index as usize];
+                        &raw mut p.import_records.items_mut()[import_record_index as usize];
                     // SAFETY: `record` points into `p.import_records`' backing storage;
                     // nothing in this match arm reallocates that list.
                     macro_rules! record { () => { unsafe { &mut *record } } }
@@ -345,7 +345,7 @@ impl<'a> ImportScanner<'a> {
                                 handle_oom(p.named_imports.put(
                                     item.ref_.expect("infallible: ref bound"),
                                     js_ast::NamedImport {
-                                        alias: Some(*alias as *const [u8]),
+                                        alias: Some(std::ptr::from_ref::<[u8]>(*alias)),
                                         alias_loc: Some(item.loc),
                                         namespace_ref: Some(namespace_ref),
                                         import_record_index: st.import_record_index,
@@ -366,7 +366,7 @@ impl<'a> ImportScanner<'a> {
 
                                 symbol.namespace_alias = Some(G::NamespaceAlias {
                                     namespace_ref,
-                                    alias: *alias as *const [u8],
+                                    alias: std::ptr::from_ref::<[u8]>(*alias),
                                     import_record_index: st.import_record_index,
                                     was_originally_property_access: st.star_name_loc.is_some()
                                         && existing.contains(original_name),

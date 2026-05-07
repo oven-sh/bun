@@ -427,7 +427,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             S::Namespace {
                 name,
                 arg: arg_ref,
-                stmts: stmts_slice as *mut [Stmt],
+                stmts: std::ptr::from_mut::<[Stmt]>(stmts_slice),
                 is_export: opts.is_export,
             },
             loc,
@@ -574,7 +574,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,
-                name: b"" as &[u8] as *const [u8],
+                name: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
                 value: None,
             };
             let mut needs_symbol = false;
@@ -589,7 +589,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // SAFETY: `value.name` is an arena-owned slice valid for 'a.
                 needs_symbol = js_lexer::is_identifier(unsafe { &*value.name });
             } else if p.lexer.is_identifier_or_keyword() {
-                value.name = p.lexer.identifier as *const [u8];
+                value.name = std::ptr::from_ref::<[u8]>(p.lexer.identifier);
                 needs_symbol = true;
             } else {
                 p.lexer.expect(T::TIdentifier)?;
@@ -731,7 +731,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             S::Enum {
                 name,
                 arg: arg_ref,
-                values: values.into_bump_slice_mut() as *mut [EnumValue],
+                values: std::ptr::from_mut::<[EnumValue]>(values.into_bump_slice_mut()),
                 is_export: opts.is_export,
             },
             loc,

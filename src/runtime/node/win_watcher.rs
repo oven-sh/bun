@@ -75,7 +75,7 @@ impl PathWatcherManager {
         // overlapping `&mut self` borrow a closure-based guard would require.
         if self.deinit_on_last_watcher && self.watchers.len() == 0 {
             // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
 
@@ -178,7 +178,7 @@ impl PathWatcher {
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
         let this: *mut PathWatcher = unsafe {
-            (event as *mut u8)
+            event.cast::<u8>()
                 .sub(core::mem::offset_of!(PathWatcher, handle))
                 .cast::<PathWatcher>()
         };
@@ -386,7 +386,7 @@ impl PathWatcher {
     fn maybe_deinit(&mut self) {
         if self.handlers.len() == 0 && !self.emit_in_progress {
             // SAFETY: self was Box::into_raw'd in `init`; no other live borrows after this point.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(core::ptr::from_mut(self)) };
         }
     }
 

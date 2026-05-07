@@ -155,7 +155,7 @@ impl SyntaxString {
                                         let ident: &'static [u8] = unsafe { css::src_str(ident) };
                                         return Err(location.new_unexpected_token_error(Token::Ident(ident)));
                                     }
-                                    ParsedComponent::Literal(Ident { v: ident as *const [u8] })
+                                    ParsedComponent::Literal(Ident { v: std::ptr::from_ref::<[u8]>(ident) })
                                 }
                             };
                             Ok(value)

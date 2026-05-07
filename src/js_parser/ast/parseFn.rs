@@ -358,7 +358,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             rest_arg = false;
         }
         if !args.is_empty() {
-            func.args = args.into_bump_slice_mut() as *mut [G::Arg];
+            func.args = std::ptr::from_mut::<[G::Arg]>(args.into_bump_slice_mut());
         }
 
         // Reserve the special name "arguments" in this scope. This ensures that it
@@ -524,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
         Ok(G::FnBody {
             loc,
-            stmts: stmts.into_bump_slice_mut() as *mut [Stmt],
+            stmts: std::ptr::from_mut::<[Stmt]>(stmts.into_bump_slice_mut()),
         })
     }
 
@@ -599,7 +599,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             prefer_expr: true,
             body: G::FnBody {
                 loc: arrow_loc,
-                stmts: stmts as *mut [Stmt],
+                stmts: std::ptr::from_mut::<[Stmt]>(stmts),
             },
             ..Default::default()
         })

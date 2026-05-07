@@ -47,7 +47,7 @@ impl Default for NamespaceAlias {
     fn default() -> Self {
         Self {
             namespace_ref: Ref::default(),
-            alias: &[] as *const [u8],
+            alias: std::ptr::from_ref::<[u8]>(&[]),
             was_originally_property_access: false,
             import_record_index: u32::MAX,
         }
@@ -271,7 +271,7 @@ impl FnBody {
             Stmt::alloc(crate::ast::s::Return { value: Some(expr) }, expr.loc)
         });
         Ok(FnBody {
-            stmts: stmts as *mut [Stmt],
+            stmts: std::ptr::from_mut::<[Stmt]>(stmts),
             loc: expr.loc,
         })
     }
@@ -319,7 +319,7 @@ impl Fn {
         Ok(Fn {
             name: self.name,
             open_parens_loc: self.open_parens_loc,
-            args: args as *mut [Arg],
+            args: std::ptr::from_mut::<[Arg]>(args),
             body: FnBody {
                 loc: self.body.loc,
                 stmts: self.body.stmts,

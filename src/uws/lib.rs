@@ -1236,7 +1236,7 @@ impl SocketGroup {
                 self,
                 loop_,
                 match vt {
-                    Some(v) => v as *const SocketGroupVTable,
+                    Some(v) => std::ptr::from_ref::<SocketGroupVTable>(v),
                     None => core::ptr::null(),
                 },
                 owner_ptr,
@@ -1359,7 +1359,7 @@ impl SocketGroup {
                 port,
                 options,
                 socket_ext_size,
-                &mut has_dns_resolved,
+                &raw mut has_dns_resolved,
             )
         };
         if ptr.is_null() {

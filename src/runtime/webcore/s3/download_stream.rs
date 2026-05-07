@@ -326,9 +326,9 @@ impl S3HttpDownloadStreamingTask {
         let self_ = unsafe { &mut *this };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            let task = self_
+            let task = std::ptr::from_mut::<ConcurrentTask>(self_
                 .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
+                .from(this, AutoDeinit::ManualDeinit));
             // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe.
             unsafe { (*(*self_.vm).event_loop()).enqueue_task_concurrent(task) };

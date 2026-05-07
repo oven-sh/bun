@@ -221,7 +221,7 @@ impl PageRule {
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see declaration.rs `DeclarationBlock::parse`).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*(input.allocator() as *const bun_alloc::Arena) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
         let mut declarations = DeclarationBlock::new_in(bump);
         let mut rules: ArrayList<PageMarginRule> = ArrayList::new();
         let mut rule_parser = PageRuleParser {
@@ -466,7 +466,7 @@ const _: () = {
             let loc = input.current_source_location();
             match css::parse_utility::parse_string(input.allocator(), name, PageMarginBox::parse) {
                 Ok(v) => Ok(v),
-                Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(name as *const [u8]))),
+                Err(_) => Err(loc.new_custom_error(ParserError::at_rule_invalid(std::ptr::from_ref::<[u8]>(name)))),
             }
         }
 

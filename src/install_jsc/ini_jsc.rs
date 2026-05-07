@@ -99,7 +99,7 @@ impl IniTestingAPIs {
             // both `env_storage` / `map_storage` drop at fn return.
             unsafe {
                 core::mem::transmute::<*mut dotenv::Loader<'_>, *mut dotenv::Loader<'static>>(
-                    env_storage.as_mut().unwrap() as *mut _,
+                    std::ptr::from_mut(env_storage.as_mut().unwrap()),
                 )
             }
         };
@@ -211,7 +211,7 @@ impl IniTestingAPIs {
         // `parser.arena.allocator()`); split the borrow via raw ptr so the bump
         // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
         // not moved/dropped for the lifetime of `parser`.
-        let bump: &bun_alloc::Arena = unsafe { &*(&parser.arena as *const bun_alloc::Arena) };
+        let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };
         parser.parse(bump)?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {

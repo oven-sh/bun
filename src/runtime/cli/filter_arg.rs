@@ -285,9 +285,9 @@ impl PackageFilterIterator {
         // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
         Ok(PackageFilterIterator {
             // SAFETY: caller keeps `patterns`/`root_dir` alive for the iterator's lifetime (see TODO above).
-            patterns: patterns as *const [Box<[u8]>],
+            patterns: std::ptr::from_ref::<[Box<[u8]>]>(patterns),
             pattern_idx: 0,
-            root_dir: root_dir as *const [u8],
+            root_dir: std::ptr::from_ref::<[u8]>(root_dir),
             walker: MaybeUninit::uninit(),
             iter: MaybeUninit::uninit(),
             valid: false,
@@ -336,7 +336,7 @@ impl PackageFilterIterator {
         // walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
         // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
         let walker_ref: &'static mut GlobWalker =
-            unsafe { &mut *(self.walker.assume_init_mut() as *mut GlobWalker) };
+            unsafe { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
         self.iter.write(glob::walk::Iterator::new(walker_ref));
         // SAFETY: just wrote `iter`.
         unsafe { self.iter.assume_init_mut() }.init()??;

@@ -734,7 +734,7 @@ pub fn new_runtime_function(
     unsafe {
         private::Bun__CreateFFIFunctionValue(
             global_object.as_mut_ptr(),
-            symbol_name.map_or(core::ptr::null(), |s| s as *const _),
+            symbol_name.map_or(core::ptr::null(), |s| std::ptr::from_ref(s)),
             arg_count,
             function_pointer,
             add_ptr_property,
@@ -777,7 +777,7 @@ pub fn new_function_with_data(
     unsafe {
         private::Bun__CreateFFIFunctionWithDataValue(
             global_object.as_mut_ptr(),
-            symbol_name.map_or(core::ptr::null(), |s| s as *const _),
+            symbol_name.map_or(core::ptr::null(), |s| std::ptr::from_ref(s)),
             arg_count,
             function,
             data,

@@ -129,7 +129,7 @@ pub fn edit_trusted_dependencies(
         if let js_ast::ExprData::EArray(arr) = &query.expr.data {
             // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
             // this function; lifetime erased per Phase-A `Str` convention.
-            trusted_dependencies = unsafe { &*(arr.items.slice() as *const [Expr]) };
+            trusted_dependencies = unsafe { &*std::ptr::from_ref::<[Expr]>(arr.items.slice()) };
         }
     }
 
@@ -752,7 +752,7 @@ pub fn edit(
                 if let js_ast::ExprData::EArray(arr) = &query.expr.data {
                     // SAFETY: arena-backed slice; see note in `edit_trusted_dependencies`.
                     trusted_dependencies =
-                        unsafe { &*(arr.items.slice() as *const [Expr]) };
+                        unsafe { &*std::ptr::from_ref::<[Expr]>(arr.items.slice()) };
                 }
             }
         }

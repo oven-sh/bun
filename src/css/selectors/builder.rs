@@ -174,7 +174,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
                 // disjoint prefix of the previous `current` slice). The source
                 // storage is leaked-then-truncated via `set_len(0)`.
                 let moved = unsafe {
-                    core::ptr::read(&current_simple_selectors[current_simple_selectors_i])
+                    core::ptr::read(&raw const current_simple_selectors[current_simple_selectors_i])
                 };
                 components.push(moved);
                 current_simple_selectors_i += 1;

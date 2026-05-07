@@ -75,7 +75,7 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     #[inline]
     fn as_slice(&self) -> &[T] {
         // SAFETY: matches Zig `buf: [N]T = undefined`; see TODO above.
-        unsafe { &*(self.0.as_slice() as *const [MaybeUninit<T>] as *const [T]) }
+        unsafe { &*(std::ptr::from_ref::<[MaybeUninit<T>]>(self.0.as_slice()) as *const [T]) }
     }
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
@@ -83,7 +83,7 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
         // the intermediate `&mut [MaybeUninit<T>]` is consumed by the cast so no
         // second `&mut` aliases the returned slice. Layout of `MaybeUninit<T>` is
         // identical to `T`; validity invariant is the same as `as_slice` (see TODO above).
-        unsafe { &mut *(self.0.as_mut_slice() as *mut [MaybeUninit<T>] as *mut [T]) }
+        unsafe { &mut *(std::ptr::from_mut::<[MaybeUninit<T>]>(self.0.as_mut_slice()) as *mut [T]) }
     }
 }
 
@@ -121,7 +121,7 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     #[inline]
     fn as_slice(&self) -> &[T] {
         // SAFETY: see StaticBuffer note.
-        unsafe { &*(&*self.0 as *const [MaybeUninit<T>] as *const [T]) }
+        unsafe { &*(&raw const *self.0 as *const [T]) }
     }
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
@@ -129,7 +129,7 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
         // `&mut [MaybeUninit<T>]` is consumed by the raw-pointer cast so the
         // returned `&mut [T]` is the sole live reference into the allocation.
         // Layout matches; validity invariant is the same as `as_slice` (see StaticBuffer note).
-        unsafe { &mut *(&mut *self.0 as *mut [MaybeUninit<T>] as *mut [T]) }
+        unsafe { &mut *(&raw mut *self.0 as *mut [T]) }
     }
 
     fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
@@ -252,7 +252,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // PERF(port): was stack array sized by page_size/2/sizeof(T) — same
             // byte footprint here, no heap.
             let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
-            let tmp_ptr = tmp_bytes.as_mut_ptr() as *mut T;
+            let tmp_ptr = tmp_bytes.as_mut_ptr().cast::<T>();
             // TODO(port): alignment — tmp_bytes is 1-aligned; for T with
             // align > 1 this is UB. Phase B: use an aligned scratch type.
             let tmp_len = (PAGE_SIZE_MIN / 2) / mem::size_of::<T>();
@@ -279,7 +279,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // SAFETY: poisoning unused tail; matches Zig `@memset(unused, undefined)`.
             unsafe {
                 ptr::write_bytes(
-                    unused.as_mut_ptr() as *mut u8,
+                    unused.as_mut_ptr().cast::<u8>(),
                     0xAA,
                     unused.len() * mem::size_of::<T>(),
                 );
@@ -327,7 +327,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // After realign(), head==0 so readableSlice(0) == old[0..count].
                 // SAFETY: old and new are disjoint allocations.
                 unsafe {
-                    ptr::copy_nonoverlapping(old.as_ptr() as *const T, new.as_mut_ptr(), count);
+                    ptr::copy_nonoverlapping(old.as_ptr().cast::<T>(), new.as_mut_ptr(), count);
                 }
             }
             // `self.allocator.free(self.buf)` — `old` drops here.
@@ -403,7 +403,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // SAFETY: poisoning bytes about to be discarded.
                 unsafe {
                     ptr::write_bytes(
-                        slice.as_mut_ptr() as *mut u8,
+                        slice.as_mut_ptr().cast::<u8>(),
                         0xAA,
                         count * mem::size_of::<T>(),
                     );
@@ -414,7 +414,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                     // SAFETY: poisoning.
                     unsafe {
                         ptr::write_bytes(
-                            slice.as_mut_ptr() as *mut u8,
+                            slice.as_mut_ptr().cast::<u8>(),
                             0xAA,
                             slice_len * mem::size_of::<T>(),
                         );
@@ -425,7 +425,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // SAFETY: poisoning.
                 unsafe {
                     ptr::write_bytes(
-                        slice2.as_mut_ptr() as *mut u8,
+                        slice2.as_mut_ptr().cast::<u8>(),
                         0xAA,
                         rem * mem::size_of::<T>(),
                     );

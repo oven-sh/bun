@@ -371,7 +371,7 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let mut cw: c_int = 0;
             let mut ch: c_int = 0;
             // SAFETY: (ptr,len) from a valid live slice; cw/ch are valid `*mut c_int` out-params.
-            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &mut cw, &mut ch) } == 0
+            if unsafe { webp::WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
                 || cw <= 0
                 || ch <= 0
             {
@@ -475,7 +475,7 @@ pub struct Encoded {
 impl Drop for Encoded {
     fn drop(&mut self) {
         // SAFETY: `bytes` was allocated by the codec whose deallocator is `free`.
-        unsafe { (self.free)(self.bytes.as_ptr() as *mut u8 as *mut c_void, core::ptr::null_mut()) }
+        unsafe { (self.free)(self.bytes.as_ptr().cast::<u8>().cast::<c_void>(), core::ptr::null_mut()) }
     }
 }
 

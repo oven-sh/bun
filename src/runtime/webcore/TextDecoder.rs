@@ -284,7 +284,7 @@ impl TextDecoder {
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): Box::into_raw transfers a tight allocation (no excess capacity).
                 Ok(ZigString::to_external_u16(
-                    Box::into_raw(bytes) as *mut u16,
+                    Box::into_raw(bytes).cast::<u16>(),
                     out.written as usize,
                     global_this,
                 ))

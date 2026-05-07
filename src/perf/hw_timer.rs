@@ -165,7 +165,7 @@ fn read_frequency() -> u64 {
             unsafe {
                 let _ = sysctlbyname(
                     NAME.as_ptr(),
-                    (&mut hz) as *mut u64 as *mut c_void,
+                    core::ptr::from_mut::<u64>(&mut hz).cast::<c_void>(),
                     &mut hz_len,
                     core::ptr::null(),
                     0,
@@ -243,7 +243,7 @@ fn os_monotonic_ns() -> u64 {
             // joined the vDSO in 5.3.
             // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut spec);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut spec);
             }
         }
         #[cfg(target_os = "macos")]

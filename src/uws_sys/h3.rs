@@ -70,21 +70,21 @@ impl Request {
     pub fn url(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_url(self, &mut p) };
+        let n = unsafe { c::uws_h3_req_get_url(self, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { core::slice::from_raw_parts(p, n) }
     }
     pub fn method(&mut self) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_method(self, &mut p) };
+        let n = unsafe { c::uws_h3_req_get_method(self, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { core::slice::from_raw_parts(p, n) }
     }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &mut p) };
+        let n = unsafe { c::uws_h3_req_get_header(self, name.as_ptr(), name.len(), &raw mut p) };
         if n == 0 {
             None
         } else {
@@ -101,14 +101,14 @@ impl Request {
     pub fn query(&mut self, name: &[u8]) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &mut p) };
+        let n = unsafe { c::uws_h3_req_get_query(self, name.as_ptr(), name.len(), &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { core::slice::from_raw_parts(p, n) }
     }
     pub fn parameter(&mut self, idx: u16) -> &[u8] {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptr is a valid local
-        let n = unsafe { c::uws_h3_req_get_parameter(self, idx, &mut p) };
+        let n = unsafe { c::uws_h3_req_get_parameter(self, idx, &raw mut p) };
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { core::slice::from_raw_parts(p, n) }
     }
@@ -185,7 +185,7 @@ impl Response {
     pub fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live FFI handle; data ptr valid for read; len out-ptr is a valid local
-        if unsafe { c::uws_h3_res_write(self, data.as_ptr(), &mut len) } {
+        if unsafe { c::uws_h3_res_write(self, data.as_ptr(), &raw mut len) } {
             WriteResult::WantMore(len)
         } else {
             WriteResult::Backpressure(len)
@@ -280,7 +280,7 @@ impl Response {
         let mut ip_ptr: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; out-ptrs are valid locals
         let len = unsafe {
-            c::uws_h3_res_get_remote_address_info(self, &mut ip_ptr, &mut port, &mut is_ipv6)
+            c::uws_h3_res_get_remote_address_info(self, &raw mut ip_ptr, &raw mut port, &raw mut is_ipv6)
         };
         if len == 0 {
             return None;
@@ -449,7 +449,7 @@ impl Response {
         let mut ctx: Ctx<UD> = (handler, ud);
         // SAFETY: self is a live FFI handle; trampoline is `extern "C"`; ctx outlives the
         // synchronous FFI call.
-        unsafe { c::uws_h3_res_cork(self, (&mut ctx as *mut Ctx<UD>).cast(), cb::<UD>) }
+        unsafe { c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>) }
     }
 }
 

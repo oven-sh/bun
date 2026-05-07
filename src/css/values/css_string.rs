@@ -17,7 +17,7 @@ pub struct CssStringFns;
 impl CssStringFns {
     pub fn parse(input: &mut css::Parser) -> Result<CssString> {
         // No lifetime laundering: capture the arena slice as a raw pointer.
-        input.expect_string().map(|s| s as *const [u8])
+        input.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
     }
 
     pub fn to_css(this: &CssString, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

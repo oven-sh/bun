@@ -53,7 +53,7 @@ fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
     let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.allocator);
     list.extend_from_slice(src);
     p.visit_stmts(&mut list, kind).expect("unreachable");
-    list.into_bump_slice_mut() as *mut [Stmt]
+    std::ptr::from_mut::<[Stmt]>(list.into_bump_slice_mut())
 }
 
 // ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
@@ -69,7 +69,7 @@ fn stmts_to_list<'a>(allocator: &'a bun_alloc::Arena, ptr: *mut [Stmt]) -> StmtL
 }
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
-    list.into_bump_slice_mut() as *mut [Stmt]
+    std::ptr::from_mut::<[Stmt]>(list.into_bump_slice_mut())
 }
 
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
@@ -548,14 +548,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         stmt.loc,
                     ));
                     let items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
-                        alias: b"default" as *const [u8],
+                        alias: std::ptr::from_ref::<[u8]>(b"default"),
                         alias_loc: data.default_name.loc,
                         name: data.default_name,
                         ..Default::default()
                     }));
                     // PERF(port): was assume_capacity
                     stmts.push(p.s(
-                        S::ExportClause { items: items as *mut [_], is_single_line: false },
+                        S::ExportClause { items: std::ptr::from_mut::<[_]>(items), is_single_line: false },
                         stmt.loc,
                     ));
                 }
@@ -1082,7 +1082,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
                     // here so its provenance is a child of the active Unique borrow.
                     let wrapper = p.to_expr_wrapper_namespace;
-                    let ctx = core::ptr::addr_of_mut!(*p) as *mut core::ffi::c_void;
+                    let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
                     let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
                     stmts.push(p.s(
                         S::SExpr {
@@ -1319,7 +1319,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             {
                                 // last entry's value
                                 let key: &'a [u8] = unsafe {
-                                    arena_str(&p.commonjs_named_exports.keys()[to_convert as usize][..])
+                                    arena_str(&raw const p.commonjs_named_exports.keys()[to_convert as usize][..])
                                 };
                                 let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
@@ -1347,7 +1347,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.had_commonjs_named_exports_this_visit = true;
                                 let clause_items = core::slice::from_mut(p.allocator.alloc(js_ast::ClauseItem {
                                     // We want the generated name to not conflict
-                                    alias: key as *const [u8],
+                                    alias: std::ptr::from_ref::<[u8]>(key),
                                     alias_loc: bin.left.loc,
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
                                     ..Default::default()
@@ -1364,7 +1364,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 );
                                 let export = p.s(
                                     S::ExportClause {
-                                        items: clause_items as *mut [_],
+                                        items: std::ptr::from_mut::<[_]>(clause_items),
                                         is_single_line: true,
                                     },
                                     stmt.loc,
@@ -1453,7 +1453,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // topmost scope in a loop body block.
             let kind = if core::mem::discriminant(&p.loop_body) == core::mem::discriminant(&stmt.data)
                 && match (p.loop_body, stmt.data) {
-                    (StmtData::SBlock(a), StmtData::SBlock(b)) => core::ptr::eq(&*a as *const _, &*b as *const _),
+                    (StmtData::SBlock(a), StmtData::SBlock(b)) => core::ptr::eq(&raw const *a, &raw const *b),
                     _ => false,
                 } {
                 StmtsKind::LoopBody
@@ -1979,10 +1979,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         unsafe { &mut *exported_members }
                             .get_ptr_mut(name)
                             .unwrap()
-                            .data = js_ast::ts::Data::EnumString(&*str_ as *const _);
+                            .data = js_ast::ts::Data::EnumString(&raw const *str_);
 
                         p.ref_to_ts_namespace_member
-                            .insert(value.ref_, js_ast::ts::Data::EnumString(&*str_ as *const _));
+                            .insert(value.ref_, js_ast::ts::Data::EnumString(&raw const *str_));
                     }
                     _ => {
                         if visited.known_primitive() == js_ast::expr::PrimitiveType::String {

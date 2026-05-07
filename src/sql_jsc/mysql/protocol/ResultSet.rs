@@ -46,7 +46,7 @@ impl<'a> Row<'a> {
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
             if let Some(f) = c.fields.as_deref() {
-                names = f.as_ptr() as *mut ExternColumnIdentifier;
+                names = f.as_ptr().cast_mut();
                 names_count = f.len() as u32;
             }
         }

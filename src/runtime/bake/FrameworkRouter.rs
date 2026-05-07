@@ -318,7 +318,7 @@ pub struct EncodedPattern {
 impl EncodedPattern {
     /// `/` is represented by zero bytes
     pub const ROOT: EncodedPattern = EncodedPattern {
-        data: &[] as *const [u8],
+        data: std::ptr::from_ref::<[u8]>(&[]),
     };
 
     #[inline]
@@ -347,7 +347,7 @@ impl EncodedPattern {
             debug_assert!(fbs.pos == len);
         }
         Ok(EncodedPattern {
-            data: &*slice as *const [u8],
+            data: &raw const *slice,
         })
     }
 
@@ -425,7 +425,7 @@ impl EncodedPattern {
                     params.params.resize(param_num + 1).unwrap();
                     params.params.slice()[param_num] = MatchedParamEntry {
                         key: name,
-                        value: &path[i..end],
+                        value: &raw const path[i..end],
                     };
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
@@ -450,7 +450,7 @@ impl EncodedPattern {
                                 params.params.resize(param_num + 1).unwrap();
                                 params.params.slice()[param_num] = MatchedParamEntry {
                                     key: name,
-                                    value: &path[segment_start..segment_end],
+                                    value: &raw const path[segment_start..segment_end],
                                 };
                                 param_num += 1;
                             }
@@ -1608,7 +1608,7 @@ impl FrameworkRouter {
                 // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
                 // is the unique live reference to this entry during the scan, and `fs_impl`
                 // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&mut *fs_impl, false) } {
+                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {
@@ -1765,7 +1765,7 @@ impl FrameworkRouter {
                             }
                             debug_assert!(pos == allocation.len());
                             let pattern = StaticPattern {
-                                route_path: &*allocation as *const [u8],
+                                route_path: &raw const *allocation,
                             };
                             self.insert(
                                 t_index,

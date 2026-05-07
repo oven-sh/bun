@@ -385,7 +385,7 @@ pub mod strings {
             simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                 utf16.as_ptr(),
                 utf16.len(),
-                spare.as_mut_ptr() as *mut u8,
+                spare.as_mut_ptr().cast::<u8>(),
             )
         };
         if r.status == simdutf::Status::SURROGATE {

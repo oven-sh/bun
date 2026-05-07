@@ -97,7 +97,7 @@ impl StdAllocator {
         // SAFETY: `bytes` is reborrowed mutably only for the vtable signature; the
         // callee treats it as opaque (Zig passes `[]u8`).
         let buf = unsafe {
-            core::slice::from_raw_parts_mut(bytes.as_ptr() as *mut u8, bytes.len())
+            core::slice::from_raw_parts_mut(bytes.as_ptr().cast_mut(), bytes.len())
         };
         self.raw_free(buf, Alignment::from_byte_units(1), 0);
     }
@@ -692,7 +692,7 @@ pub mod StringImplAllocator {
         unsafe { WTFStringImplStruct::ref_(this) };
         // we should never actually allocate
         // SAFETY: m_ptr.latin1 valid for byte_length bytes.
-        unsafe { (*this).m_ptr.latin1 as *mut u8 }
+        unsafe { (*this).m_ptr.latin1.cast_mut() }
     }
 
     unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
@@ -1227,7 +1227,7 @@ pub mod heap_breakdown {
         // `Vec`'s heap buffer address is stable when the `Vec` struct is moved
         // (only the {ptr,len,cap} header moves), and the map never removes or
         // mutates this entry, so `raw` remains valid for process lifetime.
-        let raw = owned.as_ptr() as *const c_char;
+        let raw = owned.as_ptr().cast::<c_char>();
         // SAFETY: `raw` points into a NUL-terminated buffer that is moved into
         // the 'static `ZONES` map immediately below and never freed.
         let zone = unsafe { Zone::init(raw) };
@@ -1273,7 +1273,7 @@ macro_rules! get_zone {
             // literal in static memory — valid for process lifetime.
             unsafe {
                 $crate::heap_breakdown::Zone::init(
-                    concat!($name, "\0").as_ptr() as *const ::core::ffi::c_char,
+                    concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
                 )
             }
         })
@@ -1596,7 +1596,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     pub fn init() -> &'static mut Self {
         // Zig: `default_allocator.create(Self)` — route through mimalloc.
         // SAFETY: FFI — mi_malloc returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
         assert!(!ptr.is_null(), "OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
@@ -1652,7 +1652,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             // is not Boxed, so represent it as `prev = None`; heap heads were
             // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
-            new_block.prev = if core::ptr::eq(head_ptr.as_ptr() as *const _, tail_ptr) {
+            new_block.prev = if core::ptr::eq(head_ptr.as_ptr().cast_const(), tail_ptr) {
                 None
             } else {
                 // SAFETY: the previous head was `Box::into_raw`'d by an earlier
@@ -1700,7 +1700,7 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
         // Phase-B static wrapper, not here.
         if let Some(head) = self.head.take() {
             let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
-            if !core::ptr::eq(head.as_ptr() as *const _, tail_ptr) {
+            if !core::ptr::eq(head.as_ptr().cast_const(), tail_ptr) {
                 // SAFETY: `head` was `Box::into_raw`'d by `append_overflow` and is
                 // exclusively owned by this struct. Dropping the Box recursively
                 // drops `prev`, freeing the whole heap chain.
@@ -1804,7 +1804,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// responsibility — use `bss_string_list!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
         assert!(!ptr.is_null(), "OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
@@ -1979,7 +1979,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             // never frees overflow allocations (matches Zig); the singleton lives for
             // process lifetime.
             // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥value_len bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(value_len) } as *mut u8;
+            let ptr = unsafe { mimalloc::mi_malloc(value_len) }.cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
@@ -2065,7 +2065,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// responsibility — use `bss_map_inner!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
         assert!(!ptr.is_null(), "OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
@@ -2265,7 +2265,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     /// responsibility — use `bss_map!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
         // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
-        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) }.cast::<Self>();
         assert!(!ptr.is_null(), "OOM");
         // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
         // process lifetime (singleton; never freed, matching Zig).
@@ -2353,7 +2353,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
             // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
             // the stored slice.
             // SAFETY: FFI — mi_malloc returns null on OOM or a writable region of ≥key.len() bytes.
-            let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) } as *mut u8;
+            let ptr = unsafe { mimalloc::mi_malloc(key.len().max(1)) }.cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
@@ -2382,7 +2382,7 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
                     // size-agnostic, so a trimmed (shorter) stored slice is fine.
                     // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
                     // (the only non-static-buffer source above) and not yet freed.
-                    unsafe { mimalloc::mi_free(existing_slice.as_ptr() as *mut core::ffi::c_void) };
+                    unsafe { mimalloc::mi_free(existing_slice.as_ptr().cast_mut().cast::<core::ffi::c_void>()) };
                 }
                 self.key_list_overflow[idx] = slice;
             } else {

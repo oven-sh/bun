@@ -83,7 +83,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: recover the parent via offset_of (Zig: `@fieldParentPtr`).
         let this: *mut Self = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(offset_of!(Self, task))
                 .cast::<Self>()
         };
@@ -102,7 +102,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
     }
 
     pub fn schedule(&mut self) {
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     /// SAFETY: `this` is the live heap allocation from [`create_on_js_thread`],
@@ -116,7 +116,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `this` while holding `&mut concurrent_task` is sound because `from`
         // only stores the pointer (does not dereference it).
         let task =
-            unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) } as *mut _;
+            std::ptr::from_mut(unsafe { (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit) });
         event_loop.enqueue_task_concurrent(task);
     }
 

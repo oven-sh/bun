@@ -1391,7 +1391,7 @@ impl DynamicBitSetList {
             bit_length: self.bit_length,
             // SAFETY: offset+1 is within `buf` for i < n; the returned view is
             // non-owning and must not be `deinit`ed.
-            masks: unsafe { self.buf.as_ptr().add(offset).add(1) as *mut usize },
+            masks: unsafe { self.buf.as_ptr().add(offset).add(1).cast_mut() },
         }
     }
 

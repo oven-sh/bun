@@ -64,12 +64,12 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn close(&mut self) {
         // SAFETY: self is a valid *mut uws_app_s (opaque C++ app); ssl flag matches construction.
-        unsafe { c::uws_app_close(Self::SSL_FLAG, self as *mut Self as *mut uws_app_s) }
+        unsafe { c::uws_app_close(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_s>()) }
     }
 
     pub fn close_idle_connections(&mut self) {
         // SAFETY: self is a valid *mut uws_app_s.
-        unsafe { c::uws_app_close_idle(Self::SSL_FLAG, self as *mut Self as *mut uws_app_s) }
+        unsafe { c::uws_app_close_idle(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_s>()) }
     }
 
     pub fn create(opts: BunSocketContextOptions) -> Option<*mut Self> {
@@ -95,7 +95,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_set_flags(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 require_host_header,
                 use_strict_method_validation,
             )
@@ -107,7 +107,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_set_max_http_header_size(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 max_header_size,
             )
         }
@@ -115,7 +115,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn clear_routes(&mut self) {
         // SAFETY: self is a valid *mut uws_app_t.
-        unsafe { c::uws_app_clear_routes(Self::SSL_FLAG, self as *mut Self as *mut uws_app_t) }
+        unsafe { c::uws_app_clear_routes(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
     }
 
     pub fn publish_with_options(
@@ -129,7 +129,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_publish(
                 SSL as i32,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 topic.as_ptr(),
                 topic.len(),
                 message.as_ptr(),
@@ -171,7 +171,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_get(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -185,7 +185,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_post(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -204,7 +204,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_options(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -223,7 +223,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_delete(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -249,7 +249,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_patch(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -263,7 +263,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_put(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -277,7 +277,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_head(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -296,7 +296,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_connect(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -315,7 +315,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_trace(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -350,7 +350,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_any(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr(),
                 pattern.len(),
                 handler,
@@ -364,7 +364,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_domain(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 pattern.as_ptr().cast(),
             )
         }
@@ -372,7 +372,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn run(&mut self) {
         // SAFETY: self is a valid app.
-        unsafe { c::uws_app_run(Self::SSL_FLAG, self as *mut Self as *mut uws_app_t) }
+        unsafe { c::uws_app_run(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
     }
 
     pub fn listen(
@@ -388,7 +388,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_listen(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 port,
                 Some(handler),
                 user_data,
@@ -408,7 +408,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_set_on_clienterror(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_s,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_s>(),
                 handler,
                 user_data,
             )
@@ -428,7 +428,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_listen_with_config(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 config.host,
                 u16::try_from(config.port).expect("int cast"),
                 config.options,
@@ -452,7 +452,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_app_listen_domain_with_options(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 domain_name.as_ptr().cast(),
                 domain_name.len(),
                 flags,
@@ -464,7 +464,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn constructor_failed(&mut self) -> bool {
         // SAFETY: self is a valid app.
-        unsafe { c::uws_constructor_failed(Self::SSL_FLAG, self as *mut Self as *mut uws_app_t) }
+        unsafe { c::uws_constructor_failed(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<uws_app_t>()) }
     }
 
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
@@ -472,7 +472,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_num_subscribers(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 topic.as_ptr(),
                 topic.len(),
             )
@@ -490,7 +490,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_publish(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 topic.as_ptr(),
                 topic.len(),
                 message.as_ptr(),
@@ -503,7 +503,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn get_native_handle(&mut self) -> *mut c_void {
         // SAFETY: self is a valid app.
-        unsafe { c::uws_get_native_handle(Self::SSL_FLAG, self as *mut Self as *mut c_void) }
+        unsafe { c::uws_get_native_handle(Self::SSL_FLAG, std::ptr::from_mut::<Self>(self).cast::<c_void>()) }
     }
 
     pub fn remove_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
@@ -511,7 +511,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_remove_server_name(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
             )
         }
@@ -522,7 +522,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_add_server_name(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
             )
         }
@@ -537,7 +537,7 @@ impl<const SSL: bool> App<SSL> {
         let rc = unsafe {
             c::uws_add_server_name_with_options(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
                 opts,
             )
@@ -557,7 +557,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_missing_server_name(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 handler,
                 user_data,
             )
@@ -569,7 +569,7 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             c::uws_filter(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 handler,
                 user_data,
             )
@@ -582,12 +582,12 @@ impl<const SSL: bool> App<SSL> {
         unsafe {
             uws_ws(
                 Self::SSL_FLAG,
-                self as *mut Self as *mut uws_app_t,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 ctx,
                 pattern.as_ptr(),
                 pattern.len(),
                 id,
-                &mut behavior,
+                &raw const behavior,
             )
         }
     }
@@ -628,19 +628,19 @@ impl<const SSL: bool> ListenSocket<SSL> {
     #[inline]
     pub fn close(&mut self) {
         // SAFETY: ListenSocket<SSL> is layout-identical to crate::ListenSocket (both opaque).
-        unsafe { (*(self as *mut Self as *mut UwsListenSocket)).close() }
+        unsafe { (*std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).close() }
     }
 
     #[inline]
     pub fn get_local_port(&mut self) -> i32 {
         // SAFETY: opaque cast as above.
-        unsafe { (*(self as *mut Self as *mut UwsListenSocket)).get_local_port() }
+        unsafe { (*std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>()).get_local_port() }
     }
 
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<'static, SSL> {
         // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
         // (a listen socket IS a us_socket_t); Zig does `.from(@ptrCast(this))`.
-        crate::socket::NewSocketHandler::<SSL>::from((self as *mut Self).cast())
+        crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
 }
 

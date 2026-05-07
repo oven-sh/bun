@@ -346,7 +346,7 @@ pub(crate) mod kind {
                 // .swap() path rather than a plain .store().
 
                 if let Some(ev) = raw_env {
-                    self.ptr_value.store(ev.as_ptr() as *mut u8, Ordering::Relaxed);
+                    self.ptr_value.store(ev.as_ptr().cast_mut(), Ordering::Relaxed);
                     self.len_value.store(ev.len(), Ordering::Release);
                 } else {
                     self.ptr_value.store(NOT_SET_PTR, Ordering::Relaxed);

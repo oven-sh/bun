@@ -55,7 +55,7 @@ impl Assets {
         // SAFETY: `Assets` is only ever constructed as the `assets` field of
         // `DevServer` (which is `Box`-allocated and never moved post-init).
         unsafe {
-            &*(self as *const Self)
+            &*std::ptr::from_ref::<Self>(self)
                 .cast::<u8>()
                 .sub(offset_of!(DevServer, assets))
                 .cast::<DevServer>()
@@ -70,7 +70,7 @@ impl Assets {
     fn owner_mut(&mut self) -> *mut DevServer {
         // SAFETY: see `owner`. Pointer arithmetic only; no reference is formed here.
         unsafe {
-            (self as *mut Self)
+            std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .sub(offset_of!(DevServer, assets))
                 .cast::<DevServer>()

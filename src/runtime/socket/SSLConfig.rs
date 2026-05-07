@@ -547,7 +547,7 @@ fn hash_scalar<T: Copy>(hasher: &mut Wyhash, value: &T) {
     // `std.mem.asBytes(&value)`).
     let bytes = unsafe {
         core::slice::from_raw_parts(
-            (value as *const T) as *const u8,
+            std::ptr::from_ref::<T>(value).cast::<u8>(),
             core::mem::size_of::<T>(),
         )
     };
@@ -628,7 +628,7 @@ pub mod GlobalRegistry {
                         return existing_shared;
                     }
                     // Hash collision, different content — keep scanning.
-                } else if Weak::as_ptr(weak) as *const () != core::ptr::null() {
+                } else if Weak::as_ptr(weak).cast::<()>() != core::ptr::null() {
                     // strong==0: existing is dying. Its `drop()` is blocked in
                     // `remove()` waiting for this mutex, so its slot is still
                     // here. We can't `is_same()` it (would alias `&mut`), but
@@ -903,7 +903,7 @@ fn handle_file(
             // SAFETY: opaque `GenBlob` (`*mut c_void`) is the JS class `m_ctx`
             // pointer, layout-identical to `crate::webcore::Blob`.
             jsc::generated::SSLConfigFile::File(val) => {
-                SingleFile::File(unsafe { &mut *(val.get() as *mut crate::webcore::Blob) })
+                SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
                 return handle_file_array(global, list.items());
@@ -945,7 +945,7 @@ fn handle_file_array(
                 // SAFETY: opaque `GenBlob` (`*mut c_void`) is layout-identical
                 // to `crate::webcore::Blob`.
                 jsc::generated::SSLConfigSingleFile::File(val) => {
-                    SingleFile::File(unsafe { &mut *(val.get() as *mut crate::webcore::Blob) })
+                    SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
                 }
             },
         )?);

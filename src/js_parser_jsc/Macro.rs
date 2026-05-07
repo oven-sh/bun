@@ -90,9 +90,9 @@ impl MacroContext {
     pub fn init(transpiler: &mut Transpiler<'static>) -> MacroContext {
         MacroContext {
             macros: MacroMap::new(),
-            resolver: &mut transpiler.resolver,
+            resolver: &raw mut transpiler.resolver,
             env: transpiler.env,
-            remap: &transpiler.options.macro_remap,
+            remap: &raw const transpiler.options.macro_remap,
             javascript_object: JSValue::ZERO,
             bump: bun_alloc::Arena::new(),
         }
@@ -231,7 +231,7 @@ impl MacroContext {
         // PORT NOTE: reshaped for borrowck — `self.bump` is shared-borrowed for
         // the closure while `self.macros` was already released above; capture
         // as a raw pointer so the closure does not extend `&mut self`.
-        let bump: *const bun_alloc::Arena = &self.bump;
+        let bump: *const bun_alloc::Arena = &raw const self.bump;
         // SAFETY: `vm` is the per-thread VM, live for this call.
         let ret = unsafe { &*vm }.run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
@@ -851,7 +851,7 @@ impl<'a> Run<'a> {
                     // `is_exception` takes `*mut VM` (FFI passthrough). The
                     // C++ side never writes through it.
                     || promise_result
-                        .is_exception(self.global.vm() as *const jsc::VM as *mut jsc::VM)
+                        .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
                     // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
                     unsafe {
@@ -1003,7 +1003,7 @@ impl Runner {
         extern "C" fn call() {
             CALL_STATE.with(|s| {
                 // SAFETY: set immediately before Bun__startMacro below; cleared after.
-                let state = unsafe { &mut *(s.get() as *mut CallData<'_>) };
+                let state = unsafe { &mut *s.get().cast::<CallData<'_>>() };
                 state.result = Run::run_async(
                     state.macro_,
                     state.log,

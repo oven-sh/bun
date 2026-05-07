@@ -90,7 +90,7 @@ fn prop_copy(p: &Property) -> Property {
         value: p.value,
         // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
         // intended Zig copy semantic.
-        ts_metadata: unsafe { core::ptr::read(&p.ts_metadata) },
+        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
 
@@ -100,7 +100,7 @@ fn prop_full_copy(p: &Property) -> Property {
     // undecorated property as-is" path).
     // SAFETY: Vec is repr-compatible with a (ptr,len,cap,origin) POD; the
     // arena owns the buffer for the parser lifetime. Shallow copy via read.
-    let ts_decorators = unsafe { core::ptr::read(&p.ts_decorators) };
+    let ts_decorators = unsafe { core::ptr::read(&raw const p.ts_decorators) };
     Property {
         initializer: p.initializer,
         kind: p.kind,
@@ -110,7 +110,7 @@ fn prop_full_copy(p: &Property) -> Property {
         key: p.key,
         value: p.value,
         // SAFETY: see `prop_copy`.
-        ts_metadata: unsafe { core::ptr::read(&p.ts_metadata) },
+        ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
 
@@ -119,7 +119,7 @@ fn class_copy(c: &G::Class) -> G::Class {
     G::Class {
         class_keyword: c.class_keyword,
         // SAFETY: see `prop_full_copy`.
-        ts_decorators: unsafe { core::ptr::read(&c.ts_decorators) },
+        ts_decorators: unsafe { core::ptr::read(&raw const c.ts_decorators) },
         class_name: c.class_name,
         extends: c.extends,
         body_loc: c.body_loc,
@@ -902,7 +902,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let class_ptr: *mut G::Class = match &mut stmt.clone().data {
             // `stmt` is Copy; cloning the handle is fine — the StoreRef points
             // at the same arena-backed `S::Class`.
-            js_ast::StmtData::SClass(c) => &mut c.class as *mut G::Class,
+            js_ast::StmtData::SClass(c) => &raw mut c.class,
             _ => unreachable!(),
         };
         // SAFETY: arena-owned; exclusive access during visit.
@@ -986,8 +986,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Zig: `core::mem::take` on a Vec. We can't move out of `&mut Class`;
         // shallow-read the list and replace with empty (arena owns the buffer).
         // SAFETY: Vec is POD; arena owns buffer for 'a.
-        let class_decorators: ExprNodeList = unsafe { core::ptr::read(&class.ts_decorators) };
-        unsafe { core::ptr::write(&mut class.ts_decorators, ExprNodeList::default()) };
+        let class_decorators: ExprNodeList = unsafe { core::ptr::read(&raw const class.ts_decorators) };
+        unsafe { core::ptr::write(&raw mut class.ts_decorators, ExprNodeList::default()) };
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1016,7 +1016,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let cdr = p.new_sym(js_ast::symbol::Kind::Other, b"_dec");
             class_dec_ref = Some(cdr);
             // SAFETY: shallow-reborrow the same arena buffer; never grown.
-            let items: ExprNodeList = unsafe { core::ptr::read(&class_decorators) };
+            let items: ExprNodeList = unsafe { core::ptr::read(&raw const class_decorators) };
             let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: cdr }, loc);
@@ -1052,7 +1052,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     expr_var_decls.push(G::Decl { binding, value: None });
                 }
                 // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&prop.ts_decorators) };
+                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
                 let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
@@ -1314,7 +1314,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let get_body =
                         bump.alloc_slice_copy(&[p.s(S::Return { value: Some(get_ret) }, loc)]);
                     let get_fn = G::Fn {
-                        body: G::FnBody { stmts: get_body as *mut [Stmt], loc },
+                        body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(get_body), loc },
                         ..Default::default()
                     };
 
@@ -1334,8 +1334,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         ..Default::default()
                     });
                     let set_fn = G::Fn {
-                        args: core::slice::from_mut(setter_fn_args) as *mut [G::Arg],
-                        body: G::FnBody { stmts: set_body as *mut [Stmt], loc },
+                        args: std::ptr::from_mut::<[G::Arg]>(core::slice::from_mut(setter_fn_args)),
+                        body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(set_body), loc },
                         ..Default::default()
                     };
 
@@ -1413,7 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.use_ref(dec_ref, loc)
             } else {
                 // SAFETY: shallow-reborrow arena Vec.
-                let items: ExprNodeList = unsafe { core::ptr::read(&prop.ts_decorators) };
+                let items: ExprNodeList = unsafe { core::ptr::read(&raw const prop.ts_decorators) };
                 p.new_expr(E::Array { items, ..Default::default() }, loc)
             };
 
@@ -1734,7 +1734,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.use_ref(cdr, loc)
             } else {
                 // SAFETY: see Phase-2 array note.
-                let items: ExprNodeList = unsafe { core::ptr::read(&class_decorators) };
+                let items: ExprNodeList = unsafe { core::ptr::read(&raw const class_decorators) };
                 p.new_expr(E::Array { items, ..Default::default() }, loc)
             });
             cls_dec_args.push(if is_expr {
@@ -1789,7 +1789,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
                         } else {
                             // Wrap in IIFE
-                            let stmts_ptr: *mut [Stmt] = stmts_slice as *mut [Stmt];
+                            let stmts_ptr: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts_slice);
                             let iife_body = p.new_expr(
                                 E::Arrow {
                                     body: G::FnBody { loc, stmts: stmts_ptr },
@@ -1988,7 +1988,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 spliced.extend_from_slice(&body_stmts[..insert_at]);
                 spliced.extend_from_slice(&constructor_inject_stmts);
                 spliced.extend_from_slice(&body_stmts[insert_at..]);
-                func.func.body.stmts = spliced.into_bump_slice_mut() as *mut [Stmt];
+                func.func.body.stmts = std::ptr::from_mut::<[Stmt]>(spliced.into_bump_slice_mut());
                 found_constructor = true;
                 break;
             }
@@ -2014,7 +2014,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     ctor_stmts.push(p.s(S::SExpr { value: call, ..Default::default() }, loc));
                 }
                 ctor_stmts.extend_from_slice(&constructor_inject_stmts);
-                let ctor_body_ptr = ctor_stmts.into_bump_slice_mut() as *mut [Stmt];
+                let ctor_body_ptr = std::ptr::from_mut::<[Stmt]>(ctor_stmts.into_bump_slice_mut());
                 let func = G::Fn {
                     name: None,
                     open_parens_loc: logger::Loc::EMPTY,
@@ -2050,7 +2050,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             new_properties = merged;
         }
 
-        class.properties = new_properties.into_bump_slice_mut() as *mut [Property];
+        class.properties = std::ptr::from_mut::<[Property]>(new_properties.into_bump_slice_mut());
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 

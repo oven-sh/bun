@@ -569,7 +569,7 @@ impl TrustCommand {
             match bun_interchange::json::parse_utf8(&package_json_source, unsafe { &mut *ctx.log }, &bump) {
                 Ok(v) => v.into(),
                 Err(err) => {
-                    let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
+                    let _ = unsafe { &*ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
 
                     Output::err_generic("failed to parse package.json: {s}", (err.name(),));
                     Global::crash();
@@ -643,7 +643,7 @@ impl TrustCommand {
         // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
         // only for `save_format()` (scalar `format`/`migrated` fields).
         unsafe {
-            let lf: *mut Lockfile = &mut *(*pm_raw).lockfile;
+            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
         drop(load_lockfile);

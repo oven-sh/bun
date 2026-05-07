@@ -55,7 +55,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // duration. We only read the two raw-pointer fields, matching Zig's
     // `*const PrepareCssAstTask`.
     let prepare_css_asts: &PrepareCssAstTask = unsafe {
-        &*(task as *mut u8)
+        &*task.cast::<u8>()
             .sub(offset_of!(PrepareCssAstTask, task))
             .cast::<PrepareCssAstTask>()
     };
@@ -68,7 +68,7 @@ pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // avoid aliasing.
     let worker = {
         let bundle_v2: &BundleV2 = unsafe {
-            &*(linker as *mut u8)
+            &*linker.cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
@@ -273,15 +273,14 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // are newtype-`u64` and `Box<[u8]>` / `*const [u8]` are both `(ptr, len)` fat
                                 // pointers — same layout, used read-only by the printer.
                                 Some(unsafe {
-                                    &*(&c.mangled_props as *const _ as *const LocalsResultsMap)
+                                    &*(&raw const c.mangled_props).cast::<LocalsResultsMap>()
                                 }),
                                 // CYCLEBREAK: `to_css` takes `&bun_logger::symbol::Map`; `c.graph.symbols`
                                 // is `bun_js_parser::ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.
                                 unsafe {
-                                    &*(&c.graph.symbols as *const _
-                                        as *const bun_logger::symbol::Map)
+                                    &*(&raw const c.graph.symbols).cast::<bun_logger::symbol::Map>()
                                 },
                             ) {
                                 Ok(v) => v,
@@ -363,8 +362,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // SAFETY: asts[idx] is Some for source_index entries (invariant of imports_in_chunk_in_order).
                         // The column element type is `Option<*mut c_void>`; cast to the real stylesheet type.
                         let original_stylesheet: &BundlerStyleSheet = unsafe {
-                            &*(asts[source_index.get() as usize].expect("css ast present")
-                                as *mut BundlerStyleSheet)
+                            &*asts[source_index.get() as usize].expect("css ast present").cast::<BundlerStyleSheet>()
                         };
                         // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
@@ -485,7 +483,7 @@ fn wrap_rules_with_conditions(
             // `SmallList<&'static [u8],1>` payload is arena-backed and never
             // freed via this view, so the bitwise duplicate is sound (same as
             // every other `ptr::read` shallow-copy in this file).
-            let layer = unsafe { core::ptr::read(&l.v) };
+            let layer = unsafe { core::ptr::read(&raw const l.v) };
             let mut do_block_rule = true;
             if ast.rules.v.is_empty() {
                 if l.v.is_none() {

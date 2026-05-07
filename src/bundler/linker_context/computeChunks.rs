@@ -552,7 +552,7 @@ pub fn compute_chunks(
     // Derived from `this_ptr` (raw) so it does not reborrow `*this` here — the column
     // slices below hold disjoint immutable borrows into `this.graph`.
     let bv2: &mut BundleV2 = unsafe {
-        &mut *((this_ptr as *mut u8)
+        &mut *(this_ptr.cast::<u8>()
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>())
     };

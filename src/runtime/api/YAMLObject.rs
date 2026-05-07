@@ -1156,7 +1156,7 @@ impl<'a> ParserCtx<'a> {
                 Ok(bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?)
             }
             ExprData::EArray(e_array) => {
-                let key = e_array.as_ptr() as *const c_void;
+                let key = e_array.as_ptr().cast_const().cast::<c_void>();
                 if let Some(arr) = self.seen_objects.get(&key) {
                     return Ok(*arr);
                 }
@@ -1175,7 +1175,7 @@ impl<'a> ParserCtx<'a> {
                 Ok(arr)
             }
             ExprData::EObject(e_object) => {
-                let key = e_object.as_ptr() as *const c_void;
+                let key = e_object.as_ptr().cast_const().cast::<c_void>();
                 if let Some(obj) = self.seen_objects.get(&key) {
                     return Ok(*obj);
                 }

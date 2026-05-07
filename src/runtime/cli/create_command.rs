@@ -365,7 +365,7 @@ impl CreateCommand {
         // PORT NOTE: Zig `defer progress.refresh()`. Capture `*mut Progress` so
         // the guard does not hold an exclusive borrow for the whole fn body;
         // `progress` is declared earlier so it is still alive when this drops.
-        let progress_ptr: *mut Progress = &mut progress;
+        let progress_ptr: *mut Progress = &raw mut progress;
         let _refresh_on_exit = scopeguard::guard(progress_ptr, |p| {
             // SAFETY: see PORT NOTE above — `progress` outlives this guard.
             unsafe { (*p).refresh() };
@@ -775,7 +775,7 @@ impl CreateCommand {
                 // PORT NOTE: Zig used fromOwnedSlice; here we move into Vec for mutation.
 
                 if log.errors > 0 {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
 
                     package_json_file = None;
                     break 'process_package_json;
@@ -1252,7 +1252,7 @@ impl CreateCommand {
                         // (initialized via `initialize_store()`), which lives
                         // for the rest of `exec`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
-                            unsafe { &*(s as *const [u8]) }
+                            unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match postinstall.expr.data {
@@ -1910,7 +1910,7 @@ fn analyzer_on_fetch_trampoline(
 ) -> Result<(), bun_core::Error> {
     // SAFETY: `ctx` is `&mut analyzer as *mut _ as *mut ()` set by the caller in
     // `run_on_entry_point`; lives for the duration of the scan call.
-    let analyzer = unsafe { &mut *(ctx as *mut Analyzer<'_>) };
+    let analyzer = unsafe { &mut *ctx.cast::<Analyzer<'_>>() };
     Analyzer::on_analyze(analyzer, result)
 }
 
@@ -1930,7 +1930,7 @@ fn run_on_entry_point(
     };
 
     let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner {
-        ctx: &mut analyzer as *mut _ as *mut (),
+        ctx: (&raw mut analyzer).cast::<()>(),
         entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
         // PORT NOTE: Zig used `@ptrCast` on the fn pointer; in Rust the HRTB lifetime
         // on `Analyzer<'_>` prevents a direct transmute, so route through a thin
@@ -2354,7 +2354,7 @@ impl Example {
                 refresher.refresh();
 
                 if log.errors > 0 {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Global::exit(1);
                 } else {
                     Output::pretty_errorln(format_args!(
@@ -2370,7 +2370,7 @@ impl Example {
             progress.end();
             refresher.refresh();
 
-            let _ = log.print(Output::error_writer() as *mut _);
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
 
@@ -2517,7 +2517,7 @@ impl Example {
             Ok(e) => e,
             Err(err) => {
                 if log.errors > 0 {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Global::exit(1);
                 } else {
                     Output::pretty_errorln(format_args!(
@@ -2530,7 +2530,7 @@ impl Example {
         };
 
         if log.errors > 0 {
-            let _ = log.print(Output::error_writer() as *mut _);
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
 

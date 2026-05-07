@@ -167,7 +167,7 @@ impl ToExprWrapper {
         allocator: &Arena,
         wrap: fn(*mut core::ffi::c_void, logger::Loc, Ref) -> Expr,
     ) -> Self {
-        Self { allocator: allocator as *const Arena, wrap }
+        Self { allocator: std::ptr::from_ref::<Arena>(allocator), wrap }
     }
 
     #[inline]

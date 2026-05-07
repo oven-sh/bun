@@ -215,7 +215,7 @@ impl NapiEnv {
         let mut exception = JSValue::ZERO;
         // SAFETY: out-param is a valid stack location; interior mutability via
         // `as_mut_ptr` permits C++ to clear the pending exception.
-        if unsafe { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &mut exception) } {
+        if unsafe { NapiEnv__getAndClearPendingException(self.as_mut_ptr(), &raw mut exception) } {
             return Some(exception);
         }
         None
@@ -736,7 +736,7 @@ pub extern "C" fn napi_create_string_latin1(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { core::ffi::CStr::from_ptr(str_ as *const c_char) }.to_bytes();
+                break 'brk unsafe { core::ffi::CStr::from_ptr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -789,7 +789,7 @@ pub extern "C" fn napi_create_string_utf8(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { core::ffi::CStr::from_ptr(str_ as *const c_char) }.to_bytes();
+                break 'brk unsafe { core::ffi::CStr::from_ptr(str_.cast::<c_char>()) }.to_bytes();
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -1107,7 +1107,7 @@ pub extern "C" fn napi_make_callback(
     let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
         // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
         // [args, args+arg_count) is valid.
-        unsafe { core::slice::from_raw_parts(args as *const JSValue, arg_count) }
+        unsafe { core::slice::from_raw_parts(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
     };
@@ -1630,13 +1630,13 @@ impl napi_async_work {
         }
         self.scheduled = true;
         self.poll_ref.ref_(vm_ctx());
-        WorkPool::schedule(&mut self.task);
+        WorkPool::schedule(&raw mut self.task);
     }
 
     pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to napi_async_work.task; recover parent via offset_of.
         let this: &mut napi_async_work = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(core::mem::offset_of!(napi_async_work, task))
                 .cast::<napi_async_work>()
         };
@@ -1769,7 +1769,7 @@ pub static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
     minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
     patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
-    release: b"node\0".as_ptr() as *const c_char,
+    release: b"node\0".as_ptr().cast::<c_char>(),
 };
 
 #[repr(C)]
@@ -1803,7 +1803,7 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     }
 
     if len == NAPI_AUTO_LENGTH {
-        return unsafe { core::ffi::CStr::from_ptr(ptr as *const c_char) }.to_bytes();
+        return unsafe { core::ffi::CStr::from_ptr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
     unsafe { core::slice::from_raw_parts(ptr, len) }
@@ -1863,7 +1863,7 @@ pub extern "C" fn napi_create_buffer_copy(
         }
         if let Some(ptr_out) = unsafe { result_data.as_mut() } {
             *ptr_out = if length > 0 {
-                array_buf.ptr as *mut c_void
+                array_buf.ptr.cast::<c_void>()
             } else {
                 ptr::null_mut()
             };
@@ -1986,7 +1986,7 @@ pub extern "C" fn napi_get_node_version(
     bun_output::scoped_log!(napi, "napi_get_node_version");
     let env = get_env!(env_);
     let version = get_out!(env, version_);
-    *version = &NAPI_NODE_VERSION_GLOBAL;
+    *version = &raw const NAPI_NODE_VERSION_GLOBAL;
     env.ok()
 }
 
@@ -2041,7 +2041,7 @@ pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
-        env_ as *mut c_void,
+        env_.cast::<c_void>(),
         napi_internal_register_cleanup_callback,
     );
 }
@@ -3182,7 +3182,7 @@ impl NapiFinalizerTask {
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             global_this.bun_vm().as_mut()
                 .rare_data()
-                .push_cleanup_hook(vm.global(), this as *mut c_void, Self::run_as_cleanup_hook);
+                .push_cleanup_hook(vm.global(), this.cast::<c_void>(), Self::run_as_cleanup_hook);
         } else {
             vm.event_loop_ref().enqueue_task(Task::init(this));
         }

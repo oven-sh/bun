@@ -51,7 +51,7 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, ParseDoubleError> {
 
     let mut count: usize = 0;
     // SAFETY: buf.as_ptr() is valid for buf.len() bytes; `count` is a valid out-param.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &mut count) };
+    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
 
     if count == 0 {
         return Err(ParseDoubleError::InvalidCharacter);

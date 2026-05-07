@@ -147,7 +147,7 @@ impl IOReader {
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
-        unsafe { (*this.reader.get()).set_parent((parent as *mut IOReader).cast()) };
+        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
@@ -185,7 +185,7 @@ impl IOReader {
         // (`*const bun_event_loop::EventLoopHandle`) and never write through
         // it. The pointee lives inside `Arc<IOReader>` and outlives every
         // FilePoll callback.
-        bun_io::EventLoopHandle(&self.state().evtloop as *const _ as *mut c_void)
+        bun_io::EventLoopHandle(&raw const self.state().evtloop as *mut c_void)
     }
 
     /// Only does things on windows. Spec: IOReader.zig `setReading`.

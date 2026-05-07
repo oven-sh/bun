@@ -146,7 +146,7 @@ pub fn install_with_manager(
 
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(Output::error_writer() as *mut _)
+                        .print(std::ptr::from_mut(Output::error_writer()))
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                     manager.log_mut().reset();
                 }
@@ -245,7 +245,7 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
                             manager.log_mut()
-                                .print(Output::error_writer() as *mut _)
+                                .print(std::ptr::from_mut(Output::error_writer()))
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
@@ -254,7 +254,7 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
                             manager.log_mut()
-                                .print(Output::error_writer() as *mut _)
+                                .print(std::ptr::from_mut(Output::error_writer()))
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
@@ -300,7 +300,7 @@ pub fn install_with_manager(
                     // (`log`, `lockfile`, `update_requests`) through it. No
                     // other live `&mut` to `*mgr` exists across the call.
                     let log = unsafe { (*mgr).log };
-                    let from_lockfile: *mut Lockfile = unsafe { &mut *(*mgr).lockfile };
+                    let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
                     let update_requests = if unsafe { (*mgr).to_update } {
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
@@ -648,7 +648,7 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(Output::error_writer() as *mut _)
+                        .print(std::ptr::from_mut(Output::error_writer()))
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
@@ -657,7 +657,7 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
                     manager.log_mut()
-                        .print(Output::error_writer() as *mut _)
+                        .print(std::ptr::from_mut(Output::error_writer()))
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
@@ -759,7 +759,7 @@ pub fn install_with_manager(
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager.log_mut()
-        .print(Output::error_writer() as *mut _)
+        .print(std::ptr::from_mut(Output::error_writer()))
         .map_err(|_| bun_core::err!("WriteFailed"))?;
     manager.log_mut().reset();
 
@@ -961,7 +961,7 @@ pub fn install_with_manager(
         }
     }
 
-    let lockfile_before_install: *const Lockfile = &*manager.lockfile;
+    let lockfile_before_install: *const Lockfile = &raw const *manager.lockfile;
 
     let save_format = load_result.save_format(&manager.options);
 
@@ -1060,7 +1060,7 @@ pub fn install_with_manager(
 
     if log_level != Options::LogLevel::Silent {
         manager.log_mut()
-            .print(Output::error_writer() as *mut _)
+            .print(std::ptr::from_mut(Output::error_writer()))
             .map_err(|_| bun_core::err!("WriteFailed"))?;
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {

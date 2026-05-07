@@ -244,7 +244,7 @@ impl<'a> Printer<'a> {
         self.error_kind = Some(css::PrinterError {
             kind: css::PrinterErrorKind::invalid_css_modules_pattern_in_grid,
             loc: Some(css::ErrorLocation {
-                filename: self.filename() as *const [u8],
+                filename: std::ptr::from_ref::<[u8]>(self.filename()),
                 line: self.loc.line,
                 column: self.loc.column,
             }),
@@ -262,7 +262,7 @@ impl<'a> Printer<'a> {
         self.error_kind = Some(css::PrinterError {
             kind,
             loc: maybe_loc.map(|loc| css::ErrorLocation {
-                filename: self.filename() as *const [u8],
+                filename: std::ptr::from_ref::<[u8]>(self.filename()),
                 line: loc.line - 1,
                 column: loc.column,
             }),

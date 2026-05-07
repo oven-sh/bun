@@ -124,7 +124,7 @@ pub trait PosixPipeWriter {
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
-            let self_addr = self as *const _ as *const () as usize;
+            let self_addr = std::ptr::from_ref(self).cast::<()>() as usize;
             log!(
                 "PosixPipeWriter(0x{:x}) handle={}",
                 self_addr,
@@ -367,7 +367,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             unsafe { Parent::event_loop(self.parent()) },
             fd,
             Parent::POLL_OWNER_TAG,
-            self as *mut _ as *mut c_void,
+            std::ptr::from_mut(self).cast::<c_void>(),
         )
     }
 
@@ -505,7 +505,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Parent::POLL_OWNER_TAG, owner);
     }
 
@@ -728,7 +728,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = self as *mut _ as *mut c_void;
+        let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle.set_owner(Parent::POLL_OWNER_TAG, owner);
     }
 
@@ -1044,7 +1044,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let poll = match self.get_poll() {
             Some(p) => p,
             None => {
-                let p = FilePoll::init(loop_, fd, Parent::POLL_OWNER_TAG, self as *mut _ as *mut c_void);
+                let p = FilePoll::init(loop_, fd, Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast::<c_void>());
                 self.handle = PollOrFd::Poll(p);
                 p
             }
@@ -1150,7 +1150,7 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Pipe(pipe) => {
                 // SAFETY: pipe is heap-allocated by Source::open; freed in on_pipe_close.
-                unsafe { (*pipe).data = pipe as *mut c_void };
+                unsafe { (*pipe).data = pipe.cast::<c_void>() };
                 // SAFETY: pipe is a live uv handle; libuv calls on_pipe_close after close completes.
                 unsafe { (*pipe).close(on_pipe_close) };
             }
@@ -1158,7 +1158,7 @@ pub trait BaseWindowsPipeWriter {
                 let p = tty.as_ptr();
                 // SAFETY: tty is heap-allocated (via open_tty Box::into_raw) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
-                unsafe { (*p).data = p as *mut c_void };
+                unsafe { (*p).data = p.cast::<c_void>() };
                 // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
                 unsafe { (*p).close(on_tty_close) };
             }
@@ -1186,7 +1186,7 @@ pub trait BaseWindowsPipeWriter {
         self.set_parent_ptr(parent);
         if !self.is_done() {
             if let Some(pipe) = self.source() {
-                pipe.set_data(self as *mut Self as *mut c_void);
+                pipe.set_data(core::ptr::from_mut(self).cast::<c_void>());
             }
         }
     }
@@ -1206,7 +1206,7 @@ pub trait BaseWindowsPipeWriter {
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let source = Source::SyncFile(Source::open_file(fd));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1216,7 +1216,7 @@ pub trait BaseWindowsPipeWriter {
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let source = Source::File(Source::open_file(fd));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1242,7 +1242,7 @@ pub trait BaseWindowsPipeWriter {
         // TODO(port): Zig branch `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
         // dropped — Phase B handles via the MovableFd overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
-        source.set_data(self as *mut Self as *mut c_void);
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
         self.set_parent(p);
@@ -1267,14 +1267,14 @@ pub trait BaseWindowsPipeWriter {
 #[cfg(windows)]
 extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
     // SAFETY: handle.data was set to the boxed Pipe ptr in close().
-    let this = unsafe { (*handle).data as *mut uv::Pipe };
+    let this = unsafe { (*handle).data.cast::<uv::Pipe>() };
     drop(unsafe { Box::from_raw(this) });
 }
 
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // SAFETY: handle.data was set to the tty ptr in close().
-    let this = unsafe { (*handle).data as *mut uv::uv_tty_t };
+    let this = unsafe { (*handle).data.cast::<uv::uv_tty_t>() };
     // The stdin tty (fd 0) lives in static storage; never free it. Mirrors
     // Zig PipeWriter onTtyClose's `is_stdin_tty()` gate.
     if !crate::source::stdin_tty::is_stdin_tty(this) {
@@ -1453,7 +1453,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *(parent_ptr as *mut Self) };
+        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
 
         if was_canceled {
             // Canceled write - clear pending state
@@ -1496,7 +1496,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                 debug_assert!(file.can_start());
 
                 self.pending_payload_size = buffer_len;
-                file.fs.set_data(self as *mut Self as *mut c_void);
+                file.fs.set_data(core::ptr::from_mut(self).cast::<c_void>());
                 file.prepare();
                 self.write_buffer = uv::uv_buf_t::init(buffer);
 
@@ -1505,7 +1505,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
                     unsafe { Parent::loop_(self.parent()) },
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    core::ptr::from_ref(&self.write_buffer),
                     1,
                     -1,
                     Self::on_fs_write_complete,
@@ -1622,7 +1622,7 @@ impl StreamBuffer {
     pub fn write_type_as_bytes<T>(&mut self, data: &T) -> Result<(), OOM> {
         // SAFETY: caller passes POD T (matches Zig std.mem.asBytes contract).
         let bytes = unsafe {
-            core::slice::from_raw_parts(data as *const T as *const u8, mem::size_of::<T>())
+            core::slice::from_raw_parts(std::ptr::from_ref::<T>(data).cast::<u8>(), mem::size_of::<T>())
         };
         self.write(bytes)
     }
@@ -1631,7 +1631,7 @@ impl StreamBuffer {
         // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // SAFETY: caller passes POD T.
         let bytes = unsafe {
-            core::slice::from_raw_parts(&data as *const T as *const u8, mem::size_of::<T>())
+            core::slice::from_raw_parts((&raw const data).cast::<u8>(), mem::size_of::<T>())
         };
         // PERF(port): was assume_capacity
         self.list.extend_from_slice(bytes);
@@ -1895,7 +1895,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole `&mut` at this point.
-        let this = unsafe { &mut *(parent_ptr as *mut Self) };
+        let this = unsafe { &mut *parent_ptr.cast::<Self>() };
 
         if was_canceled {
             // Canceled write - reset buffers and deref to balance process_send ref
@@ -1961,7 +1961,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 // StreamingWriter ensures current_payload blocks concurrent writes
                 debug_assert!(file.can_start());
 
-                file.fs.set_data(self as *mut Self as *mut c_void);
+                file.fs.set_data(core::ptr::from_mut(self).cast::<c_void>());
                 file.prepare();
                 self.write_buffer = uv::uv_buf_t::init(bytes);
 
@@ -1970,7 +1970,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                     unsafe { Parent::loop_(self.parent()) },
                     &mut file.fs,
                     file.file,
-                    &self.write_buffer as *const _,
+                    core::ptr::from_ref(&self.write_buffer),
                     1,
                     -1,
                     Self::on_fs_write_complete,

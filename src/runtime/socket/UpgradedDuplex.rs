@@ -245,11 +245,11 @@ impl UpgradedDuplex {
                         None,
                         0,
                         __jsc_host_on_received_data,
-                        self as *mut Self as *mut c_void,
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                     );
                     data_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(data_callback, Some(self as *mut Self as *mut c_void));
+                    host_fn::set_function_data(data_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
 
                     self.on_data_callback = StrongOptional::create(data_callback, global);
                     data_callback
@@ -267,11 +267,11 @@ impl UpgradedDuplex {
                         None,
                         0,
                         __jsc_host_on_end,
-                        self as *mut Self as *mut c_void,
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                     );
                     end_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(end_callback, Some(self as *mut Self as *mut c_void));
+                    host_fn::set_function_data(end_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
 
                     self.on_end_callback = StrongOptional::create(end_callback, global);
                     end_callback
@@ -289,11 +289,11 @@ impl UpgradedDuplex {
                         None,
                         0,
                         __jsc_host_on_writable,
-                        self as *mut Self as *mut c_void,
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                     );
                     writable_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(writable_callback, Some(self as *mut Self as *mut c_void));
+                    host_fn::set_function_data(writable_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
                     self.on_writable_callback = StrongOptional::create(writable_callback, global);
                     writable_callback
                 }
@@ -310,11 +310,11 @@ impl UpgradedDuplex {
                         None,
                         0,
                         __jsc_host_on_close_js,
-                        self as *mut Self as *mut c_void,
+                        std::ptr::from_mut::<Self>(self).cast::<c_void>(),
                     );
                     close_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(close_callback, Some(self as *mut Self as *mut c_void));
+                    host_fn::set_function_data(close_callback, Some(std::ptr::from_mut::<Self>(self).cast::<c_void>()));
                     self.on_close_callback = StrongOptional::create(close_callback, global);
                     close_callback
                 }
@@ -335,7 +335,7 @@ impl UpgradedDuplex {
             ssl_options,
             is_client,
             super::ssl_wrapper::Handlers {
-                ctx: self as *mut UpgradedDuplex,
+                ctx: std::ptr::from_mut::<UpgradedDuplex>(self),
                 on_open: Self::on_open,
                 on_handshake: Self::on_handshake,
                 on_data: Self::on_data,
@@ -369,7 +369,7 @@ impl UpgradedDuplex {
             ctx_nn,
             is_client,
             super::ssl_wrapper::Handlers {
-                ctx: self as *mut UpgradedDuplex,
+                ctx: std::ptr::from_mut::<UpgradedDuplex>(self),
                 on_open: Self::on_open,
                 on_handshake: Self::on_handshake,
                 on_data: Self::on_data,
@@ -393,7 +393,7 @@ impl UpgradedDuplex {
     }
 
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
-        Self::internal_write(self as *mut Self, encoded_data);
+        Self::internal_write(std::ptr::from_mut::<Self>(self), encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
@@ -463,7 +463,7 @@ impl UpgradedDuplex {
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&mut self.event_loop_timer);
+            timer_all().remove(&raw mut self.event_loop_timer);
         }
         self.current_timeout = ms;
 
@@ -478,7 +478,7 @@ impl UpgradedDuplex {
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        timer_all().insert(&mut self.event_loop_timer);
+        timer_all().insert(&raw mut self.event_loop_timer);
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {
@@ -531,7 +531,7 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *(self_ptr as *mut UpgradedDuplex) };
+        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
         if args.len >= 1 {
             let data_arg = args.ptr[0];
             if this.origin.has() {
@@ -566,7 +566,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *(self_ptr as *mut UpgradedDuplex) };
+        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
@@ -583,7 +583,7 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *(self_ptr as *mut UpgradedDuplex) };
+        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.flush();
@@ -603,7 +603,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
-        let this = unsafe { &mut *(self_ptr as *mut UpgradedDuplex) };
+        let this = unsafe { &mut *self_ptr.cast::<UpgradedDuplex>() };
         // flush pending data
         if let Some(wrapper) = &mut this.wrapper {
             let _ = wrapper.shutdown(true);

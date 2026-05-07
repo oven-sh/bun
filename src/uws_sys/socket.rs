@@ -185,7 +185,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             InternalSocket::Detached => None,
             InternalSocket::UpgradedDuplex(socket) => {
                 if IS_SSL {
-                    Some((socket.ssl()? as *mut SSL).cast::<c_void>())
+                    Some(socket.ssl()?.cast::<SSL>().cast::<c_void>())
                 } else {
                     None
                 }

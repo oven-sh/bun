@@ -131,7 +131,7 @@ impl ReadableStream {
         let mut out2 = JSValue::ZERO;
         // SAFETY: FFI call into JSC bindings; out params are valid stack ptrs.
         let ok = bun_jsc::from_js_host_call_generic(global_this, || unsafe {
-            ReadableStream__tee(self.value, global_this, &mut out1, &mut out2)
+            ReadableStream__tee(self.value, global_this, &raw mut out1, &raw mut out2)
         })?;
         if !ok {
             return Ok(None);
@@ -270,7 +270,7 @@ impl ReadableStream {
 
         // SAFETY: out/ptr are valid stack out-params.
         let tag = bun_jsc::from_js_host_call_generic(global_this, || unsafe {
-            ReadableStreamTag__tagged(global_this, &mut out, &mut ptr)
+            ReadableStreamTag__tagged(global_this, &raw mut out, &raw mut ptr)
         })?;
 
         Ok(match tag {
@@ -447,7 +447,7 @@ impl ReadableStream {
         // `m_ctx` in `to_readable_stream()` below (freed via GC finalizer).
         let source = unsafe { &mut *source };
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
-        let ctx_ptr: *mut FileReader = &mut source.context;
+        let ctx_ptr: *mut FileReader = &raw mut source.context;
         source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
 
         source.to_readable_stream(global_this)
@@ -717,7 +717,7 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
         // SAFETY: `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
         // (`Box::into_raw`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
         // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
-        unsafe { (C::JS_CREATE)(global_this, self as *mut Self as *mut c_void) }
+        unsafe { (C::JS_CREATE)(global_this, std::ptr::from_mut::<Self>(self).cast::<c_void>()) }
     }
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         // SAFETY: `this` wraps a `JS{NAME}InternalReadableStreamSource` cell on `global`'s heap.
@@ -803,7 +803,7 @@ impl<C: SourceContext> NewSource<C> {
             // against the *exact* fn pointer stored by `set_on_close_from_js`, so the
             // JS path receives `self` (not `close_ctx`, which is unset on that path).
             if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(self as *mut _ as *mut c_void));
+                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
             } else {
                 close(self.close_ctx.map(|p| p.as_ptr()));
             }
@@ -902,7 +902,7 @@ impl<C: SourceContext> NewSource<C> {
     /// `Box::into_raw(Box::new(..))`) and must not be used after this call.
     pub unsafe fn deinit(&mut self) {
         // SAFETY: see fn-level doc — caller guarantees Box provenance.
-        drop(unsafe { Box::from_raw(self as *mut Self) });
+        drop(unsafe { Box::from_raw(std::ptr::from_mut::<Self>(self)) });
     }
 }
 
@@ -989,7 +989,7 @@ impl<C: SourceContext> NewSource<C> {
                 // SAFETY: flags is a JS object passed from builtin JS; index 0 is writable.
                 unsafe {
                     jsc::c_api::JSObjectSetPropertyAtIndex(
-                        global_this as *const JSGlobalObject as *mut JSGlobalObject,
+                        std::ptr::from_ref::<JSGlobalObject>(global_this).cast_mut(),
                         flags.as_object_ref(),
                         0,
                         value.as_object_ref(),

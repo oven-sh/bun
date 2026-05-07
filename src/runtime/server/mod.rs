@@ -366,7 +366,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         // `prepare_js_request_context` for this frame; no other borrow is live.
         unsafe {
             (*self.ctx).to_async(
-                req as *mut uws_sys::Request as *mut c_void,
+                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 &mut *self.request_object,
             );
         }
@@ -566,7 +566,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
         // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
         // (no-op enter/exit in release builds).
-        let vm_ptr = server.vm as *mut jsc::VirtualMachine;
+        let vm_ptr = server.vm.cast_mut();
         // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
         // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
         // this frame.
@@ -584,7 +584,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // We need to pass it a pointer, any pointer should do.
             resp_ref.on_timeout(
                 Self::on_timeout_for_idle_warn,
-                Self::did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
+                Self::did_send_idletimeout_warning_once().as_ptr().cast::<c_void>(),
             );
         }
 
@@ -594,12 +594,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
         // initializes it via `MaybeUninit::write`.
         let ctx_uninit = unsafe {
-            &mut *(ctx_slot as *mut core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>)
+            &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
         };
         ServerRequestContext::<SSL, DEBUG>::create(
             ctx_uninit,
             this,
-            req as *mut uws_sys::Request as *mut c_void,
+            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
             should_deinit_context,
             method,
@@ -681,8 +681,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 unsafe {
                     *body_value =
                         crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
-                            task: Some(ctx as *mut c_void),
-                            global: global as *const _,
+                            task: Some(ctx.cast::<c_void>()),
+                            global: std::ptr::from_ref(global),
                             on_start_buffering: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,
                             ),
@@ -739,7 +739,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             SavedRequestUnion::Stack(r) => {
                 // PORT NOTE: reshaped for borrowck — decouple the inner
                 // `&mut uws::Request` lifetime from the `req` match guard.
-                let r = *r as *const uws::Request as *mut uws_sys::Request;
+                let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
                 match Self::prepare_js_request_context(
                     this,
                     // SAFETY: stack uws::Request still alive for this frame.
@@ -802,7 +802,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx_mut = unsafe { &mut *ctx };
         let original_state = ctx_mut.defer_deinit_until_callback_completes;
         let mut should_deinit_context = false;
-        ctx_mut.defer_deinit_until_callback_completes = Some(&mut should_deinit_context);
+        ctx_mut.defer_deinit_until_callback_completes = Some(&raw mut should_deinit_context);
         ctx_mut.on_response(server, prepared.js_request, response_value);
         // SAFETY: re-borrow after `on_response` returned (which may have run
         // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
@@ -832,7 +832,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // is the heap `Request` kept alive by `ctx.request_weakref`.
                 unsafe {
                     (*ctx).to_async(
-                        r as *const uws::Request as *mut c_void,
+                        std::ptr::from_ref::<uws::Request>(r).cast_mut().cast::<c_void>(),
                         &mut *request_object,
                     )
                 };
@@ -899,7 +899,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `req`/`request_object` live for this frame; `ctx` not freed.
         unsafe {
             (*ctx).to_async(
-                req as *mut uws_sys::Request as *mut c_void,
+                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 &mut *request_object,
             );
         }
@@ -912,7 +912,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
         let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
+        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
         let Some(prepared) = Self::prepare_js_request_context(
             this,
             req,
@@ -958,11 +958,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
         let user_route = unsafe { &*user_route };
-        let server = user_route.server as *mut Self;
+        let server = user_route.server.cast_mut();
         let index = user_route.id;
 
         let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
+        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
         let Some(mut prepared) = Self::prepare_js_request_context(
             server,
             req,
@@ -996,7 +996,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         prepared.request_object,
                         server_js,
                         server_request_list,
-                        &mut prepared.js_request,
+                        &raw mut prepared.js_request,
                         req,
                     )
                 }
@@ -1069,7 +1069,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
         // a raw `*mut Self` would zero those bits and trip the dispatch
         // `unreachable!`, so re-pack into the `TaggedPointerUnion` wire format.
-        let any_server_packed = AnyServer::from(this as *const Self).to_packed() as usize;
+        let any_server_packed = AnyServer::from(this.cast_const()).to_packed() as usize;
 
         let mut node_http_response: *mut NodeHTTPResponse = core::ptr::null_mut();
         let mut is_async = false;
@@ -1090,9 +1090,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     callback,
                     method_string,
                     req,
-                    (resp as *mut uws_sys::NewAppResponse<SSL>).cast(),
+                    std::ptr::from_mut::<uws_sys::NewAppResponse<SSL>>(resp).cast(),
                     upgrade_ctx.cast(),
-                    &mut node_http_response,
+                    &raw mut node_http_response,
                 )
             }
         })
@@ -1326,12 +1326,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
         self.poll_ref
-            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm as *mut _));
+            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm.cast_mut()));
     }
 
     pub fn unref(&mut self) {
         self.poll_ref
-            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm as *mut _));
+            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm.cast_mut()));
     }
 
     pub fn stop_listening(&mut self, abrupt: bool) {
@@ -1524,7 +1524,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         let task = Box::into_raw(Box::new(bun_event_loop::AnyTask::AnyTask {
-            ctx: core::ptr::NonNull::new((self as *mut Self).cast()),
+            ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast()),
             callback: |ctx: *mut core::ffi::c_void| {
                 Self::deinit(ctx.cast::<Self>());
                 Ok(())
@@ -1615,7 +1615,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn set_using_custom_expect_handler(&mut self, value: bool) {
         if let Some(app) = self.app {
             // SAFETY: app is a live uws handle while self is alive.
-            unsafe { ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app as *mut c_void, value) };
+            unsafe { ffi::NodeHTTP_setUsingCustomExpectHandler(SSL, app.cast::<c_void>(), value) };
         }
     }
 
@@ -1632,10 +1632,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // errdefer free(base_url) — Box drops on Err automatically
 
         let server = Box::into_raw(Box::new(Self {
-            global_this: global as *const _,
+            global_this: std::ptr::from_ref(global),
             config: core::mem::take(config),
             base_url_string_for_joining: base_url,
-            vm: jsc::VirtualMachine::get() as *const _,
+            vm: std::ptr::from_ref(jsc::VirtualMachine::get()),
             dev_server: None,
             app: None,
             listener: None,
@@ -1714,12 +1714,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: set_routes is only called after `self.app = Some(..)` in listen().
         let app = unsafe { &mut *self.app.unwrap() };
         let self_ptr: *mut Self = self;
-        let any_server = AnyServer::from(self_ptr as *const Self);
+        let any_server = AnyServer::from(self_ptr.cast_const());
         // PORT NOTE: reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
         // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
         // don't conflict with `&mut self.config` / `&mut self.user_routes`.
         let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
-            self.dev_server.as_deref_mut().map(|d| d as *mut _);
+            self.dev_server.as_deref_mut().map(|d| std::ptr::from_mut(d));
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
@@ -1768,7 +1768,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
             websocket.global_object = self.global_this;
-            websocket.handler.app = Some(app as *mut _ as *mut c_void);
+            websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
             websocket
                 .handler
                 .flags
@@ -1785,10 +1785,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Snapshot the websocket pointer up front so the two `&mut self.*`
         // accesses do not overlap from rustc's POV.
         let websocket_ptr: Option<*mut WebSocketServerContext> =
-            self.config.websocket.as_mut().map(|w| w as *mut _);
+            self.config.websocket.as_mut().map(|w| std::ptr::from_mut(w));
 
         for user_route in self.user_routes.iter_mut() {
-            let ud: *mut c_void = (user_route as *mut UserRoute<SSL, DEBUG>).cast();
+            let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
             let path = user_route.route.path.as_bytes();
             let is_star_path = path == b"/*";
             if is_star_path {
@@ -2084,7 +2084,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the main "/*" handler.
         if has_node_http {
             // SAFETY: app is a live uws handle.
-            unsafe { ffi::NodeHTTP_assignOnNodeJSCompat(SSL, app as *mut _ as *mut c_void) };
+            unsafe { ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>()) };
         }
 
         route_list_value
@@ -2311,7 +2311,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let inner = &bytes[1..bytes.len() - 1];
                             host_buff[..inner.len()].copy_from_slice(inner);
                             host_buff[inner.len()] = 0;
-                            host = host_buff.as_ptr() as *const c_char;
+                            host = host_buff.as_ptr().cast::<c_char>();
                         } else {
                             host = existing.as_ptr();
                         }
@@ -2335,7 +2335,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     unsafe {
                         (*app).listen_with_config(
                             Some(trampoline::on_listen::<SSL, DEBUG>),
-                            this as *mut c_void,
+                            this.cast::<c_void>(),
                             uws_app_c::uws_app_listen_config_t {
                                 port: port as c_int,
                                 host,
@@ -2362,7 +2362,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { &mut *h3_app }.listen_with_config(
                             this,
                             |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
-                                s.on_h3_listen(ls.map(|l| l as *mut _));
+                                s.on_h3_listen(ls.map(|l| std::ptr::from_mut(l)));
                             },
                             uws_sys::h3::ListenConfig { port: h3_port, host, options },
                         );
@@ -2403,7 +2403,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 unsafe {
                     (*app).listen_on_unix_socket(
                         trampoline::on_listen_unix::<SSL, DEBUG>,
-                        this as *mut c_void,
+                        this.cast::<c_void>(),
                         z,
                         options,
                     );
@@ -2488,7 +2488,7 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
-        let server = unsafe { &mut *(user_data as *mut NewServer<SSL, DEBUG>) };
+        let server = unsafe { &mut *user_data.cast::<NewServer<SSL, DEBUG>>() };
         let socket = if socket.is_null() {
             None
         } else {
@@ -2512,7 +2512,7 @@ mod trampoline {
         _user_data: *mut c_void,
     ) {
         // SAFETY: res is a live uws response for the duration of the callback.
-        let resp = unsafe { &mut *(res as *mut uws_sys::NewAppResponse<SSL>) };
+        let resp = unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() };
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
     }
@@ -2719,7 +2719,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     // server's entire lifetime once `init()` runs.
     fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
     fn vm(&self) -> &jsc::VirtualMachine { unsafe { &*self.vm } }
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine { self.vm as *mut jsc::VirtualMachine }
+    fn vm_mut(&self) -> *mut jsc::VirtualMachine { self.vm.cast_mut() }
     fn config(&self) -> &ServerConfig { &self.config }
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> { self.dev_server.as_deref() }
@@ -2732,10 +2732,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         unsafe {
             if is_h3 {
                 (*self.h3_request_pool_allocator)
-                    .put(&mut *(ctx as *mut request_context::RequestContext<Self, SSL, DEBUG, true>));
+                    .put(&raw mut *ctx.cast::<request_context::RequestContext<Self, SSL, DEBUG, true>>());
             } else {
                 (*self.request_pool_allocator)
-                    .put(&mut *(ctx as *mut request_context::RequestContext<Self, SSL, DEBUG, false>));
+                    .put(&raw mut *ctx.cast::<request_context::RequestContext<Self, SSL, DEBUG, false>>());
             }
         }
     }
@@ -2814,7 +2814,7 @@ impl AnyServer {
             (false, true) => AnyServerTag::DebugHTTPServer,
             (true, true) => AnyServerTag::DebugHTTPSServer,
         };
-        AnyServer { tag, ptr: server as *mut () }
+        AnyServer { tag, ptr: server.cast::<()>().cast_mut() }
     }
 
     /// Re-pack into the Zig `bun.ptr.TaggedPointerUnion` wire format

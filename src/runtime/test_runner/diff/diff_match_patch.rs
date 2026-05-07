@@ -842,7 +842,7 @@ pub fn diff_lines_to_chars<Unit: DiffUnit>(
 
     // "\x00" is a valid character, but various debuggers don't like it.
     // So we'll insert a junk entry to avoid generating a null character.
-    line_array.push(&[] as *const [Unit]);
+    line_array.push(std::ptr::from_ref::<[Unit]>(&[]));
 
     // Allocate 2/3rds of the space for text1, the rest for text2.
     let chars1 = diff_lines_to_chars_munge(text1, &mut line_array, &mut line_hash)?;
@@ -867,7 +867,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
         panic!("Unit must be u8");
     }
     // SAFETY: Unit == u8 verified above; layout-identical reinterpret.
-    let text_u8: &[u8] = unsafe { core::slice::from_raw_parts(text.as_ptr() as *const u8, text.len()) };
+    let text_u8: &[u8] = unsafe { core::slice::from_raw_parts(text.as_ptr().cast::<u8>(), text.len()) };
 
     let mut line_start: isize = 0;
     let mut line_end: isize = -1;
@@ -885,7 +885,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
             ..usize::try_from(line_start + (line_end + 1 - line_start)).unwrap()];
         // SAFETY: Unit == u8 verified above.
         let line_u8: &[u8] =
-            unsafe { core::slice::from_raw_parts(line.as_ptr() as *const u8, line.len()) };
+            unsafe { core::slice::from_raw_parts(line.as_ptr().cast::<u8>(), line.len()) };
 
         if let Some(&value) = line_hash.get(line_u8) {
             chars.push(value);
@@ -894,10 +894,10 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
                 line = &text[usize::try_from(line_start).unwrap()..];
                 line_end = isize::try_from(text.len()).unwrap();
             }
-            line_array.push(line as *const [Unit]);
+            line_array.push(std::ptr::from_ref::<[Unit]>(line));
             // SAFETY: Unit == u8 verified above.
             let line_u8: &[u8] =
-                unsafe { core::slice::from_raw_parts(line.as_ptr() as *const u8, line.len()) };
+                unsafe { core::slice::from_raw_parts(line.as_ptr().cast::<u8>(), line.len()) };
             // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
             line_hash.insert(line_u8.into(), line_array.len() - 1);
             chars.push(line_array.len() - 1);
@@ -1351,8 +1351,8 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
         return 5;
     }
     // SAFETY: Unit == u8 verified above; layout-identical reinterpret.
-    let one: &[u8] = unsafe { core::slice::from_raw_parts(one.as_ptr() as *const u8, one.len()) };
-    let two: &[u8] = unsafe { core::slice::from_raw_parts(two.as_ptr() as *const u8, two.len()) };
+    let one: &[u8] = unsafe { core::slice::from_raw_parts(one.as_ptr().cast::<u8>(), one.len()) };
+    let two: &[u8] = unsafe { core::slice::from_raw_parts(two.as_ptr().cast::<u8>(), two.len()) };
 
     // Each port of this function behaves slightly differently due to
     // subtle differences in each language's definition of things like

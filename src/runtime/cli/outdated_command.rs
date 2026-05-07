@@ -154,7 +154,7 @@ impl OutdatedCommand {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.
-                        let _ = unsafe { (*log_ptr).print(Output::error_writer() as *mut _) };
+                        let _ = unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
                     }
                 }
                 Global::crash();

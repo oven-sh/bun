@@ -1539,7 +1539,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 
             // SAFETY: bun_vm() returns the live thread-local VM.
             if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
-                let any = AnyServer::from(server as *const $ServerType);
+                let any = AnyServer::from(server.cast_const());
                 crate::server::http_server_agent::notify_server_started(
                     &mut debugger.http_server_agent,
                     any,
@@ -1766,13 +1766,13 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
             // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.
-            let _ = sys::munmap(ptr as *mut u8, size as usize);
+            let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
         }
 
         jsc::array_buffer::make_typed_array_with_bytes_no_copy(
             global_this,
             jsc::TypedArrayType::TypeUint8,
-            map.as_ptr() as *mut c_void,
+            map.as_ptr().cast_mut().cast::<c_void>(),
             map.len(),
             Some(munmap_dealloc),
             map.len() as *mut c_void,
@@ -2027,7 +2027,7 @@ fn standalone_file_blob(
     );
     // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
     // stable for the life of `mime` (`'static` for the table-backed loaders).
-    blob_body.content_type = mime.value.as_ref() as *const [u8];
+    blob_body.content_type = std::ptr::from_ref::<[u8]>(mime.value.as_ref());
     // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
     // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
     // is a no-op for the static case and correct for the owned `OTHER` case.
@@ -2491,7 +2491,7 @@ pub mod JSZlib {
                 );
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr as *mut c_void,
+                    ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2558,7 +2558,7 @@ pub mod JSZlib {
                 );
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr as *mut c_void,
+                    ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2661,7 +2661,7 @@ pub mod JSZlib {
                 );
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr as *mut c_void,
+                    ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2723,7 +2723,7 @@ pub mod JSZlib {
                 );
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr as *mut c_void,
+                    ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2911,7 +2911,7 @@ pub mod JSZstd {
         pub unsafe fn run_task(task: *mut jsc::WorkPoolTask) {
             // SAFETY: task points to ZstdJob.task; recover parent via offset_of.
             let job_ptr: *mut ZstdJob = unsafe {
-                (task as *mut u8)
+                task.cast::<u8>()
                     .sub(core::mem::offset_of!(ZstdJob, task))
                     .cast::<ZstdJob>()
             };
@@ -3057,7 +3057,7 @@ pub mod JSZstd {
             job_ref.poll.ref_(bun_aio::posix_event_loop::get_vm_ctx(
                 bun_aio::AllocatorType::Js,
             ));
-            WorkPool::schedule(&mut job_ref.task);
+            WorkPool::schedule(&raw mut job_ref.task);
 
             job
         }

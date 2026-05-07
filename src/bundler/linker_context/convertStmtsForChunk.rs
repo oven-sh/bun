@@ -398,7 +398,7 @@ pub fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(
                             S::Function {
                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s.func`).
-                                func: unsafe { core::ptr::read(&s.func) },
+                                func: unsafe { core::ptr::read(&raw const s.func) },
                             },
                             stmt.loc,
                         );
@@ -413,7 +413,7 @@ pub fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(
                             S::Class {
                                 // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s.class`).
-                                class: unsafe { core::ptr::read(&s.class) },
+                                class: unsafe { core::ptr::read(&raw const s.class) },
                                 is_export: false,
                             },
                             stmt.loc,
@@ -499,7 +499,7 @@ pub fn convert_stmts_for_chunk(
                                         stmt = Stmt::alloc(
                                             S::Function {
                                                 // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s2.func`).
-                                                func: unsafe { core::ptr::read(&s2.func) },
+                                                func: unsafe { core::ptr::read(&raw const s2.func) },
                                             },
                                             stmt.loc,
                                         );
@@ -514,7 +514,7 @@ pub fn convert_stmts_for_chunk(
                                         stmt = Stmt::alloc(
                                             S::Class {
                                                 // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s2.class`).
-                                                class: unsafe { core::ptr::read(&s2.class) },
+                                                class: unsafe { core::ptr::read(&raw const s2.class) },
                                                 is_export: false,
                                             },
                                             stmt.loc,

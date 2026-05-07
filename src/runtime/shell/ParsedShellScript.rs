@@ -315,7 +315,7 @@ fn create_parsed_shell_script_impl(
         ParsedShellScript__createWithValues(
             global.as_mut_ptr(),
             parsed_shell_script_ptr.cast::<core::ffi::c_void>(),
-            marked_argument_buffer as *mut MarkedArgumentBuffer as *mut core::ffi::c_void,
+            std::ptr::from_mut::<MarkedArgumentBuffer>(marked_argument_buffer).cast::<core::ffi::c_void>(),
         )
     };
     // SAFETY: pointer just created above; wrapper now owns it but we need one more field write.

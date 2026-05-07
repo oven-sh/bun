@@ -109,7 +109,7 @@ impl<'a> ProcessHandle<'a> {
             break 'brk spawn::spawn_process(
                 &handle.options,
                 argv.as_ptr(),
-                envp.as_ptr() as *const *const c_char,
+                envp.as_ptr().cast::<*const c_char>(),
             )??;
             // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
         };
@@ -117,7 +117,7 @@ impl<'a> ProcessHandle<'a> {
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
 
-        let handle_ptr = handle as *mut ProcessHandle<'a> as *mut c_void;
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
         handle.stderr.set_parent(handle_ptr);
 
@@ -149,7 +149,7 @@ impl<'a> ProcessHandle<'a> {
         // sole owner until reaped, owner backref set before reap callback can fire.
         let process = unsafe { &mut *process };
         process.set_exit_handler(
-            (handle as *mut ProcessHandle<'a>).cast::<()>(),
+            std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<()>(),
             &PROCESS_HANDLE_EXIT_VTABLE,
         );
 
@@ -197,7 +197,7 @@ unsafe fn process_handle_on_process_exit(
     // SAFETY: `owner` is the `*mut ProcessHandle` registered via
     // `set_exit_handler`; it outlives the Process.
     unsafe {
-        (*(owner as *mut ProcessHandle<'static>))
+        (*owner.cast::<ProcessHandle<'static>>())
             .on_process_exit(&mut *process, status, &*rusage)
     };
 }
@@ -464,7 +464,7 @@ impl<'a> State<'a> {
         // PORT NOTE: reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             // SAFETY: idx in bounds; we need disjoint access to handles[idx] and draw_buf.
-            let handle = unsafe { &*(&self.handles[idx] as *const ProcessHandle<'a>) };
+            let handle = unsafe { &*(&raw const self.handles[idx]) };
             // TODO(port): borrowck — self.handles[idx] borrowed while self.draw_buf is &mut.
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
             let elide_lines = if is_abort { None } else { Some(handle.config.elide_count.unwrap_or(10)) };
@@ -643,8 +643,8 @@ impl AbortHandler {
             act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
             // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
             unsafe {
-                libc::sigemptyset(&mut act.sa_mask);
-                libc::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
+                libc::sigemptyset(&raw mut act.sa_mask);
+                libc::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
         #[cfg(not(unix))]
@@ -953,7 +953,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     }
     state.handles = handles_vec.into_boxed_slice();
     for (i, script) in scripts.iter().enumerate() {
-        let handle_ptr: *mut ProcessHandle = &mut state.handles[i];
+        let handle_ptr: *mut ProcessHandle = &raw mut state.handles[i];
         let res = map.get_or_put(&script.package_name)?;
         if res.found_existing {
             res.value_ptr.push(handle_ptr);
@@ -979,7 +979,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             if let Some(pkgs) = map.get(name) {
                 for &dep in pkgs {
                     // SAFETY: dep points into state.handles which is stable for the run.
-                    unsafe { (*dep).dependents.push(handle as *mut _) };
+                    unsafe { (*dep).dependents.push(std::ptr::from_mut(handle)) };
                     handle.remaining_dependencies += 1;
                 }
             }
@@ -1006,7 +1006,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // this is done after the cycle check because we don't want these to be removed if there is a cycle
     for i in 0..state.handles.len() - 1 {
         if state.handles[i].config.package_name == state.handles[i + 1].config.package_name {
-            let next_ptr: *mut ProcessHandle = &mut state.handles[i + 1];
+            let next_ptr: *mut ProcessHandle = &raw mut state.handles[i + 1];
             state.handles[i].dependents.push(next_ptr);
             state.handles[i + 1].remaining_dependencies += 1;
         }
@@ -1034,7 +1034,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             state.abort();
         }
         // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&state as *const _ as *mut c_void) };
+        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
     }
 
     let status = state.finalize();

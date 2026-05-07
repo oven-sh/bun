@@ -63,7 +63,7 @@ impl<T> Node<T> {
     ///     new_node: Pointer to the new node to insert.
     pub fn insert_after(&mut self, new_node: &mut Node<T>) {
         new_node.next = self.next;
-        self.next = new_node as *mut Node<T>;
+        self.next = std::ptr::from_mut::<Node<T>>(new_node);
     }
 
     /// Remove a node from the list.
@@ -86,7 +86,7 @@ impl<T> Node<T> {
     /// Iterate over the singly-linked list from this node, until the final node is found.
     /// This operation is O(N).
     pub fn find_last(&mut self) -> *mut Node<T> {
-        let mut it: *mut Node<T> = self as *mut Node<T>;
+        let mut it: *mut Node<T> = std::ptr::from_mut::<Node<T>>(self);
         loop {
             // SAFETY: `it` is always a valid live node in the list
             let next = unsafe { (*it).next };
@@ -448,7 +448,7 @@ where
     pub fn release_value(value: *mut T) {
         // SAFETY: `value` points to the `data` field of a live `Node<T>`
         let node = unsafe {
-            (value as *mut u8)
+            value.cast::<u8>()
                 .sub(offset_of!(Node<T>, data))
                 .cast::<Node<T>>()
         };

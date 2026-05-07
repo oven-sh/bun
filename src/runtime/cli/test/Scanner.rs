@@ -240,8 +240,8 @@ impl<'a> Scanner<'a> {
         // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
         // cast away `&` to match the Zig calling convention. Serialised by
         // `RealFS.entries_mutex` inside the callee.
-        let real_fs = core::ptr::from_ref(&self.fs.fs) as *mut fs::RealFS;
-        let iter = ScannerDirIter(self as *mut Scanner<'a>);
+        let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
+        let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
         unsafe { &mut *real_fs }
@@ -345,7 +345,7 @@ impl<'a> Scanner<'a> {
         self.has_iterated = true;
         // `Entry::kind` takes `*mut RealFS` (Zig `*Implementation`); cast the
         // shared singleton ref — `kind()` only stat()s through it.
-        let real_fs = &self.fs.fs as *const fs::RealFS as *mut fs::RealFS;
+        let real_fs = (&raw const self.fs.fs).cast_mut();
         match entry.kind(real_fs, true) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
@@ -388,7 +388,7 @@ impl<'a> Scanner<'a> {
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop; Zig copied it by value. Upstream type lacks
                     // Clone/Copy, so bitwise-copy here to match Zig semantics.
-                    name: unsafe { core::ptr::read(&entry.base_) },
+                    name: unsafe { core::ptr::read(&raw const entry.base_) },
                     dir_path: entry.dir,
                 });
             }

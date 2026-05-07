@@ -54,7 +54,7 @@ impl Stream {
             decoded_headers: Vec::new(),
             body_buffer: Vec::new(),
             status_code: 0,
-            pending_body: b"" as &[u8] as *const [u8],
+            pending_body: std::ptr::from_ref::<[u8]>(b"" as &[u8]),
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,

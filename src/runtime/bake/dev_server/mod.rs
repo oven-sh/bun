@@ -464,7 +464,7 @@ impl HotReloadEvent {
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
                         let (source_file_path, specifier, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &*dep.specifier as *const [u8], dep.next)
+                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
                         };
                         it = next;
 
@@ -786,7 +786,7 @@ impl WatcherAtomics {
                     return None; // done running events
                 }
                 NextEvent::DONE => unreachable!(),
-                _ => break &mut self.events[next.0 as usize],
+                _ => break &raw mut self.events[next.0 as usize],
             }
         };
 
@@ -820,7 +820,7 @@ impl WatcherAtomics {
             }
             unreachable!()
         };
-        let ev: *mut HotReloadEvent = &mut self.events[index];
+        let ev: *mut HotReloadEvent = &raw mut self.events[index];
 
         #[cfg(debug_assertions)]
         {
@@ -887,7 +887,7 @@ impl WatcherAtomics {
             // SAFETY: reading initialized bytes of `timer` for a debug sanity check.
             let bytes = unsafe {
                 core::slice::from_raw_parts(
-                    core::ptr::addr_of!(ev_ref.timer) as *const u8,
+                    core::ptr::addr_of!(ev_ref.timer).cast::<u8>(),
                     core::mem::size_of_val(&ev_ref.timer),
                 )
             };
@@ -911,7 +911,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
         let ev_index: u8 = u8::try_from(unsafe {
-            ev.offset_from(self.events.as_ptr() as *mut HotReloadEvent)
+            ev.offset_from(self.events.as_ptr().cast_mut())
         })
         .unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
@@ -940,7 +940,7 @@ impl WatcherAtomics {
                 // lifetime; `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
                     (*(*(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&mut ev_ref.concurrent_task);
+                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
                 }
             }
 
@@ -987,7 +987,7 @@ impl DirectoryWatchStore {
         // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
         // field of a heap-allocated `DevServer` (never moved post-init).
         unsafe {
-            (self as *mut Self)
+            std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .sub(core::mem::offset_of!(DevServer, directory_watchers))
                 .cast::<DevServer>()
@@ -1077,7 +1077,7 @@ pub mod directory_watch_store {
         fn default() -> Self {
             Dep {
                 next: None,
-                source_file_path: &[] as *const [u8],
+                source_file_path: std::ptr::from_ref::<[u8]>(&[]),
                 specifier: Box::default(),
             }
         }
@@ -1110,7 +1110,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
         barrel_needed_exports: |p| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
-            &mut dev.barrel_needed_exports
+            &raw mut dev.barrel_needed_exports
         },
         log_for_resolution_failures: |p, abs_path, graph| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
@@ -1149,7 +1149,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
             // `DevServerHandle::put_or_overwrite_asset` call site.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
-            let path = unsafe { &*(path as *const bun_resolver::fs::Path<'_>) };
+            let path = unsafe { &*path.cast::<bun_resolver::fs::Path<'_>>() };
             // PORT NOTE: vtable boundary erased the `AnyBlob` to its byte slice;
             // re-wrap as an owned blob (Zig spec transferred ownership of the bytes).
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
@@ -1172,7 +1172,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             let dev = unsafe { &mut *p.cast::<DevServer>() };
             dev.current_bundle
                 .as_mut()
-                .map(|c| &mut c.start_data as *mut _ as *mut ())
+                .map(|c| (&raw mut c.start_data).cast::<()>())
                 .unwrap_or(core::ptr::null_mut())
         },
         register_barrel_with_deferrals: |p, path| {
@@ -1205,7 +1205,7 @@ impl DevServer {
     #[inline]
     pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
         bun_bundler::dispatch::DevServerHandle {
-            owner: self as *mut Self as *mut (),
+            owner: std::ptr::from_mut::<Self>(self).cast::<()>(),
             vtable: &DEV_SERVER_VTABLE,
         }
     }
@@ -1352,7 +1352,7 @@ impl DirectoryWatchStore {
 
         // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
-        let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> = &mut self.watches;
+        let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> = &raw mut self.watches;
         let watches_guard = scopeguard::guard(gop_index, move |idx| {
             // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
             // the error path no other borrow of `self.watches` is outstanding.

@@ -518,7 +518,7 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
 
     // TODO(port): lifetime — `name` borrows the input arena. The detach is the
     // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
-    let name: &'static [u8] = unsafe { &*(name as *const [u8]) };
+    let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
     options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -1103,7 +1103,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
         // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { &*(self.allocator as *const Bump) };
+        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.allocator) };
         NestedRuleParser {
             allocator: self.allocator,
             options: self.options,
@@ -1302,7 +1302,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             // TODO(port): lifetime — arena-owned slice; same `'static` erasure
             // as `Token` payloads.
             let url_str: &'static [u8] =
-                unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
+                unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
 
             let layer: Option<Option<LayerName>> =
                 if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1337,11 +1337,11 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             let prefix = input
                 .try_parse(|p| {
                     p.expect_ident()
-                        .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } })
+                        .map(|s| -> &'static [u8] { unsafe { &*std::ptr::from_ref::<[u8]>(s) } })
                 })
                 .ok();
             let namespace: &'static [u8] =
-                unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
+                unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_url_or_string()?) };
             return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
         }
         if strings::eql_case_insensitive_ascii(name, b"charset", true) {
@@ -1421,7 +1421,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             AtRulePrelude::Namespace { prefix, url } => {
                 this.state = TopLevelState::Namespaces;
                 this.rules.v.push(CssRule::Namespace(NamespaceRule {
-                    prefix: prefix.map(|p| Ident { v: p as *const [u8] }),
+                    prefix: prefix.map(|p| Ident { v: std::ptr::from_ref::<[u8]>(p) }),
                     url,
                     loc,
                 }));
@@ -1523,7 +1523,7 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
         };
         // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
         // parser arena.
-        let bump: &'static Bump = unsafe { &*(self.allocator as *const Bump) };
+        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.allocator) };
         let mut nested_parser = NestedRuleParser::<T> {
             allocator: self.allocator,
             options: self.options,
@@ -1625,7 +1625,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
         // TODO(port): lifetime — `name` borrows the input arena. Detach to
         // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
         // `Token` payload erasure throughout this file).
-        let name: &'static [u8] = unsafe { &*(name as *const [u8]) };
+        let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
         let result: Self::Prelude = 'brk: {
             // TODO(port): Zig `ComptimeEnumMap(PreludeEnum)` ASCII-CI dispatch.
             // Phase B: replace these chained if-eql with `match_ignore_ascii_case!`.
@@ -2206,7 +2206,7 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         // SAFETY: `input.allocator()` re-borrows the parser arena through `&self`;
         // detach that borrow so `input` can be re-borrowed mutably below. The
         // arena outlives the parser (it owns all parsed allocations).
-        let allocator: &Bump = unsafe { &*(input.allocator() as *const Bump) };
+        let allocator: &Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.allocator()) };
         let mut ctx = NestedComposesCtx {
             state: this.composes_state,
             allocator,
@@ -2426,7 +2426,7 @@ pub fn fill_property_bit_set(
                 // arena-owned `*const [u8]`; detach from `block`'s borrow so
                 // callers can move `block` afterwards. Re-thread once
                 // `PropertyUsage` carries the arena lifetime (TODO at field def).
-                let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
+                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2441,7 +2441,7 @@ pub fn fill_property_bit_set(
         let tag = match prop {
             Property::Custom(c) => {
                 // SAFETY: see above.
-                let name: &'static [u8] = unsafe { &*(c.name.as_str() as *const [u8]) };
+                let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
             }
@@ -2623,7 +2623,7 @@ impl<AtRule> StyleSheet<AtRule> {
             // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
             // arena lifetimes (see rules/mod.rs `decl_block_static`).
             let references_mut: &mut CssModuleReferences<'_> = unsafe {
-                &mut *(&mut references as *mut CssModuleReferences<'_>)
+                &mut *(&raw mut references)
             };
             printer.css_module = Some(CssModule::new(
                 printer.allocator,
@@ -2758,7 +2758,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 Token::Comment(comment) => {
                     if comment.first() == Some(&b'!') {
                         // TODO(port): lifetime — arena slice; see erasure note.
-                        license_comments.push(unsafe { &*(comment as *const [u8]) });
+                        license_comments.push(unsafe { &*std::ptr::from_ref::<[u8]>(comment) });
                     }
                 }
                 _ => break,
@@ -3061,7 +3061,7 @@ impl StyleSheet<BundlerAtRule> {
         //   `Drop`, so both copies must not run their destructors.
         let options = core::mem::ManuallyDrop::new(options);
         // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-        let options_for_parse = unsafe { core::ptr::read(&*options) };
+        let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
         let import_records_ptr = core::ptr::NonNull::from(import_records);
         let mut at_rule_parser = BundlerAtRuleParser {
             allocator,
@@ -3384,7 +3384,7 @@ impl<'a> Parser<'a> {
         // `StylesheetExtra` alongside the same arena). Detach the borrow so it
         // satisfies `Symbol.original_name: &'static [u8]` (Phase-A lifetime
         // erasure — see PORTING.md §Lifetimes).
-        let name_static: &'static [u8] = unsafe { &*(name as *const [u8]) };
+        let name_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(name) };
 
         let entry = match local_scope.entry(Box::<[u8]>::from(name)) {
             MapEntry::Vacant(v) => {
@@ -3426,7 +3426,7 @@ impl<'a> Parser<'a> {
             // every `ImportRecord` produced by this parse. `bun.fs.Path` in
             // the Zig original stores the same borrowed slice; Phase-A
             // erases the lifetime to 'static (see PORTING.md §Lifetimes).
-            let url_static: &'static [u8] = unsafe { &*(url as *const [u8]) };
+            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
             import_records.push(ImportRecord {
                 path: ast::fs::path_init(url_static),
                 kind,
@@ -3446,7 +3446,7 @@ impl<'a> Parser<'a> {
         } else {
             // SAFETY: same lifetime erasure as above; the error token is only
             // used for diagnostics borrowing the same source.
-            let url_static: &'static [u8] = unsafe { &*(url as *const [u8]) };
+            let url_static: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
             Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
         }
     }

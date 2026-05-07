@@ -96,7 +96,7 @@ pub fn install_hoisted_packages(
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
         let lockfile_ptr: *mut crate::lockfile::Lockfile =
-            unsafe { &mut *(*mgr_ptr).lockfile };
+            unsafe { &raw mut *(*mgr_ptr).lockfile };
         // SAFETY: `log` is the always-live logger backref (Zig: `*Log`, never
         // null); `mgr_ptr` see shadow-reborrow above.
         unsafe {
@@ -144,7 +144,7 @@ pub fn install_hoisted_packages(
         // SAFETY: same `root_node` validity as above.
         scripts_node = unsafe { (*root_node).start(ProgressStrings::script(), 0) };
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
-        this.scripts_node = NonNull::new(&mut scripts_node);
+        this.scripts_node = NonNull::new(&raw mut scripts_node);
         // TODO(port): storing pointers to stack locals into `this` — Phase B must reshape
         // (move nodes into PackageManager or thread lifetimes).
     }
@@ -219,7 +219,7 @@ pub fn install_hoisted_packages(
         let lockfile_ptr: *mut crate::lockfile::Lockfile =
             // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
             // via `Box` (Zig: `*Lockfile`), so deref the Box for the heap addr.
-            unsafe { &mut *(*mgr_ptr).lockfile };
+            unsafe { &raw mut *(*mgr_ptr).lockfile };
         let buf_trees: *const Vec<tree::Tree> =
             unsafe { core::ptr::addr_of!((*lockfile_ptr).buffers.trees) };
         let buf_hoisted: *const Vec<DependencyID> =
@@ -316,12 +316,12 @@ pub fn install_hoisted_packages(
             // is not freed for the lifetime of `installer` (only grows, which is
             // why `fix_cached_lockfile_package_slices` re-snapshots).
             let mut parts = unsafe { (*lockfile_ptr).packages.slice() };
-            let metas = unsafe { &*(parts.items_meta() as *const [_]) };
-            let bins = unsafe { &*(parts.items_bin() as *const [_]) };
-            let names = unsafe { &*(parts.items_name() as *const [_]) };
-            let pkg_name_hashes = unsafe { &*(parts.items_name_hash() as *const [_]) };
-            let resolutions = unsafe { &mut *(parts.items_resolution_mut() as *mut [_]) };
-            let pkg_dependencies = unsafe { &*(parts.items_dependencies() as *const [_]) };
+            let metas = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_meta()) };
+            let bins = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_bin()) };
+            let names = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_name()) };
+            let pkg_name_hashes = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_name_hash()) };
+            let resolutions = unsafe { &mut *std::ptr::from_mut::<[_]>(parts.items_resolution_mut()) };
+            let pkg_dependencies = unsafe { &*std::ptr::from_ref::<[_]>(parts.items_dependencies()) };
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for

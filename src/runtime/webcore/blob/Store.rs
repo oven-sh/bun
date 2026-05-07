@@ -228,7 +228,7 @@ impl StoreExt for Store {
                         // integer wrapper — every bit pattern is valid `u8`.
                         let bytes = unsafe {
                             core::slice::from_raw_parts(
-                                (fd as *const bun_sys::Fd).cast::<u8>(),
+                                std::ptr::from_ref::<bun_sys::Fd>(fd).cast::<u8>(),
                                 core::mem::size_of::<bun_sys::Fd>(),
                             )
                         };
@@ -358,7 +358,7 @@ impl S3Ext for S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw(Wrapper::new(..)) below.
-                let mut self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
+                let mut self_ = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created and
                 // the VM keeps it alive for the duration of the async op.
@@ -408,8 +408,8 @@ impl S3Ext for S3 {
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
                 store: unsafe { StoreRef::retained(NonNull::from(store)) },
-                global: global_this as *const _,
-            })) as *mut c_void,
+                global: std::ptr::from_ref(global_this),
+            })).cast::<c_void>(),
             proxy,
             aws_options.request_payer,
         )?;
@@ -444,7 +444,7 @@ impl S3Ext for S3 {
                 opaque_self: *mut c_void,
             ) -> Result<(), bun_jsc::JsTerminated> {
                 // SAFETY: opaque_self was created via Box::into_raw below.
-                let mut self_ = unsafe { Box::from_raw(opaque_self as *mut Wrapper) };
+                let mut self_ = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
                 // SAFETY: global was a valid &JSGlobalObject when the wrapper was created.
                 let global_object = unsafe { &*self_.global };
@@ -509,7 +509,7 @@ impl S3Ext for S3 {
             // intrusive refcount (Zig: `store.ref()`).
             store: unsafe { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
-            global: global_this as *const _,
+            global: std::ptr::from_ref(global_this),
         }));
 
         s3_client::list_objects(
@@ -518,7 +518,7 @@ impl S3Ext for S3 {
             // callback; this borrow ends before any other access.
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
-            wrapper as *mut c_void,
+            wrapper.cast::<c_void>(),
             proxy,
         )?;
 
@@ -580,8 +580,8 @@ impl BytesExt for Bytes {
                 let len = self.len as usize;
                 let cap = self.cap as usize;
                 if core::ptr::eq(
-                    self.allocator.vtable as *const _,
-                    bun_alloc::basic::C_ALLOCATOR.vtable as *const _,
+                    std::ptr::from_ref(self.allocator.vtable),
+                    std::ptr::from_ref(bun_alloc::basic::C_ALLOCATOR.vtable),
                 ) {
                     // SAFETY: `init(Vec<u8>)` is the only path that stores
                     // `C_ALLOCATOR`, and it recorded the exact `(ptr, len, cap)`

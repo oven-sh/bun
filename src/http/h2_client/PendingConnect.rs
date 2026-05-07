@@ -61,7 +61,7 @@ impl PendingConnect {
         let list = &mut ctx.pending_h2_connects;
         // PORT NOTE: reshaped for borrowck (was `for + swapRemove + return`)
         list.iter()
-            .position(|p| core::ptr::eq(&**p as *const Self, this))
+            .position(|p| core::ptr::eq(&raw const **p, this))
             .map(|i| list.swap_remove(i))
     }
 

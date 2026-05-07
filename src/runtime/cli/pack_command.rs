@@ -62,7 +62,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
     // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
     // pack`), and `Arena` is `!Sync` so no cross-thread aliasing. Erase the
     // borrow to `'static` to mirror Zig's allocator-owned slices.
-    BUMP.with(|b| unsafe { &*(b as *const bun_alloc::Arena) })
+    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
 }
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
@@ -226,7 +226,7 @@ impl PackCommand {
                     }
                 }
                 if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
+                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
                 }
                 Global::crash();
             }
@@ -1726,7 +1726,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
     // every interleaved `ctx` access touches disjoint fields (`command_ctx`,
     // `bundled_deps`, `stats`) or only reads `manager` via `pm_*` helpers.
-    let manager_ptr: *mut PackageManager = &mut *ctx.manager;
+    let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
     // single-threaded and no callee retains a conflicting borrow.
     let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
@@ -1747,7 +1747,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
         WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
             Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-            let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
+            let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
@@ -1955,7 +1955,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
             WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
                 Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-                let _ = pm_log(manager_ptr).print(Output::error_writer() as *mut _);
+                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
                 Global::crash();
             }
             WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
@@ -2153,7 +2153,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             // SAFETY: pointers came from `&mut` and outlive the returned value.
             return Ok(Some(Publish::Context {
                 manager: unsafe { &mut *manager_ptr },
-                command_ctx: unsafe { &mut *(ctx.command_ctx as *mut _) },
+                command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
                 abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -2535,7 +2535,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // process-lifetime singletons aliased exactly as Zig's `*T` did.
         return Ok(Some(Publish::Context {
             manager: unsafe { &mut *manager_ptr },
-            command_ctx: unsafe { &mut *(ctx.command_ctx as *mut _) },
+            command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
             abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -2572,7 +2572,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     // for `env.map.put()` while `ctx` only holds `&Context`.
     // SAFETY: both are process-lifetime singletons; no concurrent `&mut` exists
     // while a lifecycle script runs (single-threaded CLI dispatch).
-    let command_ctx = unsafe { &mut *(ctx.command_ctx as *const _ as *mut Command::ContextData) };
+    let command_ctx = unsafe { &mut *std::ptr::from_ref(ctx.command_ctx).cast_mut() };
     let use_system_shell = command_ctx.debug.use_system_shell;
     match RunCommand::run_package_script_foreground(
         command_ctx,
@@ -2779,7 +2779,7 @@ fn archive_package_json(
 
     match archive.write_header(entry) {
         ArchiveStatus::Failed | ArchiveStatus::Fatal | ArchiveStatus::Warn => {
-            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(archive as *mut Archive))));
+            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(archive)))));
             Global::crash();
         }
         _ => {}
@@ -2830,7 +2830,7 @@ fn add_archive_entry(
 
     match archive.write_header(entry) {
         ArchiveStatus::Failed | ArchiveStatus::Fatal => {
-            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(archive as *mut Archive))));
+            Output::err_generic("failed to write tarball header: {}", format_args!("{}", bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(archive)))));
             Global::crash();
         }
         _ => {}

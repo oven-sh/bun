@@ -118,7 +118,7 @@ impl uv_buf_t {
     #[inline]
     pub fn init(input: &[u8]) -> uv_buf_t {
         debug_assert!(input.len() <= ULONG::MAX as usize);
-        uv_buf_t { len: input.len() as ULONG, base: input.as_ptr() as *mut u8 }
+        uv_buf_t { len: input.len() as ULONG, base: input.as_ptr().cast_mut() }
     }
     #[inline]
     pub fn slice(&self) -> &[u8] {
@@ -262,7 +262,7 @@ impl Loop {
             let size = unsafe { uv_loop_size() };
             let layout = core::alloc::Layout::from_size_align(size, 16).unwrap();
             // SAFETY: layout is non-zero (uv_loop_t is >100 bytes on Windows).
-            let ptr = unsafe { std::alloc::alloc(layout) } as *mut Loop;
+            let ptr = unsafe { std::alloc::alloc(layout) }.cast::<Loop>();
             assert!(!ptr.is_null(), "OOM allocating uv_loop_t");
             // SAFETY: `ptr` is a fresh `uv_loop_size()`-byte allocation.
             if let Some(err) = unsafe { uv_loop_init(ptr) }.errno() {
@@ -603,14 +603,14 @@ impl Timer {
     #[inline]
     pub fn ref_(&mut self) {
         // SAFETY: `Timer` embeds `uv_handle_t` at offset 0.
-        unsafe { uv_ref((self as *mut Timer).cast()) }
+        unsafe { uv_ref(core::ptr::from_mut(self).cast()) }
     }
 
     /// `Timer.unref` (libuv.zig:1290).
     #[inline]
     pub fn unref(&mut self) {
         // SAFETY: `Timer` embeds `uv_handle_t` at offset 0.
-        unsafe { uv_unref((self as *mut Timer).cast()) }
+        unsafe { uv_unref(core::ptr::from_mut(self).cast()) }
     }
 }
 
@@ -652,7 +652,7 @@ impl Pipe {
         self.data = context;
         // SAFETY: `Pipe` is layout-compatible with `uv_stream_t` for the first
         // field; libuv treats every stream subtype this way.
-        unsafe { uv_listen((self as *mut Pipe).cast(), backlog, Some(on_connect)) }
+        unsafe { uv_listen(core::ptr::from_mut(self).cast(), backlog, Some(on_connect)) }
     }
 
     /// `Pipe::listenNamedPipe` (libuv.zig:1432) — bind + listen.
@@ -673,7 +673,7 @@ impl Pipe {
     /// `StreamMixin::accept` (libuv.zig:3060).
     pub fn accept(&mut self, client: &mut Pipe) -> ReturnCode {
         // SAFETY: both pipes embed `uv_stream_t` at offset 0.
-        unsafe { uv_accept((self as *mut Pipe).cast(), (client as *mut Pipe).cast()) }
+        unsafe { uv_accept(core::ptr::from_mut(self).cast(), core::ptr::from_mut(client).cast()) }
     }
 
     /// `HandleMixin::close` (libuv.zig:448). `cb` receives the same pointer
@@ -683,7 +683,7 @@ impl Pipe {
         // ABI-identical to `uv_close_cb` modulo the pointee type.
         unsafe {
             uv_close(
-                (self as *mut Pipe).cast(),
+                core::ptr::from_mut(self).cast(),
                 Some(core::mem::transmute::<
                     unsafe extern "C" fn(*mut Pipe),
                     unsafe extern "C" fn(*mut uv_handle_t),
@@ -695,7 +695,7 @@ impl Pipe {
     #[inline]
     pub fn is_closing(&self) -> bool {
         // SAFETY: `Pipe` embeds `uv_handle_t` at offset 0.
-        unsafe { uv_is_closing((self as *const Pipe).cast()) != 0 }
+        unsafe { uv_is_closing(core::ptr::from_ref(self).cast()) != 0 }
     }
 }
 

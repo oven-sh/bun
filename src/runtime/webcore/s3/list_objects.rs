@@ -717,7 +717,7 @@ pub fn get_list_objects_options_from_js(
             // TODO(port): bun_str::String tag accessors (Empty/Dead)
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.continuation_token = Some(slice.slice() as *const [u8]);
+                list_objects_options.continuation_token = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
                 list_objects_options._continuation_token = Some(slice);
             }
         }
@@ -729,7 +729,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.delimiter = Some(slice.slice() as *const [u8]);
+                list_objects_options.delimiter = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
                 list_objects_options._delimiter = Some(slice);
             }
         }
@@ -741,7 +741,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.encoding_type = Some(slice.slice() as *const [u8]);
+                list_objects_options.encoding_type = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
                 list_objects_options._encoding_type = Some(slice);
             }
         }
@@ -765,7 +765,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.prefix = Some(slice.slice() as *const [u8]);
+                list_objects_options.prefix = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
                 list_objects_options._prefix = Some(slice);
             }
         }
@@ -777,7 +777,7 @@ pub fn get_list_objects_options_from_js(
 
             if !str.is_empty() && !str.is_dead() {
                 let slice = str.to_utf8();
-                list_objects_options.start_after = Some(slice.slice() as *const [u8]);
+                list_objects_options.start_after = Some(std::ptr::from_ref::<[u8]>(slice.slice()));
                 list_objects_options._start_after = Some(slice);
             }
         }

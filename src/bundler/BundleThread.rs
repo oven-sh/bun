@@ -323,7 +323,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).
-            bun_threading::work_pool::WorkPool::get() as *const _ as *mut _,
+            std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
 
         // PORT NOTE: Zig's overlapping `defer { ast_memory_allocator.pop();
@@ -369,7 +369,7 @@ pub mod singleton {
     fn load_once_impl<C: CompletionStruct>() {
         let bundle_thread = Box::into_raw(Box::new(BundleThread::<C>::uninitialized()));
         // SAFETY: only called once under ONCE.
-        unsafe { INSTANCE = bundle_thread as *mut () };
+        unsafe { INSTANCE = bundle_thread.cast::<()>() };
 
         // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
@@ -393,7 +393,7 @@ pub mod singleton {
         ONCE.call_once(load_once_impl::<C>);
         // SAFETY: INSTANCE is non-null after call_once and never written again; pointer is
         // a leaked 'static Box of `BundleThread<C>` (same `C` per the safety contract).
-        unsafe { INSTANCE as *mut BundleThread<C> }
+        unsafe { INSTANCE.cast::<BundleThread<C>>() }
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {

@@ -247,11 +247,11 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
             match unsafe { &*addr_of!((*proxy_ptr).socket) } {
                 &Socket::Ssl(socket) => {
-                    let hctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
+                    let hctx = &raw mut crate::http_thread().https_context;
                     this.handle_on_data_headers::<true>(decoded_data, hctx, socket);
                 }
                 &Socket::Tcp(socket) => {
-                    let hctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
+                    let hctx = &raw mut crate::http_thread().http_context;
                     this.handle_on_data_headers::<false>(decoded_data, hctx, socket);
                 }
                 Socket::None => {}
@@ -492,12 +492,12 @@ unsafe fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: *mut Pro
     // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
     match unsafe { &*addr_of!((*proxy).socket) } {
         &Socket::Ssl(socket) => {
-            let hctx = (&mut crate::http_thread().https_context) as *mut GenHttpContext<true>;
+            let hctx = &raw mut crate::http_thread().https_context;
             // SAFETY: caller contract — no live `&mut *ctx`.
             unsafe { (*ctx).progress_update::<true>(hctx, socket) };
         }
         &Socket::Tcp(socket) => {
-            let hctx = (&mut crate::http_thread().http_context) as *mut GenHttpContext<false>;
+            let hctx = &raw mut crate::http_thread().http_context;
             // SAFETY: caller contract — no live `&mut *ctx`.
             unsafe { (*ctx).progress_update::<false>(hctx, socket) };
         }
@@ -732,7 +732,7 @@ impl ProxyTunnel {
         self.socket = Socket::from_generic::<IS_SSL>(socket);
         // SAFETY: `self` was created by `start` (Box::into_raw); we transfer the
         // pool's strong ref to the client by storing the raw pointer here.
-        client.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(self as *mut ProxyTunnel) });
+        client.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(std::ptr::from_mut::<ProxyTunnel>(self)) });
         client.flags.proxy_tunneling = false;
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and

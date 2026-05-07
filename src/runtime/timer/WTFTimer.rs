@@ -249,7 +249,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
         })
     };
 
-    Box::into_raw(this) as *mut c_void
+    Box::into_raw(this).cast::<c_void>()
 }
 
 #[unsafe(no_mangle)]

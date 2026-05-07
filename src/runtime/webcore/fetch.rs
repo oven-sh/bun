@@ -225,10 +225,10 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     // via `Box::from_raw` when set). Use `Box::into_raw` (paired alloc/free), not
     // `Box::leak`.
     blob.content_type = match mime_type.value {
-        std::borrow::Cow::Borrowed(s) => s as *const [u8],
+        std::borrow::Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
         std::borrow::Cow::Owned(v) => {
             blob.content_type_allocated = true;
-            Box::into_raw(v.into_boxed_slice()) as *const [u8]
+            Box::into_raw(v.into_boxed_slice()).cast_const()
         }
     };
     debug_assert_eq!(allocated, blob.content_type_allocated);
@@ -1842,7 +1842,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             ) {
                 // SAFETY: ctx was produced by `Box::into_raw(s3_stream)` below; the
                 // 'static lifetime is a raw-pointer fiction matching the Zig @ptrCast.
-                let _ = S3StreamWrapper::resolve(result, ctx as *mut S3StreamWrapper<'static>);
+                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
             // Zig: `credentialsWithOptions.credentials.dupe()` — heap-allocate a
             // fresh intrusive-refcounted copy. `upload_stream` adopts the ref by
@@ -1861,7 +1861,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 proxy_url,
                 credentials_with_options.request_payer,
                 Some(s3_stream_wrapper_resolve),
-                Box::into_raw(s3_stream) as *mut libc::c_void,
+                Box::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
             // PORT NOTE: url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
@@ -1961,7 +1961,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
     // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
     // `url_static` to the local `url_proxy_boxed` binding.
-    let buf_ptr: *const [u8] = &*url_proxy_boxed;
+    let buf_ptr: *const [u8] = &raw const *url_proxy_boxed;
     // SAFETY: `buf_ptr` points into `url_proxy_boxed` which the FetchTasklet
     // keeps alive for the lifetime of the parsed URLs (see comment above).
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the

@@ -238,7 +238,7 @@ impl Task {
     #[inline]
     unsafe fn from_node(node: *mut Node) -> *mut Task {
         // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
-        unsafe { (node as *mut u8).sub(offset_of!(Task, node)).cast::<Task>() }
+        unsafe { node.cast::<u8>().sub(offset_of!(Task, node)).cast::<Task>() }
     }
 }
 
@@ -255,7 +255,7 @@ impl Batch {
         // SAFETY: `len` is only read here for the fast-path zero check; the
         // atomic load mirrors Zig's `@atomicLoad(usize, &this.len, .monotonic)`.
         let len = unsafe {
-            (*(&self.len as *const usize as *const AtomicUsize)).load(Ordering::Relaxed)
+            (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed)
         };
         if len == 0 {
             return None;
@@ -399,7 +399,7 @@ impl ThreadPool {
         unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
             // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
             let runner_task = unsafe {
-                &mut *(task as *mut u8)
+                &mut *task.cast::<u8>()
                     .sub(offset_of!(RunnerTask<Ctx, V, F>, task))
                     .cast::<RunnerTask<Ctx, V, F>>()
             };
@@ -408,14 +408,14 @@ impl ThreadPool {
             let wctx = unsafe { &*runner_task.ctx };
             // SAFETY: `values` slice outlives all RunnerTasks (wait_for_all() blocks until
             // every task finishes); each task owns a distinct index `i`.
-            let value: *mut V = unsafe { &mut (*wctx.values)[i] };
+            let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
             unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
         }
 
         let wait_context = WaitContext {
             ctx,
-            values: values as *mut [V],
+            values: std::ptr::from_mut::<[V]>(values),
             run_fn,
         };
 
@@ -432,7 +432,7 @@ impl ThreadPool {
                     node: Node::default(),
                     callback: call::<Ctx, V, F>,
                 },
-                ctx: &wait_context as *const _,
+                ctx: &raw const wait_context,
             });
         }
         // PORT NOTE: reshaped for borrowck — Zig wrote into pre-allocated slots and
@@ -493,7 +493,7 @@ impl ThreadPool {
             }
             // Make sure thread is part of this thread pool, not a different one.
             // SAFETY: current is a live thread-local Thread for this OS thread.
-            if unsafe { (*current).thread_pool } == self as *const ThreadPool {
+            if unsafe { (*current).thread_pool } == std::ptr::from_ref::<ThreadPool>(self) {
                 current
             } else {
                 ptr::null_mut()
@@ -612,7 +612,7 @@ impl ThreadPool {
                 continue;
             }
             let stack_size = self.stack_size as usize;
-            let pool = SendPtr(self as *const ThreadPool);
+            let pool = SendPtr(std::ptr::from_ref::<ThreadPool>(self));
             match std::thread::Builder::new()
                 .stack_size(stack_size)
                 .spawn(move || {
@@ -674,7 +674,7 @@ impl ThreadPool {
                     // We signaled to spawn a new thread
                     if can_wake && (sync.spawned() as u32) < self.max_threads {
                         let stack_size = self.stack_size as usize;
-                        let pool = SendPtr(self as *const ThreadPool);
+                        let pool = SendPtr(std::ptr::from_ref::<ThreadPool>(self));
                         match std::thread::Builder::new()
                             .stack_size(stack_size)
                             .spawn(move || {
@@ -985,7 +985,7 @@ impl Thread {
             run_buffer: node::Buffer::default(),
             thread_pool,
         };
-        let self_ptr: *mut Thread = &mut self_;
+        let self_ptr: *mut Thread = &raw mut self_;
         // SAFETY: thread_pool outlives this worker (join() waits); self_ptr is
         // our stack-local Thread.
         let _registration = unsafe { ThreadRegistration::new(thread_pool, self_ptr) };
@@ -1084,7 +1084,7 @@ impl Thread {
 
             // Skip stealing from the buffer if we're the target.
             // We still steal from our own queue above given it may have just been locked the first time we tried.
-            if target == self as *mut Thread {
+            if target == std::ptr::from_mut::<Thread>(self) {
                 num_threads -= 1;
                 continue;
             }

@@ -377,7 +377,7 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
         // SAFETY: writing `size_of::<T>()` bytes into MaybeUninit<T> storage.
         let bytes = unsafe {
             core::slice::from_raw_parts_mut(
-                out.as_mut_ptr() as *mut u8,
+                out.as_mut_ptr().cast::<u8>(),
                 core::mem::size_of::<T>(),
             )
         };

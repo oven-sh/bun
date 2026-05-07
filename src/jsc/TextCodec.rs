@@ -63,7 +63,7 @@ impl TextCodec {
                 data.len(),
                 flush,
                 stop_on_error,
-                &mut saw_error,
+                &raw mut saw_error,
             )
         };
 
@@ -86,7 +86,7 @@ impl TextCodec {
         mark_binding!();
         let mut len: usize = 0;
         // SAFETY: encoding.ptr is valid for encoding.len bytes; `len` is a valid out-pointer.
-        let name = unsafe { Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &mut len) }?;
+        let name = unsafe { Bun__getCanonicalEncodingName(encoding.as_ptr(), encoding.len(), &raw mut len) }?;
         // SAFETY: C++ returns a pointer into static encoding-name table data, valid for `len` bytes
         // and for the lifetime of the program.
         Some(unsafe { core::slice::from_raw_parts(name.as_ptr(), len) })

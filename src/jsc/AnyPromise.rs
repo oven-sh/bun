@@ -107,7 +107,7 @@ impl AnyPromise {
             Self::Normal(p) => p,
             // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
             // pointer reinterpretation is valid for any C++ API taking JSPromise*.
-            Self::Internal(p) => p as *mut JSPromise,
+            Self::Internal(p) => p.cast::<JSPromise>(),
         }
     }
 
@@ -156,7 +156,7 @@ impl AnyPromise {
         {
             // SAFETY: `wrap_` is `&mut Wrapper<F>` passed below; `global` is a
             // live JSGlobalObject* supplied by JSC for the duration of the call.
-            let wrap_ = unsafe { &mut *(wrap_ as *mut Wrapper<F>) };
+            let wrap_ = unsafe { &mut *wrap_.cast::<Wrapper<F>>() };
             let global = unsafe { &*global };
             let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
             // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
@@ -197,7 +197,7 @@ impl AnyPromise {
             JSC__AnyPromise__wrap(
                 global_object.as_ptr(),
                 self.as_value(),
-                &mut ctx as *mut Wrapper<F> as *mut c_void,
+                (&raw mut ctx).cast::<c_void>(),
                 call::<F>,
             );
         }

@@ -735,7 +735,7 @@ impl<'a> TransformTask<'a> {
         // are shared with `js_instance` (kept alive via IntrusiveRc); the copy is
         // wrapped in `ManuallyDrop` so only the original frees them.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
-            core::ptr::read(&transpiler.transpiler)
+            core::ptr::read(&raw const transpiler.transpiler)
         });
 
         // PORT NOTE: capture the raw pointer for `IntrusiveRc::init_ref` BEFORE the
@@ -770,9 +770,9 @@ impl<'a> TransformTask<'a> {
         // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
         // — re-point the linker's resolver backref into the heap-allocated copy.
         // Must happen AFTER the move into the Box so the address is stable.
-        let resolver_ptr: *mut _ = &mut transform_task.transpiler.resolver;
+        let resolver_ptr: *mut _ = &raw mut transform_task.transpiler.resolver;
         transform_task.transpiler.linker.resolver = resolver_ptr;
-        transform_task.transpiler.set_log(&mut transform_task.log);
+        transform_task.transpiler.set_log(&raw mut transform_task.log);
         // `set_allocator(bun.default_allocator)` — Rust `Transpiler` carries an
         // `&Arena`, not a generic allocator. The work-thread `run()` immediately
         // overwrites it with the local arena, so leave the copied pointer as-is
@@ -797,8 +797,8 @@ impl<'a> TransformTask<'a> {
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
         self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
-        self.transpiler.set_log(&mut self.log);
+            .set_allocator(unsafe { &*(&raw const arena) });
+        self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
@@ -1004,7 +1004,7 @@ pub fn constructor(
     // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
     // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
     // the borrow to 'static, so launder through a raw ptr.
-    let arena_ref: &'static Arena = unsafe { &*(arena.as_ref() as *const Arena) };
+    let arena_ref: &'static Arena = unsafe { &*std::ptr::from_ref::<Arena>(arena.as_ref()) };
 
     // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
     // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -1031,7 +1031,7 @@ pub fn constructor(
     let vm = VirtualMachine::get().as_mut();
     let transpiler = match Transpiler::Transpiler::init(
         arena_ref,
-        &mut config.log,
+        &raw mut config.log,
         config.transform.clone(),
         Some(vm.transpiler.env),
     ) {
@@ -1063,7 +1063,7 @@ pub fn constructor(
     // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
     // stack slot. Re-point it at the heap-stable field now that the Box exists.
     {
-        let config_log: *mut logger::Log = &mut this.config.log;
+        let config_log: *mut logger::Log = &raw mut this.config.log;
         this.transpiler.set_log(config_log);
     }
 
@@ -1287,12 +1287,12 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_allocator` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
-        self.transpiler.set_log(&mut log);
+            .set_allocator(unsafe { &*(&raw const arena) });
+        self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
-            transpiler: &mut self.transpiler,
+            transpiler: &raw mut self.transpiler,
             prev_allocator,
-            restore_log: &mut self.config.log,
+            restore_log: &raw mut self.config.log,
             prev_macro_context: None,
         };
 
@@ -1476,12 +1476,12 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_allocator`, `&self.config.log`, and `prev_macro_context` before either drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
-        self.transpiler.set_log(&mut log);
+            .set_allocator(unsafe { &*(&raw const arena) });
+        self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
-            transpiler: &mut self.transpiler,
+            transpiler: &raw mut self.transpiler,
             prev_allocator,
-            restore_log: &mut self.config.log,
+            restore_log: &raw mut self.config.log,
             prev_macro_context: Some(prev_macro_context),
         };
 
@@ -1658,12 +1658,12 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_allocator` and `&self.config.log` before either local drops.
         self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
-        self.transpiler.set_log(&mut log);
+            .set_allocator(unsafe { &*(&raw const arena) });
+        self.transpiler.set_log(&raw mut log);
         let _restore = TranspilerStateGuard {
-            transpiler: &mut self.transpiler,
+            transpiler: &raw mut self.transpiler,
             prev_allocator,
-            restore_log: &mut self.config.log,
+            restore_log: &raw mut self.config.log,
             prev_macro_context: None,
         };
 
@@ -1687,7 +1687,7 @@ impl JSTranspiler {
         // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
         // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
         let define = unsafe {
-            &*(&*self.transpiler.options.define as *const bun_bundler::defines::Define)
+            &*(&raw const *self.transpiler.options.define)
         };
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The

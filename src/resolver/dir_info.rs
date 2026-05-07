@@ -167,7 +167,7 @@ impl DirInfo {
     pub fn get_entries(&self, generation: Generation) -> Option<*mut fs::DirEntry> {
         let entries_ptr = fs::FileSystem::instance().fs.entries_at(self.entries, generation)?;
         match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(*entries as *mut _),
+            fs::EntriesOption::Entries(entries) => Some(std::ptr::from_mut(*entries)),
             fs::EntriesOption::Err(_) => None,
         }
     }
@@ -183,7 +183,7 @@ impl DirInfo {
     }
 
     pub fn get_parent(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.parent).map(|p| p as *mut _)
+        hash_map_instance().at_index(self.parent).map(|p| std::ptr::from_mut(p))
     }
 
     /// Returns a raw `*mut DirInfo` into the BSSMap singleton. The enclosing
@@ -193,7 +193,7 @@ impl DirInfo {
     ///
     /// SAFETY: caller must hold the resolver mutex.
     pub unsafe fn get_enclosing_browser_scope(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.enclosing_browser_scope).map(|p| p as *mut _)
+        hash_map_instance().at_index(self.enclosing_browser_scope).map(|p| std::ptr::from_mut(p))
     }
 }
 
@@ -298,7 +298,7 @@ impl HashMapExt for HashMap {
         // pointers from a single bound `&mut HashMap` (see resolver.rs `dir_info_cached_*`).
         // TODO(port): derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
         // provenance) so slot pointers survive sibling retags outright.
-        self.put(result, value).map(|v| v as *mut DirInfo).map_err(Into::into)
+        self.put(result, value).map(|v| std::ptr::from_mut::<DirInfo>(v)).map_err(Into::into)
     }
     #[inline]
     fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {

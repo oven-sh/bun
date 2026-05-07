@@ -130,7 +130,7 @@ impl FakeTimers {
         }
         // SAFETY: self points to the `fake_timers` field of `timer::All` (always embedded there)
         let owner: &timer::All = unsafe {
-            &*((self as *const Self as *const u8)
+            &*(std::ptr::from_ref::<Self>(self).cast::<u8>()
                 .sub(offset_of!(timer::All, fake_timers))
                 .cast::<timer::All>())
         };

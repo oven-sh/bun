@@ -88,7 +88,7 @@ impl Compressor {
         unsafe {
             libdeflate_alloc_compressor_ex(
                 compression_level,
-                options.map_or(core::ptr::null(), |o| o as *const Options),
+                options.map_or(core::ptr::null(), |o| std::ptr::from_ref::<Options>(o)),
             )
         }
     }
@@ -106,9 +106,9 @@ impl Compressor {
         let written = unsafe {
             libdeflate_deflate_compress(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
             )
         };
@@ -143,9 +143,9 @@ impl Compressor {
         let result = unsafe {
             libdeflate_zlib_compress(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
             )
         };
@@ -161,9 +161,9 @@ impl Compressor {
         let result = unsafe {
             libdeflate_gzip_compress(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
             )
         };
@@ -201,12 +201,12 @@ impl Decompressor {
         let result = unsafe {
             libdeflate_deflate_decompress_ex(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
-                &mut actual_in_bytes_ret,
-                &mut actual_out_bytes_ret,
+                &raw mut actual_in_bytes_ret,
+                &raw mut actual_out_bytes_ret,
             )
         };
         Result {
@@ -223,12 +223,12 @@ impl Decompressor {
         let result = unsafe {
             libdeflate_zlib_decompress_ex(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
-                &mut actual_in_bytes_ret,
-                &mut actual_out_bytes_ret,
+                &raw mut actual_in_bytes_ret,
+                &raw mut actual_out_bytes_ret,
             )
         };
         Result {
@@ -245,12 +245,12 @@ impl Decompressor {
         let result = unsafe {
             libdeflate_gzip_decompress_ex(
                 self,
-                input.as_ptr() as *const c_void,
+                input.as_ptr().cast::<c_void>(),
                 input.len(),
-                output.as_mut_ptr() as *mut c_void,
+                output.as_mut_ptr().cast::<c_void>(),
                 output.len(),
-                &mut actual_in_bytes_ret,
-                &mut actual_out_bytes_ret,
+                &raw mut actual_in_bytes_ret,
+                &raw mut actual_out_bytes_ret,
             )
         };
         Result {

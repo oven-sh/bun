@@ -35,7 +35,7 @@ fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
     // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(|r| r as *mut DOMFormData)
+    DOMFormData::from_js(value).map(|r| std::ptr::from_mut::<DOMFormData>(r))
 }
 #[inline]
 fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
@@ -220,7 +220,7 @@ pub struct PendingValue {
 impl PendingValue {
     pub fn new(global: &JSGlobalObject) -> Self {
         Self {
-            global: global as *const _,
+            global: std::ptr::from_ref(global),
             ..Default::default()
         }
     }
@@ -500,7 +500,7 @@ pub fn hive_alloc(
     // argument; suppress the local drop so the move is one-way.
     let mut value = core::mem::ManuallyDrop::new(value);
     let ptr = vm
-        .init_request_body_value(&mut *value as *mut Value as *mut core::ffi::c_void)
+        .init_request_body_value((&raw mut *value).cast::<core::ffi::c_void>())
         .cast::<HiveRef>();
     // `HiveRef::init` only fails on allocator OOM, which `handle_oom` upstream
     // would have already aborted on; treat null as unreachable.
@@ -631,7 +631,7 @@ impl Value {
     pub unsafe fn unref(&mut self) -> Option<&mut Self> {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
         let parent = unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(core::mem::offset_of!(HiveRef, value))
                 .cast::<HiveRef>()
         };
@@ -642,7 +642,7 @@ impl Value {
     pub unsafe fn ref_(&mut self) -> &mut Self {
         // SAFETY: caller contract — `self` is the `.value` field of a HiveRef slot.
         let parent = unsafe {
-            &mut *(self as *mut Self as *mut u8)
+            &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(core::mem::offset_of!(HiveRef, value))
                 .cast::<HiveRef>()
         };
@@ -666,11 +666,11 @@ impl Value {
         }
         if let Some(req) = value.as_::<crate::webcore::Request>() {
             // SAFETY: `as_` returns a live JSC-owned `*mut Request`.
-            return Some(unsafe { &mut *req }.get_body_value() as *mut Value);
+            return Some(std::ptr::from_mut::<Value>(unsafe { &mut *req }.get_body_value()));
         }
         if let Some(res) = value.as_::<crate::webcore::Response>() {
             // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
-            return Some(unsafe { &mut *res }.get_body_value() as *mut Value);
+            return Some(std::ptr::from_mut::<Value>(unsafe { &mut *res }.get_body_value()));
         }
         None
     }
@@ -896,7 +896,7 @@ impl Value {
                     _ => {}
                 }
 
-                let context_ptr: *mut ByteStream = &mut reader.context;
+                let context_ptr: *mut ByteStream = &raw mut reader.context;
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
                         ptr: webcore::readable_stream::Source::Bytes(context_ptr),
@@ -1004,7 +1004,7 @@ impl Value {
                 let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
                 drop(encoded);
                 let mut blob = Blob::init(owned.into_vec(), global_this);
-                blob.content_type = mime.as_bytes() as *const [u8];
+                blob.content_type = std::ptr::from_ref::<[u8]>(mime.as_bytes());
                 blob.content_type_was_set = true;
                 return Ok(Value::Blob(blob));
             }
@@ -1168,13 +1168,13 @@ impl Value {
                                     unsafe {
                                         (*store_ptr).mime_type = mime_type;
                                         blob.content_type =
-                                            (*store_ptr).mime_type.value.as_ref() as *const [u8];
+                                            std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref());
                                     }
                                     blob.content_type_allocated = false;
                                 } else {
                                     blob.content_type = match mime_type.value {
                                         Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
-                                        Cow::Borrowed(s) => s as *const [u8],
+                                        Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                                     };
                                     blob.content_type_allocated = allocated;
                                 }
@@ -1182,7 +1182,7 @@ impl Value {
                             }
                         }
                         if !blob.content_type_was_set && blob.store.is_some() {
-                            blob.content_type = bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8];
+                            blob.content_type = std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref());
                             blob.content_type_allocated = false;
                             blob.content_type_was_set = true;
                             // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
@@ -1547,7 +1547,7 @@ impl Value {
         // PORT NOTE: reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else { unreachable!() };
 
-        let context_ptr: *mut ByteStream = &mut reader.context;
+        let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
                 ptr: webcore::readable_stream::Source::Bytes(context_ptr),
@@ -2040,13 +2040,13 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                         unsafe {
                             (*store_ptr).mime_type = mime_type;
                             blob.content_type =
-                                (*store_ptr).mime_type.value.as_ref() as *const [u8];
+                                std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref());
                         }
                         blob.content_type_allocated = false;
                     } else {
                         blob.content_type = match mime_type.value {
                             Cow::Owned(v) => Box::into_raw(v.into_boxed_slice()),
-                            Cow::Borrowed(s) => s as *const [u8],
+                            Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
                         };
                         blob.content_type_allocated = allocated;
                     }
@@ -2054,7 +2054,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                 }
             }
             if !blob.content_type_was_set && blob.store.is_some() {
-                blob.content_type = bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8];
+                blob.content_type = std::ptr::from_ref::<[u8]>(bun_http_types::MimeType::TEXT.value.as_ref());
                 blob.content_type_allocated = false;
                 blob.content_type_was_set = true;
                 // SAFETY: store presence checked above; single-threaded JS — no concurrent &Store.
@@ -2200,7 +2200,7 @@ impl<'a> ValueBufferer<'a> {
                         }
                         let global = self.global;
                         blob.do_read_file_internal::<Self, LoadFileAdapter>(
-                            self as *mut Self,
+                            std::ptr::from_mut::<Self>(self),
                             global,
                         );
                     }
@@ -2244,7 +2244,7 @@ impl<'a> ValueBufferer<'a> {
                     // `Box::from_raw` — `Vec::from_raw_parts(ptr, len, len)` would be
                     // UB if any producer's underlying capacity ever exceeded `len`.
                     unsafe {
-                        drop(Box::<[u8]>::from_raw(data.buf as *mut [u8]));
+                        drop(Box::<[u8]>::from_raw(std::ptr::from_mut::<[u8]>(data.buf)));
                     }
                 }
             }
@@ -2361,7 +2361,7 @@ impl<'a> ValueBufferer<'a> {
         // PORT NOTE: reshaped for borrowck — capture the `signal.ptr` slot as a raw
         // pointer before passing `buffer_stream` to FFI (Zig aliased both).
         let signal_ptr_slot: *mut *mut c_void =
-            (&mut buffer_stream.sink.signal.ptr) as *mut Option<NonNull<c_void>> as *mut *mut c_void;
+            (&raw mut buffer_stream.sink.signal.ptr).cast::<*mut c_void>();
 
         // Zig passes `buffer_stream` (the `*ArrayBufferSink.JSSink` wrapper). The
         // Rust `assign_to_stream` takes `&mut T` and casts to `*mut c_void`; since
@@ -2370,7 +2370,7 @@ impl<'a> ValueBufferer<'a> {
         // wrapper through the inner field via the transparent guarantee.
         // SAFETY: `JSSink<T>` is `#[repr(transparent)]` (single field `sink: T`).
         let inner: &mut ArrayBufferSink = unsafe {
-            &mut *(buffer_stream as *mut ArrayBufferJSSink as *mut ArrayBufferSink)
+            &mut *std::ptr::from_mut::<ArrayBufferJSSink>(buffer_stream).cast::<ArrayBufferSink>()
         };
         let assignment_result: JSValue = ArrayBufferJSSink::assign_to_stream(
             global_this,
@@ -2396,7 +2396,7 @@ impl<'a> ValueBufferer<'a> {
                     jsc::js_promise::Status::Pending => {
                         let cell = crate::api::NativePromiseContext::create(
                             global_this,
-                            self as *mut Self,
+                            std::ptr::from_mut::<Self>(self),
                         );
                         // Zig: `catch {}` — termination is observed by the surrounding scope.
                         assignment_result.then_with_value(
@@ -2518,14 +2518,14 @@ impl<'a> ValueBufferer<'a> {
             return self.buffer_locked_body_value(value, None);
         }
         // is safe to wait it buffer
-        locked.task = Some(self as *mut Self as *mut c_void);
+        locked.task = Some(std::ptr::from_mut::<Self>(self).cast::<c_void>());
         locked.on_receive_value = Some(Self::on_receive_value);
         Ok(())
     }
 
     fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
-        let sink = unsafe { &mut *(ctx as *mut Self) };
+        let sink = unsafe { &mut *ctx.cast::<Self>() };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

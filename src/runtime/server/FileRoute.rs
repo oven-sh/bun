@@ -62,14 +62,14 @@ impl<'a> Default for InitOptions<'a> {
 unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
     // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
     // scratch state on the C++ side, hence the const→mut cast.
-    unsafe { (*(owner as *mut FetchHeaders)).count(header_count, buf_len) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).count(header_count, buf_len) }
 }
 unsafe fn fh_fast_has(owner: *const (), name: bun_http::headers::HeaderName) -> bool {
     // SAFETY: see `fh_count`. `bun_http::headers::HeaderName` re-exports
     // `bun_http_types::Method::HeaderName`, which is `#[repr(u8)]` with
     // discriminants identical to `bun_jsc::HTTPHeaderName` (both mirror
     // WebCore's `HTTPHeaderNames.in`); `fast_has_` takes the raw `u8`.
-    unsafe { (*(owner as *mut FetchHeaders)).fast_has_(name as u8) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).fast_has_(name as u8) }
 }
 unsafe fn fh_copy_to(
     owner: *const (),
@@ -79,7 +79,7 @@ unsafe fn fh_copy_to(
 ) {
     // SAFETY: see `fh_count`. `bun_http_types::ETag::StringPointer` and
     // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
-    unsafe { (*(owner as *mut FetchHeaders)).copy_to(names.cast(), values.cast(), buf) }
+    unsafe { (*owner.cast::<FetchHeaders>().cast_mut()).copy_to(names.cast(), values.cast(), buf) }
 }
 
 static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
@@ -92,7 +92,7 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
 #[inline]
 fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
     bun_http::headers::FetchHeadersRef {
-        owner: h as *const FetchHeaders as *const (),
+        owner: std::ptr::from_ref::<FetchHeaders>(h).cast::<()>(),
         vtable: &FETCH_HEADERS_VTABLE,
         _phantom: core::marker::PhantomData,
     }
@@ -105,12 +105,12 @@ fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_>
 
 unsafe fn blob_has_content_type_from_user(owner: *const ()) -> bool {
     // SAFETY: `owner` is `&Blob` erased via `blob_body_ref`.
-    unsafe { (*(owner as *const Blob)).has_content_type_from_user() }
+    unsafe { (*owner.cast::<Blob>()).has_content_type_from_user() }
 }
 unsafe fn blob_content_type(owner: *const ()) -> (*const u8, usize) {
     // SAFETY: `owner` is `&Blob` erased; the returned slice borrows blob
     // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*(owner as *const Blob)).content_type_slice() };
+    let s = unsafe { (*owner.cast::<Blob>()).content_type_slice() };
     (s.as_ptr(), s.len())
 }
 
@@ -122,7 +122,7 @@ static BLOB_BODY_VTABLE: AnyBlobVTable = AnyBlobVTable {
 #[inline]
 fn blob_body_ref(b: &Blob) -> AnyBlobRef<'_> {
     AnyBlobRef {
-        owner: b as *const Blob as *const (),
+        owner: std::ptr::from_ref::<Blob>(b).cast::<()>(),
         vtable: &BLOB_BODY_VTABLE,
         _phantom: core::marker::PhantomData,
     }
@@ -228,7 +228,7 @@ impl FileRoute {
 
                 let mut blob = body_value.use_();
 
-                blob.global_this = global as *const _;
+                blob.global_this = std::ptr::from_ref(global);
                 debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(response.get_init_headers(), &blob);
@@ -252,7 +252,7 @@ impl FileRoute {
             let blob = unsafe { &*blob_ptr };
             if blob.needs_to_read_file() {
                 let mut b = blob.dupe();
-                b.global_this = global as *const _;
+                b.global_this = std::ptr::from_ref(global);
                 debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
                 let headers = headers_from(None, &b);
                 return Ok(Some(Box::into_raw(Box::new(FileRoute {
@@ -613,7 +613,7 @@ impl FileRoute {
             offset: body_offset,
             length: body_len,
             idle_timeout: this.server.get().unwrap().config().idle_timeout,
-            ctx: this_ptr as *mut c_void,
+            ctx: this_ptr.cast::<c_void>(),
             on_complete: on_stream_complete,
             on_abort: None,
             on_error: on_stream_error,
@@ -635,11 +635,11 @@ impl FileRoute {
 }
 
 fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
-    FileRoute::on_response_complete(ctx as *mut FileRoute, resp);
+    FileRoute::on_response_complete(ctx.cast::<FileRoute>(), resp);
 }
 
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
-    FileRoute::on_response_complete(ctx as *mut FileRoute, resp);
+    FileRoute::on_response_complete(ctx.cast::<FileRoute>(), resp);
 }
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`

@@ -160,7 +160,7 @@ pub fn do_patch_commit(
             let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
                 Ok(j) => j,
                 Err(err) => {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Output::pretty_errorln(format_args!(
                         "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                         err.name(),
@@ -700,7 +700,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
                 Ok(j) => j,
                 Err(err) => {
-                    let _ = log.print(Output::error_writer() as *mut _);
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Output::pretty_errorln(format_args!(
                         "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                         err.name(),

@@ -162,7 +162,7 @@ impl MachoFile {
                                     // SAFETY: entry.data points into self.data's load-command region; we
                                     // overwrite the segment_command_64 in place (unaligned, mirroring Zig *align(1)).
                                     unsafe {
-                                        let entry_ptr: *mut u8 = entry.data.as_ptr() as *mut u8;
+                                        let entry_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
                                         core::ptr::write_unaligned(
                                             entry_ptr.cast::<macho::segment_command_64>(),
                                             self.segment,
@@ -378,7 +378,7 @@ impl MachoFile {
 
         while let Some(entry) = iter.next() {
             let cmd = entry.hdr;
-            let cmd_ptr: *mut u8 = entry.data.as_ptr() as *mut u8;
+            let cmd_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
 
             match cmd.cmd {
                 macho::LC::SYMTAB => {
@@ -803,7 +803,7 @@ fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
 fn as_bytes<T>(v: &T) -> &[u8] {
     // SAFETY: T is #[repr(C)] POD with no padding-sensitive readers (callers pass SuperBlob /
     // BlobIndex / CodeDirectory which are byte-serialized verbatim into the Mach-O signature).
-    unsafe { core::slice::from_raw_parts((v as *const T).cast::<u8>(), size_of::<T>()) }
+    unsafe { core::slice::from_raw_parts(std::ptr::from_ref::<T>(v).cast::<u8>(), size_of::<T>()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

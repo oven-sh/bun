@@ -121,7 +121,7 @@ pub struct HTTPResponseMetadata {
 impl Default for HTTPResponseMetadata {
     fn default() -> Self {
         Self {
-            url: b"" as *const [u8],
+            url: std::ptr::from_ref::<[u8]>(b""),
             owned_buf: Box::default(),
             response: bun_picohttp::Response::default(),
         }
@@ -140,7 +140,7 @@ impl Drop for HTTPResponseMetadata {
             // `Box::leak`s exactly this slice; we are its sole owner.
             unsafe {
                 drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
-                    list.as_ptr() as *mut bun_picohttp::Header,
+                    list.as_ptr().cast_mut(),
                     list.len(),
                 )));
             }
@@ -403,7 +403,7 @@ impl HTTPClientResultCallback {
         // calling convention, the receiver casts `ctx` back before use.
         unsafe {
             Self {
-                ctx: this as *mut (),
+                ctx: this.cast::<()>(),
                 function: core::mem::transmute::<
                     fn(*mut T, *mut AsyncHTTP<'static>, HTTPClientResult<'_>),
                     HTTPClientResultCallbackFunction,
@@ -541,7 +541,7 @@ impl<'a> HTTPClient<'a> {
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> NonNull<HTTPClient<'static>> {
         // SAFETY: `self` is a valid reference (non-null, aligned).
-        unsafe { NonNull::new_unchecked(self as *const Self as *mut HTTPClient<'static>) }
+        unsafe { NonNull::new_unchecked(std::ptr::from_ref::<Self>(self).cast_mut().cast::<HTTPClient<'static>>()) }
     }
 }
 
@@ -1225,7 +1225,7 @@ impl<'a> HTTPClient<'a> {
     }
     #[inline]
     fn set_request_body(&mut self, slice: &[u8]) {
-        self.state.request_body = slice as *const [u8];
+        self.state.request_body = std::ptr::from_ref::<[u8]>(slice);
     }
     #[inline]
     fn body_out_str(&self) -> Option<&MutableString> {
@@ -1280,7 +1280,7 @@ impl<'a> HTTPClient<'a> {
                             vec![0u8; usize::try_from(cert_size).expect("int cast")].into_boxed_slice();
                         let mut cert_ptr = cert.as_mut_ptr();
                         // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
-                        let result_size = unsafe { boring_extra::i2d_X509(x509, &mut cert_ptr) };
+                        let result_size = unsafe { boring_extra::i2d_X509(x509, &raw mut cert_ptr) };
                         debug_assert!(result_size == cert_size);
 
                         self.state.certificate_info = Some(CertificateInfo {
@@ -1371,12 +1371,12 @@ impl<'a> HTTPClient<'a> {
                     if raw_hostname.len() < temp.len() {
                         temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
                         temp[raw_hostname.len()] = 0;
-                        temp.as_ptr() as *const core::ffi::c_char
+                        temp.as_ptr().cast::<core::ffi::c_char>()
                     } else {
                         owned = Vec::with_capacity(raw_hostname.len() + 1);
                         owned.extend_from_slice(raw_hostname);
                         owned.push(0);
-                        owned.as_ptr() as *const core::ffi::c_char
+                        owned.as_ptr().cast::<core::ffi::c_char>()
                     }
                 } else {
                     core::ptr::null()
@@ -1465,7 +1465,7 @@ impl<'a> HTTPClient<'a> {
             let mut proto: *const u8 = core::ptr::null();
             let mut proto_len: c_uint = 0;
             // SAFETY: ssl_ptr is a live *mut SSL for this socket; out-params are valid stack locals
-            unsafe { boring_extra::SSL_get0_alpn_selected(ssl_ptr, &mut proto, &mut proto_len) };
+            unsafe { boring_extra::SSL_get0_alpn_selected(ssl_ptr, &raw mut proto, &raw mut proto_len) };
             if !proto.is_null()
                 && proto_len == 2
                 // SAFETY: proto[0..proto_len] is the slice ALPN wrote; proto_len == 2 checked above
@@ -1541,7 +1541,7 @@ impl<'a> HTTPClient<'a> {
             }
             let callback = self.result_callback;
             // PORT NOTE: reshaped for borrowck — to_result() borrows &mut self.
-            let this_ptr = self as *mut Self;
+            let this_ptr = std::ptr::from_mut::<Self>(self);
             let result = self.to_result();
             // SAFETY: result borrows fields disjoint from those reset() touches at this stage.
             unsafe { (*this_ptr).state.reset() };
@@ -1760,11 +1760,11 @@ impl<'a> HTTPClient<'a> {
         // Phase B should unify behind a borrow.
         if IS_SSL {
             if let Some(ctx) = self.custom_ssl_ctx {
-                return ctx.as_ptr() as *mut GenHttpContext<IS_SSL>;
+                return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
-            (&mut http_thread().https_context) as *mut _ as *mut GenHttpContext<IS_SSL>
+            (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
         } else {
-            (&mut http_thread().http_context) as *mut _ as *mut GenHttpContext<IS_SSL>
+            (&raw mut http_thread().http_context).cast::<GenHttpContext<IS_SSL>>()
         }
     }
 
@@ -2314,7 +2314,7 @@ impl<'a> HTTPClient<'a> {
 
         if has_sent_headers && !self.request_body().is_empty() {
             self.state.request_body =
-                &self.request_body()[self.state.request_sent_len - headers_len..];
+                &raw const self.request_body()[self.state.request_sent_len - headers_len..];
         }
 
         let has_sent_body = if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2379,7 +2379,7 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: reshaped for borrowck — `stream` borrows
         // self.state.original_request_body; capture a raw self ptr first for
         // the disjoint reads/mutations below.
-        let this_ptr = self as *mut Self;
+        let this_ptr = std::ptr::from_mut::<Self>(self);
         let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body else {
             return;
         };
@@ -2550,7 +2550,7 @@ impl<'a> HTTPClient<'a> {
                             };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body = &self.request_body()[sent..];
+                            self.state.request_body = &raw const self.request_body()[sent..];
                         }
 
                         if self.request_body().is_empty() {
@@ -2600,7 +2600,7 @@ impl<'a> HTTPClient<'a> {
                             let Ok(sent) = ProxyTunnel::write(proxy, to_send) else { return };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body = &self.request_body()[sent..];
+                            self.state.request_body = &raw const self.request_body()[sent..];
 
                             if self.request_body().is_empty() {
                                 self.state.request_stage = RequestStage::Done;
@@ -2669,7 +2669,7 @@ impl<'a> HTTPClient<'a> {
 
                     if has_sent_headers && !self.request_body().is_empty() {
                         self.state.request_body =
-                            &self.request_body()[self.state.request_sent_len - headers_len..];
+                            &raw const self.request_body()[self.state.request_sent_len - headers_len..];
                     }
 
                     let has_sent_body = self.request_body().is_empty();
@@ -2754,13 +2754,13 @@ impl<'a> HTTPClient<'a> {
         // PORT NOTE: reshaped for borrowck — `to_read` aliases either
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
         // raw fat-ptr so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read_ptr: *const [u8] = incoming_data as *const [u8];
+        let mut to_read_ptr: *const [u8] = std::ptr::from_ref::<[u8]>(incoming_data);
         macro_rules! to_read { () => { unsafe { &*to_read_ptr } } }
         let mut needs_move = true;
         if !self.state.response_message_buffer.list.is_empty() {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
             let _ = self.state.response_message_buffer.append_slice_exact(incoming_data);
-            to_read_ptr = self.state.response_message_buffer.list.as_slice() as *const [u8];
+            to_read_ptr = std::ptr::from_ref::<[u8]>(self.state.response_message_buffer.list.as_slice());
             needs_move = false;
         }
 
@@ -2802,7 +2802,7 @@ impl<'a> HTTPClient<'a> {
 
             let bytes_read =
                 (usize::try_from(response.bytes_read).expect("int cast")).min(to_read!().len());
-            to_read_ptr = &to_read!()[bytes_read..] as *const [u8];
+            to_read_ptr = &raw const to_read!()[bytes_read..];
 
             if response.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None {
@@ -3009,7 +3009,7 @@ impl<'a> HTTPClient<'a> {
             if self.state.stage == Stage::Fail {
                 let callback = self.result_callback;
                 // PORT NOTE: reshaped for borrowck — to_result() borrows &mut self.
-                let this_ptr = self as *mut Self;
+                let this_ptr = std::ptr::from_mut::<Self>(self);
                 let result = self.to_result();
                 // SAFETY: result borrows fields disjoint from reset()/proxy_tunneling.
                 unsafe {
@@ -3026,7 +3026,7 @@ impl<'a> HTTPClient<'a> {
     fn resolve_pending_h2(&mut self, mut resolution: PendingH2Resolution<'_>) {
         let Some(pc) = self.pending_h2.take() else { return };
         // SAFETY: get_ssl_ctx returns a thread-owned non-null context.
-        let _owned = h2::PendingConnect::unregister_from(&*pc, unsafe { &mut *self.get_ssl_ctx::<true>() });
+        let _owned = h2::PendingConnect::unregister_from(&raw const *pc, unsafe { &mut *self.get_ssl_ctx::<true>() });
         // pc / _owned drop at scope exit (was `defer pc.deinit()`)
 
         for waiter_ptr in pc.waiters.iter() {
@@ -3080,7 +3080,7 @@ impl<'a> HTTPClient<'a> {
             if !self.flags.defer_fail_until_connecting_is_complete {
                 let callback = self.result_callback;
                 // PORT NOTE: reshaped for borrowck — to_result() borrows &mut self.
-                let this_ptr = self as *mut Self;
+                let this_ptr = std::ptr::from_mut::<Self>(self);
                 let result = self.to_result();
                 // SAFETY: result borrows fields disjoint from reset()/proxy_tunneling.
                 unsafe {
@@ -3120,7 +3120,7 @@ impl<'a> HTTPClient<'a> {
             // we clean the temporary response since cloned_metadata is now the owner
             self.state.pending_response = None;
 
-            let href = builder.append(self.url.href) as *const [u8];
+            let href = std::ptr::from_ref::<[u8]>(builder.append(self.url.href));
             // Transfer the single backing allocation out of the builder
             // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
             let cap = builder.cap;
@@ -3519,7 +3519,7 @@ impl<'a> HTTPClient<'a> {
     fn parent_async_http(&mut self) -> *mut AsyncHTTP<'static> {
         // SAFETY: HTTPClient is always embedded as `client` field of AsyncHTTP
         unsafe {
-            (self as *mut Self as *mut u8)
+            std::ptr::from_mut::<Self>(self).cast::<u8>()
                 .sub(offset_of!(AsyncHTTP<'static>, client))
                 .cast::<AsyncHTTP<'static>>()
         }
@@ -3734,7 +3734,7 @@ impl<'a> HTTPClient<'a> {
         // on the body buffer in place. The Zig `var buffer = buffer_ptr.*` was a
         // shallow struct copy that aliased the same allocation; deep-cloning
         // here would diverge (mutations from process_body_buffer would be lost).
-        let decoder: *mut picohttp::phr_chunked_decoder = &mut self.state.chunked_decoder;
+        let decoder: *mut picohttp::phr_chunked_decoder = &raw mut self.state.chunked_decoder;
         // SAFETY: get_body_buffer returns a ref into self.state; raw-ptr to
         // avoid pinning &mut self.state for the whole fn.
         let buffer_ptr: *mut MutableString = self.state.get_body_buffer();
@@ -3753,10 +3753,10 @@ impl<'a> HTTPClient<'a> {
         let pret = unsafe {
             let list = &mut (*buffer_ptr).list;
             picohttp::phr_decode_chunked(
-                &mut *decoder,
+                &raw mut *decoder,
                 list.as_mut_ptr()
                     .add(list.len().saturating_sub(incoming_data.len())),
-                &mut bytes_decoded,
+                &raw mut bytes_decoded,
             )
         };
         // SAFETY: buffer_ptr is the unique body buffer.
@@ -3823,7 +3823,7 @@ impl<'a> HTTPClient<'a> {
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — raw ptr so later self.state.* compile.
-        let decoder: *mut picohttp::phr_chunked_decoder = &mut self.state.chunked_decoder;
+        let decoder: *mut picohttp::phr_chunked_decoder = &raw mut self.state.chunked_decoder;
         // SAFETY: HTTP-thread-only static
         let small = unsafe { &mut SINGLE_PACKET_SMALL_BUFFER };
         debug_assert!(incoming_data.len() <= small.len());
@@ -3856,11 +3856,11 @@ impl<'a> HTTPClient<'a> {
         // len - in_len == 0 is trivially in bounds.
         let pret = unsafe {
             picohttp::phr_decode_chunked(
-                &mut *decoder,
+                &raw mut *decoder,
                 buffer
                     .as_mut_ptr()
                     .add(buffer.len().saturating_sub(in_len)),
-                &mut bytes_decoded,
+                &raw mut bytes_decoded,
             )
         };
         let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);

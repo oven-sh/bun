@@ -279,7 +279,7 @@ impl ParseTask {
         let known_target = unsafe { (*ctx).transpiler().options.target };
         ParseTask {
             // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF).
-            ctx: ctx as *mut BundleV2<'static>,
+            ctx: ctx.cast::<BundleV2<'static>>(),
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -370,7 +370,7 @@ impl Default for ParseTask {
 pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.io_task (intrusive field).
     let parse_task = unsafe {
-        &mut *(task as *mut u8)
+        &mut *task.cast::<u8>()
             .sub(offset_of!(ParseTask, io_task))
             .cast::<ParseTask>()
     };
@@ -380,7 +380,7 @@ pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: task points to ParseTask.task (intrusive field).
     let parse_task = unsafe {
-        &mut *(task as *mut u8)
+        &mut *task.cast::<u8>()
             .sub(offset_of!(ParseTask, task))
             .cast::<ParseTask>()
     };
@@ -629,7 +629,7 @@ fn get_empty_css_ast(
         js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty()) as *mut _ as *mut c_void);
+    ast.css = Some(std::ptr::from_mut(bump.alloc(bun_css::BundlerStyleSheet::empty())).cast::<c_void>());
     Ok(ast)
 }
 
@@ -688,7 +688,7 @@ fn css_symbols_to_parser_symbols(
             core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
         };
         out.append_assume_capacity(PSym {
-            original_name: s.original_name as *const [u8],
+            original_name: std::ptr::from_ref::<[u8]>(s.original_name),
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
             // distinct `NamespaceAlias` mirrors.
@@ -1188,7 +1188,7 @@ fn get_ast(
             }
             // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
             let root = Expr::init(E::Object::default(), Loc { start: 0 });
-            let css_ast_heap = bump.alloc(css_ast) as *mut _ as *mut c_void;
+            let css_ast_heap = std::ptr::from_mut(bump.alloc(css_ast)).cast::<c_void>();
             // PORT NOTE: under `feature = "css"` `StylesheetExtra.symbols` is
             // `Vec<bun_logger::Symbol>`; `new_lazy_export_ast_impl` takes
             // `Vec<bun_js_parser::Symbol>`. Both port the same Zig
@@ -1484,7 +1484,7 @@ fn get_code_for_parse_task<'b>(
         file_path,
         loader,
         deferred_error: None,
-        should_continue_running: &mut should_continue_running,
+        should_continue_running: &raw mut should_continue_running,
         result: core::ptr::null_mut(),
     };
 
@@ -1714,7 +1714,7 @@ impl OnBeforeParseResult {
         // SAFETY: result points to OnBeforeParseResultWrapper.result (always
         // constructed that way in `OnBeforeParsePlugin::run`).
         let wrapper = unsafe {
-            (result as *mut u8)
+            result.cast::<u8>()
                 .sub(offset_of!(OnBeforeParseResultWrapper, result))
                 .cast::<OnBeforeParseResultWrapper>()
         };
@@ -1929,13 +1929,13 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         // no parent-`&mut` use pops its SharedRW tag before the FFI callbacks
         // (`fetch_source_code` / `log_fn`) dereference it. Reuse the same raw
         // for the `ctx` argument instead of re-deriving from `&mut self`.
-        let self_ptr = self as *mut _ as *mut OnBeforeParsePlugin<'static, 'static>;
+        let self_ptr = std::ptr::from_mut(self).cast::<OnBeforeParsePlugin<'static, 'static>>();
         args.context = self_ptr;
         let count = plugin.call_on_before_parse_plugins(
             self_ptr.cast(),
             namespace,
             &path_str,
-            &mut args,
+            &raw mut args,
             result_ptr,
             should_continue_running,
         );
@@ -2128,7 +2128,7 @@ fn run_with_source_code(
 
     // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
     let mut transpiler: *mut Transpiler<'static> =
-        unsafe { (*worker_raw).transpiler_for_target(task.known_target) } as *mut _;
+        std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
     // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
     // `if (.fd) entry.deinit(allocator)` .zig:1148) are reshaped into the
     // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
@@ -2220,7 +2220,7 @@ fn run_with_source_code(
         // pop the SharedRW tag backing `resolver` (which still points into the
         // original target's transpiler per Zig .zig:1189).
         transpiler =
-            unsafe { (*worker_raw).transpiler_for_target(options::Target::Browser) } as *mut _;
+            std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(options::Target::Browser) });
     }
     // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
     // reassigned above); reborrow only the disjoint `options` field.
@@ -2544,7 +2544,7 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
     scoped_log!(
         ParseTask,
         "ParseTask(0x{:x}, {}) callback",
-        this as *mut _ as usize,
+        std::ptr::from_mut(this) as usize,
         bstr::BStr::new(this.path.text)
     );
 

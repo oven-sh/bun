@@ -357,7 +357,7 @@ mod elf {
         let target = vaddr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
-            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
@@ -487,7 +487,7 @@ impl LazySourceMap {
                 // (kind = .zig, load_hint = .none implicit). `from_provider` packs the
                 // same triple into the `SourceContentPtr` bitfield.
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    Box::into_raw(data) as *mut SourceMap::SourceProviderMap,
+                    Box::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
                 stored.is_standalone_module_graph = true;
 
@@ -555,7 +555,7 @@ impl StandaloneModuleGraph {
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
-        let modules_list_base = modules_list_bytes.as_ptr() as *const CompiledModuleGraphFile;
+        let modules_list_base = modules_list_bytes.as_ptr().cast::<CompiledModuleGraphFile>();
 
         if offsets.entry_point_id as usize > modules_list_count {
             return Err(err!("Corrupted module graph: entry point ID is greater than module list count"));
@@ -593,13 +593,13 @@ impl StandaloneModuleGraph {
                         // `&[u8]` is ever formed over this range.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
                     } else {
-                        &mut [] as *mut [u8]
+                        std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
                     } else {
-                        &mut [] as *mut [u8]
+                        std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
                         unsafe { slice_to_z(raw_const, raw_len, module.bytecode_origin_path) }.as_bytes()
@@ -932,7 +932,7 @@ pub fn to_bytes(
     // `std.mem.sliceAsBytes`.
     let modules_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
-            modules.as_ptr() as *const u8,
+            modules.as_ptr().cast::<u8>(),
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
@@ -947,7 +947,7 @@ pub fn to_bytes(
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
-            &offsets as *const Offsets as *const u8,
+            (&raw const offsets).cast::<u8>(),
             size_of::<Offsets>(),
         )
     };
@@ -1852,7 +1852,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -1874,7 +1874,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -1896,7 +1896,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr as *const Offsets) };
+            let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
             return from_bytes_alloc(base, len, offsets).map(Some);
         }
 
@@ -1986,7 +1986,7 @@ pub struct SerializedSourceMapHeader {
 impl SerializedSourceMap {
     pub fn header(self) -> SerializedSourceMapHeader {
         // SAFETY: bytes.len() >= size_of::<Header>() must hold (caller checked); align(1) read.
-        unsafe { core::ptr::read_unaligned(self.bytes.as_ptr() as *const SerializedSourceMapHeader) }
+        unsafe { core::ptr::read_unaligned(self.bytes.as_ptr().cast::<SerializedSourceMapHeader>()) }
     }
 
     pub fn mapping_blob(self) -> Option<&'static [u8]> {
@@ -2160,7 +2160,7 @@ pub fn serialize_json_source_map_for_standalone(
         let unused = string_payload.spare_capacity_mut();
         // TODO(port): zstd compress into MaybeUninit slice — Phase B may need a safe wrapper.
         let unused_slice = unsafe {
-            core::slice::from_raw_parts_mut(unused.as_mut_ptr() as *mut u8, unused.len())
+            core::slice::from_raw_parts_mut(unused.as_mut_ptr().cast::<u8>(), unused.len())
         };
         let compressed_result = bun_zstd::compress(unused_slice, utf8, Some(1));
         match compressed_result {

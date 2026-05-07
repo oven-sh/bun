@@ -320,7 +320,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // the wrong pointer.
         #[cfg(not(windows))]
         {
-            self.manager_mut().event_loop.r#loop() as *mut AsyncLoop
+            self.manager_mut().event_loop.r#loop().cast::<AsyncLoop>()
         }
         #[cfg(windows)]
         {
@@ -422,7 +422,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             {
                 // SAFETY: `this` was inserted via `insert(this)` with allocation-
                 // rooted provenance; the heap holds no other live `&mut` to it here.
-                active.remove(this as *mut LifecycleScriptSubprocess<'static>);
+                active.remove(this.cast::<LifecycleScriptSubprocess<'static>>());
             }
         }
     }
@@ -496,8 +496,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .as_ref()
             .expect("script present");
         let cwd = (*this).scripts.cwd.as_bytes();
-        (*this).stdout.set_parent(this as *mut c_void);
-        (*this).stderr.set_parent(this as *mut c_void);
+        (*this).stdout.set_parent(this.cast::<c_void>());
+        (*this).stderr.set_parent(this.cast::<c_void>());
 
         // Raw-ptr receiver: touches only `heap`/`manager`, so the shared
         // borrows `original_script`/`cwd` (into `(*this).scripts`) survive.
@@ -547,16 +547,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let mut argv: [*const c_char; 4] =
             if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
-                    (*this).shell_bin.unwrap().as_ptr() as *const c_char,
-                    b"-c\0".as_ptr() as *const c_char,
-                    combined_script.as_ptr() as *const c_char,
+                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
+                    b"-c\0".as_ptr().cast::<c_char>(),
+                    combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
             } else {
                 [
-                    bun_core::self_exe_path()?.as_ptr() as *const c_char,
-                    b"exec\0".as_ptr() as *const c_char,
-                    combined_script.as_ptr() as *const c_char,
+                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
+                    b"exec\0".as_ptr().cast::<c_char>(),
+                    combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
             };
@@ -576,8 +576,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let mut stdout_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
             // SAFETY: as above.
             let mut stderr_pipe = Box::new(core::mem::zeroed::<uv::Pipe>());
-            let stdout_ptr = stdout_pipe.as_mut() as *mut uv::Pipe;
-            let stderr_ptr = stderr_pipe.as_mut() as *mut uv::Pipe;
+            let stdout_ptr: *mut uv::Pipe = core::ptr::from_mut(stdout_pipe.as_mut());
+            let stderr_ptr: *mut uv::Pipe = core::ptr::from_mut(stderr_pipe.as_mut());
             (*this).stdout.source = Some(bun_io::Source::Pipe(stdout_pipe));
             (*this).stderr.source = Some(bun_io::Source::Pipe(stderr_pipe));
             (stdout_ptr, stderr_ptr)
@@ -638,13 +638,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // reborrow, whose SB tag would be invalidated by the field accesses below.
         (*manager)
             .active_lifecycle_scripts
-            .insert(this as *mut LifecycleScriptSubprocess<'static>);
+            .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
         let mut spawned = bun_spawn::spawn_process(
             &spawn_options,
             // argv is `[*const c_char; 4]` with trailing null — exactly the
             // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-            argv.as_mut_ptr() as *mut _,
-            (*this).envp.as_ptr() as *const *const c_char,
+            argv.as_mut_ptr().cast(),
+            (*this).envp.as_ptr().cast::<*const c_char>(),
         )??;
         // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer `!Maybe(Spawned)`.
         // Modeled here as `Result<bun_sys::Result<Spawned>, _>`, hence `??`. Verify in Phase B.
@@ -653,7 +653,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         {
             if let Some(stdout) = spawned.stdout {
                 if !spawned.memfds[1] {
-                    (*this).stdout.set_parent(this as *mut c_void);
+                    (*this).stdout.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stdout);
                     (*this).remaining_fds += 1;
 
@@ -663,13 +663,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stdout.set_parent(this as *mut c_void);
+                    (*this).stdout.set_parent(this.cast::<c_void>());
                     (*this).stdout.start_memfd(stdout);
                 }
             }
             if let Some(stderr) = spawned.stderr {
                 if !spawned.memfds[2] {
-                    (*this).stderr.set_parent(this as *mut c_void);
+                    (*this).stderr.set_parent(this.cast::<c_void>());
                     let _ = bun_sys::set_nonblocking(stderr);
                     (*this).remaining_fds += 1;
 
@@ -679,7 +679,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         poll.set_flag(FilePollFlag::Socket);
                     }
                 } else {
-                    (*this).stderr.set_parent(this as *mut c_void);
+                    (*this).stderr.set_parent(this.cast::<c_void>());
                     (*this).stderr.start_memfd(stderr);
                 }
             }
@@ -687,12 +687,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         #[cfg(windows)]
         {
             if matches!(spawned.stdout, bun_spawn::SpawnedStdio::Buffer(_)) {
-                (*this).stdout.set_parent(this as *mut c_void);
+                (*this).stdout.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stdout.start_with_current_pipe()?;
             }
             if matches!(spawned.stderr, bun_spawn::SpawnedStdio::Buffer(_)) {
-                (*this).stderr.set_parent(this as *mut c_void);
+                (*this).stderr.set_parent(this.cast::<c_void>());
                 (*this).remaining_fds += 1;
                 (*this).stderr.start_with_current_pipe()?;
             }
@@ -709,7 +709,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // Store the allocation-rooted `this` as the exit-handler owner. We hold no
         // live `&mut Self` here, so the synchronous `on_exit` dispatch below may
         // reenter `on_process_exit` through `this` without aliasing.
-        (*process).set_exit_handler(this as *mut (), &LIFECYCLE_SCRIPT_EXIT_VTABLE);
+        (*process).set_exit_handler(this.cast::<()>(), &LIFECYCLE_SCRIPT_EXIT_VTABLE);
 
         if let Err(err) = (*process).watch_or_reap() {
             if !(*process).has_exited() {
@@ -788,7 +788,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         // SAFETY: `self` is live; the raw-ptr receiver touches only disjoint
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
-        unsafe { Self::ensure_not_in_heap(self as *mut Self) };
+        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
         match status {
             Status::Exited(exit) => {
@@ -819,7 +819,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         exit.code,
                     ));
                     // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
-                    unsafe { Self::destroy(self as *mut Self) };
+                    unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
                     Global::exit(exit.code as u32);
                 }
@@ -874,7 +874,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             }
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
-                            unsafe { Self::destroy(self as *mut Self) };
+                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                             return;
                         }
                         _ => {}
@@ -892,7 +892,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // from this pointer are not invalidated by a later reborrow.
                         if let Err(err) = unsafe {
                             Self::spawn_next_script(
-                                self as *mut Self,
+                                std::ptr::from_mut::<Self>(self),
                                 u8::try_from(new_script_index).expect("int cast"),
                             )
                         } {
@@ -937,7 +937,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // the last script finished
                 self.decrement_pending_script_tasks();
                 // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
-                unsafe { Self::destroy(self as *mut Self) };
+                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
                 self.print_output();
@@ -984,7 +984,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     err,
                 ));
                 // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
-                unsafe { Self::destroy(self as *mut Self) };
+                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
                 Global::exit(1);
             }
@@ -1065,7 +1065,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         // SAFETY: `self` was created by `Self::new` (Box::into_raw); uniquely owned here.
-        unsafe { Self::destroy(self as *mut Self) };
+        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
     pub fn spawn_package_scripts(
@@ -1196,7 +1196,7 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
         // CYCLEBREAK note on `bun_io::EventLoopHandle`).
         unsafe {
             EventLoopHandle(
-                (*this).event_loop() as *const AnyEventLoop<'static> as *mut c_void,
+                std::ptr::from_ref::<AnyEventLoop<'static>>((*this).event_loop()).cast_mut().cast::<c_void>(),
             )
         }
     }
@@ -1207,7 +1207,7 @@ impl Drop for LifecycleScriptSubprocess<'_> {
         self.reset_polls();
         // SAFETY: `self` is live for the duration of `drop`; raw-ptr receiver
         // touches only `heap`/`manager` (see `ensure_not_in_heap` doc).
-        unsafe { Self::ensure_not_in_heap(self as *mut Self) };
+        unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
     }
 }
 

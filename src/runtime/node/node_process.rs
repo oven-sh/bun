@@ -62,7 +62,7 @@ pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
         // TODO(@190n) we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         // SAFETY: worker pointer is valid for the lifetime of the VM.
-        unsafe { (*(worker as *const WebWorker)).exit() };
+        unsafe { (*worker.cast::<WebWorker>()).exit() };
     } else {
         // SAFETY: vm is the live per-thread VirtualMachine; on_exit/global_exit
         // are the canonical shutdown path.
@@ -102,23 +102,22 @@ unsafe impl Sync for CStrPtr {}
 
 #[unsafe(no_mangle)]
 pub static Bun__version: CStrPtr =
-    CStrPtr(const_format::concatcp!("v", Global::package_json_version, "\0").as_ptr() as *const c_char);
+    CStrPtr(const_format::concatcp!("v", Global::package_json_version, "\0").as_ptr().cast::<c_char>());
 #[unsafe(no_mangle)]
 pub static Bun__version_with_sha: CStrPtr = CStrPtr(
-    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0").as_ptr()
-        as *const c_char,
+    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0").as_ptr().cast::<c_char>(),
 );
 // Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
 // The C++ code in BunProcess.cpp uses the generated header directly
 #[unsafe(no_mangle)]
 pub static Bun__versions_uws: CStrPtr =
-    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr().cast::<c_char>());
 #[unsafe(no_mangle)]
 pub static Bun__versions_usockets: CStrPtr =
-    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr().cast::<c_char>());
 #[unsafe(no_mangle)]
 pub static Bun__version_sha: CStrPtr =
-    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr().cast::<c_char>());
 
 mod _impl {
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker};
@@ -195,7 +194,7 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(worker) = vm.worker {
         // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker`
         // to the live `WebWorker` for this VM; valid while the VM is.
-        let worker = unsafe { &*(worker as *const WebWorker) };
+        let worker = unsafe { &*worker.cast::<WebWorker>() };
         // was explicitly overridden for the worker?
         if let Some(exec_argv) = worker.exec_argv() {
             let array = JSValue::create_empty_array(global_object, exec_argv.len())?;
@@ -339,7 +338,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
 
     // SAFETY: `vm.worker` is a BACKREF `*const c_void` set by `init_worker` to
     // the live `WebWorker` for this VM; valid while the VM is.
-    let worker: Option<&WebWorker> = vm.worker.map(|w| unsafe { &*(w as *const WebWorker) });
+    let worker: Option<&WebWorker> = vm.worker.map(|w| unsafe { &*w.cast::<WebWorker>() });
 
     let args_count: usize = match worker {
         Some(w) => w.argv().len(),

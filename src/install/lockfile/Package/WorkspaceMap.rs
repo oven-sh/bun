@@ -263,7 +263,7 @@ impl WorkspaceMap {
                 // SAFETY: rel_input_path points into a mutable threadlocal buffer; Zig @constCast'd it.
                 let rel_mut = unsafe {
                     core::slice::from_raw_parts_mut(
-                        rel_input_path.as_ptr() as *mut u8,
+                        rel_input_path.as_ptr().cast_mut(),
                         rel_input_path.len(),
                     )
                 };
@@ -475,7 +475,7 @@ impl WorkspaceMap {
                         // SAFETY: workspace_path points into a mutable threadlocal buffer; Zig @constCast'd it.
                         let wp_mut = unsafe {
                             core::slice::from_raw_parts_mut(
-                                workspace_path.as_ptr() as *mut u8,
+                                workspace_path.as_ptr().cast_mut(),
                                 workspace_path.len(),
                             )
                         };

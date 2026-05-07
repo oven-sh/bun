@@ -79,7 +79,7 @@ impl Drop for Node {
         if self.owns_slice {
             // SAFETY: when owns_slice is true, slice was produced by Box::<[u8]>::into_raw
             // in `push_cloned` and has not been freed.
-            drop(unsafe { Box::from_raw(self.slice as *mut [u8]) });
+            drop(unsafe { Box::from_raw(self.slice.cast_mut()) });
         }
     }
 }
@@ -126,7 +126,7 @@ impl StringJoiner {
         if data.is_empty() {
             return;
         }
-        self.push_raw(data as *const [u8], false);
+        self.push_raw(std::ptr::from_ref::<[u8]>(data), false);
     }
 
     fn push_raw(&mut self, data: *const [u8], owned: bool) {
@@ -185,7 +185,7 @@ impl StringJoiner {
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     s.as_ptr(),
-                    slice.as_mut_ptr().add(off) as *mut u8,
+                    slice.as_mut_ptr().add(off).cast::<u8>(),
                     s.len(),
                 );
             }
@@ -264,7 +264,7 @@ impl StringJoiner {
     pub fn node_slices(&self) -> NodeSlices<'_> {
         NodeSlices {
             cur: match &self.head {
-                Some(h) => &**h as *const Node,
+                Some(h) => &raw const **h,
                 None => ptr::null(),
             },
             _joiner: core::marker::PhantomData,
@@ -273,7 +273,7 @@ impl StringJoiner {
 
     pub fn contains(&self, slice: &[u8]) -> bool {
         let mut el: *const Node = match &self.head {
-            Some(h) => &**h as *const Node,
+            Some(h) => &raw const **h,
             None => ptr::null(),
         };
         while !el.is_null() {

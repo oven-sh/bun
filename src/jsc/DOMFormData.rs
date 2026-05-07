@@ -74,7 +74,7 @@ impl DOMFormData {
     {
         unsafe extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
             // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
-            let cb = unsafe { &mut *(c as *mut F) };
+            let cb = unsafe { &mut *c.cast::<F>() };
             cb(unsafe { *str_ });
         }
 
@@ -83,7 +83,7 @@ impl DOMFormData {
         unsafe {
             WebCore__DOMFormData__toQueryString(
                 self,
-                callback as *mut F as *mut c_void,
+                std::ptr::from_mut::<F>(callback).cast::<c_void>(),
                 run::<F>,
             );
         }
@@ -144,16 +144,16 @@ impl DOMFormData {
             F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
             // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
-            let ctx_ = unsafe { &mut *(ctx_ptr as *mut F) };
+            let ctx_ = unsafe { &mut *ctx_ptr.cast::<F>() };
             let value = if is_blob == 0 {
                 // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
-                FormDataEntry::String(unsafe { *(value_ptr as *mut ZigString) })
+                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: when is_blob != 0, value_ptr points to a webcore
                     // Blob (`bun_runtime::webcore::Blob`) valid for the callback
                     // scope (LIFETIMES.tsv: BORROW_PARAM). Caller picks `B`.
-                    blob: unsafe { &*(value_ptr as *const B) },
+                    blob: unsafe { &*value_ptr.cast::<B>() },
                     filename: if filename.is_null() {
                         ZigString::EMPTY
                     } else {
@@ -173,7 +173,7 @@ impl DOMFormData {
         unsafe {
             DOMFormData__forEach(
                 self,
-                callback as *mut F as *mut c_void,
+                std::ptr::from_mut::<F>(callback).cast::<c_void>(),
                 for_each_wrapper::<B, F>,
             );
         }

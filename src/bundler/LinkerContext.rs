@@ -66,9 +66,9 @@ pub static BUNDLE_GENERATE_CHUNK_VTABLE: bun_crash_handler::BundleGenerateChunkV
         fmt: |context, chunk, part_range, writer| {
             // SAFETY: erased pointers were constructed by `bundle_generate_chunk_action`
             // below from live `&LinkerContext` / `&Chunk` / `&PartRange`.
-            let ctx = unsafe { &*(context as *const LinkerContext) };
-            let chunk = unsafe { &*(chunk as *const Chunk) };
-            let pr = unsafe { &*(part_range as *const PartRange) };
+            let ctx = unsafe { &*context.cast::<LinkerContext>() };
+            let chunk = unsafe { &*chunk.cast::<Chunk>() };
+            let pr = unsafe { &*part_range.cast::<PartRange>() };
             // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
             // the lifetime of the link step that constructed this Action.
             let parse_graph = unsafe { &*ctx.parse_graph };
@@ -104,9 +104,9 @@ pub fn bundle_generate_chunk_action(
     part_range: &PartRange,
 ) -> bun_crash_handler::Action {
     bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
-        context: ctx as *const LinkerContext as *const (),
-        chunk: chunk as *const Chunk as *const (),
-        part_range: part_range as *const PartRange as *const (),
+        context: core::ptr::from_ref::<LinkerContext>(ctx).cast::<()>(),
+        chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
+        part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
         vtable: &BUNDLE_GENERATE_CHUNK_VTABLE,
     })
 }
@@ -460,7 +460,7 @@ impl<'a> LinkerContext<'a> {
 
         // PORT NOTE: erase `'a` → `'static` for the task backref. The tasks are
         // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
-        let ctx: *mut LinkerContext<'static> = (self as *mut LinkerContext<'a>).cast();
+        let ctx: *mut LinkerContext<'static> = std::ptr::from_mut::<LinkerContext<'a>>(self).cast();
         let mut batch = ThreadPoolLib::Batch::default();
         let mut second_batch = ThreadPoolLib::Batch::default();
         debug_assert_eq!(reachable.len(), self.source_maps.line_offset_tasks.len());
@@ -486,8 +486,8 @@ impl<'a> LinkerContext<'a> {
                     callback: SourceMapDataTask::run_quoted_source_contents,
                 },
             };
-            batch.push(ThreadPoolLib::Batch::from(&mut line_offset.thread_task));
-            second_batch.push(ThreadPoolLib::Batch::from(&mut quoted.thread_task));
+            batch.push(ThreadPoolLib::Batch::from(&raw mut line_offset.thread_task));
+            second_batch.push(ThreadPoolLib::Batch::from(&raw mut quoted.thread_task));
         }
 
         // line offsets block sooner and are faster to compute, so we should schedule those first
@@ -715,7 +715,7 @@ impl<'a> LinkerContext<'a> {
         let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         // SAFETY: parse_graph backref
         let side_effects: *const [SideEffects] = unsafe { (*self.parse_graph).input_files.items_side_effects() };
-        let entry_point_kinds: *const [EntryPoint::Kind] = self.graph.files.items_entry_point_kind() as *const _;
+        let entry_point_kinds: *const [EntryPoint::Kind] = std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let entry_points_len = unsafe { (&*entry_points).len() };
@@ -784,7 +784,7 @@ impl<'a> LinkerContext<'a> {
         // (shared), so a `&` is sufficient and avoids aliasing.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            (ctx.c as *const LinkerContext as *const u8)
+            ctx.c.cast_const().cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
@@ -808,7 +808,7 @@ impl<'a> LinkerContext<'a> {
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
-            (ctx.c as *const LinkerContext as *const u8)
+            ctx.c.cast_const().cast::<u8>()
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
@@ -826,7 +826,7 @@ impl<'a> LinkerContext<'a> {
         // simultaneously; cache the files slice via raw pointer (it lives in
         // the chunk arena, address-stable for the renamer pass).
         let files: *const [u32] = match &chunk.content {
-            crate::chunk::Content::Javascript(js) => &*js.files_in_chunk_order as *const [u32],
+            crate::chunk::Content::Javascript(js) => &raw const *js.files_in_chunk_order,
             _ => unreachable!(),
         };
         // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`
@@ -1133,7 +1133,7 @@ impl SourceMapDataTask {
     pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
-            &mut *((thread_task as *mut u8)
+            &mut *(thread_task.cast::<u8>()
                 .sub(offset_of!(SourceMapDataTask, thread_task))
                 .cast::<SourceMapDataTask>())
         };
@@ -1153,7 +1153,7 @@ impl SourceMapDataTask {
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
         let bundle: *const BundleV2 = unsafe {
-            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.allocator` points at `worker.heap` (init by `Worker::create`).
@@ -1164,7 +1164,7 @@ impl SourceMapDataTask {
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
-            &mut *((thread_task as *mut u8)
+            &mut *(thread_task.cast::<u8>()
                 .sub(offset_of!(SourceMapDataTask, thread_task))
                 .cast::<SourceMapDataTask>())
         };
@@ -1180,7 +1180,7 @@ impl SourceMapDataTask {
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
         let bundle: *const BundleV2 = unsafe {
-            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
+            ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
@@ -1301,7 +1301,7 @@ pub struct MatchImport {
 impl Default for MatchImport {
     fn default() -> Self {
         Self {
-            alias: b"" as *const [u8],
+            alias: std::ptr::from_ref::<[u8]>(b""),
             kind: MatchImportKind::default(),
             namespace_ref: Ref::default(),
             source_index: 0,
@@ -1432,7 +1432,7 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
             // `transpiler_for_target` only reads `bundle.browser_transpiler`.
             let bundle = unsafe {
-                &mut *((self as *mut LinkerContext as *mut u8)
+                &mut *(std::ptr::from_mut::<LinkerContext>(self).cast::<u8>()
                     .sub(offset_of!(BundleV2, linker))
                     .cast::<BundleV2>())
             };
@@ -1732,7 +1732,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
     ) -> js_printer::PrintResult {
-        let parts_to_print = &[Part { stmts: out_stmts as *mut [Stmt], ..Default::default() }];
+        let parts_to_print = &[Part { stmts: std::ptr::from_mut::<[Stmt]>(out_stmts), ..Default::default() }];
 
         // SAFETY: parse_graph backref
         let parse_graph = unsafe { &*self.parse_graph };
@@ -1752,12 +1752,12 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `self.graph` columns are stable heap allocations valid for
         // the duration of this call; the printer only reads from them.
         let ts_enums: &js_ast::ast::ast::TsEnumsMap =
-            unsafe { &*(&self.graph.ts_enums as *const _) };
+            unsafe { &*(&raw const self.graph.ts_enums) };
         let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
-            &*(&self.graph.files.items_line_offset_table()[source_index.get() as usize] as *const _)
+            &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
         };
         let mangled_props: &MangledProps =
-            unsafe { &*(&self.mangled_props as *const MangledProps) };
+            unsafe { &*(&raw const self.mangled_props) };
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -1907,7 +1907,7 @@ impl<'a> LinkerContext<'a> {
                 // SAFETY: the SoA `css` column stores type-erased
                 // `*mut BundlerStyleSheet` (see `BundledAst.rs:58`); cast back
                 // to the concrete type. Pointer owned by the graph arena.
-                let css_ast = unsafe { &*(*css_ast_ptr as *mut css::BundlerStyleSheet) };
+                let css_ast = unsafe { &*(*css_ast_ptr).cast::<css::BundlerStyleSheet>() };
                 if css_ast.local_scope.count() == 0 {
                     continue;
                 }
@@ -2491,7 +2491,7 @@ impl Default for ImportTrackerIterator {
         Self {
             status: ImportTrackerStatus::default(),
             value: ImportTracker::default(),
-            import_data: &[] as *const [crate::ImportData],
+            import_data: std::ptr::from_ref::<[crate::ImportData]>(&[]),
         }
     }
 }
@@ -2879,8 +2879,7 @@ impl<'a> LinkerContext<'a> {
                 return ImportTrackerIterator {
                     value: matching_export.data,
                     status: ImportTrackerStatus::Found,
-                    import_data: matching_export.potentially_ambiguous_export_star_refs.slice()
-                        as *const [crate::ImportData],
+                    import_data: std::ptr::from_ref::<[crate::ImportData]>(matching_export.potentially_ambiguous_export_star_refs.slice()),
                 };
             }
         }
@@ -2898,8 +2897,7 @@ impl<'a> LinkerContext<'a> {
                     name_loc: matching_export.data.name_loc,
                 },
                 status: ImportTrackerStatus::Found,
-                import_data: matching_export.potentially_ambiguous_export_star_refs.slice()
-                    as *const [crate::ImportData],
+                import_data: std::ptr::from_ref::<[crate::ImportData]>(matching_export.potentially_ambiguous_export_star_refs.slice()),
             };
         }
 

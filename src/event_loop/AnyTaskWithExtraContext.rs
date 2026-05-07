@@ -91,7 +91,7 @@ impl AnyTaskWithExtraContext {
         callback: fn(*mut T, *mut ()),
     ) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
-        self as *mut Self
+        std::ptr::from_mut::<Self>(self)
     }
 
     pub fn run(&mut self, extra: *mut c_void) {

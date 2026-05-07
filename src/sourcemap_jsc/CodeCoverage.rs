@@ -98,7 +98,7 @@ impl Report {
             CodeCoverage__withBlocksAndFunctions(
                 vm,
                 generator.byte_range_mapping.source_id,
-                (&mut generator as *mut Generator).cast::<c_void>(),
+                (&raw mut generator).cast::<c_void>(),
                 ignore_sourcemap_,
                 Generator::do_,
             )
@@ -452,7 +452,7 @@ fn thread_map() -> *mut ByteRangeMappingHashMap {
             *slot = Some(Box::new(ByteRangeMappingHashMap::default()));
         }
         // SAFETY: just ensured Some above; Box deref gives stable address.
-        &mut **slot.as_mut().unwrap() as *mut ByteRangeMappingHashMap
+        &raw mut **slot.as_mut().unwrap()
     })
 }
 

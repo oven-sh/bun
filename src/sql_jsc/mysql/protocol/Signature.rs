@@ -28,7 +28,7 @@ impl Signature {
         // hashed identically on both sides.
         let fields_bytes = unsafe {
             core::slice::from_raw_parts(
-                self.fields.as_ptr() as *const u8,
+                self.fields.as_ptr().cast::<u8>(),
                 core::mem::size_of_val::<[Param]>(&self.fields),
             )
         };

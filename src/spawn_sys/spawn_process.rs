@@ -399,7 +399,7 @@ impl PosixSpawnResult {
                             let mut status: i32 = 0;
                             // SAFETY: libc wait4
                             let rc = unsafe {
-                                libc::wait4(self.pid, &mut status, 0, core::ptr::null_mut())
+                                libc::wait4(self.pid, &raw mut status, 0, core::ptr::null_mut())
                             };
                             match bun_sys::get_errno(rc as isize) {
                                 bun_sys::E::SUCCESS => {}
@@ -699,14 +699,14 @@ pub fn spawn_process_posix(
                                 fds[1].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
                                 fds[0].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                         } else {
@@ -714,14 +714,14 @@ pub fn spawn_process_posix(
                                 fds[0].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_recvbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
                                 fds[1].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
+                                core::ptr::from_ref(&so_sendbuf).cast::<c_void>(),
                                 core::mem::size_of::<c_int>() as u32,
                             );
                         }

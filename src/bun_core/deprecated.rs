@@ -769,7 +769,7 @@ mod tests {
 
             list1.concat_by_moving(&mut list2);
 
-            assert!(list1.last == &mut five as *mut _);
+            assert!(list1.last == core::ptr::from_mut(&mut five));
             assert!(list1.len == 5);
             assert!(list2.first.is_null());
             assert!(list2.last.is_null());

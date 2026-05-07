@@ -151,7 +151,7 @@ impl Script {
         let me = interp.as_script(this);
         // SAFETY: see `stmt_count_of`; `idx` was bounds-checked against
         // `stmt_count` by the caller.
-        unsafe { &(*me.node).stmts[idx] }
+        unsafe { &raw const (*me.node).stmts[idx] }
     }
 }
 

@@ -597,7 +597,7 @@ impl WindowsNamedPipe {
             return init_result;
         }
 
-        self.connect_req.data = self as *mut _ as *mut c_void;
+        self.connect_req.data = core::ptr::from_mut(self).cast::<c_void>();
         let result = self.pipe.as_mut().unwrap().connect(
             &mut self.connect_req,
             path,
@@ -647,7 +647,7 @@ impl WindowsNamedPipe {
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> Option<bun_sys::Result<()>> {
         let handlers = ssl_wrapper::Handlers {
-            ctx: self as *mut _,
+            ctx: std::ptr::from_mut(self),
             on_open: Self::ssl_on_open,
             on_handshake: Self::ssl_on_handshake,
             on_data: Self::ssl_on_data,
@@ -701,7 +701,7 @@ impl WindowsNamedPipe {
                 &ssl_options,
                 is_client,
                 ssl_wrapper::Handlers {
-                    ctx: self as *mut _,
+                    ctx: std::ptr::from_mut(self),
                     on_open: Self::ssl_on_open,
                     on_handshake: Self::ssl_on_handshake,
                     on_data: Self::ssl_on_data,
@@ -860,7 +860,7 @@ impl WindowsNamedPipe {
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&mut self.event_loop_timer);
+            timer_all().remove(&raw mut self.event_loop_timer);
         }
         self.current_timeout = ms;
 
@@ -874,7 +874,7 @@ impl WindowsNamedPipe {
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        timer_all().insert(&mut self.event_loop_timer);
+        timer_all().insert(&raw mut self.event_loop_timer);
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

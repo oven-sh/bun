@@ -436,7 +436,7 @@ impl<'a> ZstdReaderArrayList<'a> {
 
             // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
             // into live slices with correct sizes.
-            let rc = unsafe { c::ZSTD_decompressStream(self.zstd, &mut out_buf, &mut in_buf) };
+            let rc = unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
             // SAFETY: pure FFI fn, no preconditions.
             if unsafe { c::ZSTD_isError(rc) } != 0 {
                 self.state = State::Error;

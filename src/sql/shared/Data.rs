@@ -91,16 +91,16 @@ impl Data {
     pub fn substring(&self, start_index: usize, end_index: usize) -> Data {
         match self {
             Data::Owned(owned) => {
-                Data::Temporary(&owned.slice()[start_index..end_index] as *const [u8])
+                Data::Temporary(&raw const owned.slice()[start_index..end_index])
             }
             Data::Temporary(temporary) => {
                 // SAFETY: caller guarantees the borrowed slice is still valid (same as Zig)
                 let s = unsafe { &**temporary };
-                Data::Temporary(&s[start_index..end_index] as *const [u8])
+                Data::Temporary(&raw const s[start_index..end_index])
             }
             Data::Empty => Data::Empty,
             Data::InlineStorage(inline_storage) => {
-                Data::Temporary(&inline_storage.as_slice()[start_index..end_index] as *const [u8])
+                Data::Temporary(&raw const inline_storage.as_slice()[start_index..end_index])
             }
         }
     }

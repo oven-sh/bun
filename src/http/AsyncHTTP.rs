@@ -126,7 +126,7 @@ unsafe fn free_owned_href(href: &'static [u8]) {
         // global-allocator `Box<[u8]>` allocation.
         drop(unsafe {
             Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                href.as_ptr() as *mut u8,
+                href.as_ptr().cast_mut(),
                 href.len(),
             ))
         });
@@ -325,7 +325,7 @@ impl<'a> AsyncHTTP<'a> {
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]
     pub fn as_erased_ptr(&self) -> *mut AsyncHTTP<'static> {
-        self as *const Self as *mut AsyncHTTP<'static>
+        std::ptr::from_ref::<Self>(self).cast_mut().cast::<AsyncHTTP<'static>>()
     }
 
     /// Accessor for the global concurrent-request cap (Zig:
@@ -825,7 +825,7 @@ impl<'a> AsyncHTTP<'a> {
                 // `ThreadlocalAsyncHTTP::new` (Box::into_raw); recover the parent
                 // via field offset and reclaim the Box. This is the LAST access
                 // to `this`/`async_http`; only static state is touched afterward.
-                let threadlocal_http: *mut ThreadlocalAsyncHTTP = (async_http as *mut u8)
+                let threadlocal_http: *mut ThreadlocalAsyncHTTP = async_http.cast::<u8>()
                     .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
                     .cast::<ThreadlocalAsyncHTTP>();
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` — explicit Box reclaim.
@@ -869,7 +869,7 @@ impl<'a> AsyncHTTP<'a> {
 pub unsafe fn start_async_http(task: *mut Task) {
     // SAFETY: caller upholds the invariant above.
     let this: *mut AsyncHTTP<'static> = unsafe {
-        (task as *mut u8)
+        task.cast::<u8>()
             .sub(offset_of!(AsyncHTTP<'static>, task))
             .cast::<AsyncHTTP<'static>>()
     };
@@ -929,7 +929,7 @@ impl HTTPChannelContext<'_> {
     pub fn callback(data: HTTPCallbackPair) {
         // SAFETY: `data.0` points to the `http` field of an `HTTPChannelContext`.
         let this: &mut HTTPChannelContext = unsafe {
-            &mut *((data.0 as *mut u8)
+            &mut *(data.0.cast::<u8>()
                 .sub(offset_of!(HTTPChannelContext, http))
                 .cast::<HTTPChannelContext>())
         };

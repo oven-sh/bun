@@ -157,7 +157,7 @@ impl SmolStr {
     pub fn slice(&self) -> &[u8] {
         if self.is_inlined() {
             // SAFETY: on little-endian the low `len` bytes of the backing u128 are the inline data.
-            let bytes = &self.0 as *const u128 as *const u8;
+            let bytes = (&raw const self.0).cast::<u8>();
             return unsafe { core::slice::from_raw_parts(bytes, self.len() as usize) };
         }
         // SAFETY: heap ptr + raw_len describe a live allocation owned by self.
@@ -325,17 +325,17 @@ impl Inlined {
         // `&mut self.0`, so the resulting reference has provenance over the full u128 and
         // is uniquely borrowed for the lifetime of `&mut self` — no other reference to
         // `self.0` can exist while the returned `&mut [u8; 15]` is live.
-        unsafe { &mut *(self.ptr() as *mut [u8; Self::MAX_LEN]) }
+        unsafe { &mut *self.ptr().cast::<[u8; Self::MAX_LEN]>() }
     }
 
     #[inline]
     fn ptr(&mut self) -> *mut u8 {
-        &mut self.0 as *mut u128 as *mut u8
+        (&raw mut self.0).cast::<u8>()
     }
 
     #[inline]
     fn ptr_const(&self) -> *const u8 {
-        &self.0 as *const u128 as *const u8
+        (&raw const self.0).cast::<u8>()
     }
 }
 

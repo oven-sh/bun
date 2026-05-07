@@ -152,7 +152,7 @@ impl ConsoleObject {
         // valid for the box's lifetime. We split the borrow through a raw
         // pointer because `adapt_to_new_api` would otherwise hold a unique
         // borrow of one field while we assign another.
-        let p: *mut ConsoleObject = &mut *out;
+        let p: *mut ConsoleObject = &raw mut *out;
         unsafe {
             (*p).error_writer_backing =
                 error_writer.quiet_writer().adapt_to_new_api(&mut (*p).stderr_buffer);
@@ -301,7 +301,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references — matches the Zig shape (`*ConsoleObject` field).
-    global.bun_vm().as_mut().console as *mut ConsoleObject
+    global.bun_vm().as_mut().console.cast::<ConsoleObject>()
 }
 
 /// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
@@ -930,7 +930,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { &mut *(ctx as *mut Ctx<'_, '_>) };
+                    let ctx = unsafe { &mut *ctx.cast::<Ctx<'_, '_>>() };
                     if ctx
                         .this
                         .update_columns_for_row(ctx.columns, RowKey::Num(ctx.idx), value)
@@ -941,7 +941,7 @@ impl<'a> TablePrinter<'a> {
                     ctx.idx += 1;
                 }
                 tabular_data
-                    .for_each_with_context(global_object, &mut ctx as *mut _ as *mut c_void, callback)?;
+                    .for_each_with_context(global_object, (&raw mut ctx).cast::<c_void>(), callback)?;
                 if ctx.err {
                     return Err(jsc::JsError::Thrown);
                 }
@@ -1035,7 +1035,7 @@ impl<'a> TablePrinter<'a> {
                     value: JSValue,
                 ) {
                     // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { &mut *(ctx as *mut Ctx<'_, '_>) };
+                    let ctx = unsafe { &mut *ctx.cast::<Ctx<'_, '_>>() };
                     if ctx
                         .this
                         .print_row::<C>(ctx.writer, ctx.columns, RowKey::Num(ctx.idx), value)
@@ -1047,7 +1047,7 @@ impl<'a> TablePrinter<'a> {
                 }
                 tabular_data.for_each_with_context(
                     global_object,
-                    &mut ctx as *mut _ as *mut c_void,
+                    (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
                 )?;
                 if ctx.err {
@@ -1145,13 +1145,13 @@ impl<'a> DynWriteAdapter<'a> {
         bytes: &[u8],
     ) -> Result<(), bun_core::Error> {
         // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
-        let this = unsafe { &mut *(w as *mut Self) };
+        let this = unsafe { &mut *w.cast::<Self>() };
         this.inner.write_all(bytes)
     }
 
     unsafe fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
         // SAFETY: `w` always points at `Self.head`, the first repr(C) field.
-        let this = unsafe { &mut *(w as *mut Self) };
+        let this = unsafe { &mut *w.cast::<Self>() };
         this.inner.flush()
     }
 }
@@ -1447,7 +1447,7 @@ pub fn format2(
     let mut this_value: JSValue = vals[0];
     // PORT NOTE: see E0509 note above.
     let mut fmt = Formatter::new(global);
-    fmt.remaining_values = &vals[1..];
+    fmt.remaining_values = &raw const vals[1..];
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
@@ -1716,7 +1716,7 @@ pub mod formatter {
         pub fn advance_remaining(&mut self) {
             unsafe {
                 let s = &*self.remaining_values;
-                self.remaining_values = &s[1..];
+                self.remaining_values = &raw const s[1..];
             }
         }
     }
@@ -2408,7 +2408,7 @@ pub mod formatter {
                         len = slice.len() as u32;
                         let next_value = unsafe {
                             let s = &*self.remaining_values;
-                            self.remaining_values = &s[1..];
+                            self.remaining_values = &raw const s[1..];
                             s[0]
                         };
 
@@ -2832,7 +2832,7 @@ pub mod formatter {
             next_value: JSValue,
         ) {
             // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { (ctx as *mut Self).as_mut() }) else { return };
+            let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
             let this = ctx;
             if this.formatter.failed {
                 return;
@@ -2896,7 +2896,7 @@ pub mod formatter {
             next_value: JSValue,
         ) {
             // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(this) = (unsafe { (ctx as *mut Self).as_mut() }) else { return };
+            let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
             if this.formatter.failed {
                 return;
             }
@@ -2982,7 +2982,7 @@ pub mod formatter {
             }
 
             // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { (ctx_ptr as *mut Self).as_mut() }) else { return };
+            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
             if ctx.formatter.failed {
                 return;
             }
@@ -3267,8 +3267,8 @@ pub mod formatter {
             // The body mutates both `self` and `remove_before_recurse`, so
             // capture raw pointers and read the *current* `remove_before_recurse`
             // at scope-exit time, exactly like Zig's late-evaluated `defer`.
-            let map_ptr: *mut visited::Map = &mut self.map;
-            let rbr_ptr: *const bool = &remove_before_recurse;
+            let map_ptr: *mut visited::Map = &raw mut self.map;
+            let rbr_ptr: *const bool = &raw const remove_before_recurse;
             scopeguard::defer! {
                 // SAFETY: `self.map` / `remove_before_recurse` outlive this
                 // guard; no other borrow is live at the drop point.
@@ -3586,7 +3586,7 @@ pub mod formatter {
                     } else {
                         false
                     };
-                    let map_restore_ptr: *mut visited::Map = &mut self.map;
+                    let map_restore_ptr: *mut visited::Map = &raw mut self.map;
                     scopeguard::defer! {
                         // SAFETY: `self.map` outlives this guard; no other
                         // borrow is live at the drop point.
@@ -4284,7 +4284,7 @@ pub mod formatter {
                     };
                     value.for_each_property_non_indexed(
                         global_this,
-                        &mut iter as *mut _ as *mut c_void,
+                        (&raw mut iter).cast::<c_void>(),
                         PropertyIteratorCtx::<C>::for_each,
                     )?;
                     if self.failed {
@@ -4427,7 +4427,7 @@ pub mod formatter {
                     let mut iter = MapIteratorCtx::<C, false, true> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed { return Ok(()); }
@@ -4436,7 +4436,7 @@ pub mod formatter {
                     let mut iter = MapIteratorCtx::<C, false, false> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each)?;
                     if iter.formatter.failed { return Ok(()); }
                 }
@@ -4469,7 +4469,7 @@ pub mod formatter {
                     let mut iter = MapIteratorCtx::<C, true, true> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, true>::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed { return Ok(()); }
@@ -4483,7 +4483,7 @@ pub mod formatter {
                     let mut iter = MapIteratorCtx::<C, true, false> {
                         formatter: self, writer: writer_, count: 0,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, true, false>::for_each)?;
                     let count = iter.count;
                     if iter.formatter.failed { return Ok(()); }
@@ -4535,7 +4535,7 @@ pub mod formatter {
                     let mut iter = SetIteratorCtx::<C, true> {
                         formatter: self, writer: writer_, is_first: true,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each)?;
                     let is_first = iter.is_first;
                     if iter.formatter.failed { return Ok(()); }
@@ -4544,7 +4544,7 @@ pub mod formatter {
                     let mut iter = SetIteratorCtx::<C, false> {
                         formatter: self, writer: writer_, is_first: true,
                     };
-                    value.for_each(global_this, &mut iter as *mut _ as *mut c_void,
+                    value.for_each(global_this, (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each)?;
                     if iter.formatter.failed { return Ok(()); }
                 }
@@ -5065,13 +5065,13 @@ pub mod formatter {
             } else if ordered_properties {
                 value.for_each_property_ordered(
                     global_this,
-                    &mut iter as *mut _ as *mut c_void,
+                    (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else {
                 value.for_each_property(
                     global_this,
-                    &mut iter as *mut _ as *mut c_void,
+                    (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             }
@@ -5170,7 +5170,7 @@ pub mod formatter {
                 ($t:ty) => {
                     unsafe {
                         core::slice::from_raw_parts(
-                            slice.as_ptr() as *const $t,
+                            slice.as_ptr().cast::<$t>(),
                             slice.len() / core::mem::size_of::<$t>(),
                         )
                     }

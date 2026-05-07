@@ -83,9 +83,9 @@ impl Worker {
         // pointers remain valid as long as `self` is not moved (Coordinator
         // holds workers in a stable slice).
         unsafe {
-            let out_ptr: *mut WorkerPipe = &mut self.out;
+            let out_ptr: *mut WorkerPipe = &raw mut self.out;
             (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
-            let err_ptr: *mut WorkerPipe = &mut self.err;
+            let err_ptr: *mut WorkerPipe = &raw mut self.err;
             (*err_ptr).reader.set_parent(err_ptr.cast::<c_void>());
         }
 
@@ -108,7 +108,7 @@ impl Worker {
             // cleanup (which can't tell whether start() ran) doesn't deinit on
             // undefined ArrayList memory.
             // PORT NOTE: assignment drops the old value (≡ Zig deinit + reinit).
-            let self_ptr: *const Worker = this as *const Worker;
+            let self_ptr: *const Worker = std::ptr::from_ref::<Worker>(this);
             this.ipc = Channel::default();
             this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
             this.err = WorkerPipe::new(PipeRole::Stderr, self_ptr);
@@ -241,9 +241,9 @@ impl Worker {
         }
         this.alive = true;
         // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
-        unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers += 1 };
+        unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         process.set_exit_handler(
-            (&mut **this as *mut Worker).cast::<()>(),
+            (&raw mut **this).cast::<()>(),
             &WORKER_EXIT_VTABLE,
         );
         match process.watch_or_reap() {
@@ -256,7 +256,7 @@ impl Worker {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
                 // SAFETY: see above.
-                unsafe { (*(coord_ptr as *mut Coordinator<'static>)).live_workers -= 1 };
+                unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
                 return Err(bun_core::err!("ProcessWatchFailed"));
             }
@@ -270,7 +270,7 @@ impl Worker {
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_worker_exit(self, status) };
+        unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
     pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
@@ -284,7 +284,7 @@ impl Worker {
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
+        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
         f.u32_(file_idx);
         f.str(file);
@@ -296,7 +296,7 @@ impl Worker {
 
     pub fn shutdown(&mut self) {
         // SAFETY: coord backref valid; frame mutation — see field TODO.
-        let f = unsafe { &mut (*(self.coord as *mut Coordinator<'static>)).frame };
+        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
@@ -307,7 +307,7 @@ impl Worker {
     /// `Channel` owner callback: a decoded frame arrived.
     pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
+        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
@@ -323,7 +323,7 @@ impl Worker {
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
+        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -337,7 +337,7 @@ unsafe fn worker_on_process_exit(
 ) {
     // SAFETY: `owner` is the `*mut Worker` stored in `set_exit_handler`;
     // `process`/`rusage` are non-null per `ProcessExitHandler::call`.
-    unsafe { (*(owner as *mut Worker)).on_process_exit(&*process, status, &*rusage) };
+    unsafe { (*owner.cast::<Worker>()).on_process_exit(&*process, status, &*rusage) };
 }
 
 static WORKER_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
@@ -351,7 +351,7 @@ impl ChannelOwner for Worker {
 
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).on_frame(self, kind, rd) };
+        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
     fn on_channel_done(&mut self) {
@@ -364,7 +364,7 @@ impl ChannelOwner for Worker {
             }
         }
         // SAFETY: coord backref valid; mutation — see field TODO.
-        unsafe { (*(self.coord as *mut Coordinator<'static>)).try_reap(self) };
+        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -402,7 +402,7 @@ impl WorkerPipe {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
         // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
-        unsafe { (*(self.worker as *mut Worker)).captured.extend_from_slice(chunk) };
+        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
     pub fn on_reader_done(&mut self) {

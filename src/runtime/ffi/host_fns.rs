@@ -109,7 +109,7 @@ unsafe extern "C" {
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
     let key_str = bun_str::String::init(ZigString::init(key));
     // SAFETY: `global` is live; `key_str` borrows `key` for the call duration.
-    let v = unsafe { JSC__JSValue__getOwn(value, global, &key_str) };
+    let v = unsafe { JSC__JSValue__getOwn(value, global, &raw const key_str) };
     if global.has_exception() {
         return Err(jsc::JsError::Thrown);
     }
@@ -308,9 +308,9 @@ impl FFI {
                     let cb = unsafe {
                         Bun__CreateFFIFunctionValue(
                             global,
-                            &str,
+                            &raw const str,
                             function.arg_types.len() as u32,
-                            compiled.ptr as *const c_void,
+                            compiled.ptr.cast_const(),
                             true,
                             function
                                 .symbol_from_dynamic_library
@@ -725,7 +725,7 @@ impl Function {
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
         {
-            let ptr = global_object.map(|g| g as *const _ as usize).unwrap_or(0);
+            let ptr = global_object.map(|g| std::ptr::from_ref(g) as usize).unwrap_or(0);
             write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL\n", ptr)?;
         }
 

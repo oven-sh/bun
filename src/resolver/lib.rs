@@ -428,7 +428,7 @@ pub mod fs {
             let r = self.fs.read_directory(dir, None, generation, store_fd)?;
             // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
             // to `'static` so `&mut self` is dropped before the caller binds the slot.
-            Ok(unsafe { &mut *(r as *mut EntriesOption) })
+            Ok(unsafe { &mut *std::ptr::from_mut::<EntriesOption>(r) })
         }
     }
 
@@ -1066,7 +1066,7 @@ pub mod fs {
             }
             pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_core::Error> {
                 let r = Self::instance().append(value).map_err(|_| bun_core::err!("OutOfMemory"))?;
-                Ok(r as *mut Entry)
+                Ok(std::ptr::from_mut::<Entry>(r))
             }
         }
 
@@ -1206,9 +1206,9 @@ pub mod fs {
                         // TODO(port): lifetime — Zig stored caller's slice; widened to 'static.
                         // SAFETY: extended for borrowck reshape; consumed before caller's buffer
                         // is overwritten (see resolver call sites).
-                        query: unsafe { &*(query_ as *const [u8]) },
+                        query: unsafe { &*std::ptr::from_ref::<[u8]>(query_) },
                         // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                        actual: unsafe { &*(basename as *const [u8]) },
+                        actual: unsafe { &*std::ptr::from_ref::<[u8]>(basename) },
                     }),
                     _marker: core::marker::PhantomData,
                 });
@@ -1233,7 +1233,7 @@ pub mod fs {
                         dir: self.dir,
                         query: query_lower,
                         // SAFETY: `basename` borrows EntryStore (process-lifetime).
-                        actual: unsafe { &*(basename as *const [u8]) },
+                        actual: unsafe { &*std::ptr::from_ref::<[u8]>(basename) },
                     }),
                     _marker: core::marker::PhantomData,
                 });
@@ -1578,7 +1578,7 @@ pub mod fs {
             // mutation must be visible — pass through directly (Zig: `*Result`).
             self.inner()
                 .put(result, value)
-                .map(|v| v as *mut EntriesOption)
+                .map(|v| std::ptr::from_mut::<EntriesOption>(v))
                 .map_err(|_| bun_core::err!("OutOfMemory"))
         }
         pub fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {
@@ -1790,14 +1790,14 @@ pub mod fs {
                     if let Some(cached_result) = unsafe { self.entries.at_index(cr.index) } {
                         // PORT NOTE: erase to raw immediately so the early-return reborrow
                         // doesn't conflict with the `&mut self.entries` borrow above.
-                        let cached_ptr = cached_result as *mut EntriesOption;
+                        let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
                         // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
                         // Single `&mut` reborrow — the catch-all arm binds and returns the
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
                             EntriesOption::Entries(e) if e.generation < generation => {
-                                in_place = Some(*e as *mut DirEntry);
+                                in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
                         }
@@ -2042,7 +2042,7 @@ pub mod fs {
                     // BOTH success and error paths — use scopeguard so close-or-store happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &mut cache;
+                    let cache_ptr: *mut EntryCache = &raw mut cache;
                     let _guard = scopeguard::guard(file, move |file| {
                         if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                             let _ = bun_sys::close(file);
@@ -2102,11 +2102,11 @@ pub mod fs {
             // PORT NOTE: erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
             // SAFETY: `entries_mutex` held by caller; sole `&mut` to this slot.
-            let result_ptr = unsafe { self.entries.at_index(index) }? as *mut EntriesOption;
+            let result_ptr = std::ptr::from_mut::<EntriesOption>(unsafe { self.entries.at_index(index) }?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
-                    let e_ptr: *mut DirEntry = *existing as *mut DirEntry;
+                    let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
                     let handle = match self.open_dir(dir) {
@@ -2406,7 +2406,7 @@ pub mod dir_entry_accessor {
                 // SAFETY: ARENA — `*mut Entry` points into the EntryStore BSSList
                 // singleton ('static lifetime); `RealFS.entries_mutex` serializes access.
                 let entry: &Entry = unsafe { &**val };
-                let fs: *mut Implementation = &mut FS::instance().fs;
+                let fs: *mut Implementation = &raw mut FS::instance().fs;
                 let kind = entry.kind(fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
@@ -2418,7 +2418,7 @@ pub mod dir_entry_accessor {
                 // until the next `read_directory` regeneration; `name_slice()`
                 // re-narrows the lifetime so it never escapes the iter result.
                 // Mirrors Zig `nextval.key_ptr.*`.
-                let name: *const [u8] = &**key;
+                let name: *const [u8] = &raw const **key;
                 Ok(Some(DirEntryIterResult {
                     name: DirEntryNameWrapper { value: name },
                     kind: fskind,
@@ -2518,7 +2518,7 @@ pub mod dir_entry_accessor {
                 EntriesOption::Entries(entry) => {
                     // SAFETY: ARENA — `entry: &'static mut DirEntry` borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
-                    let p: *const DirEntry = &**entry;
+                    let p: *const DirEntry = &raw const **entry;
                     Ok(Ok(DirEntryHandle { value: Some(unsafe { &*p }) }))
                 }
                 EntriesOption::Err(err) => Err(err.original_err),
@@ -2780,9 +2780,9 @@ pub mod cache {
         /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
         /// `parse_result.source.contents` may be read.
         pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
-            if core::ptr::eq(buffer, &self.shared_buffer) {
+            if core::ptr::eq(buffer, &raw const self.shared_buffer) {
                 core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
-            } else if core::ptr::eq(buffer, &self.macro_shared_buffer) {
+            } else if core::ptr::eq(buffer, &raw const self.macro_shared_buffer) {
                 core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
             } else {
                 unreachable!("resetSharedBuffer: invalid buffer");
@@ -3422,9 +3422,9 @@ pub mod options {
             use bun_options_types::ImportKind as K;
             let group = if is_node_modules { &self.node_modules } else { &self.default };
             match kind {
-                K::Url | K::AtConditional | K::At => &*self.css,
-                K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => &*group.esm,
-                _ => &*group.default,
+                K::Url | K::AtConditional | K::At => &raw const *self.css,
+                K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => &raw const *group.esm,
+                _ => &raw const *group.default,
             }
         }
     }
@@ -3787,7 +3787,7 @@ fn bufs_storage_get() -> *mut Bufs {
             // SAFETY: Bufs is plain bytes; Zig left these `= undefined`.
             *borrow = Some(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
         }
-        &mut **borrow.as_mut().unwrap() as *mut Bufs
+        &raw mut **borrow.as_mut().unwrap()
     })
 }
 
@@ -4087,8 +4087,8 @@ impl Default for DirEntryResolveQueueItem {
                 index: allocators::NOT_FOUND,
                 status: allocators::Status::Unknown,
             },
-            unsafe_path: b"" as *const [u8],
-            safe_path: b"" as *const [u8],
+            unsafe_path: std::ptr::from_ref::<[u8]>(b""),
+            safe_path: std::ptr::from_ref::<[u8]>(b""),
             fd: FD::INVALID,
         }
     }
@@ -4608,7 +4608,7 @@ impl<'a> Resolver<'a> {
 
         // Heap behind `Box<[Box<[u8]>]>` is address-stable across the move of
         // `opts` into the struct below, so taking the pointer here is sound.
-        let extension_order: options::ExtensionSlice = &*opts.extension_order.default.default;
+        let extension_order: options::ExtensionSlice = &raw const *opts.extension_order.default.default;
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
@@ -4676,7 +4676,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: PORT — `import_path` is caller-interned (DirnameStore/source text)
         // and outlives the returned MatchResult. Zig used raw `[]const u8` here.
         // TODO(port): thread an explicit `'a` through MatchResult instead.
-        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
+        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         if source_dir.is_empty() {
             return None;
         }
@@ -4755,7 +4755,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. Zig used raw `[]const u8` here.
         // TODO(port): thread an explicit lifetime through Result instead.
-        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
+        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
@@ -4780,13 +4780,13 @@ impl<'a> Resolver<'a> {
         // borrowck so the restore happens explicitly at every return point below.
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                &*self.opts.extension_order.css
+                &raw const *self.opts.extension_order.css
             }
             ast::ImportKind::EntryPointBuild
             | ast::ImportKind::EntryPointRun
             | ast::ImportKind::Stmt
-            | ast::ImportKind::Dynamic => &*self.opts.extension_order.default.esm,
-            _ => &*self.opts.extension_order.default.default,
+            | ast::ImportKind::Dynamic => &raw const *self.opts.extension_order.default.esm,
+            _ => &raw const *self.opts.extension_order.default.default,
         };
 
         if FeatureFlags::TRACING {
@@ -5117,7 +5117,7 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<Result, bun_core::Error> {
         // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO(port): thread explicit lifetime.
-        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
+        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
         // TODO(port): narrow error set
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
@@ -5136,7 +5136,7 @@ impl<'a> Resolver<'a> {
                     bun_options_types::BuiltInModule::Import(path) => {
                         // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
                         // ends before `self.resolve(&mut self, ...)`.
-                        let path: &'static [u8] = unsafe { &*(path.as_ref() as *const [u8]) };
+                        let path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
@@ -5207,7 +5207,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            result.package_json = result.package_json.or(dir.enclosing_package_json.map(|p| p as *const _));
+            result.package_json = result.package_json.or(dir.enclosing_package_json.map(|p| std::ptr::from_ref(p)));
 
             if needs_side_effects {
                 if let Some(pkg_ptr) = result.package_json {
@@ -5509,7 +5509,7 @@ impl<'a> Resolver<'a> {
                     result.path_pair.primary = fallback_module.path.clone();
                     result.module_type = options::ModuleType::Cjs;
                     // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                    result.package_json = Some(fallback_module.package_json as *const PackageJSON);
+                    result.package_json = Some(std::ptr::from_ref::<PackageJSON>(fallback_module.package_json));
                     result.flags.set_is_from_node_modules(true);
                     return ResultUnion::Success(result);
                 }
@@ -5664,7 +5664,7 @@ impl<'a> Resolver<'a> {
                                     path_pair: match_result.path_pair,
                                     diff_case: match_result.diff_case,
                                     dirname_fd: match_result.dirname_fd,
-                                    package_json: Some(pkg as *const _),
+                                    package_json: Some(std::ptr::from_ref(pkg)),
                                     jsx: self.opts.jsx.clone(),
                                     module_type: match_result.module_type,
                                     flags,
@@ -5775,7 +5775,7 @@ impl<'a> Resolver<'a> {
                                         path_pair: pair,
                                         dirname_fd: node_module.dirname_fd,
                                         diff_case: node_module.diff_case,
-                                        package_json: Some(package_json as *const _),
+                                        package_json: Some(std::ptr::from_ref(package_json)),
                                         jsx: self.opts.jsx.clone(),
                                         ..Default::default()
                                     });
@@ -5829,7 +5829,7 @@ impl<'a> Resolver<'a> {
 
                 if res.package_json.is_some() && self.care_about_browser_field {
                     let base_dir_info = match res.dir_info {
-                        Some(d) => d as *mut DirInfo::DirInfo,
+                        Some(d) => d.cast_mut(),
                         None => match self.read_dir_info(result.path_pair.primary.name.dir()) {
                             Ok(Some(d)) => d,
                             _ => return ResultUnion::Success(result),
@@ -5889,7 +5889,7 @@ impl<'a> Resolver<'a> {
                 // if it doesn't have a name, assume it's something just for adjusting the main fields (react-bootstrap does this)
                 // In that case, we really would like the top-level package that you download from NPM
                 // so we ignore any unnamed packages
-                return Some(pkg as *const _);
+                return Some(std::ptr::from_ref(pkg));
             }
 
             dir_info = di.get_parent()?;
@@ -5949,7 +5949,7 @@ impl<'a> Resolver<'a> {
             let di = unsafe { &*dir_info };
             Some(RootPathPair {
                 base_path: slice,
-                package_json: di.package_json()? as *const _,
+                package_json: std::ptr::from_ref(di.package_json()?),
             })
         }
     }
@@ -6179,7 +6179,7 @@ impl<'a> Resolver<'a> {
                         let pkg_dir_info = unsafe { &*pkg_dir_info_ptr };
                         self.extension_order = match kind {
                             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
-                                &*self.opts.extension_order.css
+                                &raw const *self.opts.extension_order.css
                             }
                             _ => self.opts.extension_order.kind(kind, true),
                         };
@@ -6278,8 +6278,8 @@ impl<'a> Resolver<'a> {
                                         // doesn't carry that method, so re-derive via the resolver's
                                         // `Path` (already done one line up for `path_pair.primary`).
                                         is_node_module: Path::init(package_json.source.path.text).is_node_module(),
-                                        package_json: Some(package_json as *const _),
-                                        dir_info: Some(dir_info as *const _),
+                                        package_json: Some(std::ptr::from_ref(package_json)),
+                                        dir_info: Some(dir_info.cast_const()),
                                         ..Default::default()
                                     });
                                 }
@@ -6623,8 +6623,8 @@ impl<'a> Resolver<'a> {
                                             dirname_fd: pkg_dir_info.get_file_descriptor(),
                                             file_fd: FD::INVALID,
                                             is_node_module: package_json.source.path.is_node_module(),
-                                            package_json: Some(package_json as *const _),
-                                            dir_info: Some(dir_info as *const _),
+                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            dir_info: Some(dir_info.cast_const()),
                                             ..Default::default()
                                         });
                                     }
@@ -6684,7 +6684,7 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| d as *mut _));
+            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| std::ptr::from_mut(d)));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -6721,7 +6721,7 @@ impl<'a> Resolver<'a> {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
-                    in_place = Some(*entries as *mut _);
+                    in_place = Some(std::ptr::from_mut(*entries));
                 }
             }
         }
@@ -7077,10 +7077,10 @@ impl<'a> Resolver<'a> {
                     path_pair: PathPair { primary: Path::init_with_namespace(absolute_out_path, b"file"), secondary: None },
                     dirname_fd: entries.fd,
                     file_fd: unsafe { &*entry_query.entry }.cache().fd,
-                    dir_info: Some(resolved_dir_info as *const _),
+                    dir_info: Some(std::ptr::from_ref(resolved_dir_info)),
                     diff_case: entry_query.diff_case,
                     is_node_module: true,
-                    package_json: Some(resolved_dir_info.package_json().map(|p| p as *const _).unwrap_or(package_json as *const _)),
+                    package_json: Some(resolved_dir_info.package_json().map(|p| std::ptr::from_ref(p)).unwrap_or(std::ptr::from_ref(package_json))),
                     module_type,
                     ..Default::default()
                 })
@@ -7092,7 +7092,7 @@ impl<'a> Resolver<'a> {
                 if let Some(res) = self.load_as_file_or_directory(abs_esm_path, kind) {
                     let mut res_copy = res;
                     res_copy.is_node_module = true;
-                    res_copy.package_json = res_copy.package_json.or(Some(package_json as *const _));
+                    res_copy.package_json = res_copy.package_json.or(Some(std::ptr::from_ref(package_json)));
                     return Some(res_copy);
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -7247,7 +7247,7 @@ impl<'a> Resolver<'a> {
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<*const DirInfo::DirInfo> {
-        self.dir_info_cached_maybe_log::<false, true>(path).ok().flatten().map(|p| p as *const _)
+        self.dir_info_cached_maybe_log::<false, true>(path).ok().flatten().map(|p| p.cast_const())
     }
 
     fn dir_info_cached_maybe_log<const ENABLE_LOGGING: bool, const FOLLOW_SYMLINKS: bool>(
@@ -7310,7 +7310,7 @@ impl<'a> Resolver<'a> {
         let top_result = unsafe { &mut *self.dir_cache() }.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
             // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
-            return Ok(unsafe { &mut *self.dir_cache() }.at_index(top_result.index).map(|d| d as *mut _));
+            return Ok(unsafe { &mut *self.dir_cache() }.at_index(top_result.index).map(|d| std::ptr::from_mut(d)));
         }
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
@@ -7332,8 +7332,8 @@ impl<'a> Resolver<'a> {
 
         bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            unsafe_path: &path[..input_path_len] as *const [u8],
-            safe_path: b"" as *const [u8],
+            unsafe_path: &raw const path[..input_path_len],
+            safe_path: std::ptr::from_ref::<[u8]>(b""),
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -7380,9 +7380,9 @@ impl<'a> Resolver<'a> {
                 return Ok(None);
             }
             bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
-                unsafe_path: top as *const [u8],
+                unsafe_path: std::ptr::from_ref::<[u8]>(top),
                 result,
-                safe_path: b"" as *const [u8],
+                safe_path: std::ptr::from_ref::<[u8]>(b""),
                 fd: FD::INVALID,
             });
 
@@ -7392,7 +7392,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
-                        slot.safe_path = entries.dir as *const [u8];
+                        slot.safe_path = std::ptr::from_ref::<[u8]>(entries.dir);
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -7417,9 +7417,9 @@ impl<'a> Resolver<'a> {
                 top_parent = result;
             } else {
                 bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
-                    unsafe_path: root_path as *const [u8],
+                    unsafe_path: std::ptr::from_ref::<[u8]>(root_path),
                     result,
-                    safe_path: b"" as *const [u8],
+                    safe_path: std::ptr::from_ref::<[u8]>(b""),
                     fd: FD::INVALID,
                 });
                 // SAFETY: resolver mutex held; sole `&mut` to this slot.
@@ -7428,7 +7428,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
-                            slot.safe_path = entries.dir as *const [u8];
+                            slot.safe_path = std::ptr::from_ref::<[u8]>(entries.dir);
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -7643,7 +7643,7 @@ impl<'a> Resolver<'a> {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
-                        in_place = Some(*entries as *mut _);
+                        in_place = Some(std::ptr::from_mut(*entries));
                     }
                 }
             }
@@ -7723,7 +7723,7 @@ impl<'a> Resolver<'a> {
             let dc = unsafe { &mut *self.dir_cache() };
             let dir_info_ptr: *mut DirInfo::DirInfo =
                 dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| d as *mut _);
+            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| std::ptr::from_mut(d));
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -8124,7 +8124,7 @@ impl<'a> Resolver<'a> {
                             _path.is_disabled = true;
                             dec_ret!(Some(MatchResult {
                                 path_pair: PathPair { primary: _path, secondary: None },
-                                package_json: Some(browser_json as *const _),
+                                package_json: Some(std::ptr::from_ref(browser_json)),
                                 ..Default::default()
                             }));
                         }
@@ -8143,7 +8143,7 @@ impl<'a> Resolver<'a> {
             if let Some(package_json) = unsafe { &*dir_info }.package_json() {
                 dec_ret!(Some(MatchResult {
                     path_pair: PathPair { primary: Fs::Path::init(result.path), secondary: None },
-                    package_json: Some(package_json as *const _),
+                    package_json: Some(std::ptr::from_ref(package_json)),
                     dirname_fd: result.dirname_fd,
                     ..Default::default()
                 }));
@@ -8186,7 +8186,7 @@ impl<'a> Resolver<'a> {
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext: *const [u8] = &*self.opts.extra_cjs_extensions[i];
+            let ext: *const [u8] = &raw const *self.opts.extra_cjs_extensions[i];
             // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
             // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
             if let Some(result) = self.load_index_with_extension(dir_info, unsafe { &*ext }) {
@@ -8238,7 +8238,7 @@ impl<'a> Resolver<'a> {
                         return Some(MatchResult {
                             path_pair: PathPair { primary: Path::init(out_buf), secondary: None },
                             diff_case: lookup.diff_case,
-                            package_json: Some(package_json as *const _),
+                            package_json: Some(std::ptr::from_ref(package_json)),
                             dirname_fd: dir_info.get_file_descriptor(),
                             ..Default::default()
                         });
@@ -8302,7 +8302,7 @@ impl<'a> Resolver<'a> {
                             _path.is_disabled = true;
                             return Some(MatchResult {
                                 path_pair: PathPair { primary: _path, secondary: None },
-                                package_json: Some(browser_json as *const _),
+                                package_json: Some(std::ptr::from_ref(browser_json)),
                                 ..Default::default()
                             });
                         }
@@ -8354,7 +8354,7 @@ impl<'a> Resolver<'a> {
                                 path_pair: PathPair { primary: Path::init(file.path), secondary: None },
                                 diff_case: file.diff_case,
                                 dirname_fd: file.dirname_fd,
-                                package_json: Some(package_json as *const _),
+                                package_json: Some(std::ptr::from_ref(package_json)),
                                 file_fd: file.file_fd,
                                 ..Default::default()
                             });
@@ -8407,13 +8407,13 @@ impl<'a> Resolver<'a> {
         // Try using the main field(s) from "package.json"
         // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver (see LIFETIMES.tsv).
         if let Some(pkg_json) = unsafe { &*dir_info }.package_json() {
-            package_json = Some(pkg_json as *const _);
+            package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
                 // PORT NOTE: raw fat ptr — borrows `self.opts.main_fields` heap buffer so
                 // the loop body can take `&mut self` without overlapping borrows.
-                let main_field_keys: options::ExtensionSlice = &*self.opts.main_fields;
-                let mf_ext_order: options::ExtensionSlice = &*self.opts.main_field_extension_order;
+                let main_field_keys: options::ExtensionSlice = &raw const *self.opts.main_fields;
+                let mf_ext_order: options::ExtensionSlice = &raw const *self.opts.main_field_extension_order;
                 // Spec resolver.zig compares the *pointer* of `opts.main_fields`
                 // against the per-target default to detect "user did not pass
                 // --main-fields"; the bundler now projects that as an explicit
@@ -8566,7 +8566,7 @@ impl<'a> Resolver<'a> {
         // (debug_logs / load_extension / dirname_store) don't trip borrowck.
         let dir_entry: *mut Fs::file_system::real_fs::EntriesOption =
             match unsafe { &mut *rfs }.read_directory(dir_path, None, self.generation, self.store_fd) {
-                Ok(e) => e as *mut _,
+                Ok(e) => std::ptr::from_mut(e),
                 Err(_) => dec_ret!(None),
             };
 
@@ -8647,7 +8647,7 @@ impl<'a> Resolver<'a> {
         // `load_extension` (avoids the forbidden lifetime-extension cast).
         let n = self.opts.extra_cjs_extensions.len();
         for i in 0..n {
-            let ext: *const [u8] = &*self.opts.extra_cjs_extensions[i];
+            let ext: *const [u8] = &raw const *self.opts.extra_cjs_extensions[i];
             // SAFETY: `extra_cjs_extensions` is owned by `self.opts` and never mutated
             // while the resolver runs; the heap buffer behind each `Box<[u8]>` is stable.
             if let Some(result) = self.load_extension(base, path, unsafe { &*ext }, entries!()) {
@@ -9086,7 +9086,7 @@ impl<'a> Resolver<'a> {
                 // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
                 // BundleOptions (lives for the resolver's lifetime).
                 tsconfig_path = self.opts.tsconfig_override.as_deref()
-                    .map(|s| unsafe { &*(s as *const [u8]) });
+                    .map(|s| unsafe { &*std::ptr::from_ref::<[u8]>(s) });
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
@@ -9264,7 +9264,7 @@ impl<'b> BrowserMapPath<'b> {
             // artificially shortens what is process-lifetime storage.
             self.remapped = unsafe { core::slice::from_raw_parts(result.as_ptr(), result.len()) };
             // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
-            self.input_path = unsafe { &*(path_to_check as *const [u8]) };
+            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
             return true;
         }
 
@@ -9289,9 +9289,9 @@ impl<'b> BrowserMapPath<'b> {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                    self.cleaned = unsafe { &*(new_path as *const [u8]) };
+                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     // SAFETY: same as above.
-                    self.input_path = unsafe { &*(new_path as *const [u8]) };
+                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
@@ -9309,7 +9309,7 @@ impl<'b> BrowserMapPath<'b> {
             // SAFETY: ARENA — see `result` note above.
             self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
             // SAFETY: TODO(port): lifetime — `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-            self.input_path = unsafe { &*(index_path as *const [u8]) };
+            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
             return true;
         }
 
@@ -9331,9 +9331,9 @@ impl<'b> BrowserMapPath<'b> {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
-                    self.cleaned = unsafe { &*(new_path as *const [u8]) };
+                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     // SAFETY: same as above.
-                    self.input_path = unsafe { &*(new_path as *const [u8]) };
+                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }

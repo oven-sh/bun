@@ -397,7 +397,7 @@ impl<'a> Snapshots<'a> {
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(logger::Log::init(), |log| {
                 if log.errors > 0 {
-                    let _ = log.print(bun_output::error_writer() as *mut bun_core::io::Writer);
+                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
                     success.set(false);
                 }
             });
@@ -564,7 +564,7 @@ impl<'a> Snapshots<'a> {
                     // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
-                    let log_ptr: *mut logger::Log = &mut *log;
+                    let log_ptr: *mut logger::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
                         unsafe { &mut *log_ptr },
                         &source,

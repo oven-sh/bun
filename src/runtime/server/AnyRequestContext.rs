@@ -199,7 +199,7 @@ impl AnyRequestContext {
             // to `*T.Resp` before forwarding. The Rust `RequestContext::on_abort`
             // takes `uws::AnyResponse` directly (and re-checks H3 internally),
             // so forward the enum as-is — the per-variant assert is redundant.
-            T::on_abort(ctx as *mut T, response);
+            T::on_abort(core::ptr::from_mut::<T>(ctx), response);
         })
     }
 
@@ -231,7 +231,7 @@ impl AnyRequestContext {
             // `Box` field never moved while requests are in flight.
             let server = ctx.server?.cast_mut();
             let ds = unsafe { (*server).dev_server.as_deref_mut()? };
-            Some(ds as *mut _)
+            Some(core::ptr::from_mut(ds))
         })
     }
 

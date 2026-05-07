@@ -524,7 +524,7 @@ fn send_audit_request(
         url,
         headers.entries,
         headers_buf,
-        &mut response_buf,
+        &raw mut response_buf,
         &final_compressed_body,
         http_proxy,
         None,

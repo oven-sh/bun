@@ -91,7 +91,7 @@ impl WatcherAtomics {
             }
             unreachable!()
         };
-        let ev: *mut HotReloadEvent = &mut self.events[index];
+        let ev: *mut HotReloadEvent = &raw mut self.events[index];
 
         #[cfg(debug_assertions)]
         {
@@ -158,7 +158,7 @@ impl WatcherAtomics {
             // SAFETY: reading initialized bytes of `timer` for a debug sanity check.
             let bytes = unsafe {
                 core::slice::from_raw_parts(
-                    core::ptr::addr_of!(ev_ref.timer) as *const u8,
+                    core::ptr::addr_of!(ev_ref.timer).cast::<u8>(),
                     core::mem::size_of_val(&ev_ref.timer),
                 )
             };
@@ -182,7 +182,7 @@ impl WatcherAtomics {
 
         // SAFETY: `ev` points into `self.events`; both are within the same allocation.
         let ev_index: u8 = u8::try_from(unsafe {
-            ev.offset_from(self.events.as_ptr() as *mut HotReloadEvent)
+            ev.offset_from(self.events.as_ptr().cast_mut())
         })
         .unwrap();
         let old_next = NextEvent(self.next_event.swap(ev_index, Ordering::AcqRel));
@@ -213,7 +213,7 @@ impl WatcherAtomics {
                 // lifetime; `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
                     (*(*(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&mut ev_ref.concurrent_task);
+                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
                 }
             }
 
@@ -288,7 +288,7 @@ impl WatcherAtomics {
                     return None; // done running events
                 }
                 NextEvent::DONE => unreachable!(),
-                _ => break &mut self.events[next.0 as usize],
+                _ => break &raw mut self.events[next.0 as usize],
             }
         };
 

@@ -4220,14 +4220,14 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     pub fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
         unsafe {
-            core::slice::from_raw_parts(self.items.as_ptr() as *const T, self.len as usize)
+            core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize)
         }
     }
 
     pub fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
         unsafe {
-            core::slice::from_raw_parts_mut(self.items.as_mut_ptr() as *mut T, self.len as usize)
+            core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
 

@@ -152,9 +152,9 @@ pub fn post_process_js_chunk(
         // Hoist `*mut [Stmt]` extraction so the two `&mut chunk` borrows below
         // (content vs renamer) don't overlap inside a single expression.
         let prefix_stmts: *mut [Stmt] =
-            chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut() as *mut [Stmt];
+            std::ptr::from_mut::<[Stmt]>(chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut());
         let suffix_stmts: *mut [Stmt] =
-            chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut() as *mut [Stmt];
+            std::ptr::from_mut::<[Stmt]>(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_allocator,
@@ -1019,7 +1019,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                         ref_: Some(temp_ref),
                                         loc: Logger::Loc::EMPTY,
                                     },
-                                    alias: &**alias as *const [u8],
+                                    alias: &raw const **alias,
                                     alias_loc: Logger::Loc::EMPTY,
                                     ..Default::default()
                                 });
@@ -1052,7 +1052,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                         ref_: Some(resolved_export_data.import_ref),
                                         loc: resolved_export_data.name_loc,
                                     },
-                                    alias: &**alias as *const [u8],
+                                    alias: &raw const **alias,
                                     alias_loc: resolved_export_data.name_loc,
                                     ..Default::default()
                                 });
@@ -1065,7 +1065,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         let items: &mut [js_ast::ClauseItem] = Box::leak(items.into_boxed_slice());
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
-                                items: items as *mut [js_ast::ClauseItem],
+                                items: std::ptr::from_mut::<[js_ast::ClauseItem]>(items),
                                 is_single_line: false,
                             },
                             Logger::Loc::EMPTY,
@@ -1110,7 +1110,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                             func: G::Fn {
                                                 body: G::FnBody {
                                                     loc: Logger::Loc::EMPTY,
-                                                    stmts: fn_body as *mut [Stmt],
+                                                    stmts: std::ptr::from_mut::<[Stmt]>(fn_body),
                                                 },
                                                 ..Default::default()
                                             },
@@ -1262,7 +1262,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
     let import_records: &'a [ImportRecord] =
-        unsafe { &*(ast_view.import_records.slice() as *const [ImportRecord]) };
+        unsafe { &*std::ptr::from_ref::<[ImportRecord]>(ast_view.import_records.slice()) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(
@@ -1273,7 +1273,7 @@ pub fn generate_entry_point_tail_js<'a>(
             print_options,
             import_records,
             &[Part {
-                stmts: stmts.as_mut_slice() as *mut [Stmt],
+                stmts: std::ptr::from_mut::<[Stmt]>(stmts.as_mut_slice()),
                 ..Default::default()
             }],
             r,

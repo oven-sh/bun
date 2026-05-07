@@ -900,7 +900,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
         // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
         let mut lim: libc::rlimit = unsafe { core::mem::zeroed() };
         // SAFETY: &mut lim is a valid out-pointer.
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } == 0 { Some(lim) } else { None }
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 { Some(lim) } else { None }
     }
 
     let mut show_trace = Environment::SHOW_CRASH_TRACE;
@@ -1169,7 +1169,7 @@ fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Resul
             };
 
             // SAFETY: stack points to a valid static buffer
-            if unsafe { libc::sigaltstack(&stack, core::ptr::null_mut()) } == 0 {
+            if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
                 act_.sa_flags |= libc::SA_ONSTACK;
                 // SAFETY: single global; only mutated during signal-handler setup
                 unsafe { DID_REGISTER_SIGALTSTACK = true; }
@@ -1177,7 +1177,7 @@ fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> Resul
         }
     }
 
-    let act_ptr: *const libc::sigaction = act.map(|a| a as *const _).unwrap_or(core::ptr::null());
+    let act_ptr: *const libc::sigaction = act.map(|a| std::ptr::from_ref(a)).unwrap_or(core::ptr::null());
     // SAFETY: valid sigaction pointer or null; null oldact is permitted.
     unsafe {
         libc::sigaction(libc::SIGSEGV, act_ptr, core::ptr::null_mut());
@@ -1202,7 +1202,7 @@ pub fn reset_on_posix() {
     act.sa_sigaction = handle_segfault_posix as *const () as usize;
     act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
     // SAFETY: sa_mask is a valid out-pointer.
-    unsafe { libc::sigemptyset(&mut act.sa_mask); }
+    unsafe { libc::sigemptyset(&raw mut act.sa_mask); }
     let _ = update_posix_segfault_handler(Some(&mut act));
 }
 
@@ -1267,7 +1267,7 @@ pub fn reset_segfault_handler() {
         let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
         act.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer.
-        unsafe { libc::sigemptyset(&mut act.sa_mask); }
+        unsafe { libc::sigemptyset(&raw mut act.sa_mask); }
         // To avoid a double-panic, do nothing if an error happens here.
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
@@ -1414,14 +1414,14 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         // SAFETY: all out-pointers are valid
         unsafe {
             bun_alloc::mimalloc::mi_process_info(
-                &mut elapsed_msecs,
-                &mut user_msecs,
-                &mut system_msecs,
-                &mut current_rss,
-                &mut peak_rss,
-                &mut current_commit,
-                &mut peak_commit,
-                &mut page_faults,
+                &raw mut elapsed_msecs,
+                &raw mut user_msecs,
+                &raw mut system_msecs,
+                &raw mut current_rss,
+                &raw mut peak_rss,
+                &raw mut current_commit,
+                &raw mut peak_commit,
+                &raw mut page_faults,
             );
         }
         write!(writer, "Elapsed: {}ms | User: {}ms | Sys: {}ms\n", elapsed_msecs, user_msecs, system_msecs).map_err(fmt_err)?;
@@ -1637,7 +1637,7 @@ impl StackLine {
                     // SAFETY: load commands follow the mach header in memory
                     buffer: unsafe {
                         core::slice::from_raw_parts(
-                            (header as *const u8).add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
+                            header.cast::<u8>().add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
                             header_ref.sizeofcmds as usize,
                         )
                     },
@@ -1700,7 +1700,7 @@ impl StackLine {
 
             unsafe extern "C" fn callback(info: *mut libc::dl_phdr_info, _size: libc::size_t, context: *mut c_void) -> c_int {
                 // SAFETY: dl_iterate_phdr passes a valid info pointer; context is &mut Ctx
-                let context = unsafe { &mut *(context as *mut Ctx) };
+                let context = unsafe { &mut *context.cast::<Ctx>() };
                 // SAFETY: dl_iterate_phdr passes a valid info pointer.
                 let info = unsafe { &*info };
                 // PORT NOTE: Zig `defer context.i += 1` reshaped — bump on every return.
@@ -1734,7 +1734,7 @@ impl StackLine {
 
             // SAFETY: ctx outlives the dl_iterate_phdr call; callback signature matches libc's contract.
             unsafe {
-                libc::dl_iterate_phdr(Some(callback), &mut ctx as *mut Ctx as *mut c_void);
+                libc::dl_iterate_phdr(Some(callback), (&raw mut ctx).cast::<c_void>());
             }
 
             let _ = name_bytes;
@@ -1841,7 +1841,7 @@ fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> Resul
             let ret: bun_zlib::ReturnCode = unsafe {
                 core::mem::transmute(bun_zlib::compress2(
                     compressed_bytes.as_mut_ptr(),
-                    &mut len,
+                    &raw mut len,
                     message.as_ptr(),
                     u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
                     9,
@@ -2083,7 +2083,7 @@ fn crash() -> ! {
         let mut sigact: libc::sigaction = unsafe { core::mem::zeroed() };
         sigact.sa_sigaction = libc::SIG_DFL;
         // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-        unsafe { libc::sigemptyset(&mut sigact.sa_mask); }
+        unsafe { libc::sigemptyset(&raw mut sigact.sa_mask); }
         for sig in [
             libc::SIGSEGV,
             libc::SIGILL,
@@ -2094,7 +2094,7 @@ fn crash() -> ! {
             libc::SIGTERM,
         ] {
             // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
-            unsafe { libc::sigaction(sig, &sigact, core::ptr::null_mut()); }
+            unsafe { libc::sigaction(sig, &raw const sigact, core::ptr::null_mut()); }
         }
         // Zig: `@trap()` — emits ud2 (x86_64 → SIGILL) / brk (aarch64 → SIGTRAP).
         // `core::intrinsics::abort()` lowers to the same trap instruction, preserving
@@ -2424,13 +2424,13 @@ pub fn suppress_core_dumps_if_necessary() {
         // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
         let mut existing_limit: libc::rlimit = unsafe { core::mem::zeroed() };
         // SAFETY: &mut existing_limit is a valid out-pointer.
-        if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &mut existing_limit) } != 0 {
+        if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
             return;
         }
         if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
             existing_limit.rlim_cur = 0;
             // SAFETY: &existing_limit is a valid in-pointer.
-            unsafe { libc::setrlimit(libc::RLIMIT_CORE, &existing_limit); }
+            unsafe { libc::setrlimit(libc::RLIMIT_CORE, &raw const existing_limit); }
         }
     }
 }

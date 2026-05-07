@@ -224,14 +224,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // SAFETY: HTTPContext<true> and HTTPContext<SSL> are identical when SSL.
             unsafe {
                 core::mem::transmute::<*mut HTTPContext<true>, *mut Self>(
-                    &mut http::http_thread().https_context as *mut _,
+                    &raw mut http::http_thread().https_context,
                 )
             }
         } else {
             // SAFETY: same as above for false.
             unsafe {
                 core::mem::transmute::<*mut HTTPContext<false>, *mut Self>(
-                    &mut http::http_thread().http_context as *mut _,
+                    &raw mut http::http_thread().http_context,
                 )
             }
         }
@@ -306,7 +306,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // Releases the strong ref taken in register_h2.
         // SAFETY: `session` carries write provenance from the original Box.
-        unsafe { h2::ClientSession::deref(session as *mut _) };
+        unsafe { h2::ClientSession::deref(session.cast_mut()) };
     }
 
     /// Raw-pointer variant of [`Self::unregister_h2`] for re-entrant call
@@ -351,7 +351,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         // Releases the strong ref taken in register_h2.
         // SAFETY: `session` carries write provenance from the original Box.
-        unsafe { h2::ClientSession::deref(session as *mut _) };
+        unsafe { h2::ClientSession::deref(session.cast_mut()) };
     }
 
     pub fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {
@@ -401,7 +401,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         };
         // SAFETY: secure was just set to Some.
         unsafe { ssl_ctx_setup(self.ssl_ctx()) };
-        let owner_ptr = self as *mut Self as *mut c_void;
+        let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group
             .init(http::http_thread().uws_loop(), None, owner_ptr);
         Ok(())
@@ -431,7 +431,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     pub fn init(&mut self) {
-        let owner_ptr = self as *mut Self as *mut c_void;
+        let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group
             .init(http::http_thread().uws_loop(), None, owner_ptr);
         if SSL {
@@ -510,7 +510,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 pending.hostname_buf[..hostname.len()].copy_from_slice(hostname);
                 pending.hostname_len = hostname.len() as u8; // @truncate
                 pending.port = port;
-                pending.owner = self as *mut _;
+                pending.owner = std::ptr::from_mut(self);
                 // Clone a strong ref for the keepalive pool; the caller retains
                 // its own ref via HTTPClient.tls_props.
                 pending.ssl_config = ssl_config.cloned();
@@ -704,7 +704,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             Self::KIND,
             if SSL { self.secure } else { None },
             socket_path,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
             false, // dont allow half-open sockets
         )?;
         client.allow_retry = false;
@@ -748,7 +748,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                         return Ok(None);
                     }
                 }
-                let cfg_nn = cfg.and_then(|p| NonNull::new(p as *mut SSLConfig));
+                let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
                 for pc in &mut self.pending_h2_connects {
                     if pc.matches(hostname, port, cfg_nn) {
                         // client outlives the pending connect (resolved before
@@ -787,7 +787,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(ctx) = sock.ext::<*mut c_void>() {
                     // SAFETY: ext slot stores the ActiveSocket tagged-pointer word.
                     unsafe {
-                        *ctx = ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr();
+                        *ctx = ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr();
                     }
                 }
                 client.allow_retry = true;
@@ -844,14 +844,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if SSL { self.secure } else { None },
             hostname,
             port as c_int,
-            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr() as *const HTTPClient<'static>).ptr(),
+            ActiveSocket::<SSL>::init(client.as_erased_ptr().as_ptr().cast::<HTTPClient<'static>>()).ptr(),
             false,
         )?;
         client.allow_retry = false;
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref())
-                    .and_then(|p| NonNull::new(p as *mut SSLConfig));
+                    .and_then(|p| NonNull::new(p.cast_mut()));
                 let mut pc = h2::PendingConnect::new(h2::PendingConnect {
                     hostname: Box::<[u8]>::from(hostname),
                     port,
@@ -934,7 +934,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // PORT NOTE: SocketGroup deinit must run before the embedding struct
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&mut self.group as *mut _) };
+            unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
         }
         if SSL {
             if let Some(c) = self.secure {
@@ -1238,7 +1238,7 @@ static DEAD_SOCKET: DeadSocket = DeadSocket { garbage: 0 };
 
 #[inline]
 fn dead_socket() -> *const DeadSocket {
-    &DEAD_SOCKET as *const DeadSocket
+    &raw const DEAD_SOCKET
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

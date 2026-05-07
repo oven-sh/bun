@@ -530,7 +530,7 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: params as *mut _,
+                    params: std::ptr::from_mut(params),
                     name: index.name,
                     path: index.abs_path.slice(),
                     pathname: url_path.pathname,
@@ -553,7 +553,7 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: params as *mut _,
+                params: std::ptr::from_mut(params),
                 name: route.name,
                 path: route.abs_path.slice(),
                 pathname: url_path.pathname,
@@ -595,7 +595,7 @@ impl Routes {
             .zip(dynamic.iter())
         {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
-                return Some(&**route as *const Route);
+                return Some(&raw const **route);
             }
         }
 
@@ -610,7 +610,7 @@ impl Routes {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index.map(|p| p.as_ptr() as *const Route);
+            return self.index.map(|p| p.as_ptr().cast_const());
         }
 
         self.static_
@@ -669,7 +669,7 @@ impl<'a> RouteLoader<'a> {
             }
 
             let new_route = Box::new(route);
-            let new_route_ptr: *const Route = &*new_route;
+            let new_route_ptr: *const Route = &raw const *new_route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
             // Longer-term:
@@ -2123,14 +2123,14 @@ mod tests {
             // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo`
             // produced by `dir_info_ref` below; the resolver guarantees it
             // outlives the router walk.
-            let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
-            di.get_entries_const().map(|e| e as *const Fs::DirEntry)
+            let di = unsafe { &*owner.cast::<bun_resolver::DirInfo>() };
+            di.get_entries_const().map(core::ptr::from_ref)
         },
     };
 
     #[inline]
     fn dir_info_ref(di: *const bun_resolver::DirInfo) -> DirInfoRef {
-        DirInfoRef { owner: di as *const (), vtable: &RESOLVER_DIR_INFO_VTABLE }
+        DirInfoRef { owner: di.cast::<()>(), vtable: &RESOLVER_DIR_INFO_VTABLE }
     }
 
     /// Newtype so the orphan rule lets us `impl ResolverLike` for a
@@ -2144,7 +2144,7 @@ mod tests {
         }
         fn fs_impl(&self) -> *mut Fs::Implementation {
             // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation }
+            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
         }
         fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
             self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
@@ -2192,10 +2192,10 @@ mod tests {
             // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
             // no errdefer; the test harness panics on error anyway, but the guard
             // still flushes diagnostics on early-return for parity.
-            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
+                    .print(bun_core::output::error_writer());
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2223,7 +2223,7 @@ mod tests {
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             let routes = RouteLoader::load_all(
                 router.config.clone(),
-                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
+                unsafe { &mut *core::ptr::from_mut(&mut log) },
                 &mut resolver,
                 dir_info_ref(root_dir),
                 top_level_dir,
@@ -2264,10 +2264,10 @@ mod tests {
             )?;
 
             let mut log = bun_logger::Log::init();
-            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
                 let _ = unsafe { &*log }
-                    .print(bun_core::output::error_writer() as *mut bun_core::io::Writer);
+                    .print(bun_core::output::error_writer());
             });
 
             let opts = bun_resolver::options::BundleOptions {
@@ -2288,7 +2288,7 @@ mod tests {
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
             // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
-                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
+                unsafe { &mut *core::ptr::from_mut(&mut log) },
                 dir_info_ref(root_dir),
                 &mut resolver,
                 top_level_dir,

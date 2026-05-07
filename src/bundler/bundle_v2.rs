@@ -756,7 +756,7 @@ pub mod api {
                 // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
                 // JSBundlerPlugin.cpp `JSBundlerPlugin__anyMatches`.
                 unsafe {
-                    JSBundlerPlugin__anyMatches(self, &namespace_string, &path_string, is_on_load)
+                    JSBundlerPlugin__anyMatches(self, &raw const namespace_string, &raw const path_string, is_on_load)
                 }
             }
 
@@ -779,8 +779,8 @@ pub mod api {
                 unsafe {
                     JSBundlerPlugin__matchOnLoad(
                         self,
-                        &namespace_string,
-                        &path_string,
+                        &raw const namespace_string,
+                        &raw const path_string,
                         context,
                         default_loader as u8,
                         is_server_side,
@@ -808,9 +808,9 @@ pub mod api {
                 unsafe {
                     JSBundlerPlugin__matchOnResolve(
                         self,
-                        &namespace_string,
-                        &path_string,
-                        &importer_string,
+                        &raw const namespace_string,
+                        &raw const path_string,
+                        &raw const importer_string,
                         context,
                         import_record_kind as u8,
                     );
@@ -875,7 +875,7 @@ pub mod api {
                 // convention used throughout `bun_resolver` (PORTING.md
                 // §Lifetimes: ARENA → `&'bump T`).
                 let dupe = |key: &[u8]| -> &'static [u8] {
-                    unsafe { &*(arena.alloc_slice_copy(key) as *const [u8]) }
+                    unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(key)) }
                 };
 
                 // Direct key match (must use `getKey` to return the map-owned
@@ -1063,7 +1063,7 @@ pub mod api {
                 Self {
                     // SAFETY: lifetime erased — Resolve is owned by the dispatch
                     // chain and never outlives `bv2` (mirrors Zig raw `*BundleV2`).
-                    bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
+                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
                     js_task: bun_event_loop::AnyTask::AnyTask::default(),
@@ -1077,7 +1077,7 @@ pub mod api {
             ///      jsc.ConcurrentTask.create(this.js_task.task()))`
             pub fn dispatch(&mut self) {
                 self.js_task = bun_event_loop::AnyTask::AnyTask {
-                    ctx: core::ptr::NonNull::new(self as *mut Self as *mut core::ffi::c_void),
+                    ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>()),
                     callback: Self::run_on_js_thread_wrap,
                 };
                 let task =
@@ -1090,7 +1090,7 @@ pub mod api {
                 let kind = self.import_record.kind;
                 // PORT NOTE: reshaped for borrowck — capture the erased self
                 // pointer before borrowing fields immutably for the FFI call.
-                let self_ptr = self as *mut Self as *mut core::ffi::c_void;
+                let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
                 // SAFETY: `bv2` is a valid backref; `plugins` is Some.
                 unsafe {
                     (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_resolve(
@@ -1104,7 +1104,7 @@ pub mod api {
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
-                unsafe { &mut *(ctx as *mut Resolve) }.run_on_js_thread();
+                unsafe { &mut *ctx.cast::<Resolve>() }.run_on_js_thread();
                 Ok(())
             }
         }
@@ -1158,7 +1158,7 @@ pub mod api {
                     .loader(&bv2.transpiler.options.loaders)
                     .unwrap_or(Loader::Js);
                 Self {
-                    bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
+                    bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     parse_task: parse,
                     source_index: parse.source_index,
                     default_loader,
@@ -1183,7 +1183,7 @@ pub mod api {
             ///    bv2.jsLoopForPlugins().enqueueTaskConcurrent(concurrent_task)`
             pub fn dispatch(&mut self) {
                 self.js_task = bun_event_loop::AnyTask::AnyTask {
-                    ctx: core::ptr::NonNull::new(self as *mut Self as *mut core::ffi::c_void),
+                    ctx: core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>()),
                     callback: Self::run_on_js_thread_wrap,
                 };
                 let concurrent_task =
@@ -1199,7 +1199,7 @@ pub mod api {
                 let default_loader = self.default_loader;
                 // PORT NOTE: reshaped for borrowck — capture the erased self
                 // pointer before borrowing fields immutably for the FFI call.
-                let self_ptr = self as *mut Self as *mut core::ffi::c_void;
+                let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
                 // SAFETY: `bv2` is a valid backref; `plugins` is Some.
                 unsafe {
                     (*(*self.bv2).plugins.unwrap().as_ptr()).match_on_load(
@@ -1213,7 +1213,7 @@ pub mod api {
             }
             fn run_on_js_thread_wrap(ctx: *mut core::ffi::c_void) -> bun_event_loop::JsResult<()> {
                 // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
-                unsafe { &mut *(ctx as *mut Load) }.run_on_js_thread();
+                unsafe { &mut *ctx.cast::<Load>() }.run_on_js_thread();
                 Ok(())
             }
         }
@@ -1361,7 +1361,7 @@ pub mod dispatch {
             unsafe {
                 (self.vtable.put_or_overwrite_asset)(
                     self.owner,
-                    path as *const P as *const (),
+                    std::ptr::from_ref::<P>(path).cast::<()>(),
                     contents,
                     content_hash,
                 )
@@ -1610,7 +1610,7 @@ pub fn generic_path_with_pretty_initialized<'a>(
 #[inline(always)]
 pub(crate) unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
     // SAFETY: upheld by caller per fn contract.
-    unsafe { &*(s as *const [u8]) }
+    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
 }
 #[inline]
 pub(crate) fn fs_path_to_logger(p: Fs::Path<'_>) -> Logger::fs::Path {
@@ -1722,14 +1722,14 @@ impl<'a> BundleV2<'a> {
         // borrow so the returned `&'a mut Transpiler<'a>` doesn't keep `self`
         // borrowed.
         let arena: &'a bun_alloc::Arena =
-            unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
 
         // PORT NOTE: Zig holds `this_transpiler = this.transpiler` (a `*Transpiler`)
         // and reads from it while also touching `this.client_transpiler`. In Rust
         // `self.transpiler` is `&'a mut Transpiler`, so materializing a second
         // `&mut` here would alias `*self`. Snapshot the `Copy` fields up front
         // and keep the source as a raw pointer.
-        let this_transpiler: *mut Transpiler<'a> = &mut *self.transpiler as *mut _;
+        let this_transpiler: *mut Transpiler<'a> = &raw mut *self.transpiler;
         // SAFETY: `self.transpiler` is a live exclusive reference; no other
         // borrow of `*self` is outstanding while we read these `Copy` fields.
         let (this_compile, this_log, this_env) =
@@ -1750,7 +1750,7 @@ impl<'a> BundleV2<'a> {
         // `self.transpiler`'s field and MUST NOT be dropped.
         unsafe {
             core::ptr::write(
-                &mut client_transpiler.options.main_fields,
+                &raw mut client_transpiler.options.main_fields,
                 Target::Browser
                     .default_main_fields()
                     .iter()
@@ -1758,41 +1758,41 @@ impl<'a> BundleV2<'a> {
                     .collect(),
             );
             core::ptr::write(
-                &mut client_transpiler.options.conditions,
+                &raw mut client_transpiler.options.conditions,
                 options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?,
             );
 
             // We need to make sure it has [hash] in the names so we don't get conflicts.
             if this_compile {
                 core::ptr::write(
-                    &mut client_transpiler.options.asset_naming,
+                    &raw mut client_transpiler.options.asset_naming,
                     options::PathTemplate::ASSET.data.to_vec().into_boxed_slice(),
                 );
                 core::ptr::write(
-                    &mut client_transpiler.options.chunk_naming,
+                    &raw mut client_transpiler.options.chunk_naming,
                     options::PathTemplate::CHUNK.data.to_vec().into_boxed_slice(),
                 );
                 core::ptr::write(
-                    &mut client_transpiler.options.entry_naming,
+                    &raw mut client_transpiler.options.entry_naming,
                     b"./[name]-[hash].[ext]".to_vec().into_boxed_slice(),
                 );
                 // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
                 // instead of "./chunk-abc.js"). Relative paths break when the HTML is
                 // served from a nested route like "/foo/".
                 core::ptr::write(
-                    &mut client_transpiler.options.public_path,
+                    &raw mut client_transpiler.options.public_path,
                     b"/".to_vec().into_boxed_slice(),
                 );
             }
 
             // Zig: `client_transpiler.macro_context = js_ast.Macro.MacroContext.init(client_transpiler);`
             core::ptr::write(
-                &mut client_transpiler.macro_context,
+                &raw mut client_transpiler.macro_context,
                 Some(js_ast::Macro::MacroContext::init(&mut *client_transpiler)),
             );
             // Zig: `client_transpiler.resolver.caches = CacheSet.Set.init(alloc);`
             core::ptr::write(
-                &mut client_transpiler.resolver.caches,
+                &raw mut client_transpiler.resolver.caches,
                 _resolver::cache::Set::init(),
             );
         }
@@ -1805,7 +1805,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (Linker.resolver
         // is `*mut Resolver<'static>`; the resolver lives as long as the arena).
         client_transpiler.linker.resolver =
-            (&mut client_transpiler.resolver as *mut _resolver::Resolver<'a>).cast();
+            (&raw mut client_transpiler.resolver).cast();
 
         // `configure_defines` early-returns on `options.defines_loaded` (which
         // was bitwise-copied as `true`), so this is a no-op that touches no
@@ -1819,7 +1819,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: see overwrite contract above.
         unsafe {
             core::ptr::write(
-                &mut client_transpiler.resolver.opts,
+                &raw mut client_transpiler.resolver.opts,
                 crate::transpiler::resolver_bundle_options_subset(&client_transpiler.options),
             );
         }
@@ -2012,7 +2012,7 @@ impl<'a> BundleV2<'a> {
         // disjoint column refs (Zig pulled multiple `items(.field)` columns at
         // once with no aliasing model).
         let redirect_map: *const PathToSourceIndexMap =
-            self.path_to_source_index_map(self.transpiler.options.target) as *const _;
+            std::ptr::from_ref(self.path_to_source_index_map(self.transpiler.options.target));
         // Always materialize a valid slice; when the boundary list is empty
         // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
         // null `&Map` via `mem::zeroed()` (UB even though it was never read
@@ -2262,7 +2262,7 @@ impl<'a> BundleV2<'a> {
                 // until after the last `*value_ptr` access below.
                 let (found_existing, value_ptr): (bool, *mut u32) = {
                     let entry = self.path_to_source_index_map(target).get_or_put(&path_primary.text).expect("oom");
-                    (entry.found_existing, entry.value_ptr as *mut u32)
+                    (entry.found_existing, std::ptr::from_mut::<u32>(entry.value_ptr))
                 };
                 if !found_existing {
                     let loader: Loader = 'brk: {
@@ -2421,7 +2421,7 @@ impl<'a> BundleV2<'a> {
                 unsafe { (*(*transpiler).fs).top_level_dir }, &path.text);
             // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
             // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
-            path.pretty = unsafe { &*(self.allocator().alloc_slice_copy(rel) as *const [u8]) };
+            path.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.allocator().alloc_slice_copy(rel)) };
         }
         path.assert_pretty_is_valid();
         path.assert_file_path_is_absolute();
@@ -2664,7 +2664,7 @@ impl<'a> BundleV2<'a> {
         transpiler.resolver.opts.mark_builtins_as_external = transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
 
         // SAFETY: aliased *mut for `ssr_transpiler` (Zig stored both as raw ptrs).
-        let ssr_alias: *mut Transpiler<'a> = transpiler as *mut _;
+        let ssr_alias: *mut Transpiler<'a> = std::ptr::from_mut(transpiler);
         let mut this = Box::new(BundleV2 {
             transpiler,
             client_transpiler: None,
@@ -2706,7 +2706,7 @@ impl<'a> BundleV2<'a> {
             let separate_ssr = bo.framework.server_components.as_ref()
                 .map(|sc| sc.separate_ssr_graph).unwrap_or(false);
             this.framework = Some(bo.framework);
-            this.linker.framework = this.framework.as_ref().map(|f| f as *const _);
+            this.linker.framework = this.framework.as_ref().map(|f| std::ptr::from_ref(f));
             this.plugins = bo.plugins;
             if this.transpiler.options.server_components {
                 debug_assert!(unsafe { this.client_transpiler.unwrap().as_ref() }.options.server_components);
@@ -2720,7 +2720,7 @@ impl<'a> BundleV2<'a> {
         // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
         // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
         // backref into the now-stable `this.graph.heap` slot.
-        this.linker.graph.bump = &this.graph.heap as *const bun_alloc::Arena;
+        this.linker.graph.bump = &raw const this.graph.heap;
         unsafe { (*this.transpiler.log).clone_line_text = true };
 
         // We don't expose an option to disable this. Bake forbids tree-shaking
@@ -2736,7 +2736,7 @@ impl<'a> BundleV2<'a> {
 
         // BACKREF: `LinkerContext<'a>.resolver` is `*mut Resolver<'a>`; the
         // resolver lives in `transpiler` which outlives `self` (same `'a`).
-        this.linker.resolver = &mut this.transpiler.resolver as *mut Resolver<'a>;
+        this.linker.resolver = &raw mut this.transpiler.resolver;
         this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
         this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
@@ -2768,7 +2768,7 @@ impl<'a> BundleV2<'a> {
         // Arena-owned (Zig: `allocator.create(ThreadPool)`). Coerce to `*mut`
         // immediately so the `&this` borrow from `allocator()` ends before
         // `ThreadPool::init` takes `&mut this`.
-        let pool: *mut ThreadPool = this.allocator().alloc(ThreadPool::default()) as *mut _;
+        let pool: *mut ThreadPool = std::ptr::from_mut(this.allocator().alloc(ThreadPool::default()));
         if cli_watch_flag {
             // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
             // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
@@ -2798,7 +2798,7 @@ impl<'a> BundleV2<'a> {
     /// §Allocators: `bump.alloc(init)` → `&'bump mut T`).
     #[inline]
     fn arena_create<T>(&self, value: T) -> *mut T {
-        self.allocator().alloc(value) as *mut T
+        std::ptr::from_mut::<T>(self.allocator().alloc(value))
     }
 
     pub fn increment_scan_counter(&mut self) {
@@ -2826,7 +2826,7 @@ impl<'a> BundleV2<'a> {
     /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
     /// rest of the scope; the caller must ensure `self` outlives the guard.
     pub fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
-        ScanCounterGuard { bv2: self as *mut BundleV2<'a> as *mut BundleV2<'static> }
+        ScanCounterGuard { bv2: std::ptr::from_mut::<BundleV2<'a>>(self).cast::<BundleV2<'static>>() }
     }
 
     // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
@@ -2899,9 +2899,9 @@ impl<'a> BundleV2<'a> {
             // mirror with `*mut` so it doesn't keep `self` borrowed through the plugin
             // dispatch / dev_server calls below.
             let transpiler: *mut Transpiler<'a> = if flags.client() && !flags.server() && !flags.ssr() {
-                self.transpiler_for_target(Target::Browser) as *mut _
+                std::ptr::from_mut(self.transpiler_for_target(Target::Browser))
             } else {
-                &mut *self.transpiler as *mut _
+                &raw mut *self.transpiler
             };
             let server_target = self.transpiler.options.target;
 
@@ -2935,8 +2935,8 @@ impl<'a> BundleV2<'a> {
                         err,
                         if flags.client() { bake::Graph::Client } else { bake::Graph::Server },
                         abs_path,
-                        unsafe { (*transpiler).log } as *const _,
-                        self as *mut _,
+                        unsafe { (*transpiler).log }.cast_const(),
+                        std::ptr::from_mut(self),
                     ).expect("oom");
                     unsafe { (*(*transpiler).log).reset() };
                     continue;
@@ -3011,7 +3011,7 @@ impl<'a> BundleV2<'a> {
         let runtime_parse_task: *mut ParseTask = self.allocator().alloc(rt.parse_task);
         unsafe {
             // BACKREF — lifetime erased per ParseTask::ctx convention.
-            (*runtime_parse_task).ctx = self as *mut _ as *mut BundleV2<'static>;
+            (*runtime_parse_task).ctx = std::ptr::from_mut(self).cast::<BundleV2<'static>>();
             (*runtime_parse_task).tree_shaking = true;
             (*runtime_parse_task).loader = Some(Loader::Js);
         }
@@ -3062,7 +3062,7 @@ impl<'a> BundleV2<'a> {
         // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
         // the `self.graph.ast.set(...)` calls at the end of this function.
         let alloc: &'static bun_alloc::Arena =
-            unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
 
         let hmr = self.transpiler.options.hot_module_reloading;
         let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -3313,7 +3313,7 @@ impl<'a> BundleV2<'a> {
         });
         unsafe {
             // BACKREF — lifetime erased per ParseTask::ctx convention.
-            (*task).ctx = self as *mut _ as *mut BundleV2<'static>;
+            (*task).ctx = std::ptr::from_mut(self).cast::<BundleV2<'static>>();
             (*task).task.node.next = core::ptr::null_mut();
             (*task).io_task.node.next = core::ptr::null_mut();
         }
@@ -3366,7 +3366,7 @@ impl<'a> BundleV2<'a> {
         let task = Box::into_raw(Box::new(ServerComponentParseTask {
             data,
             // SAFETY: lifetime-erase `'a` → `'static` for the BACKREF (matches Zig `*BundleV2`).
-            ctx: (self as *mut Self).cast::<BundleV2<'static>>(),
+            ctx: std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
             source: task_source,
             // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
             ..Default::default()
@@ -3456,7 +3456,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
         // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
         // sidestep for the `&mut self` overlap (Zig stored both as raw `*Transpiler`).
-        let entry_points: *const [Box<[u8]>] = &*this.transpiler.options.entry_points;
+        let entry_points: *const [Box<[u8]>] = &raw const *this.transpiler.options.entry_points;
         this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
         if unsafe { (*this.transpiler.log).has_errors() } {
@@ -3491,7 +3491,7 @@ impl<'a> BundleV2<'a> {
         // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
         // overlapping `&mut`. (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
         let mut chunks = unsafe {
-            let bundle_ptr: *mut BundleV2 = &mut *this;
+            let bundle_ptr: *mut BundleV2 = &raw mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // `Graph::entry_points` is `Vec<bun_js_parser::Index>`; `link()` takes
             // `&[crate::Index]` (= bun_options_types). Both are `#[repr(transparent)]`
@@ -3639,7 +3639,7 @@ impl<'a> BundleV2<'a> {
         // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
         // from `this.linker`.
         let mut chunks = unsafe {
-            let bundle_ptr: *mut BundleV2 = &mut *this;
+            let bundle_ptr: *mut BundleV2 = &raw mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
             // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
@@ -3783,7 +3783,7 @@ impl<'a> BundleV2<'a> {
         if self.completion.is_some() {
             self.enqueue_on_js_loop_for_plugins(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                    load as *mut _,
+                    std::ptr::from_mut(load),
                     on_load_from_js_loop_raw,
                 ),
             );
@@ -3797,7 +3797,7 @@ impl<'a> BundleV2<'a> {
         if self.completion.is_some() {
             self.enqueue_on_js_loop_for_plugins(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                    resolve as *mut _,
+                    std::ptr::from_mut(resolve),
                     on_resolve_from_js_loop_raw,
                 ),
             );
@@ -3834,7 +3834,7 @@ impl<'a> BundleV2<'a> {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if source.path.is_file() {
-                    unsafe { this.graph.pool.as_mut() }.schedule(unsafe { &mut *load.parse_task });
+                    unsafe { this.graph.pool.as_mut() }.schedule(unsafe { &raw mut *load.parse_task });
                     return;
                 }
 
@@ -3953,7 +3953,7 @@ impl<'a> BundleV2<'a> {
                         bun_core::err!("Plugin"),
                         load.bake_graph(),
                         source.path.key_for_incremental_graph(),
-                        &temp_log,
+                        &raw const temp_log,
                         this,
                     ).expect("oom");
                 } else {
@@ -4067,8 +4067,8 @@ impl<'a> BundleV2<'a> {
                     // `'static` is never observed.
                     let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
                         (
-                            &*(result.path.as_ref() as *const [u8]),
-                            &*(result.namespace.as_ref() as *const [u8]),
+                            &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
+                            &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
                         )
                     };
                     let mut path = Fs::Path::init(result_path_static);
@@ -4086,7 +4086,7 @@ impl<'a> BundleV2<'a> {
                     let (value_ptr, found_existing) = {
                         let existing = this.path_to_source_index_map(resolve.import_record.original_target)
                             .get_or_put(path.text).expect("oom");
-                        (existing.value_ptr as *mut _, existing.found_existing)
+                        (std::ptr::from_mut(existing.value_ptr), existing.found_existing)
                     };
                     if !found_existing {
                         // Move (not clone) — `path` keeps borrowing the heap bytes via the
@@ -4119,7 +4119,7 @@ impl<'a> BundleV2<'a> {
                             ..Default::default()
                         }).expect("unreachable");
                         let task_val = ParseTask {
-                            ctx: (this as *mut BundleV2).cast::<BundleV2<'static>>(),
+                            ctx: std::ptr::from_mut::<BundleV2>(this).cast::<BundleV2<'static>>(),
                             path,
                             // unknown at this point:
                             contents_or_fd: parse_task::ContentsOrFd::Fd {
@@ -4505,7 +4505,7 @@ impl<'a> BundleV2<'a> {
                             // `*const` slice (the scanImportsAndExports caller holds raw
                             // SoA pointers); it only reads via `is_none()`. Zig spec
                             // (`LinkerContext.zig:496`) types this `[]const ?*...`.
-                            css_asts as *const [Option<*mut core::ffi::c_void>],
+                            std::ptr::from_ref::<[Option<*mut core::ffi::c_void>]>(css_asts),
                             sources,
                             loaders,
                         ) == crate::linker_context_mod::ScanCssImportsResult::Errors {
@@ -4516,7 +4516,7 @@ impl<'a> BundleV2<'a> {
                                 bun_core::err!("InvalidCssImport"),
                                 bake::Graph::Client,
                                 &sources[index].path.text,
-                                &log,
+                                &raw const log,
                                 self,
                             ).map_err(|_| AllocError)?;
                             // Since there is an error, do not treat it as a
@@ -4583,7 +4583,7 @@ impl<'a> BundleV2<'a> {
             // `self.allocator()` does not extend across the `&mut self` calls below
             // (Phase-A arena-erasure convention; see also `path.pretty` ~L4770).
             break 'reachable_files unsafe {
-                &*(self.allocator().alloc_slice_copy(&js_files) as *const [Index])
+                &*std::ptr::from_ref::<[Index]>(self.allocator().alloc_slice_copy(&js_files))
             };
         };
 
@@ -4702,9 +4702,9 @@ impl<'a> BundleV2<'a> {
         // Arena-owned (Zig allocates `chunks` from `this.allocator()`); the
         // `DevServerOutput` lifetime is documented as "tied to the bundler's
         // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-        let chunks: *mut [Chunk] = self
+        let chunks: *mut [Chunk] = std::ptr::from_mut::<[Chunk]>(self
             .allocator()
-            .alloc_slice_fill_iter(chunks.into_iter()) as *mut [Chunk];
+            .alloc_slice_fill_iter(chunks.into_iter()));
         // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
         let chunks: &mut [Chunk] = unsafe { &mut *chunks };
 
@@ -4866,7 +4866,7 @@ impl<'a> BundleV2<'a> {
     fn path_with_pretty_initialized(&self, path: Fs::Path<'static>, target: options::Target) -> Result<Fs::Path<'static>, Error> {
         // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
         // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
-        let bump: &'static bun_alloc::Arena = unsafe { &*(self.allocator() as *const bun_alloc::Arena) };
+        let bump: &'static bun_alloc::Arena = unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(self.allocator()) };
         generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, bump)
     }
 
@@ -5230,7 +5230,7 @@ impl<'a> BundleV2<'a> {
 
                     (self.ssr_transpiler, bake::Graph::Ssr, Target::BakeServerComponentsSsr)
                 } else {
-                    (self.transpiler_for_target(ctx.target) as *mut Transpiler<'a>, ctx.target.bake_graph(), ctx.target)
+                    (std::ptr::from_mut::<Transpiler<'a>>(self.transpiler_for_target(ctx.target)), ctx.target.bake_graph(), ctx.target)
                 };
             // SAFETY: see PORT NOTE above — raw `*mut Transpiler` lives for `'a`.
             let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
@@ -5261,7 +5261,7 @@ impl<'a> BundleV2<'a> {
                     // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
                     // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
                     // cascading borrow conflicts into every `&mut self` call below).
-                    path_primary.pretty = unsafe { &*(self.allocator().alloc_slice_copy(&path_primary.text) as *const [u8]) };
+                    path_primary.pretty = unsafe { &*std::ptr::from_ref::<[u8]>(self.allocator().alloc_slice_copy(&path_primary.text)) };
                     import_record.path = ir_path_from_fs(&path_primary);
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
@@ -5300,7 +5300,7 @@ impl<'a> BundleV2<'a> {
                         // deref (DevServer vtable or `transpiler.log`). Detach via
                         // `*mut` so later `self.*` reads don't conflict.
                         let log: &mut Logger::Log = unsafe {
-                            &mut *(self.log_for_resolution_failures(&source.path.text, bake_graph) as *mut Logger::Log)
+                            &mut *std::ptr::from_mut::<Logger::Log>(self.log_for_resolution_failures(&source.path.text, bake_graph))
                         };
 
                         // Only perform directory busting when hot-reloading is enabled
@@ -5435,7 +5435,7 @@ impl<'a> BundleV2<'a> {
             // The Rust port returns `Option<&mut Path>`, which would lock the
             // whole struct. Detach via raw ptr to mirror the Zig aliasing.
             let path: &mut Fs::Path = match resolve_result.path() {
-                Some(p) => unsafe { &mut *(p as *mut Fs::Path) },
+                Some(p) => unsafe { &mut *std::ptr::from_mut::<Fs::Path>(p) },
                 None => {
                     import_record.path.is_disabled = true;
                     import_record.source_index = Index::INVALID;
@@ -5610,7 +5610,7 @@ impl<'a> BundleV2<'a> {
         // path map across the loop body. Here we (a) capture a raw self ptr for
         // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
         // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
-        let self_ptr: *mut BundleV2<'static> = self as *mut Self as *mut BundleV2<'static>;
+        let self_ptr: *mut BundleV2<'static> = std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>();
         let dev_server_is_none = self.dev_server.is_none();
         for (key, value) in resolve_queue.iter() {
             let value: *mut ParseTask = *value;
@@ -5628,7 +5628,7 @@ impl<'a> BundleV2<'a> {
                     self.graph.path_to_source_index_map(target)
                 };
                 let existing = map.get_or_put(&key).expect("oom");
-                (existing.found_existing, existing.value_ptr as *mut IndexInt)
+                (existing.found_existing, std::ptr::from_mut::<IndexInt>(existing.value_ptr))
             };
 
             if !found_existing {
@@ -5803,7 +5803,7 @@ impl<'a> BundleV2<'a> {
         // BACKREF set in `BundleV2::init`).
         let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_logger::Log) = {
             let transpiler = self.transpiler_for_target(target);
-            (&mut *transpiler.options.define as *mut _, transpiler.log)
+            (&raw mut *transpiler.options.define, transpiler.log)
         };
 
         let ast_for_html_entrypoint = JSAst::init(bun_js_parser::new_lazy_export_ast(
@@ -6164,8 +6164,8 @@ impl<'a> BundleV2<'a> {
                             err.err,
                             err.target.bake_graph(),
                             abs_path,
-                            &err.log as *const _,
-                            this as *mut _,
+                            &raw const err.log,
+                            std::ptr::from_mut(this),
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
                         // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
@@ -6849,7 +6849,7 @@ impl ExternalFreeFunctionAllocator {
 
     fn free(ext_free_function: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
         // SAFETY: ptr was created by ExternalFreeFunctionAllocator::create
-        let info: &mut ExternalFreeFunctionAllocator = unsafe { &mut *(ext_free_function as *mut ExternalFreeFunctionAllocator) };
+        let info: &mut ExternalFreeFunctionAllocator = unsafe { &mut *ext_free_function.cast::<ExternalFreeFunctionAllocator>() };
         // SAFETY: free_callback is a valid C fn provided by plugin
         unsafe { (info.free_callback)(info.context) };
         // SAFETY: info was Box::into_raw'd in create()
@@ -6872,7 +6872,7 @@ static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVT
 /// don't need to be checked.
 pub fn allocator_has_pointer(allocator: &bun_alloc::StdAllocator) -> bool {
     // bundle_v2.zig:4443 — vtable identity check.
-    core::ptr::eq(allocator.vtable, &EXTERNAL_FREE_VTABLE)
+    core::ptr::eq(allocator.vtable, &raw const EXTERNAL_FREE_VTABLE)
 }
 
 // LAYERING: `BuildResult` / `BundleV2Result` are defined once in

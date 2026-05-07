@@ -109,7 +109,7 @@ impl CallFrame {
         // SAFETY: CallFrame is an opaque handle whose address IS the base of the
         // JSC register array; reinterpreting &self as *const JSValue mirrors the
         // Zig @ptrCast(@alignCast(self)).
-        (self as *const CallFrame).cast::<JSValue>()
+        std::ptr::from_ref::<CallFrame>(self).cast::<JSValue>()
     }
 
     /// This function is manually ported from JSC's equivalent function in C++
@@ -117,7 +117,7 @@ impl CallFrame {
     fn argument_count_including_this(&self) -> u32 {
         // SAFETY: self points at the base of the JSC register array; the slot at
         // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid Register.
-        let registers: *const Register = (self as *const CallFrame).cast::<Register>();
+        let registers: *const Register = std::ptr::from_ref::<CallFrame>(self).cast::<Register>();
         // argumentCountIncludingThis takes the register at the defined offset, then
         // calls 'ALWAYS_INLINE int32_t Register::unboxedInt32() const',
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
@@ -179,8 +179,8 @@ impl CallFrame {
                 self,
                 global_this,
                 str.as_mut_ptr(),
-                &mut line,
-                &mut column,
+                &raw mut line,
+                &raw mut column,
             );
         }
         CallerSrcLoc {
@@ -196,7 +196,7 @@ impl CallFrame {
         unsafe {
             let p = Bun__CallFrame__describeFrame(self);
             let len = core::ffi::CStr::from_ptr(p).to_bytes().len();
-            ZStr::from_raw(p as *const u8, len)
+            ZStr::from_raw(p.cast::<u8>(), len)
         }
     }
 }

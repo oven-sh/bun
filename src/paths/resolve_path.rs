@@ -2180,7 +2180,7 @@ pub fn normalize_string_node<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) ->
     // unify to &[T] in the T variant and cast here.
     let r = normalize_string_node_t::<u8, P>(str, buf);
     // SAFETY: result always points into `buf`
-    unsafe { core::slice::from_raw_parts_mut(r.as_ptr() as *mut u8, r.len()) }
+    unsafe { core::slice::from_raw_parts_mut(r.as_ptr().cast_mut(), r.len()) }
 }
 
 pub fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(

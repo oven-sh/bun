@@ -199,7 +199,7 @@ impl DateHeaderTimer {
             // Reschedule it automatically for 1 second later.
             let next = now.add_ms(1000);
             self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
             // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
             unsafe { (*Self::timer_all()).insert(elt) };
@@ -256,7 +256,7 @@ impl EventLoopDelayMonitor {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
         let next = now.add_ms(i64::from(resolution_ms));
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
         // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
         unsafe { (*Self::timer_all()).insert(elt) };
@@ -269,7 +269,7 @@ impl EventLoopDelayMonitor {
         self.enabled = false;
         self.js_histogram = JSValue::default();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*Self::timer_all()).remove(elt) };
     }
@@ -317,7 +317,7 @@ impl EventLoopDelayMonitor {
         let next =
             Timespec { sec: now.sec, nsec: now.nsec }.add_ms(i64::from(self.resolution_ms));
         self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
-        let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
         // SAFETY: see `enable` — disjoint-field access on `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
@@ -490,13 +490,13 @@ impl All {
         // `timer` is the `event_loop_timer` field of the named container.
         let flags_slot: Option<*mut TimerFlags> = match timer_ref.tag {
             EventLoopTimerTag::TimeoutObject => unsafe {
-                let parent = (timer as *mut u8)
+                let parent = timer.cast::<u8>()
                     .sub(offset_of!(TimeoutObject, event_loop_timer))
                     .cast::<TimeoutObject>();
                 Some(core::ptr::addr_of_mut!((*parent).internals.flags))
             },
             EventLoopTimerTag::ImmediateObject => unsafe {
-                let parent = (timer as *mut u8)
+                let parent = timer.cast::<u8>()
                     .sub(offset_of!(ImmediateObject, event_loop_timer))
                     .cast::<ImmediateObject>();
                 Some(core::ptr::addr_of_mut!((*parent).internals.flags))
@@ -504,7 +504,7 @@ impl All {
             // Spec EventLoopTimer.zig:157-160 — `AbortSignal.Timeout` stores
             // `flags` directly (not under `.internals`).
             EventLoopTimerTag::AbortSignalTimeout => unsafe {
-                let parent = (timer as *mut u8)
+                let parent = timer.cast::<u8>()
                     .sub(offset_of!(AbortSignalTimeout, event_loop_timer))
                     .cast::<AbortSignalTimeout>();
                 Some(core::ptr::addr_of_mut!((*parent).flags))

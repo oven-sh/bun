@@ -41,7 +41,7 @@ impl BakeSourceProvider {
         // deriving `*mut Self` from `&self` is sound without a const→mut cast.
         // Rust itself holds zero bytes here; the `*mut` exists solely to match
         // C++'s non-const `BakeSourceProvider*` signatures.
-        self._p.get() as *mut Self
+        self._p.get().cast::<Self>()
     }
 
     #[inline]

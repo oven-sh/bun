@@ -71,7 +71,7 @@ impl PipeReader {
     pub fn r#ref(&self) {
         // SAFETY: `self` is live; RefCount::ref_ only touches the interior-mutable
         // `ref_count` cell via raw-ptr field projection.
-        unsafe { RefCount::<PipeReader>::ref_(self as *const Self as *mut Self) };
+        unsafe { RefCount::<PipeReader>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
 
     /// Decrement the intrusive refcount; frees the allocation when it hits zero.
@@ -138,7 +138,7 @@ impl PipeReader {
         let raw: *mut PipeReader = Box::into_raw(this);
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
         unsafe {
-            (*raw).reader.set_parent(raw as *mut core::ffi::c_void);
+            (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
             IntrusiveRc::from_raw(raw)
         }
     }
@@ -174,7 +174,7 @@ impl PipeReader {
             // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(self as *mut PipeReader) };
+            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
             // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
             match self.reader.start(self.stdio_result.unwrap(), true) {
@@ -325,7 +325,7 @@ impl PipeReader {
                 // `MarkedArrayBuffer::from_string`.
                 let boxed = bytes.into_boxed_slice();
                 let len = boxed.len();
-                let ptr = Box::into_raw(boxed) as *mut u8;
+                let ptr = Box::into_raw(boxed).cast::<u8>();
                 // SAFETY: ptr/len from Box::into_raw; backed by global mimalloc.
                 let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)

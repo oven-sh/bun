@@ -723,7 +723,7 @@ impl<C: TaskContext> AsyncTask<C> {
     unsafe fn run_callback(work_task: *mut WorkPoolTask) {
         // SAFETY: work_task points to the `task` field of an AsyncTask<C> allocated by `create`.
         let this: *mut Self = unsafe {
-            (work_task as *mut u8)
+            work_task.cast::<u8>()
                 .sub(offset_of!(Self, task))
                 .cast::<Self>()
         };

@@ -91,7 +91,7 @@ impl Request {
     pub fn url(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_url writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_url(self, &mut ptr) };
+        let len = unsafe { c::uws_req_get_url(self, &raw mut ptr) };
         if len == 0 {
             return &[];
         }
@@ -101,7 +101,7 @@ impl Request {
     pub fn method(&self) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_method writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_method(self, &mut ptr) };
+        let len = unsafe { c::uws_req_get_method(self, &raw mut ptr) };
         if len == 0 {
             return &[];
         }
@@ -113,7 +113,7 @@ impl Request {
 
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_header writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_header(self, name.as_ptr(), name.len(), &mut ptr) };
+        let len = unsafe { c::uws_req_get_header(self, name.as_ptr(), name.len(), &raw mut ptr) };
         if len == 0 {
             return None;
         }
@@ -129,7 +129,7 @@ impl Request {
     pub fn query(&self, name: &[u8]) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_query writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &mut ptr) };
+        let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &raw mut ptr) };
         if len == 0 {
             return &[];
         }
@@ -140,7 +140,7 @@ impl Request {
         let mut ptr: *const u8 = core::ptr::null();
         // SAFETY: uws_req_get_parameter writes a pointer into request-owned storage and returns its length
         let len =
-            unsafe { c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &mut ptr) };
+            unsafe { c::uws_req_get_parameter(self, c_ushort::try_from(index).unwrap(), &raw mut ptr) };
         if len == 0 {
             return &[];
         }

@@ -518,7 +518,7 @@ impl UpdateInteractiveCommand {
                     if unsafe { (*ctx_log_ptr).has_errors() } {
                         // SAFETY: `manager.log` aliases `ctx.log`; no other
                         // `&mut Log` is live here.
-                        unsafe { &*manager.log }.print(Output::error_writer() as *mut _)?;
+                        unsafe { &*manager.log }.print(std::ptr::from_mut(Output::error_writer()))?;
                     }
                 }
                 Global::crash();
@@ -1208,7 +1208,7 @@ impl UpdateInteractiveCommand {
                 libc::ioctl(
                     libc::STDOUT_FILENO,
                     libc::TIOCGWINSZ,
-                    &mut size as *mut _ as *mut libc::c_void,
+                    (&raw mut size).cast::<libc::c_void>(),
                 )
             } == 0
             {

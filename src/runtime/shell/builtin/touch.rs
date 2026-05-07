@@ -409,7 +409,7 @@ impl FlagParser for Opts {
             b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m"))),
             b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-r"))),
             b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
-            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..] as *const [u8])),
+            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[1 + i..])),
         }
     }
 }

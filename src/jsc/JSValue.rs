@@ -498,7 +498,7 @@ impl JSValue {
         unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
-                bytes.as_ptr() as *mut u8,
+                bytes.as_ptr().cast::<u8>(),
                 len,
                 ctx,
                 Some(free),
@@ -789,7 +789,7 @@ impl JSValue {
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();
         // SAFETY: `global` is live; `out` is a valid out-param.
-        if unsafe { JSC__JSValue__asArrayBuffer(self, global, &mut out) } {
+        if unsafe { JSC__JSValue__asArrayBuffer(self, global, &raw mut out) } {
             out.value = self;
             Some(out)
         } else {
@@ -862,7 +862,7 @@ impl JSValue {
         let mut ptr: *const u8 = core::ptr::null();
         let mut len: usize = 0;
         // SAFETY: out-params are valid; FFI writes only when returning true.
-        if unsafe { JSC__JSValue__getClassInfoName(self, &mut ptr, &mut len) } {
+        if unsafe { JSC__JSValue__getClassInfoName(self, &raw mut ptr, &raw mut len) } {
             // SAFETY: C++ guarantees `ptr[..len]` is a static `ClassInfo::className`.
             Some(unsafe { core::slice::from_raw_parts(ptr, len) })
         } else {
@@ -1887,7 +1887,7 @@ impl JSValue {
         let mut ret = bun_string::String::default();
         // SAFETY: `global` is live; `ret` is a valid out-param.
         host_fn::from_js_host_call_generic(global, || unsafe {
-            JSC__JSValue__getName(self, global, &mut ret)
+            JSC__JSValue__getName(self, global, &raw mut ret)
         })?;
         Ok(ret)
     }
@@ -1910,7 +1910,7 @@ impl JSValue {
     pub fn get_description(self, global: &JSGlobalObject) -> bun_string::ZigString {
         let mut zs = bun_string::ZigString::EMPTY;
         // SAFETY: `global` is live; `zs` is a valid out-param.
-        unsafe { JSC__JSValue__getSymbolDescription(self, global, &mut zs) };
+        unsafe { JSC__JSValue__getSymbolDescription(self, global, &raw mut zs) };
         zs
     }
     /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.

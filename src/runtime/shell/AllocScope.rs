@@ -45,7 +45,7 @@ impl AllocScope {
             // SAFETY: read-only reinterpret of an existing borrow's bytes.
             let bytes = unsafe {
                 core::slice::from_raw_parts(
-                    memory.as_ptr() as *const u8,
+                    memory.as_ptr().cast::<u8>(),
                     core::mem::size_of_val(memory),
                 )
             };

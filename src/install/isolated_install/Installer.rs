@@ -127,7 +127,7 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
-        self.manager.thread_pool.schedule(thread_pool::Batch::from(&mut task.task));
+        self.manager.thread_pool.schedule(thread_pool::Batch::from(&raw mut task.task));
     }
 
     pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
@@ -313,7 +313,7 @@ impl<'a> Installer<'a> {
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
                 );
-                let _ = patch_log.print(Output::error_writer() as *mut _);
+                let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
             }
             TaskError::Binaries(bin_err) => {
                 Output::err(
@@ -1670,7 +1670,7 @@ impl Task {
                     // raw `*const AbsPath` for exactly this reason.
                     let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
                         Some(p) => p,
-                        None => &node_modules_path,
+                        None => &raw const node_modules_path,
                     };
                     let mut bin_linker = bin_real::Linker {
                         bin,
@@ -1788,7 +1788,7 @@ impl Task {
     pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe {
-            &mut *(task as *mut u8)
+            &mut *task.cast::<u8>()
                 .sub(core::mem::offset_of!(Task, task))
                 .cast::<Task>()
         };
@@ -2155,7 +2155,7 @@ impl<'a> Installer<'a> {
             // the Linker field is a raw `*const AbsPath` to permit that.
             let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
                 Some(p) => p,
-                None => &node_modules_path,
+                None => &raw const node_modules_path,
             };
             let mut bin_linker = bin_real::Linker {
                 bin,

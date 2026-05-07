@@ -468,7 +468,7 @@ impl<'a> Transpiler<'a> {
         // `out` cannot overlap (`from` is `&` and `out` is `&mut`).
         unsafe {
             core::ptr::copy_nonoverlapping(
-                (from as *const Transpiler<'_>).cast::<Transpiler<'a>>(),
+                std::ptr::from_ref::<Transpiler<'_>>(from).cast::<Transpiler<'a>>(),
                 out.as_mut_ptr(),
                 1,
             );
@@ -1073,7 +1073,7 @@ pub(crate) fn resolver_bundle_options_subset(
         // call sites), so this is a plain pointer-to-pointer cast.
         install: src
             .install
-            .map(|p| p.as_ptr() as *const ())
+            .map(|p| p.as_ptr().cast::<()>().cast_const())
             .unwrap_or(core::ptr::null()),
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
@@ -1616,7 +1616,7 @@ impl<'a> Transpiler<'a> {
                 // `JavaScript::parse`'s `&'a Define` param — the box is never
                 // dropped while a parse is in flight (Zig held `*const Define`).
                 let define: &'a js_ast::defines::Define = unsafe {
-                    &*(&*self.options.define as *const crate::defines::Define)
+                    &*(&raw const *self.options.define)
                 };
 
                 // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
@@ -1805,7 +1805,7 @@ impl<'a> Transpiler<'a> {
                             logger::Loc { start: 0 },
                         );
                         // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
-                        let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                        let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
 
@@ -1882,7 +1882,7 @@ impl<'a> Transpiler<'a> {
                                         // SAFETY: ARENA — `allocator` outlives
                                         // the returned `ParseResult.ast`.
                                         Ok(boxed) => {
-                                            allocator.alloc_slice_copy(&boxed) as *const [u8]
+                                            std::ptr::from_ref::<[u8]>(allocator.alloc_slice_copy(&boxed))
                                         }
                                         Err(_) => return None,
                                     },
@@ -1900,7 +1900,7 @@ impl<'a> Transpiler<'a> {
                                 };
                                 export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
-                                    alias: name as *const [u8],
+                                    alias: std::ptr::from_ref::<[u8]>(name),
                                     alias_loc: key_loc,
                                     ..Default::default()
                                 };
@@ -1921,7 +1921,7 @@ impl<'a> Transpiler<'a> {
                             );
                             let stmt1 = js_ast::Stmt::alloc(
                                 js_ast::S::ExportClause {
-                                    items: &mut export_clauses[..count] as *mut [js_ast::ClauseItem],
+                                    items: &raw mut export_clauses[..count],
                                     is_single_line: false,
                                 },
                                 logger::Loc { start: 0 },
@@ -1937,8 +1937,7 @@ impl<'a> Transpiler<'a> {
                                 logger::Loc { start: 0 },
                             );
 
-                            let stmts = allocator.alloc_slice_copy(&[stmt0, stmt1, stmt2])
-                                as *mut [js_ast::Stmt];
+                            let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                             break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                         }
                     }
@@ -1956,7 +1955,7 @@ impl<'a> Transpiler<'a> {
                         );
 
                         let stmts =
-                            allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                            std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
                 };
@@ -1993,7 +1992,7 @@ impl<'a> Transpiler<'a> {
                     logger::Loc { start: 0 },
                 );
                 // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
-                let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 
@@ -2018,7 +2017,7 @@ impl<'a> Transpiler<'a> {
                     // SAFETY: ARENA — `allocator` outlives the returned
                     // `ParseResult.ast` (Phase-A `Str` convention erases
                     // `'bump` to `'static` for `E::String.data`).
-                    Ok(h) => unsafe { &*(allocator.alloc_slice_copy(&h) as *const [u8]) },
+                    Ok(h) => unsafe { &*std::ptr::from_ref::<[u8]>(allocator.alloc_slice_copy(&h)) },
                     Err(_) => {
                         let _ = log.add_error_fmt(
                             None,
@@ -2039,7 +2038,7 @@ impl<'a> Transpiler<'a> {
                     },
                     logger::Loc { start: 0 },
                 );
-                let stmts = allocator.alloc_slice_copy(&[stmt]) as *mut [js_ast::Stmt];
+                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 
@@ -2823,7 +2822,7 @@ impl<'a> Transpiler<'a> {
                     // on `StyleSheet`/`ParserOptions` (see css_parser.rs
                     // TODO(port): 'bump threading).
                     let alloc: &'static Arena =
-                        unsafe { &*(self.allocator as *const Arena) };
+                        unsafe { &*std::ptr::from_ref::<Arena>(self.allocator) };
 
                     let (mut sheet, extra) = match bun_css::StyleSheet::<
                         bun_css::DefaultAtRule,

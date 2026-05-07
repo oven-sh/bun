@@ -548,7 +548,7 @@ impl Debugger {
                     // both `#[repr(C)] { sec: i64, nsec: i64 }` — layout-
                     // identical. `uws_loop()` non-null on JS thread.
                     let deadline_uws: &bun_uws::Timespec =
-                        unsafe { &*(&deadline as *const bun_core::Timespec).cast() };
+                        unsafe { &*(&raw const deadline).cast() };
                     // SAFETY: see above.
                     unsafe { (*(*this).uws_loop()).tick_with_timeout(Some(deadline_uws)) };
 
@@ -601,7 +601,7 @@ impl Debugger {
             .expect("Debugger::create: vm.debugger is None");
         // SAFETY: `global_object` is a live opaque JSC handle.
         dbg.script_execution_context_id =
-            unsafe { Bun__createJSDebugger(global_object as *const _ as *mut _) };
+            unsafe { Bun__createJSDebugger(std::ptr::from_ref(global_object).cast_mut()) };
 
         // SAFETY: `this` is the live per-thread VM; short-lived borrow.
         if !unsafe { (*this).has_started_debugger } {
@@ -757,7 +757,7 @@ impl Debugger {
             unsafe { (*loop_).enter() };
             // SAFETY: `global` non-null; `url` lives across the call (C++
             // clones it).
-            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect) };
+            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 1, is_connect) };
             // SAFETY: see above.
             unsafe { (*loop_).exit() };
         }
@@ -767,7 +767,7 @@ impl Debugger {
             // SAFETY: see above.
             unsafe { (*loop_).enter() };
             // SAFETY: see above.
-            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect) };
+            unsafe { Bun__startJSDebuggerThread(global, ctx_id, &raw mut url, 0, is_connect) };
             // SAFETY: see above.
             unsafe { (*loop_).exit() };
         }
@@ -781,7 +781,7 @@ impl Debugger {
             // `VirtualMachine::init`; outlives the VM.
             let log = unsafe { log.as_ref() };
             if !log.msgs.is_empty() {
-                let _ = log.print(bun_core::Output::error_writer() as *mut bun_core::io::Writer);
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_core::Output::error_writer()));
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();
             }
@@ -823,7 +823,7 @@ pub extern "C" fn Debugger__didConnect() {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread. Spec: `this.debugger.?` would safety-panic; we early-
     // return defensively (extern "C" — unwinding is UB).
-    let Some(dbg) = (this.debugger.as_deref_mut()) else {
+    let Some(dbg) = this.debugger.as_deref_mut() else {
         return;
     };
     if dbg.wait_for_connection != Wait::Off {

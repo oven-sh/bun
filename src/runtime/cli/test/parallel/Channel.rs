@@ -85,7 +85,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
         unsafe {
-            &mut *(self as *mut Self)
+            &mut *std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .sub(Owner::CHANNEL_OFFSET)
                 .cast::<Owner>()
@@ -251,7 +251,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // SAFETY: `raw` is a freshly-created live us_socket_t; ext was
             // sized for `*mut Self` above.
             unsafe {
-                *(*raw).ext::<*mut Self>() = self as *mut Self;
+                *(*raw).ext::<*mut Self>() = std::ptr::from_mut::<Self>(self);
             }
             let sock = Socket::from(raw);
             self.backend.socket = sock;
@@ -275,7 +275,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     pub fn adopt_pipe(&mut self, _vm: &mut VirtualMachine, mut pipe: Box<uv::Pipe>) -> bool {
         if let Err(e) = pipe
             .read_start(
-                self as *mut Self,
+                core::ptr::from_mut(self),
                 WindowsHandlers::<Owner>::on_alloc,
                 WindowsHandlers::<Owner>::on_error,
                 WindowsHandlers::<Owner>::on_read,
@@ -369,7 +369,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             .write(
                 pipe.as_stream(),
                 &self.backend.write_buf,
-                self as *mut Self,
+                core::ptr::from_mut(self),
                 WindowsHandlers::<Owner>::on_write,
             )
             .unwrap_result()
@@ -486,7 +486,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // `@fieldParentPtr` arithmetic as `owner()`. The callback never
             // touches `self.r#in` (it only reads `rd` and may write other
             // channel fields / call `send()`), so the aliasing is sound.
-            let owner_ptr: *mut Owner = (self as *mut Self)
+            let owner_ptr: *mut Owner = std::ptr::from_mut::<Self>(self)
                 .cast::<u8>()
                 .wrapping_sub(Owner::CHANNEL_OFFSET)
                 .cast::<Owner>();

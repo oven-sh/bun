@@ -122,7 +122,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     if unsafe { (*manager.log).errors } > 0 {
         if log_level != LogLevel::Silent {
-            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+            let _ = manager.log_mut().print(std::ptr::from_mut(Output::error_writer()));
         }
         Global::crash();
     }
@@ -145,7 +145,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             },
         ) {
         GetResult::ParseErr(err) => {
-            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+            let _ = manager.log_mut().print(std::ptr::from_mut(Output::error_writer()));
             Output::err_generic(
                 "failed to parse package.json \"{s}\": {s}",
                 (
@@ -439,7 +439,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 },
             ) {
             GetResult::ParseErr(err) => {
-                let _ = manager.log_mut().print(Output::error_writer() as *mut _);
+                let _ = manager.log_mut().print(std::ptr::from_mut(Output::error_writer()));
                 Output::err_generic(
                     "failed to parse package.json \"{s}\": {s}",
                     (BStr::new(root_package_json_path), err.name()),
@@ -761,7 +761,7 @@ pub fn update_package_json_and_install_catch_error(
             // SAFETY: `log` is the process-global `Cli.log_` (set once during single-threaded
             // CLI startup, never freed). We are on the single CLI thread in the install error
             // path; no other `&mut Log` to it is live for the duration of this `print` call.
-            let _ = unsafe { &mut *log }.print(Output::error_writer() as *mut _);
+            let _ = unsafe { &mut *log }.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
         }
         Err(e) => Err(e),

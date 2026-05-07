@@ -401,7 +401,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             let p = unsafe {
                 bun_cares_sys::c_ares::ares_inet_ntop(
                     libc::AF_INET6,
-                    (&v6.sin6_addr as *const libc::in6_addr).cast(),
+                    (&raw const v6.sin6_addr).cast(),
                     buf.as_mut_ptr(),
                     buf.len() as bun_cares_sys::c_ares::ares_socklen_t,
                 )
@@ -521,7 +521,7 @@ pub mod internal {
         // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
         // the call. Prefetch is a perf hint — the body short-circuits if no
         // resolver is available.
-        unsafe { __bun_dns_prefetch(loop_ as *mut c_void, hostname.as_ptr(), hostname.len(), port) }
+        unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname.as_ptr(), hostname.len(), port) }
     }
 
     /// Register `pc` to be notified when the addrinfo `request` resolves.

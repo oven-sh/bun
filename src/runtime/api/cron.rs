@@ -1401,7 +1401,7 @@ impl CronJob {
     fn stop_internal(&mut self, _vm: &VirtualMachine) {
         self.stopped = true;
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&mut self.event_loop_timer);
+            timer_all().remove(&raw mut self.event_loop_timer);
         }
         self.poll_ref.unref(vm_ctx());
         self.maybe_downgrade();
@@ -1434,14 +1434,14 @@ impl CronJob {
         // PORT NOTE: `RareData::cron_jobs` stores the opaque
         // `rare_data::high_tier::CronJob`; cast through `*mut ()` for compare.
         // SAFETY: address-equality only.
-        let needle = this as *mut ();
+        let needle = this.cast::<()>();
         // SAFETY: single JS thread; mutation of the per-VM Vec. Route through the
         // thread-local raw pointer (`VirtualMachine::get`) instead of upcasting
         // `&VirtualMachine` so the `invalid_reference_casting` lint stays clean.
         let _ = vm;
         let rare = VirtualMachine::get().as_mut().rare_data.as_mut();
         if let Some(rare) = rare {
-            if let Some(i) = rare.cron_jobs.iter().position(|&j| j as *mut () == needle) {
+            if let Some(i) = rare.cron_jobs.iter().position(|&j| j.cast::<()>() == needle) {
                 rare.cron_jobs.swap_remove(i);
                 // SAFETY: `this` is a live Box-allocated CronJob; this releases one ref.
                 unsafe { Self::deref(this) };
@@ -1459,14 +1459,14 @@ impl CronJob {
         let jobs: Vec<*mut ()> = match vm.rare_data.as_mut() {
             Some(rare) => core::mem::take(&mut rare.cron_jobs)
                 .into_iter()
-                .map(|j| j as *mut ())
+                .map(|j| j.cast::<()>())
                 .collect(),
             None => return,
         };
         for job in jobs {
             // PORT NOTE: stored as opaque `rare_data::high_tier::CronJob`; the
             // concrete type is this `CronJob` (see `register` push site).
-            let job = job as *mut CronJob;
+            let job = job.cast::<CronJob>();
             // SAFETY: list holds a ref for each entry.
             unsafe { (*job).stop_internal(vm) };
             if MODE == ClearMode::Teardown {
@@ -1518,7 +1518,7 @@ impl CronJob {
         let Some(next_time) = this_ref.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(&mut this_ref.event_loop_timer, &next_time);
+        timer_all().update(&raw mut this_ref.event_loop_timer, &next_time);
     }
 
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
@@ -1727,7 +1727,7 @@ impl CronJob {
             // PORT NOTE: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick
             // the element type.
-            vm.rare_data().cron_jobs.push(job as *mut () as *mut _);
+            vm.rare_data().cron_jobs.push(job.cast::<()>().cast());
         }
 
         // SAFETY: `job` is a fresh `Box::into_raw` pointer; ownership of one
@@ -1738,7 +1738,7 @@ impl CronJob {
         js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));
 
         job_ref.poll_ref.ref_(vm_ctx());
-        timer_all().update(&mut job_ref.event_loop_timer, &next_time);
+        timer_all().update(&raw mut job_ref.event_loop_timer, &next_time);
 
         Ok(js_value)
     }
@@ -1887,7 +1887,7 @@ unsafe fn cron_on_process_exit_thunk<T: CronJobBase>(
     // callback (it is only freed in `T::finish`, gated on
     // `has_called_process_exit`). `process`/`rusage` are live for the call.
     // Forward as raw ptr — `on_process_exit` → `maybe_finished` may free it.
-    let this = owner as *mut T;
+    let this = owner.cast::<T>();
     let process_ref: &Process = unsafe { &*process };
     let rusage_ref: &Rusage = unsafe { &*rusage };
     unsafe { T::on_process_exit(this, process_ref, status, rusage_ref) };
@@ -2043,7 +2043,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     #[cfg(unix)]
     {
         if let Some(stdout) = spawned.stdout {
-            let this_ptr = this as *mut core::ffi::c_void;
+            let this_ptr = this.cast::<core::ffi::c_void>();
             if !spawned.memfds[1] {
                 s.stdout_reader().set_parent(this_ptr);
                 let _ = sys::set_nonblocking(stdout);
@@ -2091,7 +2091,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // TaggedPointerUnion of handler types). The Rust port uses a per-type
     // static vtable; see `cron_on_process_exit_thunk`.
     // SAFETY: `process` was just allocated by `to_process`; we hold the only ref.
-    unsafe { (*process).set_exit_handler(this as *mut (), T::EXIT_VTABLE) };
+    unsafe { (*process).set_exit_handler(this.cast::<()>(), T::EXIT_VTABLE) };
     // `s` not used past this point — `watch_or_reap` may synchronously invoke
     // the exit handler, which can free `this`.
     // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the

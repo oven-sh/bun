@@ -77,7 +77,7 @@ impl CryptoHasher {
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
         // SAFETY: caller passes a valid (ptr,len) byte slice
-        let name = unsafe { core::slice::from_raw_parts(name_bytes as *const u8, name_len) };
+        let name = unsafe { core::slice::from_raw_parts(name_bytes.cast::<u8>(), name_len) };
 
         if let Some(inner) = CryptoHasherZig::init(name) {
             return Some(CryptoHasher::new(CryptoHasher::Zig(inner)));
@@ -1334,7 +1334,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
             // `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *(output_buf.ptr as *mut H::Digest) };
+            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -1497,7 +1497,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `output_buf.ptr` is the JSC-owned writable backing store. Build the
             // `&mut` directly from the raw `*mut u8` field — never via
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *(output_buf.ptr as *mut H::Digest) };
+            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
             // Zig: `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
             output_digest_slice = &mut output_digest_buf;

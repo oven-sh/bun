@@ -236,12 +236,12 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     fn sql_vm(&self) -> &VirtualMachine {
         // SAFETY: bunVM returns a valid *VirtualMachine for this global,
         // live for the VM lifetime.
-        unsafe { &*(JSC__JSGlobalObject__bunVM(self.as_mut_ptr()) as *mut VirtualMachine) }
+        unsafe { &*JSC__JSGlobalObject__bunVM(self.as_mut_ptr()).cast::<VirtualMachine>() }
     }
     #[inline]
     fn sql_vm_ptr(&self) -> *mut VirtualMachine {
         // SAFETY: FFI — &self is a valid JSGlobalObject*.
-        unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()) as *mut VirtualMachine }
+        unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()).cast::<VirtualMachine>() }
     }
 }
 
@@ -368,13 +368,13 @@ impl VirtualMachineSqlExt for VirtualMachine {
         // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
         // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
         // `*mut c_void` so callers stay typed.
-        unsafe { &mut *((hooks().timer_heap)(self) as *mut TimerHeap) }
+        unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
     }
     #[inline]
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
         // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
         // after `init_runtime_state`.
-        unsafe { &mut *((hooks().ssl_ctx_cache)(self) as *mut SslCtxCache) }
+        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
     fn vm_ctx(&self) -> bun_aio::EventLoopCtx {
@@ -433,12 +433,12 @@ impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
         // intrusive heap node owned by the caller.
-        unsafe { (hooks().timer_insert)(self._opaque.get() as *mut c_void, t) }
+        unsafe { (hooks().timer_insert)(self._opaque.get().cast::<c_void>(), t) }
     }
     pub fn remove(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
         // inserted by the caller.
-        unsafe { (hooks().timer_remove)(self._opaque.get() as *mut c_void, t) }
+        unsafe { (hooks().timer_remove)(self._opaque.get().cast::<c_void>(), t) }
     }
 }
 
@@ -467,17 +467,17 @@ impl AutoFlusher {
         unsafe extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
             // SAFETY: ctx is the *mut T registered below; the queue feeds it
             // back unchanged.
-            T::on_auto_flush(ctx as *mut T)
+            T::on_auto_flush(ctx.cast::<T>())
         }
         // SAFETY: vm.event_loop() is the live VM-owned loop; deferred_tasks
         // is an embedded field with stable address for the VM lifetime.
         let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
-        q.post_task(NonNull::new(this as *mut c_void), trampoline::<T>);
+        q.post_task(NonNull::new(this.cast::<c_void>()), trampoline::<T>);
     }
     pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
         // SAFETY: see register_deferred_microtask_with_type_unchecked.
         let q = unsafe { &mut (*vm.event_loop()).deferred_tasks };
-        q.unregister_task(NonNull::new(this as *mut c_void));
+        q.unregister_task(NonNull::new(this.cast::<c_void>()));
     }
 }
 
@@ -614,7 +614,7 @@ pub mod webcore {
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
             let ptr = unsafe {
-                (hooks().blob_shared_view)(self._opaque.get() as *const c_void, &mut len)
+                (hooks().blob_shared_view)(self._opaque.get() as *const c_void, &raw mut len)
             };
             if ptr.is_null() || len == 0 { return &[]; }
             // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
@@ -626,12 +626,12 @@ pub mod webcore {
             // SAFETY: codegen-emitted `Blob__fromJS` returns null when `value`
             // is not a Blob wrapper.
             let p = unsafe { Blob__fromJS(value) };
-            if p.is_null() { None } else { Some(p as *mut Self) }
+            if p.is_null() { None } else { Some(p.cast::<Self>()) }
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             // SAFETY: codegen extern; caller has already checked `is_cell()`.
             let p = unsafe { Blob__fromJSDirect(value) };
-            if p.is_null() { None } else { Some(p as *mut Self) }
+            if p.is_null() { None } else { Some(p.cast::<Self>()) }
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
             // The opaque view is zero-sized and unconstructible (no `pub`
@@ -711,17 +711,17 @@ pub mod codegen {
             }
             pub fn to_js(ptr: *mut $payload, g: &JSGlobalObject) -> JSValue {
                 // SAFETY: `ptr` is a live m_ctx payload; ownership transfers.
-                unsafe { $create(g.as_mut_ptr(), ptr as *mut c_void) }
+                unsafe { $create(g.as_mut_ptr(), ptr.cast::<c_void>()) }
             }
             pub fn from_js(v: JSValue) -> Option<*mut $payload> {
                 // SAFETY: codegen returns null when `v` is not the wrapper type.
                 let p = unsafe { $from_js(v) };
-                if p.is_null() { None } else { Some(p as *mut $payload) }
+                if p.is_null() { None } else { Some(p.cast::<$payload>()) }
             }
             pub fn from_js_direct(v: JSValue) -> Option<*mut $payload> {
                 // SAFETY: codegen returns null when `v` is not the wrapper type.
                 let p = unsafe { $from_js_direct(v) };
-                if p.is_null() { None } else { Some(p as *mut $payload) }
+                if p.is_null() { None } else { Some(p.cast::<$payload>()) }
             }
         };
         // Variant that also emits `impl JsClass` (Zig: `value.as(T)`). Some
@@ -1053,7 +1053,7 @@ impl SslCtxCache {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
         let p = unsafe {
-            (hooks().ssl_ctx_get_or_create)(self._opaque.get() as *mut c_void, &opts, err)
+            (hooks().ssl_ctx_get_or_create)(self._opaque.get().cast::<c_void>(), &opts, err)
         };
         if p.is_null() { None } else { Some(p) }
     }

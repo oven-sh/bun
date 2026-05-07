@@ -262,7 +262,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 bin: package.bin,
                 node_modules_path: &mut node_modules_path,
                 global_bin_path: manager.options.bin_path,
-                target_node_modules_path: &target_node_modules_path,
+                target_node_modules_path: &raw const target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
 
                 // .destination_dir_subpath = destination_dir_subpath,

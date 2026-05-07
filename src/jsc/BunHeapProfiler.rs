@@ -25,10 +25,10 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {
         // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
-        unsafe { Bun__generateHeapProfile(vm as *mut VM) }
+        unsafe { Bun__generateHeapProfile(std::ptr::from_mut::<VM>(vm)) }
     } else {
         // SAFETY: vm is a valid &mut VM; FFI returns a +1-ref bun_string::String.
-        unsafe { Bun__generateHeapSnapshotV8(vm as *mut VM) }
+        unsafe { Bun__generateHeapSnapshotV8(std::ptr::from_mut::<VM>(vm)) }
     });
 
     if profile_string.is_empty() {

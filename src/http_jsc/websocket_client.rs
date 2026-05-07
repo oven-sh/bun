@@ -1679,7 +1679,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 }
                 let wrote_len = cursor.position() as usize;
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
-                let buf_ptr = close_reason_buf.as_mut_ptr() as *mut [u8; 125];
+                let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
                 this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
                 return;
             }
@@ -1697,7 +1697,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         deflate_params: Option<&websocket_deflate::Params>,
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
-        let tcp = input_socket as *mut us_socket_t;
+        let tcp = input_socket.cast::<us_socket_t>();
         // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
@@ -1735,7 +1735,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             secure: if secure_ptr.is_null() {
                 None
             } else {
-                Some(secure_ptr as *mut SslCtx)
+                Some(secure_ptr.cast::<SslCtx>())
             },
             proxy_tunnel: None,
         }));
@@ -1818,7 +1818,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // And lastly, ref the new websocket since C++ has a reference to it
         ws_ref.ref_();
 
-        ws as *mut c_void
+        ws.cast::<c_void>()
     }
 
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
@@ -1838,7 +1838,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // PORT NOTE: Zig `tunnel.ref()` then store — bump the intrusive count
         // and store the raw owning handle (released in `clear_data`).
         let tunnel_owned: NonNull<WebSocketProxyTunnel> = {
-            let p = tunnel_ptr as *mut WebSocketProxyTunnel;
+            let p = tunnel_ptr.cast::<WebSocketProxyTunnel>();
             // SAFETY: caller passes a live tunnel pointer (extern-C contract).
             unsafe { (*p).ref_() };
             // SAFETY: caller guarantees non-null (extern-C contract).
@@ -1925,7 +1925,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         ws_ref.ref_();
 
-        ws as *mut c_void
+        ws.cast::<c_void>()
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).

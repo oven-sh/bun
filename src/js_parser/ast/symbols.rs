@@ -94,7 +94,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             self.symbols[new_ref.inner_index() as usize].namespace_alias =
                                 Some(js_ast::NamespaceAlias {
                                     namespace_ref: arg_ref,
-                                    alias: name as *const [u8],
+                                    alias: std::ptr::from_ref::<[u8]>(name),
                                     ..Default::default()
                                 });
                             break 'brk new_ref;

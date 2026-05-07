@@ -165,9 +165,9 @@ where
     ) {
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
         // MaybeUninit for in-place construction.
-        let slot = unsafe { &mut *(slot as *mut core::mem::MaybeUninit<Self>) };
+        let slot = unsafe { &mut *slot.cast::<core::mem::MaybeUninit<Self>>() };
         let any_resp = RespLike::to_any_response(resp);
-        Self::create(slot, server, req as *mut _ as *mut _, any_resp, should_deinit_context, method);
+        Self::create(slot, server, std::ptr::from_mut(req).cast(), any_resp, should_deinit_context, method);
     }
     #[inline]
     fn on_response(&mut self, server: &ThisServer, rq: JSValue, rv: JSValue) { Self::on_response(self, server, rq, rv) }
@@ -178,7 +178,7 @@ where
     #[inline]
     fn render_missing(&mut self) { Self::render_missing(self) }
     #[inline]
-    fn to_async(&mut self, req: &mut Self::Req, ro: &mut Request) { Self::to_async(self, req as *mut _ as *mut _, ro) }
+    fn to_async(&mut self, req: &mut Self::Req, ro: &mut Request) { Self::to_async(self, std::ptr::from_mut(req).cast(), ro) }
     #[inline]
     fn ctx_method(&self) -> http::Method { self.method }
     #[inline]
@@ -229,7 +229,7 @@ where
         {
             NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
         }
-        RespLike::to_any_response(resp).on_data(handler::<ThisServer, SSL, DBG, H3>, self as *mut Self);
+        RespLike::to_any_response(resp).on_data(handler::<ThisServer, SSL, DBG, H3>, std::ptr::from_mut::<Self>(self));
     }
     #[inline]
     fn on_start_buffering_callback(this: *mut c_void) {
@@ -297,9 +297,9 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
         // monomorphizations; cast through the matching `From` arm. The const
         // bool is checked at compile time so only one branch is reachable.
         if SSL {
-            uws::AnyResponse::from(self as *mut Self as *mut uws_sys::NewAppResponse<true>)
+            uws::AnyResponse::from(std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<true>>())
         } else {
-            uws::AnyResponse::from(self as *mut Self as *mut uws_sys::NewAppResponse<false>)
+            uws::AnyResponse::from(std::ptr::from_mut::<Self>(self).cast::<uws_sys::NewAppResponse<false>>())
         }
     }
 }
@@ -314,7 +314,7 @@ impl RespLike for uws_sys::h3::Response {
             ud,
         );
     }
-    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse { uws::AnyResponse::from(self as *mut Self) }
+    #[inline] fn to_any_response(&mut self) -> uws::AnyResponse { uws::AnyResponse::from(std::ptr::from_mut::<Self>(self)) }
 }
 
 // Local shim: `SystemError` lives upstream and lacks `Default`; this builds the
@@ -376,9 +376,9 @@ where
     // SAFETY: H is a zero-sized fn item — conjuring it is sound; ud/req/res
     // were registered by the matching `*_ctx` call below and outlive the route.
     let h: H = unsafe { core::mem::zeroed() };
-    let ctx = unsafe { &mut *(ud as *mut T) };
-    let req = unsafe { &mut *(req as *mut uws::Request) };
-    let resp = unsafe { &mut *(res as *mut uws_sys::NewAppResponse<SSL>) };
+    let ctx = unsafe { &mut *ud.cast::<T>() };
+    let req = unsafe { &mut *req.cast::<uws::Request>() };
+    let resp = unsafe { &mut *res.cast::<uws_sys::NewAppResponse<SSL>>() };
     h(ctx, req, resp);
 }
 
@@ -387,25 +387,25 @@ impl<const SSL: bool> AppRouteExt<SSL> for uws_sys::NewApp<SSL> {
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.get(pattern, Some(_route_tramp::<T, H, SSL>), ctx as *mut c_void);
+        self.get(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
     }
     fn head_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.head(pattern, Some(_route_tramp::<T, H, SSL>), ctx as *mut c_void);
+        self.head(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
     }
     fn any_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.any(pattern, Some(_route_tramp::<T, H, SSL>), ctx as *mut c_void);
+        self.any(pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
     }
     fn method_ctx<T, H>(&mut self, m: http::Method, pattern: &[u8], ctx: *mut T, _h: H)
     where
         H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
     {
-        self.method(m, pattern, Some(_route_tramp::<T, H, SSL>), ctx as *mut c_void);
+        self.method(m, pattern, Some(_route_tramp::<T, H, SSL>), ctx.cast::<c_void>());
     }
 }
 
@@ -693,7 +693,7 @@ impl AnyRoute {
     ) -> JsResult<Option<AnyRoute>> {
         use std::collections::hash_map::Entry as StdEntry;
         if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
-            let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle as *const _);
+            let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle.cast_const());
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM
             return Ok(Some(match entry {
                 StdEntry::Vacant(v) => {
@@ -890,7 +890,7 @@ impl ServePlugins {
         rc.set(n);
         if n == 0 {
             // SAFETY: refcount hit zero; `this` carries the Box::into_raw provenance from init()
-            unsafe { drop(Box::from_raw(this as *mut Self)) };
+            unsafe { drop(Box::from_raw(this.cast_mut())) };
         }
     }
 
@@ -919,7 +919,7 @@ impl ServePlugins {
                         ServePluginsCallback::DevServer(server) => {
                             debug_assert!(
                                 dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr() as *const _) == Some(server as *const _)
+                                    || dev_server.map(|p| p.as_ptr().cast_const()) == Some(std::ptr::from_ref(server))
                             ); // one dev server per server
                             *dev_server = Some(NonNull::from(server));
                         }
@@ -996,7 +996,7 @@ impl ServePlugins {
                         if let ServePluginsState::Pending { promise: pending_promise, .. } = &mut self.state {
                             pending_promise.set(global, promise_value);
                         }
-                        promise_value.then(global, self as *mut Self, __jsc_host_on_resolve_impl, __jsc_host_on_reject_impl);
+                        promise_value.then(global, std::ptr::from_mut::<Self>(self), __jsc_host_on_resolve_impl, __jsc_host_on_reject_impl);
                         return Ok(());
                     }
                     jsc::js_promise::Status::Fulfilled => {
@@ -1048,7 +1048,7 @@ impl ServePlugins {
             // by `get_or_start_load`; the owning Box<DevServer> is held by the
             // server instance, which itself holds a counted ref on `self`).
             bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(
-                Some(plugin_ref as *const JSBundler::Plugin as *mut JSBundler::Plugin),
+                Some(std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut()),
             ));
         }
     }
@@ -1226,7 +1226,7 @@ impl<'a, Ctx: RequestCtxOps> PreparedRequestFor<'a, Ctx> {
         SavedRequest {
             js_request: StrongOptional::create(self.js_request, global),
             request: self.request_object,
-            ctx: AnyRequestContext::init(self.ctx as *const Ctx),
+            ctx: AnyRequestContext::init(std::ptr::from_ref::<Ctx>(self.ctx)),
             response: RespLike::to_any_response(resp),
         }
     }
@@ -1260,7 +1260,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// into `on_pending_request` / `on_static_request_complete`.
     #[inline]
     fn as_any_server(&self) -> super::AnyServer {
-        super::AnyServer::from(self as *const Self)
+        super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
     /// Shared `&VirtualMachine` accessor (struct stores it as `*const`).
@@ -1574,7 +1574,7 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        let app = self.app.unwrap() as *mut c_void;
+        let app = self.app.unwrap().cast::<c_void>();
 
         if topic.len == 0 {
             httplog!("publish() topic invalid");
@@ -1735,7 +1735,7 @@ where
                         if let Some(raw_response) = node_http_response.raw_response {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket() as *mut c_void);
+                            fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket().cast::<c_void>());
                         }
                     }
 
@@ -1823,7 +1823,7 @@ where
             // above would have returned None — so the concrete `Req` is always
             // `uws_sys::Request` here.
             // SAFETY: BACKREF; uws::Request is live while RequestContext.req is Some.
-            let r = unsafe { &mut *(req_ptr as *mut uws_sys::Request) };
+            let r = unsafe { &mut *req_ptr.cast::<uws_sys::Request>() };
             if sec_websocket_key_str.len == 0 {
                 sec_websocket_key_str = ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
             }
@@ -1919,11 +1919,11 @@ where
             resp.write_status(b"101 Switching Protocols");
             if let Some(h) = fetch_headers_to_use {
                 // SAFETY: h is a live FetchHeaders (see above).
-                unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket() as *mut c_void) };
+                unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket().cast::<c_void>()) };
             }
             if let Some(c) = cookies_to_write {
                 // SAFETY: c is a live +1-ref CookieMap (taken from upgrader).
-                unsafe { (*c).write(global, ResponseKind::from(SSL, false), resp.socket() as *mut c_void)? };
+                unsafe { (*c).write(global, ResponseKind::from(SSL, false), resp.socket().cast::<c_void>())? };
             }
         }
 
@@ -2587,7 +2587,7 @@ where
         resp: &mut Ctx::Resp,
     ) {
         // SAFETY: server backref outlives user_route
-        let server_ptr = user_route.server as *mut Self;
+        let server_ptr = user_route.server.cast_mut();
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
@@ -2617,8 +2617,8 @@ where
                 prepared.request_object,
                 server.js_value_assert_alive(),
                 server_request_list,
-                &mut prepared.js_request,
-                req as *mut _ as *mut c_void,
+                &raw mut prepared.js_request,
+                std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
             Ok(v) => v,
@@ -2772,7 +2772,7 @@ where
             // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
             RespLike::on_timeout_warn(
                 resp,
-                did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
+                did_send_idletimeout_warning_once().as_ptr().cast::<c_void>(),
             );
         }
 
@@ -2792,7 +2792,7 @@ where
             self_ptr,
             req,
             resp,
-            should_deinit_context.map(|r| r as *mut bool),
+            should_deinit_context.map(|r| std::ptr::from_mut::<bool>(r)),
             method,
         );
         // SAFETY: ctx_slot was just initialized by create_in.
@@ -2829,7 +2829,7 @@ where
             unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
-            AnyRequestContext::init(ctx as *const Ctx),
+            AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
             body_for_req,
@@ -2848,7 +2848,7 @@ where
             // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
             request_object.set_fetch_headers(Some(unsafe {
                 crate::webcore::response::HeadersRef::adopt(
-                    FetchHeaders::create_from_h3(req as *mut _ as *mut c_void),
+                    FetchHeaders::create_from_h3(std::ptr::from_mut(req).cast::<c_void>()),
                 )
             }));
             // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
@@ -2896,7 +2896,7 @@ where
                 // we don't waste memory
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
-                        task: Some(ctx_slot as *mut c_void),
+                        task: Some(ctx_slot.cast::<c_void>()),
                         global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
@@ -2932,11 +2932,11 @@ where
         method: Option<http::Method>,
     ) {
         // SAFETY: server backref outlives user_route
-        let server_ptr = this.server as *mut Self;
+        let server_ptr = this.server.cast_mut();
         let index = this.id;
 
         let mut should_deinit_context = false;
-        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
+        let should_deinit_ptr: *mut bool = &raw mut should_deinit_context;
         let Some(mut prepared) = Self::prepare_js_request_context(
             server_ptr,
             req,
@@ -2959,8 +2959,8 @@ where
                 prepared.request_object,
                 server_js,
                 server_request_list,
-                &mut prepared.js_request,
-                req as *mut _ as *mut c_void,
+                &raw mut prepared.js_request,
+                std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
             Ok(v) => v,
@@ -2981,7 +2981,7 @@ where
         if id == 1 {
             // This is actually a UserRoute if id is 1 so it's safe to cast
             // SAFETY: uws passes the UserRoute* as the context when id == 1
-            let user_route = unsafe { &mut *(self as *mut Self as *mut UserRoute<SSL, DEBUG>) };
+            let user_route = unsafe { &mut *std::ptr::from_mut::<Self>(self).cast::<UserRoute<SSL, DEBUG>>() };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }
@@ -3011,7 +3011,7 @@ where
             self_ptr,
             req,
             resp,
-            Some(&mut should_deinit_context),
+            Some(&raw mut should_deinit_context),
             None,
         );
         // SAFETY: ctx_slot was just initialized by create_in.
@@ -3042,7 +3042,7 @@ where
             unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.method,
-            AnyRequestContext::init(ctx as *const _),
+            AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
             Some(signal_for_req),
             body_for_req,
@@ -3090,7 +3090,7 @@ where
             return;
         }
 
-        ctx.to_async(req as *mut uws::Request as *mut c_void, request_object);
+        ctx.to_async(std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(), request_object);
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -3201,7 +3201,7 @@ where
             let is_ssl = SSL;
             let global = self.global();
             let node_socket = match jsc::from_js_host_call(&global, || unsafe {
-                Bun__createNodeHTTPServerSocketForClientError(is_ssl, socket as *mut _ as *mut c_void, global.as_ptr())
+                Bun__createNodeHTTPServerSocketForClientError(is_ssl, std::ptr::from_mut(socket).cast::<c_void>(), global.as_ptr())
             }) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -3335,7 +3335,7 @@ pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, cal
                     ) {
                         // SAFETY: user_data is the `*mut Self` registered below; socket is a live
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
-                        let this = unsafe { &mut *(user_data as *mut $T) };
+                        let this = unsafe { &mut *user_data.cast::<$T>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
                             unsafe { core::slice::from_raw_parts(raw_packet, raw_packet_len as usize) }
                         } else {
@@ -3343,7 +3343,7 @@ pub fn server_set_on_client_error_(global: &JSGlobalObject, server: JSValue, cal
                         };
                         this.on_client_error_callback(unsafe { &mut *socket }, error_code, packet);
                     }
-                    unsafe { &mut *app }.on_client_error(thunk, (this as *mut $T).cast::<c_void>());
+                    unsafe { &mut *app }.on_client_error(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
                 }
                 return Ok(JSValue::UNDEFINED);
             }

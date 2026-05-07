@@ -1254,14 +1254,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         if TypeId::of::<C>() == TypeId::of::<U>() {
             // SAFETY: C and U are the same 'static type per TypeId check.
             let characters: &[U] = unsafe {
-                core::slice::from_raw_parts(characters.as_ptr() as *const U, characters.len())
+                core::slice::from_raw_parts(characters.as_ptr().cast::<U>(), characters.len())
             };
             self._buf.append(characters, add_separator);
         } else {
             // SAFETY: C is exactly U::Other (PathUnit has only two impls: u8/u16).
             let characters: &[U::Other] = unsafe {
                 core::slice::from_raw_parts(
-                    characters.as_ptr() as *const U::Other,
+                    characters.as_ptr().cast::<U::Other>(),
                     characters.len(),
                 )
             };

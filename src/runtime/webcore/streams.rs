@@ -400,7 +400,7 @@ impl StreamResult {
         let bytes = self.slice();
         // SAFETY: caller guarantees bytes are u16-aligned and even length (mirrors Zig @ptrCast/@alignCast)
         unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
         }
     }
 
@@ -466,14 +466,14 @@ impl WritablePending {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => (unsafe { strong.get() }) as *mut JSPromise,
+            WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>((unsafe { strong.get() })),
             _ => {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
-                    global: global_this as *const _,
+                    global: std::ptr::from_ref(global_this),
                 };
                 match &self.future {
-                    WritableFuture::Promise { strong, .. } => (unsafe { strong.get() }) as *mut JSPromise,
+                    WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>((unsafe { strong.get() })),
                     _ => unreachable!(),
                 }
             }
@@ -496,11 +496,11 @@ pub trait WritablePendingCallback {
 
 impl WritableHandler {
     pub fn init<C: WritablePendingCallback>(&mut self, ctx: &mut C) {
-        self.ctx = ctx as *mut C as *mut c_void;
+        self.ctx = std::ptr::from_mut::<C>(ctx).cast::<c_void>();
         self.handler = {
             fn on_handle<C: WritablePendingCallback>(ctx_: *mut c_void, result: Writable) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { &mut *(ctx_ as *mut C) };
+                let ctx = unsafe { &mut *ctx_.cast::<C>() };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -535,7 +535,7 @@ impl WritablePending {
                 let global = unsafe { &*global };
                 Writable::fulfill_promise(
                     core::mem::replace(&mut self.result, Writable::Done),
-                    strong.swap() as *mut JSPromise,
+                    std::ptr::from_mut::<JSPromise>(strong.swap()),
                     global,
                 );
                 // TODO(port): Zig moved p out then reassigned future = .none; mem::replace mirrors this
@@ -663,10 +663,10 @@ impl Pending {
     }
 
     pub fn promise(&mut self, global_object: &JSGlobalObject) -> *mut JSPromise {
-        let prom = JSPromise::create(global_object) as *mut JSPromise;
+        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(global_object));
         self.future = PendingFuture::Promise {
             promise: prom,
-            global_this: global_object as *const _,
+            global_this: std::ptr::from_ref(global_object),
         };
         self.state = PendingState::Pending;
         prom
@@ -736,11 +736,11 @@ pub type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 impl PendingHandler {
     pub fn init<C: PendingCallback>(&mut self, ctx: &mut C) {
-        self.ctx = ctx as *mut C as *mut c_void;
+        self.ctx = std::ptr::from_mut::<C>(ctx).cast::<c_void>();
         self.handler = {
             fn on_handle<C: PendingCallback>(ctx_: *mut c_void, result: StreamResult) {
                 // SAFETY: ctx was stored from &mut C in init()
-                let ctx = unsafe { &mut *(ctx_ as *mut C) };
+                let ctx = unsafe { &mut *ctx_.cast::<C>() };
                 ctx.on_handle(result);
             }
             on_handle::<C>
@@ -948,14 +948,14 @@ impl Signal {
     pub unsafe fn init_with_type<T: SignalHandler>(handler: *mut T) -> Signal {
         // this is nullable when used as a JSValue
         Signal {
-            ptr: NonNull::new(handler as *mut c_void),
+            ptr: NonNull::new(handler.cast::<c_void>()),
             vtable: SignalVTable::wrap::<T>(),
         }
     }
 
     pub fn init<T: SignalHandler>(handler: &mut T) -> Signal {
         // SAFETY: &mut T is a valid non-null pointer
-        unsafe { Self::init_with_type(handler as *mut T) }
+        unsafe { Self::init_with_type(std::ptr::from_mut::<T>(handler)) }
     }
 
     pub fn close(&mut self, err: Option<SysError>) {
@@ -1013,7 +1013,7 @@ impl SignalVTable {
     pub fn wrap<W: SignalHandler>() -> SignalVTable {
         fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *(this as *mut W) }.on_close(err);
+            unsafe { &mut *this.cast::<W>() }.on_close(err);
         }
         fn on_ready<W: SignalHandler>(
             this: *mut c_void,
@@ -1021,11 +1021,11 @@ impl SignalVTable {
             offset: Option<BlobSizeType>,
         ) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *(this as *mut W) }.on_ready(amount, offset);
+            unsafe { &mut *this.cast::<W>() }.on_ready(amount, offset);
         }
         fn on_start<W: SignalHandler>(this: *mut c_void) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
-            unsafe { &mut *(this as *mut W) }.on_start();
+            unsafe { &mut *this.cast::<W>() }.on_start();
         }
 
         // PORT NOTE: Zig used `comptime &VTable.wrap(Type)` for a static address.
@@ -1236,11 +1236,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     fn any_res(&self) -> Option<uws::AnyResponse> {
         let res = self.res?;
         Some(if HTTP3 {
-            uws::AnyResponse::H3(res as *mut uws::H3::Response)
+            uws::AnyResponse::H3(res.cast::<uws::H3::Response>())
         } else if SSL {
-            uws::AnyResponse::SSL(res as *mut uws::Response<true>)
+            uws::AnyResponse::SSL(res.cast::<uws::Response<true>>())
         } else {
-            uws::AnyResponse::TCP(res as *mut uws::Response<false>)
+            uws::AnyResponse::TCP(res.cast::<uws::Response<false>>())
         })
     }
 
@@ -1309,7 +1309,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                         // the callback while the sink is still alive.
                         unsafe { (*this).on_writable(off, core::ptr::null_mut()) }
                     },
-                    self as *mut Self,
+                    std::ptr::from_mut::<Self>(self),
                 );
             }
             bun_core::scoped_log!(
@@ -1553,7 +1553,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         self.wrote_at_start_of_flush = self.wrote;
         self.pending_flush = Some(JSPromise::create(global_this));
-        self.global_this = global_this as *const _;
+        self.global_this = std::ptr::from_ref(global_this);
         // SAFETY: just created
         let promise_value = unsafe { &*self.pending_flush.unwrap() }.to_js();
         promise_value.protect();
@@ -1719,7 +1719,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         // SAFETY: bytes are u16-aligned per Result.slice16 invariant
         let utf16 = unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
         };
         let written = match self.buffer.write_utf16(utf16) {
             Ok(n) => n,
@@ -1810,7 +1810,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             let readable = unsafe { core::slice::from_raw_parts(slice_ptr, readable_len) };
             if !self.send(readable) {
                 self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = global_this as *const _;
+                self.global_this = std::ptr::from_ref(global_this);
                 // SAFETY: just created
                 let value = unsafe { &*self.pending_flush.unwrap() }.to_js();
                 value.protect();
@@ -2148,7 +2148,7 @@ impl NetworkSink {
 
     pub fn to_sink(&mut self) -> *mut NetworkSinkJSSink {
         // SAFETY: JSSink wraps Self at offset 0 (repr guarantee from codegen)
-        self as *mut Self as *mut NetworkSinkJSSink
+        std::ptr::from_mut::<Self>(self).cast::<NetworkSinkJSSink>()
         // TODO(port): @ptrCast(this) to JSSink — depends on codegen layout
     }
 
@@ -2558,7 +2558,7 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => (unsafe { p.get() }) as *mut JSPromise,
+            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>((unsafe { p.get() })),
         }
     }
 
@@ -2568,7 +2568,7 @@ impl BufferAction {
             | BufferAction::ArrayBuffer(p)
             | BufferAction::Blob(p)
             | BufferAction::Bytes(p)
-            | BufferAction::Json(p) => p.swap() as *mut JSPromise,
+            | BufferAction::Json(p) => std::ptr::from_mut::<JSPromise>(p.swap()),
         }
     }
 
@@ -2630,9 +2630,9 @@ impl ReadResult {
                 // pointers: `<*mut [u8]>::len()` reads only the fat-pointer
                 // metadata (no deref), and the cast to `*mut u8` projects the
                 // data pointer without creating a reference.
-                let slice_ptr = slice as *mut u8;
+                let slice_ptr = slice.cast::<u8>();
                 let slice_len = slice.len();
-                let owned = slice_ptr as *const u8 != buf.as_ptr();
+                let owned = slice_ptr.cast_const() != buf.as_ptr();
                 let done = is_done || (close_on_empty && slice_len == 0);
 
                 // Zig `bun.Vec<u8>.fromOwnedSlice(slice)` adopts an existing heap

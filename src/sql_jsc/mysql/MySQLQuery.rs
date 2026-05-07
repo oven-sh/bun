@@ -265,7 +265,7 @@ impl MySQLQuery {
         fn is_null_thunk(ctx: *mut c_void, i: usize) -> bool {
             // SAFETY: `ctx` is `params.as_ptr()` and `i < params.len()` (asserted by
             // the `len` field passed alongside, checked in `Execute::write_internal`).
-            unsafe { matches!(*(ctx as *const Value).add(i), Value::Null) }
+            unsafe { matches!(*ctx.cast::<Value>().add(i), Value::Null) }
         }
         fn to_data_thunk(
             ctx: *mut c_void,
@@ -273,7 +273,7 @@ impl MySQLQuery {
             ft: FieldType,
         ) -> Result<bun_sql::shared::Data, any_mysql_error::Error> {
             // SAFETY: same as `is_null_thunk`.
-            unsafe { (*(ctx as *const Value).add(i)).to_data(ft) }
+            unsafe { (*ctx.cast::<Value>().add(i)).to_data(ft) }
         }
 
         let execute = prepared_statement::Execute {
@@ -286,7 +286,7 @@ impl MySQLQuery {
                 .contains(ExecutionFlags::NEED_TO_SEND_PARAMS),
             params: ExecuteParams {
                 len: params.len(),
-                ctx: params.as_ptr() as *mut c_void,
+                ctx: params.as_ptr().cast_mut().cast::<c_void>(),
                 is_null: is_null_thunk,
                 to_data: to_data_thunk,
                 _marker: PhantomData,

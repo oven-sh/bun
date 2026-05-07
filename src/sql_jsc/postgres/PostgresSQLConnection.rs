@@ -264,7 +264,7 @@ impl PostgresSQLConnection {
         debug!("onAutoFlush: keep_flusher_registered: {}", keep_flusher_registered);
         self.auto_flusher.registered = keep_flusher_registered;
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self as *mut Self) };
+        unsafe { Self::deref(std::ptr::from_mut::<Self>(self)) };
         keep_flusher_registered
     }
 
@@ -415,7 +415,7 @@ impl PostgresSQLConnection {
         // `bun_uws` mirrors, so cast the group pointer through.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
             // SAFETY: `tls_group` is non-null (lazy-init in `postgres_group`).
-            unsafe { &mut *(tls_group as *mut bun_uws_sys::SocketGroup) },
+            unsafe { &mut *tls_group.cast::<bun_uws_sys::SocketGroup>() },
             bun_uws_sys::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
@@ -428,7 +428,7 @@ impl PostgresSQLConnection {
         let new_socket = new_socket.as_ptr();
         // SAFETY: ext slot is sized for `Option<*mut PostgresSQLConnection>`
         // above and `new_socket` is a live us_socket_t.
-        unsafe { *(*new_socket).ext::<Option<*mut PostgresSQLConnection>>() = Some(self as *mut Self) };
+        unsafe { *(*new_socket).ext::<Option<*mut PostgresSQLConnection>>() = Some(std::ptr::from_mut::<Self>(self)) };
         self.socket = Socket::SocketTls(uws::SocketTLS { socket: uws::InternalSocket::Connected(new_socket) });
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
         // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
@@ -652,7 +652,7 @@ impl PostgresSQLConnection {
         }
         self.ref_and_close(Some(value));
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self as *mut Self) };
+        unsafe { Self::deref(std::ptr::from_mut::<Self>(self)) };
         self.update_has_pending_activity();
     }
 
@@ -709,9 +709,9 @@ impl PostgresSQLConnection {
         self.status = Status::SentStartupMessage;
         // SAFETY: user/database/options are valid slices into options_buf for the lifetime of self.
         let mut msg = protocol::StartupMessage {
-            user: Data::Temporary(unsafe { &*self.user }),
-            database: Data::Temporary(unsafe { &*self.database }),
-            options: Data::Temporary(unsafe { &*self.options }),
+            user: Data::Temporary(unsafe { &raw const *self.user }),
+            database: Data::Temporary(unsafe { &raw const *self.database }),
+            options: Data::Temporary(unsafe { &raw const *self.options }),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
             self.fail(b"Failed to write startup message", AnyPostgresError::from(err));
@@ -773,7 +773,7 @@ impl PostgresSQLConnection {
                         let ssl_ptr: *mut BoringSSL::c::SSL = self.socket.get_native_handle().map_or(core::ptr::null_mut(), |p| p.cast());
                         if let Some(servername) = unsafe { BoringSSL::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string.
-                            let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
+                            let hostname = unsafe { core::ffi::CStr::from_ptr(std::ptr::from_ref(servername).cast::<core::ffi::c_char>()) }.to_bytes();
                             // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
                             if !BoringSSL::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                                 let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };
@@ -926,7 +926,7 @@ impl PostgresSQLConnection {
         // reset the connection timeout after we're done processing the data
         self.reset_connection_timeout();
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self as *mut Self) };
+        unsafe { Self::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn] proc-macro attr
@@ -1054,23 +1054,23 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
         let _ = b.allocate();
         let u = username_str.to_utf8_without_ref();
-        username = b.append(u.slice()) as *const [u8];
+        username = std::ptr::from_ref::<[u8]>(b.append(u.slice()));
         drop(u);
 
         let p = password_str.to_utf8_without_ref();
-        password = b.append(p.slice()) as *const [u8];
+        password = std::ptr::from_ref::<[u8]>(b.append(p.slice()));
         drop(p);
 
         let d = database_str.to_utf8_without_ref();
-        database = b.append(d.slice()) as *const [u8];
+        database = std::ptr::from_ref::<[u8]>(b.append(d.slice()));
         drop(d);
 
         let o = options_str.to_utf8_without_ref();
-        options = b.append(o.slice()) as *const [u8];
+        options = std::ptr::from_ref::<[u8]>(b.append(o.slice()));
         drop(o);
 
         let _path = path_str.to_utf8_without_ref();
-        path = b.append(_path.slice()) as *const [u8];
+        path = std::ptr::from_ref::<[u8]>(b.append(_path.slice()));
         drop(_path);
 
         break 'brk b.move_to_slice();
@@ -1530,7 +1530,7 @@ impl protocol::WriterContext for Writer {
 impl PostgresSQLConnection {
     pub fn writer(&mut self) -> protocol::NewWriter<Writer> {
         protocol::NewWriter {
-            wrapped: Writer { connection: self as *mut PostgresSQLConnection },
+            wrapped: Writer { connection: std::ptr::from_mut::<PostgresSQLConnection>(self) },
         }
     }
 }
@@ -1593,20 +1593,20 @@ impl Reader {
         }
 
         // PORT NOTE: reshaped for borrowck — capture slice ptr before calling skip().
-        let slice = &remaining[..count] as *const [u8];
+        let slice = &raw const remaining[..count];
         self.skip(count);
         // SAFETY: slice points into read_buffer which is not reallocated by skip().
-        Ok(Data::Temporary(unsafe { &*slice }))
+        Ok(Data::Temporary(unsafe { &raw const *slice }))
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         let remain = self.read_buffer().remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
-            let slice = &remain[..zero as usize] as *const [u8];
+            let slice = &raw const remain[..zero as usize];
             self.skip(zero as usize + 1);
             // SAFETY: slice points into read_buffer which is not reallocated by skip().
-            return Ok(Data::Temporary(unsafe { &*slice }));
+            return Ok(Data::Temporary(unsafe { &raw const *slice }));
         }
 
         Err(AnyPostgresError::ShortRead)
@@ -1631,7 +1631,7 @@ impl protocol::ReaderContext for Reader {
 impl PostgresSQLConnection {
     pub fn buffered_reader(&mut self) -> protocol::NewReader<Reader> {
         protocol::NewReader {
-            wrapped: Reader { connection: self as *mut PostgresSQLConnection },
+            wrapped: Reader { connection: std::ptr::from_mut::<PostgresSQLConnection>(self) },
         }
     }
 
@@ -2125,7 +2125,7 @@ impl PostgresSQLConnection {
                         let owner = self.js_value.try_get().unwrap_or(JSValue::ZERO);
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                        cached_structure_ptr = cs as *const PostgresCachedStructure;
+                        cached_structure_ptr = std::ptr::from_ref::<PostgresCachedStructure>(cs);
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure
@@ -2160,7 +2160,7 @@ impl PostgresSQLConnection {
 
                 // PORT NOTE: DataRow::decode takes the context by-value (Copy) and calls the
                 // callback with it; pass a raw `*mut Putter` so the closure can mutate it.
-                let putter_ptr: *mut DataCell::Putter<'_> = &mut putter;
+                let putter_ptr: *mut DataCell::Putter<'_> = &raw mut putter;
                 let decode_result = if request.flags.result_mode == SQLQueryResultMode::Raw {
                     protocol::DataRow::decode(putter_ptr, &mut reader, |p, i, b| {
                         // SAFETY: putter outlives this call.
@@ -2442,7 +2442,7 @@ impl PostgresSQLConnection {
                         }
 
                         let mut response = protocol::SASLResponse {
-                            data: Data::Temporary(payload.as_slice() as *const [u8]),
+                            data: Data::Temporary(std::ptr::from_ref::<[u8]>(payload.as_slice())),
                         };
 
                         // PORT NOTE: reshaped for borrowck — set status before

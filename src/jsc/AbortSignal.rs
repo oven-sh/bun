@@ -124,7 +124,7 @@ impl AbortSignal {
         let mut reason: u8 = 0;
         // SAFETY: `reason` is a valid out-param; self/global are live.
         let js_reason = unsafe {
-            WebCore__AbortSignal__reasonIfAborted(self.as_mut_ptr(), global.as_ptr(), &mut reason)
+            WebCore__AbortSignal__reasonIfAborted(self.as_mut_ptr(), global.as_ptr(), &raw mut reason)
         };
         if reason > 0 {
             debug_assert!(js_reason.is_undefined());

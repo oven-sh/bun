@@ -116,8 +116,8 @@ impl Context {
                 c_int::from(port),
                 sni.as_ptr(),
                 reject_unauthorized as c_int,
-                &mut qs,
-                &mut pc,
+                &raw mut qs,
+                &raw mut pc,
                 user,
             )
         };

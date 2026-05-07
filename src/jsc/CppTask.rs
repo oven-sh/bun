@@ -33,7 +33,7 @@ impl CppTask {
         // SAFETY: self is a valid C++ EventLoopTask; global outlives the call.
         // `JSGlobalObject` wraps `UnsafeCell`, so `as_mut_ptr()` yields a write-
         // provenance `*mut` from `&self` without laundering a read-only pointer.
-        unsafe { Bun__performTask(global.as_mut_ptr(), self as *mut CppTask) };
+        unsafe { Bun__performTask(global.as_mut_ptr(), std::ptr::from_mut::<CppTask>(self)) };
         // TODO(port): Bun__performTask returns bun.JSError!void in Zig via generated binding;
         // confirm whether the C ABI actually surfaces an error or if this is infallible.
         Ok(())
@@ -62,7 +62,7 @@ impl EventLoopTaskNoContext {
     pub unsafe fn get_vm(&self) -> Option<&'static mut VirtualMachine> {
         // SAFETY: `self` is a valid C++ EventLoopTaskNoContext; the returned VM (if non-null)
         // outlives this task.
-        unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(self as *const _).as_mut() }
+        unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(std::ptr::from_ref(self)).as_mut() }
     }
 }
 
@@ -87,7 +87,7 @@ impl ConcurrentCppTask {
     pub unsafe fn run_from_workpool(task: *mut WorkPoolTask) {
         // SAFETY: task points to ConcurrentCppTask.workpool_task; recover the parent.
         let this: *mut ConcurrentCppTask = unsafe {
-            (task as *mut u8)
+            task.cast::<u8>()
                 .sub(core::mem::offset_of!(ConcurrentCppTask, workpool_task))
                 .cast::<ConcurrentCppTask>()
         };

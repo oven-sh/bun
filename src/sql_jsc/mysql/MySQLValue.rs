@@ -238,15 +238,15 @@ impl Value {
                 // return a `Temporary` aliasing the same bytes. `to_data` callers
                 // must keep `self` alive until the returned `Data` is consumed.
                 let s = data.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
             }
             Value::String(slice) => {
                 let s = slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
             }
             Value::Bytes(b) => {
                 let s = b.slice.slice();
-                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(s as *const [u8]) });
+                return Ok(if s.is_empty() { Data::Empty } else { Data::Temporary(std::ptr::from_ref::<[u8]>(s)) });
             }
         }
 
@@ -390,7 +390,7 @@ impl Value {
                     // SAFETY: value is a live cell (is_array_buffer_like checked); out
                     // params point to valid stack locals.
                     return match unsafe {
-                        JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len)
+                        JSC__JSValue__borrowBytesForOffThread(value, &raw mut ptr, &raw mut len)
                     } {
                         // detached / null
                         0 => Ok(Value::Bytes(Bytes::default())),

@@ -181,7 +181,7 @@ pub fn write<W: Write + ?Sized>(
     let sources: &[Source] = graph.input_files.items_source();
     // SAFETY: graph points to BundleV2.graph (Zig: @fieldParentPtr).
     let bv2: &BundleV2<'_> = unsafe {
-        &*(graph as *const Graph)
+        &*std::ptr::from_ref::<Graph>(graph)
             .cast::<u8>()
             .sub(core::mem::offset_of!(BundleV2<'static>, graph))
             .cast::<BundleV2<'_>>()

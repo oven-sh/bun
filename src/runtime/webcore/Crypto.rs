@@ -54,12 +54,12 @@ impl JSGlobalObjectCryptoExt for JSGlobalObject {
         let instance = if let Some(s) = args.as_str() {
             let zs = bun_str::ZigString::init_utf8(s.as_bytes());
             // SAFETY: `zs` borrows `s` for the FFI call; `self` is a live JSGlobalObject*.
-            unsafe { ZigString__toDOMExceptionInstance(&zs, self, code as u8) }
+            unsafe { ZigString__toDOMExceptionInstance(&raw const zs, self, code as u8) }
         } else {
             let buf = std::fmt::format(args);
             let zs = bun_str::ZigString::init_utf8(buf.as_bytes());
             // SAFETY: `zs` borrows `buf` for the FFI call; `self` is a live JSGlobalObject*.
-            unsafe { ZigString__toDOMExceptionInstance(&zs, self, code as u8) }
+            unsafe { ZigString__toDOMExceptionInstance(&raw const zs, self, code as u8) }
         };
         self.throw_value(instance)
     }
@@ -275,7 +275,7 @@ impl Crypto {
         // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array))))
         // SAFETY: JSValue is #[repr(transparent)] i64; this encodes the cell pointer
         // back into a JSValue exactly as the Zig does.
-        unsafe { core::mem::transmute::<i64, JSValue>((array as *const JSUint8Array as usize as i64)) }
+        unsafe { core::mem::transmute::<i64, JSValue>((std::ptr::from_ref::<JSUint8Array>(array) as usize as i64)) }
     }
 
     #[bun_jsc::host_fn(method)]

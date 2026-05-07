@@ -96,7 +96,7 @@ impl LinkerGraph {
             files_live: BitSet::init_empty(file_count)?,
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            bump: bump as *const Arena,
+            bump: std::ptr::from_ref::<Arena>(bump),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
@@ -169,7 +169,7 @@ impl LinkerGraph {
                 // PORT NOTE: `Symbol.original_name` is a raw `*const [u8]` —
                 // arena-owned slice whose lifetime is erased (matches the Zig
                 // `[]const u8`); caller guarantees it outlives the symbol table.
-                original_name: original_name as *const [u8],
+                original_name: std::ptr::from_ref::<[u8]>(original_name),
                 ..Default::default()
             });
 

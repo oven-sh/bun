@@ -173,7 +173,7 @@ impl TimerObjectInternals {
             Kind::SetImmediate => {
                 // SAFETY: self points to ImmediateObject.internals
                 let parent = unsafe {
-                    &mut *(self as *mut Self as *mut u8)
+                    &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(ImmediateObject, internals))
                         .cast::<ImmediateObject>()
                 };
@@ -183,7 +183,7 @@ impl TimerObjectInternals {
             Kind::SetTimeout | Kind::SetInterval => {
                 // SAFETY: self points to TimeoutObject.internals
                 let parent = unsafe {
-                    &mut *(self as *mut Self as *mut u8)
+                    &mut *std::ptr::from_mut::<Self>(self).cast::<u8>()
                         .sub(offset_of!(TimeoutObject, internals))
                         .cast::<TimeoutObject>()
                 };
@@ -201,7 +201,7 @@ impl TimerObjectInternals {
                 // reaches here.
                 unsafe {
                     ImmediateObject::ref_(
-                        (self as *mut Self as *mut u8)
+                        std::ptr::from_mut::<Self>(self).cast::<u8>()
                             .sub(offset_of!(ImmediateObject, internals))
                             .cast::<ImmediateObject>(),
                     )
@@ -211,7 +211,7 @@ impl TimerObjectInternals {
                 // SAFETY: self points to TimeoutObject.internals
                 unsafe {
                     TimeoutObject::ref_(
-                        (self as *mut Self as *mut u8)
+                        std::ptr::from_mut::<Self>(self).cast::<u8>()
                             .sub(offset_of!(TimeoutObject, internals))
                             .cast::<TimeoutObject>(),
                     )
@@ -227,7 +227,7 @@ impl TimerObjectInternals {
                 // the parent — caller must not touch `self` after a final deref.
                 unsafe {
                     ImmediateObject::deref(
-                        (self as *mut Self as *mut u8)
+                        std::ptr::from_mut::<Self>(self).cast::<u8>()
                             .sub(offset_of!(ImmediateObject, internals))
                             .cast::<ImmediateObject>(),
                     )
@@ -237,7 +237,7 @@ impl TimerObjectInternals {
                 // SAFETY: self points to TimeoutObject.internals
                 unsafe {
                     TimeoutObject::deref(
-                        (self as *mut Self as *mut u8)
+                        std::ptr::from_mut::<Self>(self).cast::<u8>()
                             .sub(offset_of!(TimeoutObject, internals))
                             .cast::<TimeoutObject>(),
                     )
@@ -576,7 +576,7 @@ impl TimerObjectInternals {
             JSImmediate::callback_set_cached(timer, global, callback);
             // SAFETY: self points to ImmediateObject.internals
             let parent = unsafe {
-                (self as *mut Self as *mut u8)
+                std::ptr::from_mut::<Self>(self).cast::<u8>()
                     .sub(offset_of!(ImmediateObject, internals))
                     .cast::<ImmediateObject>()
             };
@@ -763,7 +763,7 @@ impl TimerObjectInternals {
         if !self.flags.has_accessed_primitive() {
             self.flags.set_has_accessed_primitive(true);
             // PORT NOTE: reshaped for borrowck — capture event_loop_timer ptr before borrowing maps
-            let elt = self.event_loop_timer() as *mut EventLoopTimer;
+            let elt = std::ptr::from_mut::<EventLoopTimer>(self.event_loop_timer());
             let kind = self.flags.kind();
             let id = self.id;
             // SAFETY: per-thread `RuntimeState.timer`; single-threaded JS heap.
@@ -837,7 +837,7 @@ impl TimerObjectInternals {
             Kind::SetImmediate => {
                 // SAFETY: `this` points to ImmediateObject.internals
                 let rc = unsafe {
-                    &(*(this as *mut u8)
+                    &(*this.cast::<u8>()
                         .sub(offset_of!(ImmediateObject, internals))
                         .cast::<ImmediateObject>())
                     .ref_count
@@ -847,7 +847,7 @@ impl TimerObjectInternals {
             Kind::SetTimeout | Kind::SetInterval => {
                 // SAFETY: `this` points to TimeoutObject.internals
                 let rc = unsafe {
-                    &(*(this as *mut u8)
+                    &(*this.cast::<u8>()
                         .sub(offset_of!(TimeoutObject, internals))
                         .cast::<TimeoutObject>())
                     .ref_count

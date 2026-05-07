@@ -1264,13 +1264,11 @@ impl BlobExt for Blob {
             // heap `*S3Credentials`) when extra options were supplied, else the
             // store's existing intrusive-rc'd pointer. Rust's `store::S3` holds
             // an `Arc`, not an `IntrusiveRc`, so the else-arm pointer isn't
-            // shape-compatible with `upload_stream`'s `init_ref`. Always
-            // heap-dupe (matches `fetch.rs`); `upload_stream` bumps the ref and
-            // the MultiPartUpload derefs on completion.
-            // SAFETY: `into_raw` yields a fresh ref=1 heap S3Credentials.
-            let creds_heap = aws_options.credentials.dupe().into_raw();
+            // shape-compatible. Always heap-dupe; `upload_stream` adopts the
+            // ref by value (no extra bump) and the MultiPartUpload derefs on
+            // completion.
             return crate::webcore::__s3_client::upload_stream(
-                unsafe { &mut *creds_heap },
+                aws_options.credentials.dupe(),
                 path,
                 readable_stream,
                 global_this,
@@ -1583,11 +1581,10 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // SAFETY: heap-dupe (ref=1); `writable_stream` bumps via
-                // `IntrusiveRc::init_ref` and the MultiPartUpload derefs on done.
-                let creds = credentials_with_options.credentials.dupe().into_raw();
+                // `writable_stream` adopts the dup'd ref by value; the
+                // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
-                    unsafe { &mut *creds },
+                    credentials_with_options.credentials.dupe(),
                     path,
                     global_this,
                     credentials_with_options.options,
@@ -1600,10 +1597,8 @@ impl BlobExt for Blob {
                 );
             }
 
-            // SAFETY: heap-dupe (ref=1); see comment above.
-            let creds = s3.get_credentials().dupe().into_raw();
             return crate::webcore::s3::client::writable_stream(
-                unsafe { &mut *creds },
+                s3.get_credentials().dupe(),
                 path,
                 global_this,
                 Default::default(),

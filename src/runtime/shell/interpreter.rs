@@ -687,23 +687,14 @@ impl Interpreter {
         shargs.script_ast = script;
 
         // ── init ───────────────────────────────────────────────────────────
-        // PORT NOTE: Zig passes `.{ .mini = mini }` as the `EventLoopHandle`.
-        // The Rust shell still uses an opaque `usize` shim for the handle (see
-        // `EventLoopHandle` below), so we erase the pointer and forward the
-        // loader separately. Swap to `bun_event_loop::EventLoopHandle::init_mini`
-        // once the shim is replaced.
-        let evtloop = EventLoopHandle(mini as *mut _ as usize);
-        // SAFETY: `mini.env` was set by `init_global()`; pointer is
-        // thread-lifetime singleton.
-        let env_loader = mini.env.map(|p| unsafe { &mut *p.as_ptr() });
+        let evtloop = EventLoopHandle::init_mini(mini as *mut _);
         let mut interp = match Self::init(
             ctx as *mut _,
             evtloop,
             shargs,
-            &mut [] as *mut [crate::jsc::JSValue],
+            Vec::new(),
             None,
             cwd,
-            env_loader,
         ) {
             Ok(i) => i,
             Err(e) => e.throw_mini(),
@@ -1111,20 +1102,26 @@ impl Interpreter {
             event_loop,
         );
 
+        // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
+        // `Bun.$` API can read stdout/stderr after completion. The mini path
+        // does not capture (it writes straight to the dup'd fd).
+        let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
+            (
+                Some(self.root_shell.buffered_stdout()),
+                Some(self.root_shell.buffered_stderr()),
+            )
+        } else {
+            (None, None)
+        };
+
         self.root_io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
             writer: stdout_writer,
-            captured: None,
+            captured: cap_out,
         });
         self.root_io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
             writer: stderr_writer,
-            captured: None,
+            captured: cap_err,
         });
-
-        // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
-        // `Bun.$` API can read stdout/stderr after completion.
-        // TODO(b2-blocked): bun_jsc — `EventLoopHandle` is an opaque shim with
-        // no `.js` discriminant yet; the mini path (the only live caller) does
-        // not capture, so this is correctly a no-op until the JS loop lands.
 
         Ok(())
     }

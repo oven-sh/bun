@@ -1343,7 +1343,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
         DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
         DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
         DevHandlerId::NotFound => on_not_found(dev, req, resp),
-        DevHandlerId::Request => on_request(dev, req, resp),
+        DevHandlerId::Request => on_request_any(dev, req, resp),
         #[cfg(feature = "bake_debugging_features")]
         DevHandlerId::IncrementalVisualizer => on_incremental_visualizer(dev, req, resp),
         #[cfg(feature = "bake_debugging_features")]
@@ -4980,10 +4980,14 @@ impl DevServer {
                     bun_http::headers::append_etag(any_blob.slice(), &mut headers);
                 }
                 let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
+                // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`;
+                // ownership is transferred to `HeadersRef`.
+                let headers_ref =
+                    unsafe { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
                 let mut response: Response = Response::init(
                     crate::webcore::response::Init {
                         status_code: 500,
-                        headers: Some(crate::webcore::response::HeadersRef::new(fetch_headers)),
+                        headers: Some(headers_ref),
                         ..Default::default()
                     },
                     crate::webcore::Body {
@@ -6274,7 +6278,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // PORT NOTE: split the route-bundle borrow off via raw pointer so the
         // failure slice doesn't conflict with the `&mut DevServer` below.
         let failure = self
-            .dev
+            .dev_mut()
             .route_bundle_ptr(self.route_bundle_index)
             .data
             .framework()
@@ -6356,25 +6360,24 @@ fn bundle_new_route_js_function_impl(
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
     let request: &mut WebRequest = unsafe { &mut *(request_ptr as *mut WebRequest) };
     let Some(dev) = request.request_context.dev_server() else {
-        return Err(global.throw("Request context does not belong to dev server"));
+        return Err(global.throw(format_args!("Request context does not belong to dev server")));
     };
     // Extract pathname from URL (remove protocol, host, query, hash)
     let pathname = extract_pathname_from_url(url.slice());
 
     if pathname.is_empty() || pathname[0] != b'/' {
-        return Err(global.throw(
-            format_args!(
-                "Invalid path \"{}\" it should be non-empty and start with a slash",
-                bstr::BStr::new(pathname)
-            ),
-        ));
+        return Err(global.throw(format_args!(
+            "Invalid path \"{}\" it should be non-empty and start with a slash",
+            bstr::BStr::new(pathname)
+        )));
     }
 
     let mut params: framework_router::MatchedParams = Default::default();
     let Some(route_index) = dev.router.match_slow(pathname, &mut params) else {
-        return Err(global.throw(
-            format_args!("No route found for path: {}", bstr::BStr::new(pathname)),
-        ));
+        return Err(global.throw(format_args!(
+            "No route found for path: {}",
+            bstr::BStr::new(pathname)
+        )));
     };
 
     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
@@ -6384,7 +6387,7 @@ fn bundle_new_route_js_function_impl(
 
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw("Request context does not belong to dev server"));
+        return Err(global.throw(format_args!("Request context does not belong to dev server")));
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
@@ -6464,7 +6467,7 @@ pub fn bake_get_new_route_params_js_function_impl(
 ) -> JSValue {
     jsc::to_js_host_call(
         global,
-        new_route_params_for_bundle_promise_for_js(global, callframe),
+        || new_route_params_for_bundle_promise_for_js(global, callframe),
     )
 }
 
@@ -6473,7 +6476,7 @@ fn new_route_params_for_bundle_promise_for_js(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     if callframe.arguments_count() != 3 {
-        return Err(global.throw("Expected 3 arguments"));
+        return Err(global.throw(format_args!("Expected 3 arguments")));
     }
 
     let request_js = callframe.argument(0);
@@ -6481,22 +6484,22 @@ fn new_route_params_for_bundle_promise_for_js(
     let url_js = callframe.argument(2);
 
     if !request_js.is_object() {
-        return Err(global.throw("Request must be an object"));
+        return Err(global.throw(format_args!("Request must be an object")));
     }
     if !route_bundle_index_js.is_any_int() {
-        return Err(global.throw("Route bundle index must be an integer"));
+        return Err(global.throw(format_args!("Route bundle index must be an integer")));
     }
     if !url_js.is_string() {
-        return Err(global.throw("URL must be a string"));
+        return Err(global.throw(format_args!("URL must be a string")));
     }
 
     let Some(request_ptr) = <WebRequest as bun_jsc::JsClass>::from_js(request_js) else {
-        return Err(global.throw("Expected a Request object"));
+        return Err(global.throw(format_args!("Expected a Request object")));
     };
     // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
     let request: &mut WebRequest = unsafe { &mut *request_ptr };
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
-        return Err(global.throw("Request context does not belong to dev server"));
+        return Err(global.throw(format_args!("Request context does not belong to dev server")));
     };
     // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
     // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.

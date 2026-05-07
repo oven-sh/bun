@@ -1768,8 +1768,8 @@ where
                         None => {
                             if headers_value.is_object() {
                                 if let Some(created) = FetchHeaders::create_from_js(global, headers_value)? {
-                                    *fetch_headers_to_deref = Some(created);
-                                    created
+                                    *fetch_headers_to_deref = Some(created.as_ptr());
+                                    created.as_ptr()
                                 } else if !global.has_exception() {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                         "upgrade options.headers must be a Headers or an object"
@@ -1788,12 +1788,12 @@ where
                     // SAFETY: fh is a live FetchHeaders (either from JS or freshly created).
                     let fh = unsafe { &mut *fh };
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        sec_websocket_protocol_owned = p.to_slice_clone();
+                        sec_websocket_protocol_owned = bun_core::handle_oom(p.to_slice_clone());
                         sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        sec_websocket_extensions_owned = e.to_slice_clone();
+                        sec_websocket_extensions_owned = bun_core::handle_oom(e.to_slice_clone());
                         sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }

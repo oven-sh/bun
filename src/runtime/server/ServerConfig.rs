@@ -1,4 +1,3 @@
-use core::ffi::CStr;
 use std::ffi::CString;
 use std::io::Write as _;
 
@@ -201,10 +200,10 @@ impl StaticRouteEntry {
         self.path.len() + self.route.memory_cost()
     }
 
-    // clone(): Rc-based AnyRoute makes the Zig clone() a plain `Clone` derive
-    // once AnyRoute impls it. Kept gated until AnyRoute::ref_ semantics settle.
-    // TODO(port): impl Clone for StaticRouteEntry via Rc::clone on route.
-
+    /// Zig `isLessThan` — strict-weak ordering for `std.mem.sort`
+    /// (descending by path). Kept for API parity with the spec; the Rust
+    /// `sort_by` callsite uses `strings::order` directly so it can return
+    /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
     pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
         strings::cmp_strings_desc(&(), &this.path, &other.path)
     }

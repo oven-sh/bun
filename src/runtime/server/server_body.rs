@@ -3516,19 +3516,40 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.handle_request_for::<ServerRequestContext<SSL, DEBUG>>(should_deinit_context, prepared, req, response_value);
     }
 
-    fn handle_request_for<Ctx: RequestCtx>(
+    fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &mut self,
         should_deinit_context: &mut bool,
         prepared: PreparedRequestFor<'_, Ctx>,
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
-        let _ = (should_deinit_context, prepared, req, response_value);
-        // TODO(port): Ctx::{on_response,deinit,should_render_missing,render_missing,to_async}
-        // require `ThisServer: ServerLike + TransportFor<SSL,H3>: Transport +
-        // Self: NativePromiseContextType` bounds that don't hold for the
-        // generic `NewServer<SSL,DEBUG>` parameter yet.
-        todo!("blocked_on: server::ServerLike impl for NewServer<SSL,DEBUG>")
+        let ctx = prepared.ctx;
+        let request_object_ptr: *mut Request = prepared.request_object;
+        let _detach_guard = scopeguard::guard((), |_| {
+            // uWS request will not live longer than this function
+            // SAFETY: request_object outlives this stack frame (boxed on the request).
+            unsafe { (*request_object_ptr).request_context.detach_request() };
+        });
+
+        RequestCtxOps::on_response(ctx, self, prepared.js_request, response_value);
+        // Reference in the stack here in case it is not for whatever reason
+        prepared.js_request.ensure_still_alive();
+
+        *RequestCtxOps::defer_deinit_ptr(ctx) = None;
+
+        if *should_deinit_context {
+            RequestCtxOps::deinit(ctx);
+            return;
+        }
+
+        if RequestCtxOps::should_render_missing(ctx) {
+            RequestCtxOps::render_missing(ctx);
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be copied
+        // since the provided uws.Request will be re-used for future requests (stack allocated).
+        RequestCtxOps::to_async(ctx, req, prepared.request_object);
     }
 
     pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {

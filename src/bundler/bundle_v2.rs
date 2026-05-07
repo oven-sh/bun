@@ -1263,8 +1263,11 @@ pub mod dispatch {
         pub log_for_resolution_failures:
             unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> *mut bun_logger::Log,
         /// `dev.finalizeBundle(bv2, result)` — DevServer.zig:2239.
+        /// PORT NOTE: Zig takes `*const DevServerOutput` but mutates through the
+        /// `chunks: []Chunk` slice it holds; in Rust the struct stores
+        /// `&'a mut [Chunk]`, so the whole result must be `*mut` to reborrow it.
         pub finalize_bundle:
-            unsafe fn(*mut (), *mut super::BundleV2, *const super::DevServerOutput<'_>) -> Result<(), bun_core::Error>,
+            unsafe fn(*mut (), *mut super::BundleV2, *mut super::DevServerOutput<'_>) -> Result<(), bun_core::Error>,
         // ── slots below cover every remaining direct DevServer access in bundler ──
         /// `dev.handleParseTaskFailure(err, graph, abs_path, log, bv2)` — DevServer.zig:3063.
         pub handle_parse_task_failure:
@@ -1310,7 +1313,7 @@ pub mod dispatch {
         pub fn finalize_bundle(
             &self,
             bv2: &mut super::BundleV2,
-            result: &super::DevServerOutput<'_>,
+            result: &mut super::DevServerOutput<'_>,
         ) -> Result<(), bun_core::Error> {
             // SAFETY: owner is a live *mut DevServer; bv2/result are valid for the call.
             unsafe { (self.vtable.finalize_bundle)(self.owner, bv2, result) }
@@ -4596,7 +4599,7 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        dev_server.finalize_bundle(self, &DevServerOutput {
+        dev_server.finalize_bundle(self, &mut DevServerOutput {
             chunks,
             css_file_list: core::mem::take(&mut start.css_entry_points),
             html_files,

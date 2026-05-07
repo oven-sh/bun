@@ -318,12 +318,8 @@ pub fn migrate_npm_lockfile<'a>(
             // due to package paths and resolved properties for links and workspaces always having
             // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
             // paths with forward slashes on windows
-            // TODO(port): blocked_on: PackageManager.workspace_package_json_cache field (reconciler-6).
-            // The stub PackageManager has no `workspace_package_json_cache`; until it lands,
-            // construct an ad-hoc cache so the call site type-checks.
-            let mut tmp_cache = crate::package_manager::WorkspacePackageJSONCache::default();
             let workspace_packages_count = workspaces.process_names_array(
-                &mut tmp_cache,
+                &mut manager.workspace_package_json_cache,
                 log,
                 // SAFETY: arena-backed StoreRef lives for duration of this fn
                 unsafe { &*json_array.as_ptr() },

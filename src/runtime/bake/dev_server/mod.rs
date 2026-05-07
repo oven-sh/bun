@@ -1158,12 +1158,11 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
         register_barrel_export: |p, barrel_path, alias| {
             // SAFETY: p is a live *mut DevServer per DevServerHandle invariant.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
-            // StringArrayHashMap::get_or_put boxes the key on miss; alloc fail
-            // panics (matches Zig `bun.handleOom`).
-            let gop = dev
-                .barrel_needed_exports
-                .get_or_put(barrel_path)
-                .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            // Zig `persistBarrelExport` (barrel_imports.zig:540) does
+            // `getOrPut(...) catch return` — silently drop on alloc failure.
+            let Ok(gop) = dev.barrel_needed_exports.get_or_put(barrel_path) else {
+                return;
+            };
             let _ = gop.value_ptr.get_or_put(alias);
         },
     };

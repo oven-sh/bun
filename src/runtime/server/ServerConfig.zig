@@ -189,7 +189,11 @@ fn normalizeStaticRoutesList(this: *ServerConfig) !void {
         }
     }
 
-    // sort the cloned static routes by name for determinism
+    // Sort the cloned static routes by path for determinism. Must remain a
+    // stable sort: after dedup, distinct (method, path) entries can share a
+    // path, and their relative registration order into uWS decides which
+    // handler wins when e.g. `.any` and a specific method both register the
+    // same route. Preserving declaration order keeps user intent.
     std.mem.sort(StaticRouteEntry, list.items, {}, StaticRouteEntry.isLessThan);
 }
 

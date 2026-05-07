@@ -452,8 +452,9 @@ pub const MultiPartUpload = struct {
         if (this.state == .multipart_completed) {
             // we are a multipart upload so we need to send the etags and commit
             this.state = .finished;
-            // sort the etags
-            std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
+            // Sort by part number. Part numbers are unique (assigned from a
+            // monotonically increasing counter), so stability is not required.
+            std.sort.pdq(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
             // start the multipart upload list
             bun.handleOom(this.multipart_upload_list.appendSlice(
                 bun.default_allocator,

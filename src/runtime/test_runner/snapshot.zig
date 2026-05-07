@@ -244,8 +244,11 @@ pub const Snapshots = struct {
                 success = false;
             };
 
-            // 1. sort ils_info by row, col
-            std.mem.sort(InlineSnapshotToWrite, ils_info.items, {}, InlineSnapshotToWrite.lessThanFn);
+            // 1. sort ils_info by row, col. Stability is not observable: duplicate
+            // (line, col) entries originate from the same call site executed more
+            // than once and are collapsed to a single write below; divergent
+            // values produce an error regardless of which one is encountered first.
+            std.sort.pdq(InlineSnapshotToWrite, ils_info.items, {}, InlineSnapshotToWrite.lessThanFn);
 
             // 2. load file text
             const test_file = Jest.runner.?.files.get(file_id);

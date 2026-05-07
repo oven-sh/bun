@@ -2214,7 +2214,7 @@ impl<'a> ValueBufferer<'a> {
 
     fn handle_reject_stream(&mut self, err: JSValue, is_async: bool) {
         if let Some(mut wrapper) = self.js_sink.take() {
-            wrapper.detach(self.global);
+            wrapper.detach_self(self.global);
             // PORT NOTE: see `Drop` impl — dropping the Box frees the wrapper
             // and runs `ByteList`'s Drop (≡ Zig `wrapper.sink.destroy()`).
             drop(wrapper);

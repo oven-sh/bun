@@ -881,7 +881,7 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return unsafe { ZStr::from_raw(buf.as_ptr(), 4 + n) };
                 }
-                return path_handler::posix_to_win_normalizer::resolve_cwd_with_external_buf_z(buf, sliced)
+                return path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
             }
         }
@@ -967,7 +967,7 @@ impl PathLikeExt for PathLike {
                 return strings::to_kernel32_path(buf_u16, s);
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
-                let resolve = path_handler::posix_to_win_normalizer::resolve_cwd_with_external_buf(buf, s)
+                let resolve = path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(buf, s)
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
                 let normal = path_handler::normalize_buf(resolve, &mut *b, bun_paths::Style::Windows);
                 // SAFETY: same alignment note as above.

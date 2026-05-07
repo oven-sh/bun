@@ -661,7 +661,10 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
-    pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
+    /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
+    /// `us_loop_t*` on POSIX). `bun_aio::Loop` is the cfg-aliased nominal that
+    /// resolves to the correct one per target — see `aio/{posix,windows}_event_loop.rs`.
+    pub fn loop_(&self) -> *mut bun_aio::Loop {
         #[cfg(windows)]
         {
             self.event_loop_handle.uv_loop()

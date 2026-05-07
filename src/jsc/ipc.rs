@@ -1682,11 +1682,18 @@ impl uv::StreamReader for SendQueue {
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Forming `&mut *this` would retag every byte of
+        // `*this` Unique and pop the SharedRW tag `data`'s provenance descends
+        // from — any later read through `data` is UB under Stacked Borrows
+        // *regardless* of write order. Capture the only thing we need (length)
+        // while `data` is still valid, drop it, then reborrow `*this`; the
+        // callee re-derives the just-written tail from `incoming` itself.
+        let nread = data.len();
+        let _ = data;
         // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`. `data` points into our own `incoming` buffer
-        // (returned from `on_read_alloc`); `WindowsNamedPipe::on_read` copies
-        // it out before mutating `incoming`, so the reborrow is sound.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, data);
+        // `read_start_ctx`; `data` is no longer live so the Unique retag is sound.
+        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
     }
 }
 
@@ -2175,8 +2182,13 @@ pub mod IPCHandlers {
             send_queue.close_socket_next_tick(true);
         }
 
-        pub fn on_read(send_queue: &mut SendQueue, buffer: &[u8]) {
-            log!("NewNamedPipeIPCHandler#onRead {}", buffer.len());
+        /// `nread` is the byte count libuv reported into the slice handed out
+        /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
+        /// current `len`). The slice itself is *not* passed through because it
+        /// aliases `send_queue.incoming`; see the `StreamReader::on_read`
+        /// trampoline for the Stacked-Borrows rationale.
+        pub fn on_read(send_queue: &mut SendQueue, nread: usize) {
+            log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
             // call `event_loop(&self)` without materializing
             // `&mut VirtualMachine`.
@@ -2193,17 +2205,19 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    debug_assert!(
-                        json_buf.data.len() as usize + buffer.len() <= json_buf.data.capacity() as usize
-                    );
-                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
-                    // only inspect its address range here, never read its bytes.
-                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
+                    let old_len = json_buf.data.len() as usize;
+                    debug_assert!(old_len + nread <= json_buf.data.capacity() as usize);
+                    // Re-derive the just-written tail with provenance rooted at
+                    // `send_queue` (libuv wrote `nread` bytes at `data[old_len..]`
+                    // via the slice returned from `on_read_alloc`).
+                    // SAFETY: `old_len + nread <= capacity` (asserted above);
+                    // libuv has initialised those bytes before invoking us.
+                    let buffer: &[u8] = unsafe {
                         core::slice::from_raw_parts(
-                            json_buf.data.as_mut_ptr().cast::<u8>(),
-                            json_buf.data.capacity() as usize,
+                            json_buf.data.as_mut_ptr().cast::<u8>().add(old_len),
+                            nread,
                         )
-                    }));
+                    };
 
                     json_buf.notify_written(buffer);
 
@@ -2251,19 +2265,15 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(buffer.len())) };
+                    // libuv wrote `nread` bytes into the spare-capacity slice
+                    // returned by `on_read_alloc`; bump `len` to cover them.
+                    // SAFETY: `on_read_alloc` reserved `>= nread` bytes of
+                    // capacity past `len` and libuv initialised them.
+                    unsafe { adv_buf.set_len(adv_buf.len().saturating_add(nread)) };
                     let total_len = adv_buf.len() as usize;
                     let mut slice_start: usize = 0;
 
                     debug_assert!(adv_buf.len() <= adv_buf.capacity());
-                    // SAFETY: allocated_slice() yields `[MaybeUninit<u8>]`; we
-                    // only inspect its address range here, never read its bytes.
-                    debug_assert!(bun_core::is_slice_in_buffer(buffer, unsafe {
-                        core::slice::from_raw_parts(
-                            adv_buf.as_mut_ptr().cast::<u8>(),
-                            adv_buf.capacity() as usize,
-                        )
-                    }));
 
                     loop {
                         let IncomingBuffer::Advanced(adv_buf) = &mut send_queue.incoming else {

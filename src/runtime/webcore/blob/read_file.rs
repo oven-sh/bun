@@ -1114,8 +1114,8 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
         this.total_size =
-            SizeType::try_from(stat.size().max(0).min(MAX_SIZE as i64)).unwrap();
-        this.is_regular_file = bun_sys::is_regular_file(stat.mode());
+            SizeType::try_from((stat.size() as i64).max(0).min(MAX_SIZE as i64)).unwrap();
+        this.is_regular_file = bun_sys::is_regular_file(stat.mode() as bun_sys::Mode);
 
         log!("is_regular_file: {}", this.is_regular_file);
 

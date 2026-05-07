@@ -995,13 +995,16 @@ impl bun_io::pipe_writer::WindowsWriterParent for IOWriter {
         unsafe { (*(*this).evtloop().loop_()).uv_loop }
     }
     unsafe fn ref_(this: *mut Self) {
-        // SAFETY: `this` is the `Arc::as_ptr` stashed via `writer.set_parent`;
-        // bump the shared count to balance the `deref` the BufferedWriter
-        // issues after an async write completes.
+        // SAFETY: INVARIANT — `this` MUST be the data pointer of a live
+        // `Arc<IOWriter>` (it is `Arc::as_ptr` stashed via `writer.set_parent`
+        // in `IOWriter::init`, the sole constructor). `increment_strong_count`
+        // reads the `ArcInner` header 16 bytes before `this`; passing a non-Arc
+        // backed pointer here is UB.
         unsafe { std::sync::Arc::increment_strong_count(this as *const Self) };
     }
     unsafe fn deref(this: *mut Self) {
-        // SAFETY: see ref_. May drop the last strong ref.
+        // SAFETY: see `ref_` — `this` is `Arc::as_ptr` of a live `Arc<IOWriter>`.
+        // May drop the last strong ref.
         unsafe { std::sync::Arc::decrement_strong_count(this as *const Self) };
     }
 }

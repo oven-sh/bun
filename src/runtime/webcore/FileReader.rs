@@ -280,7 +280,12 @@ impl bun_io::pipe_reader::BufferedReaderParent for FileReader {
         let ev = unsafe { *core::ptr::addr_of!((*this).event_loop) };
         #[cfg(windows)]
         {
-            ev.uv_loop()
+            // Trait return type is `*mut bun_uws_sys::Loop` (= `WindowsLoop` on
+            // Windows) but the spec (FileReader.zig:163) returns the libuv
+            // `uv_loop_t*`. The vtable consumers `.cast()` immediately
+            // (PipeReader.rs:354) so erase the nominal mismatch here rather
+            // than fan a trait-signature change across every implementor.
+            ev.uv_loop().cast()
         }
         #[cfg(not(windows))]
         {
@@ -314,7 +319,9 @@ impl FileReader {
         self.event_loop
     }
 
-    pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
+    /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
+    /// `us_loop_t*` on POSIX). See `aio/{posix,windows}_event_loop.rs`.
+    pub fn loop_(&self) -> *mut bun_aio::Loop {
         #[cfg(windows)]
         {
             self.event_loop().uv_loop()

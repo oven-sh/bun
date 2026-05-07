@@ -516,20 +516,23 @@ pub mod ws2_32 {
         pub fn WSAStartup(wVersionRequested: u16, lpWSAData: *mut WSADATA) -> c_int;
     }
 
-    /// `WSADATA` (`winsock2.h`, 64-bit layout — `szDescription`/`szSystemStatus`
-    /// precede `iMaxSockets` on Win64). Only ever read back from `WSAStartup`;
-    /// callers zero-initialise and never project fields beyond `wVersion`.
+    /// `WSADATA` (`winsock2.h`, **`_WIN64` layout** — on 64-bit Windows
+    /// `iMaxSockets`/`iMaxUdpDg`/`lpVendorInfo` come *before* the
+    /// `szDescription`/`szSystemStatus` arrays; the 32-bit header swaps that
+    /// order). Only ever read back from `WSAStartup`; callers zero-initialise
+    /// and never project fields beyond `wVersion`.
     #[repr(C)]
     #[derive(Copy, Clone)]
     pub struct WSADATA {
         pub wVersion: u16,
         pub wHighVersion: u16,
-        pub szDescription: [u8; 257],
-        pub szSystemStatus: [u8; 129],
         pub iMaxSockets: u16,
         pub iMaxUdpDg: u16,
         pub lpVendorInfo: *mut u8,
+        pub szDescription: [u8; 257],
+        pub szSystemStatus: [u8; 129],
     }
+    const _: () = assert!(core::mem::size_of::<WSADATA>() == 408);
 
     /// `SOCKADDR_STORAGE` (`ws2def.h`). 128 bytes, 8-aligned.
     #[repr(C)]

@@ -432,6 +432,18 @@ impl WindowsNamedPipe {
         (self.handlers.deref_ctx)(self.handlers.ctx);
     }
 
+    /// `extern "C"` trampoline matching `uv_connect_cb` (`Pipe::connect`'s
+    /// `on_connect` parameter). Recovers `*mut Self` from `req->data` (set in
+    /// `connect()`) and forwards to the safe `&mut self` body.
+    #[cfg(windows)]
+    unsafe extern "C" fn uv_on_connect(req: *mut uv::uv_connect_t, status: uv::ReturnCode) {
+        // SAFETY: `req` is the `&mut self.connect_req` we passed to
+        // `Pipe::connect`; `req->data` was set to `self as *mut Self` and the
+        // owning struct is kept alive by the `r#ref()` taken before the call.
+        let this = unsafe { (*req).data.cast::<Self>() };
+        unsafe { (*this).on_connect(status) };
+    }
+
     #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
         // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
@@ -588,20 +600,31 @@ impl WindowsNamedPipe {
             .init(self.vm.uv_loop(), false)
             .to_result(bun_sys::Tag::pipe)?;
 
-        self.connect_req.data = self as *mut _ as *mut c_void;
-        // BORROW_PARAM: `connect()` takes `&mut self.connect_req` and a context
-        // pointer derived from `self`, while `self.pipe` is also mutably
-        // borrowed. Snapshot raw pointers (Zig: all `*T` aliasing) so the
-        // borrows are disjoint.
-        let req: *mut uv::uv_connect_t = &mut self.connect_req;
-        let ctx: *mut Self = self;
-        // SAFETY: `req` and `ctx` are live for the call; libuv stashes them
-        // until the connect callback fires (this struct outlives that).
-        if let Some(err) = self
-            .pipe
-            .as_mut()
-            .unwrap()
-            .connect(unsafe { &mut *req }, path, ctx, Self::on_connect)
+        // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
+        // context, and `&mut self.pipe` simultaneously (Zig: all `*T` alias freely).
+        // Derive `ctx` first via `addr_of_mut!` (no intermediate `&mut Self` retag),
+        // then project `req`/`pipe` *from `ctx`* so all three share one provenance
+        // root — taking `&mut self.connect_req` followed by `self as *mut Self`
+        // would pop `req`'s tag under Stacked Borrows. libuv only *stores* `ctx`
+        // here (no deref), so the brief field-level Unique borrows below don't
+        // invalidate the bytes the callback later reads.
+        let ctx: *mut Self = core::ptr::addr_of_mut!(*self);
+        // SAFETY: `ctx` is `self`; field projections are in-bounds and disjoint.
+        let req: *mut uv::uv_connect_t = unsafe { core::ptr::addr_of_mut!((*ctx).connect_req) };
+        unsafe { (*req).data = ctx.cast::<c_void>() };
+        // `pipe` lives in a separate heap allocation (`Box<uv::Pipe>`), so its
+        // bytes are outside `*self` and unaffected by the `req` projection.
+        let pipe: *mut uv::Pipe =
+            unsafe { (*ctx).pipe.as_mut().unwrap().as_mut() as *mut uv::Pipe };
+        // SAFETY: `req`/`pipe` are live disjoint fields of `*self`; libuv stashes
+        // `req`/`ctx` until the connect callback fires (this struct outlives that).
+        if let Some(err) = unsafe { &mut *pipe }
+            .connect(
+                unsafe { &mut *req },
+                path,
+                ctx.cast::<c_void>(),
+                Self::uv_on_connect,
+            )
             .to_error(bun_sys::Tag::connect)
         {
             return Err(err);

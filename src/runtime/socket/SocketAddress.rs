@@ -926,6 +926,10 @@ pub mod inet {
     // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
     // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
     // build resolves without widening the leaf crate.
+    /// `ws2ipdef.h`: `#define IN4ADDR_LOOPBACK 0x0100007f` — the raw
+    /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
+    /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
+    /// `0x0100_007f` on little-endian Windows, matching the header literal).
     pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub const INET6_ADDRSTRLEN: usize = 65;

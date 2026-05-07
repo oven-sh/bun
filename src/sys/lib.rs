@@ -5912,23 +5912,23 @@ mod win_symlink_impl {
     /// with `ALLOW_UNPRIVILEGED_CREATE` and is cleared on `INVALID_PARAMETER`
     /// (older Windows).
     ///
-    /// PORT NOTE (intentional divergence): Zig's `flags()` (sys.zig:2657)
-    /// does `symlink_flags |= DIRECTORY; return symlink_flags;`, which
-    /// permanently stickies the `DIRECTORY` bit into the global after the
-    /// first directory symlink — almost certainly a bug (a later
-    /// `directory=false` call would still pass `SYMBOLIC_LINK_FLAG_DIRECTORY`).
-    /// The Rust port ORs `DIRECTORY` into a *local* only, so the static is
-    /// mutated solely by `denied()`.
+    /// PORT NOTE (bug-for-bug parity): Zig's `flags()` (sys.zig:2657) does
+    /// `symlink_flags |= DIRECTORY; return symlink_flags;`, which permanently
+    /// stickies the `DIRECTORY` bit into the global after the first directory
+    /// symlink — almost certainly a Zig bug (a later `directory=false` call
+    /// still passes `SYMBOLIC_LINK_FLAG_DIRECTORY`). Per the bit-identical-port
+    /// policy this is mirrored exactly; fix should land upstream in `sys.zig`
+    /// first and then both copies can drop the sticky write.
     static SYMLINK_FLAGS: AtomicU32 = AtomicU32::new(SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
 
     impl WindowsSymlinkOptions {
         #[inline]
         fn flags(self) -> u32 {
-            let mut f = SYMLINK_FLAGS.load(Ordering::Relaxed);
             if self.directory {
-                f |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+                // Zig: `symlink_flags |= SYMBOLIC_LINK_FLAG_DIRECTORY` (mutates the global).
+                SYMLINK_FLAGS.fetch_or(SYMBOLIC_LINK_FLAG_DIRECTORY, Ordering::Relaxed);
             }
-            f
+            SYMLINK_FLAGS.load(Ordering::Relaxed)
         }
         #[inline]
         fn denied() {

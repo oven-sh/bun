@@ -39,6 +39,10 @@ unsafe extern "C" {
     fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
     fn WebCore__AbortSignal__toJS(arg0: *mut AbortSignal, arg1: *mut JSGlobalObject) -> JSValue;
     fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
+    // `*mut Timeout` is round-tripped opaquely through C++ (stored from
+    // `AbortSignal__Timeout__create`, never dereferenced on the C++ side), so
+    // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
+    #[allow(improper_ctypes)]
     fn WebCore__AbortSignal__getTimeout(arg0: *mut AbortSignal) -> *mut Timeout;
     fn WebCore__AbortSignal__signal(
         arg0: *mut AbortSignal,

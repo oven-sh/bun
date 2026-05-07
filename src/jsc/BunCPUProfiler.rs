@@ -1,8 +1,10 @@
 use core::ffi::c_int;
 use std::io::Write as _;
 
-use bun_jsc::VM;
-use bun_paths::{OSPathBuffer, PathBuffer};
+use crate::VM;
+#[cfg(windows)]
+use bun_paths::OSPathBuffer;
+use bun_paths::PathBuffer;
 use bun_string::String as BunString;
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
@@ -115,8 +117,6 @@ fn write_profile_to_file(
         bun_string::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
     #[cfg(not(windows))]
     let output_path_os = path_buf.slice_z();
-    #[cfg(not(windows))]
-    let _ = OSPathBuffer::uninit; // suppress unused-import on posix; TODO(port): cleanup
 
     // Write the profile to disk using bun.sys.File.writeFile
     let result = bun_sys::File::write_file(Fd::cwd(), output_path_os, profile_slice.slice());

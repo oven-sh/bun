@@ -173,24 +173,11 @@ pub trait JSGlobalObjectSqlExt {
     fn sql_vm(&self) -> &VirtualMachine;
     fn sql_vm_ptr(&self) -> *mut VirtualMachine;
 
-    // PORT NOTE: `validate_integer_range` / `validate_big_int_range` were
-    // duplicated here while gated in `bun_jsc`; both are now inherent on
-    // `bun_jsc::JSGlobalObject` and key on the re-exported [`IntegerRange`],
-    // so the trait copies are removed (inherent methods always win in
+    // PORT NOTE: `validate_integer_range` / `validate_big_int_range` /
+    // `gregorian_date_time_to_ms` were duplicated here while gated in
+    // `bun_jsc`; all three are now inherent on `bun_jsc::JSGlobalObject`, so
+    // the trait copies are removed (inherent methods always win in
     // resolution, so the trait versions were dead code anyway).
-
-    /// `Bun__gregorianDateTimeToMS` (local-time variant). Unsigned-arg
-    /// signature matches the SQL `DateTime` field types.
-    fn gregorian_date_time_to_ms(
-        &self,
-        year: u16,
-        month: u8,
-        day: u8,
-        hour: u8,
-        minute: u8,
-        second: u8,
-        millisecond: u32,
-    ) -> JsResult<f64>;
 }
 
 impl JSGlobalObjectSqlExt for JSGlobalObject {
@@ -213,7 +200,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
         // SAFETY: FFI — &self is a valid JSGlobalObject*.
         unsafe { JSC__JSGlobalObject__bunVM(self.as_mut_ptr()) as *mut VirtualMachine }
     }
-
 }
 
 // ──────────────────────────────────────────────────────────────────────────

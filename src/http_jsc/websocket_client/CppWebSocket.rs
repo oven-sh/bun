@@ -24,7 +24,8 @@ pub struct CppWebSocket {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// TODO(port): move to http_jsc_sys (or appropriate *_sys crate)
+// FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
+// Kept private to this module — the safe wrappers below are the only callers.
 unsafe extern "C" {
     fn WebSocket__didConnect(
         websocket_context: *const CppWebSocket,
@@ -212,6 +213,6 @@ impl Drop for CppWebSocketRef {
 // PORT STATUS
 //   source:     src/http_jsc/websocket_client/CppWebSocket.zig (96 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      enter()/exit() inlined (no error path between them); `ref` uses raw ident r#ref; ErrorCode/web_socket_deflate module paths may need Phase B fixup.
+//   todos:      0
+//   notes:      enter()/exit() inlined (no error path between them); `ref` uses raw ident r#ref.
 // ──────────────────────────────────────────────────────────────────────────

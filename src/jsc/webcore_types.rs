@@ -113,39 +113,14 @@ impl Default for Blob {
 // value, so silence it for the whole anon-const.
 #[allow(improper_ctypes)]
 const _: () = {
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "Blob__fromJS"]
-        fn __from_js(value: JSValue) -> *mut Blob;
-        #[link_name = "Blob__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut Blob;
-        #[link_name = "Blob__create"]
-        fn __create(global: *const JSGlobalObject, ptr: *mut Blob) -> JSValue;
-        #[link_name = "Blob__getConstructor"]
-        fn __get_constructor(global: *const JSGlobalObject) -> JSValue;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "Blob__fromJS"]
-        fn __from_js(value: JSValue) -> *mut Blob;
-        #[link_name = "Blob__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut Blob;
-        #[link_name = "Blob__create"]
-        fn __create(global: *const JSGlobalObject, ptr: *mut Blob) -> JSValue;
-        #[link_name = "Blob__getConstructor"]
-        fn __get_constructor(global: *const JSGlobalObject) -> JSValue;
-    }
+    use crate::generated::JSBlob;
 
     impl JsClass for Blob {
         fn from_js(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast; returns null on type mismatch.
-            let p = unsafe { __from_js(value) };
-            if p.is_null() { None } else { Some(p) }
+            JSBlob::from_js(value)
         }
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            // SAFETY: pure FFI downcast (exact-structure check); null on miss.
-            let p = unsafe { __from_js_direct(value) };
-            if p.is_null() { None } else { Some(p) }
+            JSBlob::from_js_direct(value)
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // `Blob.toJS` (Blob.zig:3707, simplified): heap-promote and hand
@@ -153,13 +128,10 @@ const _: () = {
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the
-            // C++ wrapper (freed via `BlobClass__finalize` → `deinit`).
-            unsafe { __create(global, ptr) }
+            JSBlob::to_js(ptr, global)
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            // SAFETY: `global` is live; codegen extern returns the cached ctor.
-            unsafe { __get_constructor(global) }
+            JSBlob::get_constructor(global)
         }
     }
 };

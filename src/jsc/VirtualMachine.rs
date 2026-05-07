@@ -1383,6 +1383,11 @@ pub struct RuntimeHooks {
     /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` — spec
     /// web_worker.zig:727. `CronJob` lives in `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` — spec
+    /// VirtualMachine.zig:815. Same impl as `cron_clear_all_teardown` but
+    /// the `.reload` mode preserves the next-fire schedule across the new
+    /// global so timers re-register instead of being torn down.
+    pub cron_clear_all_reload: unsafe fn(vm: *mut VirtualMachine),
     /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
     /// live above `bun_jsc`; the high tier downcasts the trait-object data
@@ -1959,7 +1964,6 @@ pub fn process_fetch_log(
     ret: &mut ErrorableResolvedSource,
     err: bun_core::Error,
 ) {
-    use crate::zig_string::ZigString;
     use crate::{BuildMessage, ResolveMessage};
 
     // Helper: `expr catch |e| globalThis.takeException(e)`.
@@ -2884,7 +2888,12 @@ impl VirtualMachine {
             bun_core::Output::enable_buffering();
         }
 
-        // TODO(b2-cycle): `bun_runtime::api::cron::CronJob::clear_all_for_vm(self, .reload)`.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: `self` is valid for the call; the hook walks the VM's
+            // cron-job list and detaches each job from the old global so the
+            // new global can re-register them post-reload.
+            unsafe { (hooks.cron_clear_all_reload)(self) };
+        }
         // SAFETY: `global` valid for VM lifetime; `JSGlobalObject::reload`
         // drains microtasks + collects async + clears the JSC module loader
         // registry.
@@ -5452,7 +5461,9 @@ impl VirtualMachine {
             let _ = formatter.map.remove(&err);
         }
 
-        drop(code_string_guard);
+        if let Some(s) = code_string_guard {
+            s.deref();
+        }
         Ok(())
     }
 

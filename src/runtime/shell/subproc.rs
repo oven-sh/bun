@@ -19,7 +19,7 @@ use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
 use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
+    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, SpawnResultExt as _, Status,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};

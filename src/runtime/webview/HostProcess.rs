@@ -21,7 +21,7 @@ use bun_core::{self, Error};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{self, EventLoopHandle, Process, ProcessExitVTable, Rusage, SpawnOptions, Status, Stdio};
+use bun_spawn::{self, EventLoopHandle, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status, Stdio};
 use bun_sys::{self, Fd, FdExt as _};
 
 declare_scope!(WebViewHost, hidden);

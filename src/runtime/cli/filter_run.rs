@@ -12,7 +12,7 @@ use bun_io::{BufferedReader, ReadState};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_resolver::package_json::{DependencyMap, IncludeDependencies, IncludeScripts};
-use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::{strings, ZStr};
 use bun_sys as sys;
 

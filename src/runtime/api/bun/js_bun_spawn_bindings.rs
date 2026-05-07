@@ -953,7 +953,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 IPC::Mode::Advanced => {
                     b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0".as_ptr() as *const c_char
                 }
-            }));
+            });
         }
     }
 

@@ -20,7 +20,7 @@ use crate::Command;
 // lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
 use crate::api::bun::process::{
     self as spawn, event_loop_handle_to_ctx, Process, ProcessExitVTable, Rusage, SpawnOptions,
-    SpawnProcessResult, Status,
+    SpawnProcessResult, SpawnResultExt as _, Status,
 };
 // TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;

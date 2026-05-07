@@ -665,13 +665,21 @@ pub mod __macro_support {
     /// `host_fn.zig:toJSHostCall` — installs an `ExceptionValidationScope`
     /// pinned at the macro caller's `Location` and asserts the empty/thrown
     /// invariant.
+    ///
+    /// Takes a closure (not a value) so the user-fn body runs *inside*
+    /// `to_js_host_call`'s `catch_unwind` barrier — a `panic!` in the body
+    /// becomes a JS exception instead of unwinding out of the `extern "C"`
+    /// thunk (UB).
     #[inline]
     #[track_caller]
-    pub fn host_fn_result(global: &JSGlobalObject, r: impl IntoHostFnResult) -> JSValue {
+    pub fn host_fn_result<R: IntoHostFnResult>(
+        global: &JSGlobalObject,
+        f: impl FnOnce() -> R,
+    ) -> JSValue {
         // PORT NOTE: Zig passed `@src()` explicitly; `to_js_host_call` is
         // `#[track_caller]` so the caller's `Location` propagates through this
         // `#[track_caller]` shim into `ExceptionValidationScope::init`.
-        super::host_fn::to_js_host_call(global, move || r.into_host_fn_result())
+        super::host_fn::to_js_host_call(global, move || f().into_host_fn_result())
     }
 
     /// Setter result mapping: `()` / `JsResult<()>` → `bool` (false on throw).
@@ -681,25 +689,15 @@ pub mod __macro_support {
     /// Accepts the same [`IntoHostSetterReturn`] surface as
     /// [`super::host_fn::host_setter_result`] so `#[host_fn(setter)]`-tagged
     /// methods type-check against the exact signature the codegen calls.
+    /// Takes a closure for the same `catch_unwind` reason as
+    /// [`host_fn_result`].
     #[inline]
-    pub fn host_fn_setter_result<R>(global: &JSGlobalObject, r: R) -> bool
+    #[track_caller]
+    pub fn host_fn_setter_result<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> bool
     where
         R: super::host_fn::IntoHostSetterReturn,
     {
-        match r.into_host_setter_return() {
-            Ok(()) => true,
-            Err(JsError::OutOfMemory) => {
-                global.throw_out_of_memory_value();
-                false
-            }
-            Err(_) => {
-                debug_assert!(
-                    global.has_exception(),
-                    "host_fn(setter): JsError without pending exception"
-                );
-                false
-            }
-        }
+        super::host_fn::host_setter_result(global, f)
     }
 
     /// Construct result mapping: `JsResult<*mut T>` → `*mut c_void` (null on

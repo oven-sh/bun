@@ -1992,7 +1992,8 @@ fn NewPrinter(
         fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
             // Raw template literals must preserve bytes verbatim because they are
             // exposed to JavaScript via the .raw property and String.raw. Escaping
-            // non-ASCII characters to \uXXXX would change the runtime string value.
+            // non-ASCII characters to unicode escape sequences would change the
+            // runtime string value.
             p.print(bytes);
         }
 

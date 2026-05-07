@@ -1364,45 +1364,24 @@ impl Value {
         )
     }
 
-    // TODO(port): not a clean Drop — mutates self to Null and is called explicitly at specific
+    // PORT NOTE: not a clean Drop — mutates self to Null and is called explicitly at specific
     // protocol points. Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
-        let tag = self.tag();
-        if tag == Tag::Locked {
-            let Value::Locked(locked) = self else { unreachable!() };
-            if !locked.deinit {
-                locked.deinit = true;
-                locked.readable.deinit();
-                locked.readable = Default::default();
+        match self {
+            Value::Locked(locked) => {
+                if !locked.deinit {
+                    locked.deinit = true;
+                    locked.readable.deinit();
+                    locked.readable = Default::default();
+                }
             }
-            return;
-        }
-
-        if tag == Tag::InternalBlob {
-            // PORT NOTE: `Internal::clear_and_free` not yet ported; the Zig
-            // body just freed the backing list. Taking the Vec drops it.
-            if let Value::InternalBlob(ib) = self {
-                let _ = core::mem::take(ib);
+            Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
+                // Zig: `clearAndFree` / `Blob.deinit` / `str.deref` — all handled by
+                // dropping the variant payload via assignment.
+                *self = Value::Null;
             }
-            *self = Value::Null;
-        }
-
-        if tag == Tag::Blob {
-            if let Value::Blob(b) = self {
-                b.deinit();
-            }
-            *self = Value::Null;
-        }
-
-        if tag == Tag::WTFStringImpl {
-            // Dropping the Arc derefs it.
-            *self = Value::Null;
-        }
-
-        if tag == Tag::Error {
-            if let Value::Error(e) = self {
-                e.reset();
-            }
+            Value::Error(e) => e.reset(),
+            Value::Used | Value::Empty | Value::Null => {}
         }
     }
 

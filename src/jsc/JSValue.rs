@@ -729,16 +729,23 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// JSValue.zig `getFunction` — `get(prop)`, filter to callable.
+    /// JSValue.zig:1824 `getFunction` — `getOptional(JSValue)` (filters
+    /// undefined/null), then non-callable throws "{prop} must be a function".
     pub fn get_function(
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
-        match self.get(global, property)? {
-            Some(v) if v.is_callable() => Ok(Some(v)),
-            _ => Ok(None),
+        let property = property.as_ref();
+        let Some(v) = self.get(global, property)? else { return Ok(None) };
+        if v.is_undefined_or_null() { return Ok(None); }
+        if !v.is_cell() || !v.is_callable() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} must be a function",
+                alloc::string::String::from_utf8_lossy(property),
+            )));
         }
+        Ok(Some(v))
     }
     /// JSValue.zig:1873 `getBooleanStrict` — missing/undefined → `None`;
     /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.

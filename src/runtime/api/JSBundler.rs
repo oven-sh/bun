@@ -1368,12 +1368,9 @@ pub mod js_bundler {
                 ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
                 callback: resolve_run_on_js_thread_wrap,
             };
+            let task = ConcurrentTask::create(self.js_task.task());
             // SAFETY: bv2 is a valid backref set by BundleV2
-            unsafe {
-                (*self.bv2)
-                    .js_loop_for_plugins()
-                    .enqueue_task_concurrent(ConcurrentTask::create(self.js_task.task()));
-            }
+            unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
         }
 
         fn run_on_js_thread(&mut self) {

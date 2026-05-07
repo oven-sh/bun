@@ -671,7 +671,7 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess>);
+            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>);
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_BUFFERED_WRITER => {

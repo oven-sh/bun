@@ -2652,21 +2652,14 @@ pub mod internal {
 
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
 
-        let port: u16 = 'brk: {
-            if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
-                // TODO(port): use `JSGlobalObject::validate_integer_range` once
-                // the gated `JSGlobalObject.rs` impl is enabled upstream.
-                let _ = jsc::IntegerRangeOptions { field_name: b"port", always_allow_zero: true, ..Default::default() };
-                let n = arguments[1].coerce::<i32>(global_this)?;
-                if n != 0 && !(0..=(u16::MAX as i32)).contains(&n) {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "port must be between 0 and 65535, got {n}"
-                    )));
-                }
-                break 'brk n as u16;
-            } else {
-                break 'brk 443;
-            }
+        let port: u16 = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+            global_this.validate_integer_range::<u16>(
+                arguments[1],
+                443,
+                jsc::IntegerRange { field_name: b"port", always_allow_zero: true, ..Default::default() },
+            )?
+        } else {
+            443
         };
 
         // SAFETY: `VirtualMachine::get()` returns the live thread-local VM (panics if absent).

@@ -371,18 +371,24 @@ impl<'a> Subprocess<'a> {
         let _ = result;
     }
 
-    /// Obtain `&mut Process` through the `Arc`. Zig stores `*Process` and
-    /// mutates freely; the Rust port holds `ManuallyDrop<Arc<Process>>` for
-    /// ref-count parity, but every mutation site is single-threaded on the JS
-    /// mutator, so projecting `&mut` through the `Arc` mirrors the original
-    /// pointer semantics.
-    ///
+    /// Borrow the intrusively-refcounted `Process`. Zig stores `*Process` and
+    /// reads/mutates freely; every access site is single-threaded on the JS
+    /// mutator, so projecting `&`/`&mut` through the raw pointer mirrors the
+    /// original semantics.
+    #[inline]
+    pub fn process(&self) -> &Process {
+        // SAFETY: `process` is set at construction from a freshly-boxed
+        // `Process` and released only in `finalize()`; every caller is on the
+        // owning JS thread before `finalize()` runs.
+        unsafe { &*self.process }
+    }
+
     /// # Safety
     /// Caller must be on the owning JS thread with no other live `&mut Process`.
     #[inline]
     fn process_mut(&self) -> &mut Process {
-        // SAFETY: see doc comment — Zig `*Process` semantics.
-        unsafe { &mut *(Arc::as_ptr(&self.process) as *mut Process) }
+        // SAFETY: see `process()` — Zig `*Process` semantics.
+        unsafe { &mut *self.process }
     }
 
     /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
@@ -1400,10 +1406,12 @@ impl Subprocess<'_> {
         this.finalize_streams();
 
         this.process_mut().detach();
-        // Match Zig's `this.process.deref()`: release the Arc strong ref now, not when
-        // ref_count → 0. ManuallyDrop on the field prevents a double-drop later.
-        // SAFETY: finalize() runs exactly once; no code path reads `this.process` after this.
-        unsafe { ManuallyDrop::drop(&mut this.process) };
+        // Match Zig's `this.process.deref()`: release the intrusive ref now,
+        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
+        // no code path reads `this.process` after this (finalize runs once).
+        // SAFETY: `process` is the live Box-backed Process; deref() frees it
+        // when its own ThreadSafeRefCount reaches zero.
+        unsafe { (*this.process).deref() };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             // SAFETY: single JS thread; `timer_all()` points into the boxed

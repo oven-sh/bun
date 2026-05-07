@@ -1430,14 +1430,16 @@ impl VirtualMachine {
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
-        // SAFETY: extern "C" FFI; `console` valid.
+        // SAFETY: extern "C" FFI; `console` valid. `worker_ptr` is the C++
+        // `WebCore::Worker*` (or null on the main thread) — spec
+        // VirtualMachine.zig:1477-1484 / JSGlobalObject.zig:876.
         let global = unsafe {
             Zig__GlobalObject__create(
                 console.cast(),
                 context_id,
-                opts.smol,
+                opts.mini_mode,
                 opts.eval_mode,
-                core::ptr::null_mut(),
+                opts.worker_ptr,
             )
         };
         // JSC may mess with the stack size (spec JSGlobalObject.zig:879).

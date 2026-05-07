@@ -6387,16 +6387,9 @@ fn new_route_params_for_bundle_promise_for_js(
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw("Request context does not belong to dev server"));
     };
-    // LAYERING: `AnyRequestContext::dev_server_mut()` is typed against the
-    // keystone `dev_server::DevServer`; this file's full-port `DevServer<'_>`
-    // is the eventual replacement. The two are field-compatible by
-    // construction (same Zig source) and will be unified by collapsing the
-    // keystone to a re-export. Until then, bridge via `*mut ()` — the
-    // pointer's provenance is the `Box<DevServer>` slot in `NewServer`, which
-    // body `set_routes` populates with this exact type once the field type
-    // narrows.
-    // SAFETY: see LAYERING note; JS-thread single-writer.
-    let dev: &mut DevServer = unsafe { &mut *(dev_ptr as *mut () as *mut DevServer) };
+    // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
+    // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
+    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
 
     let route_bundle_index =
         route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).unwrap());

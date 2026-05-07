@@ -691,7 +691,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 // SAFETY: libuv async request; `task.req` and `path` outlive the
                 // call (path is copied internally by libuv before return).
                 let rc = unsafe { uv::uv_fs_open(loop_, &mut task.req, path.as_ptr(), flags, mode, Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv open({}, {}, {}) = scheduled", bstr::BStr::new(path.as_bytes()), flags, mode);
             }
             NodeFSFunctionEnum::Close => {
@@ -707,7 +707,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 }
                 // SAFETY: libuv async request.
                 let rc = unsafe { uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv close({}) = scheduled", fd);
             }
             NodeFSFunctionEnum::Read => {
@@ -721,7 +721,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 // SAFETY: libuv copies the iovec descriptor before return; the
                 // backing Buffer is JS-protected via `to_thread_safe`.
                 let rc = unsafe { uv::uv_fs_read(loop_, &mut task.req, fd, bufs.as_ptr(), 1, args.position.map(|p| p as i64).unwrap_or(-1), Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv read({}) = scheduled", fd);
             }
             NodeFSFunctionEnum::Write => {
@@ -734,7 +734,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 let bufs = [uv::uv_buf_t::init(buf)];
                 // SAFETY: see Read arm.
                 let rc = unsafe { uv::uv_fs_write(loop_, &mut task.req, fd, bufs.as_ptr(), 1, args.position.map(|p| p as i64).unwrap_or(-1), Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv write({}) = scheduled", fd);
             }
             NodeFSFunctionEnum::Readv => {
@@ -746,7 +746,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
                 // the leaked task; libuv copies the array before return.
                 let rc = unsafe { uv::uv_fs_read(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).unwrap(), pos, Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv readv({}, {:p}, {}, {}, {} total bytes) = scheduled", fd, bufs.as_ptr(), bufs.len(), pos, sum);
             }
             NodeFSFunctionEnum::Writev => {
@@ -764,7 +764,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                 // SAFETY: see Readv arm.
                 let rc = unsafe { uv::uv_fs_write(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).unwrap(), pos, Some(Self::uv_callback)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv writev({}, {:p}, {}, {}, {} total bytes) = scheduled", fd, bufs.as_ptr(), bufs.len(), pos, sum);
             }
             NodeFSFunctionEnum::Statfs => {
@@ -772,7 +772,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 let path = args.path.slice_z(&mut binding.node_fs.sync_error_buf);
                 // SAFETY: libuv copies `path` internally before return.
                 let rc = unsafe { uv::uv_fs_statfs(loop_, &mut task.req, path.as_ptr(), Some(Self::uv_callbackreq)) };
-                debug_assert!(rc.is_zero());
+                debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv statfs({}) = ~~", bstr::BStr::new(path.as_bytes()));
             }
             _ => unreachable!("UVFSRequest type not implemented"),

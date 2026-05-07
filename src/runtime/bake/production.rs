@@ -1,43 +1,39 @@
 //! Implements building a Bake application to production
 
-#![allow(unused_imports, unused_variables, dead_code, unreachable_code, unused_mut)]
-
-use core::ffi::c_char;
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::sync::OnceLock;
 
 use bstr::BStr;
 
 use bun_alloc::Arena;
 use crate::bake as bake;
 use crate::bake::bake_body;
-use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
-// Full Phase-A FrameworkRouter draft (has `Part`, `route_ptr`, `init_empty`,
-// `scan_all`, `Route.part`). The keystone stub in `mod.rs::framework_router`
-// only carries the index newtypes; route construction/walking goes through
-// the full body. Phase B unifies these once the stub is dropped.
-use crate::bake::framework_router_body as fr;
+use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use super::PatternBuffer;
 use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
 use bun_bundler::output_file::Index as OutputFileIndex;
 use bun_bundler::BundleV2;
+use bun_bundler::Transpiler;
 
-use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
+use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::{self as bun, Global, Output};
 use bun_dotenv as dotenv;
-use bun_http::AsyncHTTP;
 use bun_jsc::{self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult, StringJsc as _};
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self as path, PathBuffer};
-use bun_paths::resolve_path::{self as resolve_path, platform};
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 use bun_string::{strings, String as BunString};
-use bun_bundler::Transpiler;
 
-use crate::cli::command::{Context, ContextData, HotReload};
+use crate::cli::command::{Context, HotReload};
 use bun_options_types::Context::MacroOptions;
 use bun_options_types::OfflineMode::OfflineMode;
+
+use bun_bundler::options::OutputKind;
 
 bun_core::declare_scope!(production, visible);
 
@@ -63,6 +59,20 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
         bun_bundler::options::Side::Server => "server",
     }
 }
+
+/// Process-lifetime backing storage for the dotenv singleton (mirrors Zig's
+/// `allocator.create(DotEnv.Map)` + `allocator.create(DotEnv.Loader)` that are
+/// never freed). PORTING.md §Forbidden bans `Box::leak`; `OnceLock` owns the
+/// allocation instead. `Loader` self-borrows `Map`, so both live in one cell.
+struct DotenvSingleton {
+    map: UnsafeCell<dotenv::Map>,
+    loader: UnsafeCell<MaybeUninit<dotenv::Loader<'static>>>,
+}
+// SAFETY: `build_command` runs single-threaded during CLI init; the singleton
+// is set exactly once before any reader exists (same invariant the Zig
+// `pub var instance: ?*Loader` had).
+unsafe impl Sync for DotenvSingleton {}
+static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
 
 pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     bake::print_warning();
@@ -134,19 +144,13 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         vm.argv = ctx.passthrough.clone();
         vm.arena = NonNull::new(&mut arena as *mut Arena);
         // vm.allocator = arena.allocator() — dropped per §Allocators
-        // SAFETY: spec production.zig:50 assigns `ctx.install` (a `?*Api.BunInstall`)
-        // by raw pointer; `ctx` is process-lifetime CLI state that outlives `vm`
-        // (which is destroyed in `_vm_guard` above before `ctx` is dropped). Erase
-        // the `'1` borrow to `'static` to satisfy `Transpiler<'static>` invariance.
-        b.options.install = ctx
-            .install
-            .as_deref()
-            .map(|p| unsafe { &*(p as *const _) });
-        b.resolver.opts.install = ctx
-            .install
-            .as_deref()
-            .map(|p| p as *const _ as *const ())
-            .unwrap_or(core::ptr::null());
+        // Spec production.zig:50: `b.options.install = ctx.install` (raw
+        // `?*const Api.BunInstall` copy). `BundleOptions.install` is now
+        // `Option<NonNull<_>>`, so no lifetime-extension cast is needed.
+        let install_ptr = ctx.install.as_deref().map(NonNull::from);
+        b.options.install = install_ptr;
+        b.resolver.opts.install =
+            install_ptr.map_or(core::ptr::null(), |p| p.as_ptr() as *const ());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
@@ -185,21 +189,13 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             // shallow struct copy where both maps share the same backing
             // string slices owned by `ctx`. The two Rust types are nominally
             // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
-            // vs `StringArrayHashMap<StringArrayHashMap<&'static [u8]>>`), so
-            // rebuild the resolver-shaped map borrowing `ctx`'s allocations.
-            //
-            // SAFETY: `ctx` is `&mut ContextData`, the CLI command singleton
-            // that lives for the process. The boxed bytes inside
-            // `ctx.debug.macros` are never freed or reassigned after CLI
-            // parsing, so extending the inner `&[u8]` borrows to `'static`
-            // mirrors the Zig shallow-copy semantics exactly.
+            // vs `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`), so
+            // rebuild the resolver-shaped map by cloning value bytes.
             let mut remap = bun_resolver::package_json::MacroMap::default();
             for (pkg, inner) in macros.iter() {
                 let mut entry = bun_resolver::package_json::MacroImportReplacementMap::default();
                 for (import_name, path) in inner.iter() {
-                    let path: &'static [u8] =
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path.as_ref()) };
-                    entry.insert(import_name.as_ref(), path);
+                    entry.insert(import_name.as_ref(), Box::<[u8]>::from(path.as_ref()));
                 }
                 remap.insert(pkg.as_ref(), entry);
             }
@@ -222,21 +218,12 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     let api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
     // defer api_lock.release() — handled by ApiLock's Drop
 
-    let mut pt: PerThread = PerThread {
-        input_files: &[],
-        bundled_outputs: &[],
-        output_indexes: &[],
-        module_keys: &[],
-        module_map: StringArrayHashMap::default(),
-        source_maps: StringArrayHashMap::default(),
-
-        vm: vm_ptr,
-        loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
-        // PORT NOTE: Zig set `.null` then `.protect()`/`.unprotect()` manually;
-        // PORTING.md mandates `Strong` for heap-stored JSValue. `None` mirrors the
-        // pre-init state; `PerThread::init` overwrites it with `Some(Strong)`.
-        all_server_files: None,
-    };
+    // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
+    // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
+    // value living in this frame). Start with an empty placeholder so Drop
+    // (which detaches the C++-side per-thread pointer) runs in this frame's
+    // LIFO order — after the API lock, before the VM is destroyed.
+    let mut pt = PerThread::placeholder(vm_ptr);
 
     // PORT NOTE: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
     // the raw VM pointer and re-borrow inside.
@@ -450,20 +437,31 @@ pub fn build_with_vm(
         .unwrap_or(false);
 
     // this is probably wrong
-    let map = Box::leak(Box::new(dotenv::Map::init()));
-    let loader = Box::leak(Box::new(dotenv::Loader::init(map)));
+    // PORT NOTE: process-lifetime dotenv singleton owned via `OnceLock`
+    // (PORTING.md §Forbidden: no `Box::leak`). `Loader` self-borrows `Map`,
+    // so both live in `DOTENV_SINGLETON`.
+    let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
+        map: UnsafeCell::new(dotenv::Map::init()),
+        loader: UnsafeCell::new(MaybeUninit::uninit()),
+    });
+    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time setup
+    // and `backing` is never moved (static storage), so the `&'static mut Map`
+    // self-borrow stored in `Loader` stays valid for process lifetime.
+    let loader = unsafe {
+        let map = &mut *backing.map.get();
+        (*backing.loader.get()).write(dotenv::Loader::init(map));
+        (*backing.loader.get()).assume_init_mut()
+    };
     loader.map.put(b"NODE_ENV", b"production")?;
-    // PORT NOTE: process-lifetime singleton; `Box::leak` is the OnceLock-equivalent
-    // here (matches Zig's `bun.DotEnv.instance = loader;` which never frees).
     dotenv::set_instance(loader as *mut dotenv::Loader<'static>);
 
     // TODO(port): Zig used `var x: Transpiler = undefined;` + out-param init.
     // PORTING.md §Exception — out-param constructors: reshape to a returned
     // value once `init_transpiler_with_options` is reshaped; for now use
     // `MaybeUninit` to mirror the in-place-init contract.
-    let mut client_transpiler = core::mem::MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = core::mem::MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = core::mem::MaybeUninit::<Transpiler>::uninit();
+    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
+    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
+    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
     // SAFETY: vm.log is set from ctx.log (non-null process-lifetime).
     let vm_log = unsafe { vm.log.unwrap().as_mut() };
     framework.init_transpiler_with_options(
@@ -508,11 +506,18 @@ pub fn build_with_vm(
     let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
     // SAFETY: written above by init_transpiler_with_options.
     let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
-    // SAFETY: only read when separate_ssr_graph (initialized above).
-    let ssr_transpiler = unsafe { ssr_transpiler.assume_init_mut() };
+    // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
+    // inside `if separate_ssr_graph` blocks below — Rust forbids forming
+    // `&mut T` to uninitialized memory regardless of later use.
 
     if ctx.bundler_options.bake_debug_disable_minify {
-        for transpiler in [&mut *client_transpiler, &mut *server_transpiler, &mut *ssr_transpiler] {
+        let mut targets: Vec<&mut Transpiler> =
+            vec![&mut *client_transpiler, &mut *server_transpiler];
+        if separate_ssr_graph {
+            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+        }
+        for transpiler in targets {
             transpiler.options.minify_syntax = false;
             transpiler.options.minify_identifiers = false;
             transpiler.options.minify_whitespace = false;
@@ -569,10 +574,10 @@ pub fn build_with_vm(
 
     // PORT NOTE: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
-    let mut router_types: Vec<fr::Type> =
+    let mut router_types: Vec<framework_router::Type> =
         Vec::with_capacity(framework.file_system_router_types.len());
 
-    let mut entry_points: EntryPointMap = EntryPointMap {
+    let mut entry_points = EntryPointMap {
         root: Box::from(cwd),
         files: EntryPointHashMap::default(),
         owned_paths: Vec::new(),
@@ -589,9 +594,6 @@ pub fn build_with_vm(
         // SAFETY: read_dir_info_ignore_error returns a *const DirInfo into the
         // resolver's cache, which outlives this loop body.
         let entry = unsafe { &*entry };
-        // PORT NOTE: `fr::OpaqueFileId` and `framework_router::OpaqueFileId` are
-        // structurally identical newtypes split across the stub/draft; convert
-        // by `.get()` round-trip until Phase B unifies.
         let server_file = entry_points
             .get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
         let client_file = if let Some(client) = fsr.entry_client {
@@ -599,7 +601,7 @@ pub fn build_with_vm(
         } else {
             None
         };
-        router_types.push(fr::Type {
+        router_types.push(framework_router::Type {
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
                 entry.abs_path,
             )),
@@ -615,84 +617,67 @@ pub fn build_with_vm(
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            // PORT NOTE: `framework_router::Style` and `fr::Style` are now the
-            // same type (re-exported from `framework_router_body`); the prior
-            // by-variant conversion is gone. `fsr` is `&FileSystemRouterType`
-            // so move-out is unavailable — `Style` is `Clone` (the
-            // `JavascriptDefined` arm panics inside `clone()`, matching the
-            // Zig spec's `@panic("TODO: customizable Style")`).
+            // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
+            // `clone()`, matching the Zig spec's `@panic("TODO")`).
             style: fsr.style.clone(),
             allow_layouts: fsr.allow_layouts,
-            server_file: fr::OpaqueFileId::init(server_file.get()),
-            client_file: client_file.map(|f| fr::OpaqueFileId::init(f.get())),
+            server_file: OpaqueFileId::init(server_file.get()),
+            client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
             server_file_string: bun_jsc::StrongOptional::empty(),
         });
     }
 
-    let mut router = fr::FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
+    let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
     router.scan_all(
         &mut server_transpiler.resolver,
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // PORT NOTE: `BundleV2::generate_from_bake_production_cli` takes the
-    // bundler-crate's TYPE_ONLY mirrors (`bake_types::production::EntryPointMap`,
-    // `bake_types::Framework`, opaque `JSBundlerPlugin`, `EventLoop =
-    // Option<NonNull<()>>`). The runtime carries richer duplicates; project the
-    // fields the bundler actually reads. Zig passed the runtime structs by
-    // shallow-copy — same here, just explicit.
+    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
+    // `built_in_modules` / `server_components` / `is_built_in_react` via its
+    // lower-tier `bake_types::Framework` view. Project once here. (Full
+    // unification requires moving `FileSystemRouterType`/`ReactFastRefresh` to
+    // bun_bundler — tracked separately.)
+    // TODO(port): collapse `bake_body::Framework` into `bun_bundler::bake_types::Framework`
+    // once `FileSystemRouterType`/`framework_router::Style` move down to bun_bundler.
+    let bundler_framework = bun_bundler::bake_types::Framework::new(
+        core::mem::take(&mut framework.built_in_modules),
+        framework
+            .server_components
+            .as_ref()
+            .map(|sc| bun_bundler::bake_types::ServerComponents {
+                separate_ssr_graph: sc.separate_ssr_graph,
+                server_runtime_import: Box::from(sc.server_runtime_import.as_ref()),
+                server_register_client_reference: Box::from(
+                    sc.server_register_client_reference.as_ref(),
+                ),
+            }),
+        framework.is_built_in_react,
+    );
+
     let bundled_outputs_list: Vec<OutputFile> = {
-        // 1. EntryPointMap: bundler only reads `.root` and `.files.keys()`
-        //    (`enqueue_entry_points_bake_production`). Values are unused, so
-        //    rebuild with the same keys; raw `abs_path` ptrs borrow
-        //    `entry_points.owned_paths`, which outlives this block.
-        let mut bundler_entry_points =
-            bun_bundler::bake_types::production::EntryPointMap::default();
-        bundler_entry_points.root = entry_points.root.clone();
-        for k in entry_points.files.keys() {
-            bundler_entry_points.files.put(
-                bun_bundler::bake_types::production::InputFile::init(k.abs_path(), k.side),
-                0,
-            )?;
-        }
-
-        // 2. Framework: bundler reads `built_in_modules`, `server_components`,
-        //    `is_built_in_react`. Mirrors Zig's `framework.*` shallow-copy by
-        //    moving `built_in_modules` (not read again below) and projecting
-        //    `server_components`.
-        let bundler_framework = bun_bundler::bake_types::Framework::new(
-            core::mem::take(&mut framework.built_in_modules),
-            framework
-                .server_components
-                .as_ref()
-                .map(|sc| bun_bundler::bake_types::ServerComponents {
-                    separate_ssr_graph: sc.separate_ssr_graph,
-                    server_runtime_import: Box::from(sc.server_runtime_import.as_ref()),
-                    server_register_client_reference: Box::from(
-                        sc.server_register_client_reference.as_ref(),
-                    ),
-                }),
-            framework.is_built_in_react,
-        );
-
-        // 3. Transpiler pointers — reborrow via raw to sidestep the
-        //    `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
+        // Transpiler pointers — reborrow via raw to sidestep the
+        // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
         // SAFETY: the three transpilers live in this stack frame and outlive
         // the bundle call; `BundleV2` does not retain them past return.
         let server_ptr: *mut Transpiler = &mut *server_transpiler;
         let client_ptr: *mut Transpiler = &mut *client_transpiler;
         let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            &mut *ssr_transpiler
+            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
+            unsafe { ssr_transpiler.assume_init_mut() } as *mut Transpiler
         } else {
             server_ptr
         };
 
         BundleV2::generate_from_bake_production_cli(
-            bundler_entry_points,
+            &entry_points,
+            // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
             bun_bundler::BakeOptions {
                 framework: bundler_framework,
+                // SAFETY: stack-owned; see above.
                 client_transpiler: unsafe { NonNull::new_unchecked(client_ptr) },
+                // SAFETY: stack-owned; see above.
                 ssr_transpiler: unsafe { NonNull::new_unchecked(ssr_ptr) },
                 // `jsc::Plugin` is `c_void`; bundler's `JSBundlerPlugin` is an
                 // opaque `#[repr(C)]` ZST — both name the same C++ BunPlugin*.
@@ -703,8 +688,7 @@ pub fn build_with_vm(
             NonNull::new(vm.event_loop().cast()),
         )?
     };
-    let bundled_outputs = bundled_outputs_list.as_slice();
-    if bundled_outputs.is_empty() {
+    if bundled_outputs_list.is_empty() {
         bun_core::prettyln!("done");
         Output::flush();
         return Ok(());
@@ -730,65 +714,55 @@ pub fn build_with_vm(
     // Populate indexes in `entry_points` to be looked up during prerendering
     let mut module_keys: Vec<BunString> =
         vec![BunString::dead(); entry_points.files.count()];
-    let output_indexes = entry_points.files.values_mut();
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
-    for (i, file) in bundled_outputs.iter().enumerate() {
-        log!(
-            "src_index={:?} side={} src={} dest={} - {:?}\n",
-            file.source_index,
-            file.side
-                .map(side_name)
-                .unwrap_or("null"),
-            BStr::new(&file.src_path.text),
-            BStr::new(&file.dest_path),
-            file.entry_point_index,
-        );
-        if file.loader.is_css() {
-            if css_chunks_count == 0 {
-                css_chunks_first = i;
-            } else {
-                css_chunks_first = css_chunks_first.min(i);
+    {
+        let output_indexes = entry_points.files.values_mut();
+        for (i, file) in bundled_outputs_list.iter().enumerate() {
+            log!(
+                "src_index={:?} side={} src={} dest={} - {:?}\n",
+                file.source_index,
+                file.side
+                    .map(side_name)
+                    .unwrap_or("null"),
+                BStr::new(&file.src_path.text),
+                BStr::new(&file.dest_path),
+                file.entry_point_index,
+            );
+            if file.loader.is_css() {
+                if css_chunks_count == 0 {
+                    css_chunks_first = i;
+                } else {
+                    css_chunks_first = css_chunks_first.min(i);
+                }
+                css_chunks_count += 1;
             }
-            css_chunks_count += 1;
-        }
 
-        if let Some(entry_point) = file.entry_point_index {
-            if (entry_point as usize) < output_indexes.len() {
-                output_indexes[entry_point as usize] =
-                    OutputFileIndex(u32::try_from(i).unwrap());
-            }
-        }
-
-        // The output file which contains the runtime (Index.runtime, contains
-        // wrapper functions like `__esm`) is marked as server side, but it is
-        // also used by client
-        if file.bake_extra.bake_is_runtime {
-            if cfg!(debug_assertions) {
-                debug_assert!(
-                    maybe_runtime_file_index.is_none(),
-                    "Runtime file should only be in one chunk."
-                );
-            }
-            maybe_runtime_file_index = Some(u32::try_from(i).unwrap());
-        }
-
-        // TODO: Maybe not do all the disk-writing in 1 thread?
-        let Some(side) = file.side else { continue };
-        match side {
-            bun_bundler::options::Side::Client => {
-                // Client-side resources will be written to disk for usage on the client side
-                if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
-                    bun_crash_handler::handle_error_return_trace(err, None);
-                    Output::err(
-                        err,
-                        "Failed to write {} to output directory",
-                        (bun_core::fmt::quote(&file.dest_path),),
-                    );
+            if let Some(entry_point) = file.entry_point_index {
+                if (entry_point as usize) < output_indexes.len() {
+                    output_indexes[entry_point as usize] =
+                        OutputFileIndex(u32::try_from(i).unwrap());
                 }
             }
-            bun_bundler::options::Side::Server => {
-                if ctx.bundler_options.bake_debug_dump_server {
+
+            // The output file which contains the runtime (Index.runtime, contains
+            // wrapper functions like `__esm`) is marked as server side, but it is
+            // also used by client
+            if file.bake_extra.bake_is_runtime {
+                if cfg!(debug_assertions) {
+                    debug_assert!(
+                        maybe_runtime_file_index.is_none(),
+                        "Runtime file should only be in one chunk."
+                    );
+                }
+                maybe_runtime_file_index = Some(u32::try_from(i).unwrap());
+            }
+
+            // TODO: Maybe not do all the disk-writing in 1 thread?
+            let Some(side) = file.side else { continue };
+            match side {
+                bun_bundler::options::Side::Client => {
+                    // Client-side resources will be written to disk for usage on the client side
                     if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
                         bun_crash_handler::handle_error_return_trace(err, None);
                         Output::err(
@@ -798,60 +772,72 @@ pub fn build_with_vm(
                         );
                     }
                 }
-
-                // If the file has a sourcemap, store it so we can put it on
-                // `PerThread` so we can provide sourcemapped stacktraces for
-                // server components.
-                if file.source_map_index != u32::MAX {
-                    write_sourcemap_to_disk(file, bundled_outputs, &mut source_maps)?;
-                }
-
-                match file.output_kind {
-                    OutputKind::EntryPoint | OutputKind::Chunk => {
-                        let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                            || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                        {
-                            &file.dest_path[2..]
-                        } else {
-                            &file.dest_path[..]
-                        };
-
-                        if let Some(entry_point_index) = file.entry_point_index {
-                            if (entry_point_index as usize) < module_keys.len() {
-                                let mut str = BunString::create_format(format_args!(
-                                    "bake:/{}",
-                                    BStr::new(without_prefix)
-                                ));
-                                str.to_thread_safe();
-                                module_keys[entry_point_index as usize] = str;
-                            }
+                bun_bundler::options::Side::Server => {
+                    if ctx.bundler_options.bake_debug_dump_server {
+                        if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                            bun_crash_handler::handle_error_return_trace(err, None);
+                            Output::err(
+                                err,
+                                "Failed to write {} to output directory",
+                                (bun_core::fmt::quote(&file.dest_path),),
+                            );
                         }
-
-                        log!(
-                            "  adding module map entry: output_module_map(bake:/{}) = {}\n",
-                            BStr::new(without_prefix),
-                            i
-                        );
-
-                        let mut key = Vec::with_capacity(6 + without_prefix.len());
-                        write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
-                        output_module_map.put(
-                            &key,
-                            OutputFileIndex(u32::try_from(i).unwrap()),
-                        )?;
                     }
-                    OutputKind::Asset => {}
-                    OutputKind::Bytecode => {}
-                    OutputKind::Sourcemap => {}
-                    OutputKind::ModuleInfo => {}
-                    OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
+
+                    // If the file has a sourcemap, store it so we can put it on
+                    // `PerThread` so we can provide sourcemapped stacktraces for
+                    // server components.
+                    if file.source_map_index != u32::MAX {
+                        write_sourcemap_to_disk(file, &bundled_outputs_list, &mut source_maps)?;
+                    }
+
+                    match file.output_kind {
+                        OutputKind::EntryPoint | OutputKind::Chunk => {
+                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
+                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
+                            {
+                                &file.dest_path[2..]
+                            } else {
+                                &file.dest_path[..]
+                            };
+
+                            if let Some(entry_point_index) = file.entry_point_index {
+                                if (entry_point_index as usize) < module_keys.len() {
+                                    let mut str = BunString::create_format(format_args!(
+                                        "bake:/{}",
+                                        BStr::new(without_prefix)
+                                    ));
+                                    str.to_thread_safe();
+                                    module_keys[entry_point_index as usize] = str;
+                                }
+                            }
+
+                            log!(
+                                "  adding module map entry: output_module_map(bake:/{}) = {}\n",
+                                BStr::new(without_prefix),
+                                i
+                            );
+
+                            let mut key = Vec::with_capacity(6 + without_prefix.len());
+                            write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
+                            output_module_map.put(
+                                &key,
+                                OutputFileIndex(u32::try_from(i).unwrap()),
+                            )?;
+                        }
+                        OutputKind::Asset => {}
+                        OutputKind::Bytecode => {}
+                        OutputKind::Sourcemap => {}
+                        OutputKind::ModuleInfo => {}
+                        OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
+                    }
                 }
             }
-        }
 
-        // TODO: should we just write the sourcemaps to disk?
-        if file.source_map_index != u32::MAX {
-            write_sourcemap_to_disk(file, bundled_outputs, &mut source_maps)?;
+            // TODO: should we just write the sourcemaps to disk?
+            if file.source_map_index != u32::MAX {
+                write_sourcemap_to_disk(file, &bundled_outputs_list, &mut source_maps)?;
+            }
         }
     }
     // Write the runtime file to disk if there are any client chunks
@@ -861,20 +847,12 @@ pub fn build_with_vm(
                 "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
             ));
         };
-        let any_client_chunks = 'any_client_chunks: {
-            for file in bundled_outputs {
-                if let Some(s) = file.side {
-                    if s == bun_bundler::options::Side::Client
-                        && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
-                    {
-                        break 'any_client_chunks true;
-                    }
-                }
-            }
-            break 'any_client_chunks false;
-        };
+        let any_client_chunks = bundled_outputs_list.iter().any(|file| {
+            file.side == Some(bun_bundler::options::Side::Client)
+                && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
+        });
         if any_client_chunks {
-            let runtime_file: &OutputFile = &bundled_outputs[runtime_file_index as usize];
+            let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
             if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
                 bun_crash_handler::handle_error_return_trace(err, None);
                 Output::err(
@@ -886,16 +864,14 @@ pub fn build_with_vm(
         }
     }
 
-    let per_thread_options: PerThreadOptions = PerThreadOptions {
-        input_files: entry_points.files.keys(),
-        bundled_outputs,
-        output_indexes,
-        module_keys: &module_keys,
-        module_map: output_module_map,
+    *pt = PerThread::init(
+        vm_ptr,
+        entry_points,
+        bundled_outputs_list,
+        module_keys,
+        output_module_map,
         source_maps,
-    };
-
-    *pt = PerThread::init(vm_ptr, per_thread_options)?;
+    )?;
     pt.attach();
 
     // Static site generator
@@ -905,7 +881,6 @@ pub fn build_with_vm(
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
-            let client_file = OpaqueFileId::init(client_file.get());
             let str = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),
@@ -917,7 +892,7 @@ pub fn build_with_vm(
             client_entry_urls.put_index(global, u32::try_from(i).unwrap(), JSValue::NULL).map_err(js_err)?;
         }
 
-        let server_file = OpaqueFileId::init(router_type.server_file.get());
+        let server_file = router_type.server_file;
         let server_entry_point = pt.load_bundled_module(server_file)?;
         let server_render_func = 'brk: {
             let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
@@ -935,7 +910,7 @@ pub fn build_with_vm(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
                 bun_core::fmt::quote(resolve_path::relative(
                     cwd,
-                    entry_points.files.keys()[server_file.get() as usize].abs_path()
+                    pt.input_file(server_file).abs_path()
                 ))
             );
             Global::crash();
@@ -961,7 +936,7 @@ pub fn build_with_vm(
                         "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
                         bun_core::fmt::quote(resolve_path::relative(
                             cwd,
-                            entry_points.files.keys()[server_file.get() as usize].abs_path()
+                            pt.input_file(server_file).abs_path()
                         ))
                     );
                     Global::crash();
@@ -974,20 +949,20 @@ pub fn build_with_vm(
         server_param_funcs.put_index(global, u32::try_from(i).unwrap(), server_param_func).map_err(js_err)?;
     }
 
-    let mut navigatable_routes: Vec<fr::RouteIndex> = Vec::new();
+    let mut navigatable_routes: Vec<framework_router::RouteIndex> = Vec::new();
     for (i, route) in router.routes.iter().enumerate() {
         if route.file_page.is_none() {
             continue;
         }
-        navigatable_routes.push(fr::RouteIndex::init(u32::try_from(i).unwrap()));
+        navigatable_routes.push(framework_router::RouteIndex::init(u32::try_from(i).unwrap()));
     }
 
     let mut css_chunk_js_strings: Vec<JSValue> = vec![JSValue::ZERO; css_chunks_count];
     debug_assert_eq!(
-        bundled_outputs[css_chunks_first..][..css_chunks_count].len(),
+        pt.bundled_outputs[css_chunks_first..][..css_chunks_count].len(),
         css_chunk_js_strings.len()
     );
-    for (output_file, str) in bundled_outputs[css_chunks_first..][..css_chunks_count]
+    for (output_file, str) in pt.bundled_outputs[css_chunks_first..][..css_chunks_count]
         .iter()
         .zip(css_chunk_js_strings.iter_mut())
     {
@@ -1035,21 +1010,19 @@ pub fn build_with_vm(
         let mut pattern = PatternBuffer::EMPTY;
 
         let route = router.route_ptr(route_index);
-        // PORT NOTE: `fr::OpaqueFileId` ↔ `framework_router::OpaqueFileId`
-        // round-trip (see Type construction above).
-        let main_file_route_index = OpaqueFileId::init(route.file_page.unwrap().get());
+        let main_file_route_index = route.file_page.unwrap();
         let main_file = pt.output_file(main_file_route_index);
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         pattern.prepend_part(route.part);
         match route.part {
-            fr::Part::Param(name) => {
+            framework_router::Part::Param(name) => {
                 params_buf.push(name);
             }
-            fr::Part::CatchAll(name) => {
+            framework_router::Part::CatchAll(name) => {
                 params_buf.push(name);
             }
-            fr::Part::CatchAllOptional(_) => {
+            framework_router::Part::CatchAllOptional(_) => {
                 return Err(js_err(global.throw(
                     "catch-all routes are not supported in static site generation",
                 )));
@@ -1060,23 +1033,22 @@ pub fn build_with_vm(
         let mut css_file_count: u32 =
             u32::try_from(main_file.referenced_css_chunks.len()).unwrap();
         if let Some(file) = route.file_layout {
-            let file = OpaqueFileId::init(file.get());
             css_file_count +=
                 u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
             file_count += 1;
         }
-        let mut next: Option<fr::RouteIndex> = route.parent;
+        let mut next: Option<framework_router::RouteIndex> = route.parent;
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             pattern.prepend_part(parent.part);
             match parent.part {
-                fr::Part::Param(name) => {
+                framework_router::Part::Param(name) => {
                     params_buf.push(name);
                 }
-                fr::Part::CatchAll(name) => {
+                framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
-                fr::Part::CatchAllOptional(_) => {
+                framework_router::Part::CatchAllOptional(_) => {
                     return Err(js_err(global.throw(
                         "catch-all routes are not supported in static site generation",
                     )));
@@ -1084,7 +1056,6 @@ pub fn build_with_vm(
                 _ => {}
             }
             if let Some(file) = parent.file_layout {
-                let file = OpaqueFileId::init(file.get());
                 css_file_count +=
                     u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
                 file_count += 1;
@@ -1109,7 +1080,6 @@ pub fn build_with_vm(
             css_file_count += 1;
         }
         if let Some(file) = route.file_layout {
-            let file = OpaqueFileId::init(file.get());
             file_list.put_index(global, file_count, pt.preload_bundled_module(file).map_err(js_err)?).map_err(js_err)?;
             for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                 styles.put_index(
@@ -1125,7 +1095,6 @@ pub fn build_with_vm(
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             if let Some(file) = parent.file_layout {
-                let file = OpaqueFileId::init(file.get());
                 file_list.put_index(global, file_count, pt.preload_bundled_module(file).map_err(js_err)?).map_err(js_err)?;
                 for r#ref in pt.output_file(file).referenced_css_chunks.iter() {
                     styles.put_index(
@@ -1328,7 +1297,7 @@ unsafe extern "C" {
 
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
-fn bake_register_production_chunk(
+pub fn bake_register_production_chunk(
     global: &JSGlobalObject,
     key: BunString,
     source_code: BunString,
@@ -1428,94 +1397,28 @@ pub extern "C" fn BakeProdResolve(
 /// look up the generated chunks associated with each route's `OpaqueFileId`
 /// This data structure contains that mapping, and is also used by bundle_v2
 /// to enqueue the entry points.
-pub struct EntryPointMap {
-    pub root: Box<[u8]>,
-
-    /// OpaqueFileId refers to the index in this map.
-    /// Values are left uninitialized until after the bundle is done and indexed.
-    pub files: EntryPointHashMap,
-
-    /// Owned backing storage for the duped path bytes that `InputFile` keys
-    /// point into (raw ptr+len). Mirrors Zig's `map.allocator.dupe(u8, abs_path)`
-    /// against `bun.default_allocator` (.zig:889) — kept here so the allocations
-    /// drop with the map instead of being `Box::leak`ed (PORTING.md §Forbidden).
-    pub owned_paths: Vec<Box<[u8]>>,
-}
-
-pub type EntryPointHashMap = ArrayHashMap<InputFile, OutputFileIndex>;
-// TODO(port): Zig uses a custom ArrayHashContext (hash/eql) — ensure ArrayHashMap supports custom hasher matching InputFile::ArrayHashContext
-
-/// This approach is used instead of what DevServer does so that each
-/// distinct file gets its own index.
-#[derive(Clone, Copy)]
-pub struct InputFile {
-    pub abs_path_ptr: *const u8,
-    pub abs_path_len: u32,
-    pub side: bake::Side,
-}
-
-// `ArrayHashMap`'s `AutoContext` requires `Hash + Eq` on the key. Mirror the
-// custom Zig `InputFile.ArrayHashContext` (hash over abs_path bytes + side).
-impl core::hash::Hash for InputFile {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        state.write(self.abs_path());
-        state.write_u8(self.side as u8);
-    }
-}
-impl PartialEq for InputFile {
-    fn eq(&self, other: &Self) -> bool {
-        self.side == other.side && self.abs_path() == other.abs_path()
-    }
-}
-impl Eq for InputFile {}
-
-impl InputFile {
-    pub fn init(abs_path: &[u8], side: bake::Side) -> InputFile {
-        InputFile {
-            abs_path_ptr: abs_path.as_ptr(),
-            abs_path_len: u32::try_from(abs_path.len()).unwrap(),
-            side,
-        }
-    }
-
-    pub fn abs_path(&self) -> &[u8] {
-        // SAFETY: ptr+len were constructed from a valid slice in `init`
-        unsafe { core::slice::from_raw_parts(self.abs_path_ptr, self.abs_path_len as usize) }
-    }
-}
-
-/// Custom hash context matching Zig's `InputFile.ArrayHashContext`.
-pub struct InputFileArrayHashContext;
-
-impl InputFileArrayHashContext {
-    pub fn hash(key: &InputFile) -> u32 {
-        bun_wyhash::hash32(key.abs_path()).wrapping_add(key.side as u32)
-    }
-
-    pub fn eql(a: &InputFile, b: &InputFile, _: usize) -> bool {
-        a.side == b.side && a.abs_path() == b.abs_path()
-    }
-}
+///
+/// Canonical definition lives in `bun_bundler::bake_types::production` (lower
+/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
+/// for `bake::production::EntryPointMap` callers.
+pub use bun_bundler::bake_types::production::{EntryPointHashMap, EntryPointMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
-        _: fr::RouteIndex,
-        _: fr::FileKind,
-    ) -> Result<fr::OpaqueFileId, bun_alloc::AllocError> {
-        // PORT NOTE: `fr::OpaqueFileId` and `framework_router::OpaqueFileId` are
-        // structurally identical newtypes split across the stub/draft; convert
-        // by `.get()` round-trip until Phase B unifies.
+        _: framework_router::RouteIndex,
+        _: framework_router::FileKind,
+    ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
         self.get_or_put_entry_point(abs_path, bake::Side::Server)
-            .map(|id| fr::OpaqueFileId::init(id.get()))
+            .map(|id| OpaqueFileId::init(id.get()))
             .map_err(|_| bun_alloc::AllocError)
     }
 
     fn on_router_syntax_error(
         &mut self,
         _rel_path: &[u8],
-        _fail: fr::TinyLog,
+        _fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
         // PORT NOTE: Zig's `wrap()` only fills vtable slots for decls that exist
         // on the wrapped type; `EntryPointMap` doesn't define
@@ -1526,63 +1429,14 @@ impl framework_router::InsertionHandler for EntryPointMap {
     fn on_router_collision_error(
         &mut self,
         rel_path: &[u8],
-        other_id: fr::OpaqueFileId,
-        ty: fr::FileKind,
-    ) -> Result<(), bun_alloc::AllocError> {
-        EntryPointMap::on_router_collision_error(self, rel_path, other_id, ty)
-    }
-}
-
-impl EntryPointMap {
-    pub fn get_or_put_entry_point(
-        &mut self,
-        abs_path: &[u8],
-        side: bake::Side,
-    ) -> Result<OpaqueFileId, bun_core::Error> {
-        // PORT NOTE: `ArrayHashMap::get_or_put` requires `V: Default`, which the
-        // upstream `bun_bundler::output_file::Index` does not implement. Reshape
-        // to `get_index` + `put_no_clobber` (neither bound on `V: Default`) to
-        // mirror Zig `getOrPut` semantics without touching the upstream type.
-        let probe = InputFile::init(abs_path, side);
-        if let Some(index) = self.files.get_index(&probe) {
-            return Ok(OpaqueFileId::init(u32::try_from(index).unwrap()));
-        }
-        // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
-        // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
-        // `allocator.dupe`, which is infallible in Rust, so no rollback guard
-        // is needed. Own the duped bytes in `owned_paths` (Box heap address is
-        // stable across the move) instead of `Box::leak` so they drop with the
-        // map — PORTING.md §Forbidden bans `Box::leak` for `'static` borrows.
-        let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
-        let key = InputFile::init(&owned, side);
-        self.owned_paths.push(owned);
-        let index = self.files.count();
-        // Value is the post-bundle output index; left as a placeholder until the
-        // bundle is indexed (production.zig:873 leaves it `undefined`).
-        self.files.put_no_clobber(key, OutputFileIndex(0))?;
-        Ok(OpaqueFileId::init(u32::try_from(index).unwrap()))
-    }
-
-    pub fn get_file_id_for_router(
-        &mut self,
-        abs_path: &[u8],
-        _: framework_router::RouteIndex,
-        _: framework_router::FileKind,
-    ) -> Result<OpaqueFileId, bun_core::Error> {
-        self.get_or_put_entry_point(abs_path, bake::Side::Server)
-    }
-
-    pub fn on_router_collision_error(
-        &mut self,
-        rel_path: &[u8],
-        other_id: fr::OpaqueFileId,
-        ty: fr::FileKind,
+        other_id: OpaqueFileId,
+        ty: framework_router::FileKind,
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
             match ty {
-                fr::FileKind::Page => "pages",
-                fr::FileKind::Layout => "layout",
+                framework_router::FileKind::Page => "pages",
+                framework_router::FileKind::Layout => "layout",
             }
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
@@ -1600,21 +1454,24 @@ impl EntryPointMap {
 
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
-pub struct PerThread<'a> {
-    // Shared Data
-    pub input_files: &'a [InputFile],
-    pub bundled_outputs: &'a [OutputFile],
+///
+/// PORT NOTE: Zig held borrowed slices into `buildWithVm` locals; the Rust port
+/// owns the backing storage so the value can outlive `build_with_vm` in the
+/// caller's frame without dangling references.
+pub struct PerThread {
+    // Shared Data (owned)
+    /// Owns `input_files` (keys) and `output_indexes` (values).
+    pub entry_points: EntryPointMap,
+    pub bundled_outputs: Vec<OutputFile>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub output_indexes: &'a [OutputFileIndex],
-    /// Indexed by entry point index (OpaqueFileId)
-    pub module_keys: &'a [BunString],
+    pub module_keys: Vec<BunString>,
     /// Unordered
     pub module_map: StringArrayHashMap<OutputFileIndex>,
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
     // PORT NOTE: Zig's `vm: *jsc.VirtualMachine` is a freely-aliasing mutable
-    // pointer. Stored as `*mut` (not `&'a VirtualMachine`) so callers like
+    // pointer. Stored as `*mut` (not `&VirtualMachine`) so callers like
     // `load_module` can mutate through it without a `&T as *mut T` cast (UB).
     pub vm: *mut VirtualMachine,
     /// Indexed by entry point index (OpaqueFileId)
@@ -1624,21 +1481,9 @@ pub struct PerThread<'a> {
     // JSValue struct fields. `None` mirrors the pre-init `.null` state;
     // `PerThread::init` fills it. Strong's Drop releases the GC root.
     pub all_server_files: Option<bun_jsc::Strong>,
-}
-
-/// Sent to other threads for rendering
-// PORT NOTE: Zig declares this as `PerThread.Options`; Rust cannot nest a struct
-// inside an `impl`, so it's hoisted as a sibling type.
-pub struct PerThreadOptions<'a> {
-    pub input_files: &'a [InputFile],
-    pub bundled_outputs: &'a [OutputFile],
-    /// Indexed by entry point index (OpaqueFileId)
-    pub output_indexes: &'a [OutputFileIndex],
-    /// Indexed by entry point index (OpaqueFileId)
-    pub module_keys: &'a [BunString],
-    /// Unordered
-    pub module_map: StringArrayHashMap<OutputFileIndex>,
-    pub source_maps: StringArrayHashMap<OutputFileIndex>,
+    /// `attach()` was called and Drop should detach. The placeholder created in
+    /// `build_command` before `init` must not call into C++ on drop.
+    attached: bool,
 }
 
 // TODO(port): move to bake_sys
@@ -1646,55 +1491,73 @@ pub struct PerThreadOptions<'a> {
 // layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn BakeGlobalObject__attachPerThreadData(
-        global: *const JSGlobalObject,
-        pt: *mut PerThread<'static>,
-    );
+    fn BakeGlobalObject__attachPerThreadData(global: *const JSGlobalObject, pt: *mut PerThread);
 }
 
-impl<'a> PerThread<'a> {
+impl PerThread {
+    /// Empty placeholder used in `build_command` before `build_with_vm` fills it.
+    fn placeholder(vm: *mut VirtualMachine) -> PerThread {
+        PerThread {
+            entry_points: EntryPointMap::default(),
+            bundled_outputs: Vec::new(),
+            module_keys: Vec::new(),
+            module_map: StringArrayHashMap::default(),
+            source_maps: StringArrayHashMap::default(),
+            vm,
+            loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
+            all_server_files: None,
+            attached: false,
+        }
+    }
+
     /// After initializing, call `attach`
-    pub fn init(vm: *mut VirtualMachine, opts: PerThreadOptions<'a>) -> Result<PerThread<'a>, bun_core::Error> {
-        let loaded_files = AutoBitSet::init_empty(opts.output_indexes.len())?;
+    pub fn init(
+        vm: *mut VirtualMachine,
+        entry_points: EntryPointMap,
+        bundled_outputs: Vec<OutputFile>,
+        module_keys: Vec<BunString>,
+        module_map: StringArrayHashMap<OutputFileIndex>,
+        source_maps: StringArrayHashMap<OutputFileIndex>,
+    ) -> Result<PerThread, bun_core::Error> {
+        let n = entry_points.files.count();
+        let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
         // SAFETY: vm is the live per-thread VM; vm.global is live for VM lifetime.
         let global = unsafe { &*(*vm).global };
         let all_server_files = Some(bun_jsc::Strong::create(
-            JSValue::create_empty_array(global, opts.output_indexes.len()).map_err(js_err)?,
+            JSValue::create_empty_array(global, n).map_err(js_err)?,
             global,
         ));
 
         Ok(PerThread {
-            input_files: opts.input_files,
-            bundled_outputs: opts.bundled_outputs,
-            output_indexes: opts.output_indexes,
-            module_keys: opts.module_keys,
-            module_map: opts.module_map,
+            entry_points,
+            bundled_outputs,
+            module_keys,
+            module_map,
+            source_maps,
             vm,
             loaded_files,
             all_server_files,
-            source_maps: opts.source_maps,
+            attached: false,
         })
     }
 
     pub fn attach(&mut self) {
+        // SAFETY: self.vm is the live per-thread VM (raw ptr from init_bake);
+        // PerThread outlives the attached lifetime; detached in Drop.
         unsafe {
-            // SAFETY: self.vm is the live per-thread VM (raw ptr from init_bake);
-            // PerThread outlives the attached lifetime; detached in Drop.
-            BakeGlobalObject__attachPerThreadData(
-                (*self.vm).global,
-                self as *mut PerThread<'a> as *mut PerThread<'static>,
-            );
+            BakeGlobalObject__attachPerThreadData((*self.vm).global, self as *mut PerThread);
         }
+        self.attached = true;
     }
 
     pub fn output_index(&self, id: OpaqueFileId) -> OutputFileIndex {
-        self.output_indexes[id.get() as usize]
+        self.entry_points.files.values()[id.get() as usize]
     }
 
     pub fn input_file(&self, id: OpaqueFileId) -> InputFile {
-        self.input_files[id.get() as usize]
+        self.entry_points.files.keys()[id.get() as usize]
     }
 
     pub fn output_file(&self, id: OpaqueFileId) -> &OutputFile {
@@ -1737,12 +1600,14 @@ impl<'a> PerThread<'a> {
     }
 }
 
-impl<'a> Drop for PerThread<'a> {
+impl Drop for PerThread {
     fn drop(&mut self) {
-        // SAFETY: FFI call; `self.vm` is the live per-thread VM (VM outlives
-        // PerThread), and passing null detaches the previously-attached pointer.
-        unsafe {
-            BakeGlobalObject__attachPerThreadData((*self.vm).global, core::ptr::null_mut());
+        if self.attached {
+            // SAFETY: FFI call; `self.vm` is the live per-thread VM (VM outlives
+            // PerThread), and passing null detaches the previously-attached pointer.
+            unsafe {
+                BakeGlobalObject__attachPerThreadData((*self.vm).global, core::ptr::null_mut());
+            }
         }
         // `all_server_files: Strong` is dropped automatically, releasing the GC root.
     }
@@ -1807,23 +1672,13 @@ impl TypeAndFlags {
 
 // `fn @"export"()` force-reference block dropped — Rust links what's `pub`.
 
-use bun_bundler::options::EnvBehavior;
-use bun_bundler::options::OutputKind;
-use bun_options_types::ImportKind;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bake/production.zig (1074 lines)
-//   confidence: low (phase-d: real bodies ported; many sibling-crate API
-//               surfaces guessed against current drafts)
-//   todos:      11
-//   notes:      build_command/build_with_vm/load_module/BakeProdResolve/
-//               BakeToWindowsPath bodies ported from spec. build_with_vm uses
-//               the full `framework_router_body` types (Part/route_ptr/
-//               init_empty/scan_all) re-exported via mod.rs; the keystone
-//               stub `framework_router::Route` lacks `.part`, so route walking
-//               currently goes through the full draft. EntryPointMap now
-//               implements `InsertionHandler`. Transpiler/BundleV2/Options
-//               field names matched to current crate surfaces; Phase B should
-//               re-verify against compiled bundler API.
+//   confidence: medium (phase-e: review fixes applied — ssr_transpiler UB,
+//               Box::leak→OnceLock, install/macro_remap ownership, EntryPointMap
+//               unified with bundler, PerThread owns its data)
+//   notes:      `bake_body::Framework` ↔ `bake_types::Framework` projection
+//               kept (needs FileSystemRouterType/Style move-down to bun_bundler
+//               to fully unify; tracked by TODO(port) at the call site).
 // ──────────────────────────────────────────────────────────────────────────

@@ -1887,11 +1887,13 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
         // Zig: `manager.event_loop.loop().internal_loop_data.setParentEventLoop(
-        //     jsc.EventLoopHandle.init(&manager.event_loop))` —
-        // `InternalLoopData::set_parent_event_loop` is not yet exposed on
-        // `bun_uws::Loop` in this tier (lives in higher-tier loop_data).
-        // TODO(port): blocked_on bun_uws::InternalLoopData::set_parent_event_loop
-        let _ = manager.event_loop.r#loop();
+        //     jsc.EventLoopHandle.init(&manager.event_loop))` (PackageManager.zig:883).
+        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
+        // handle from `&mut manager.event_loop` and write it back as the loop's
+        // parent so uSockets timers / lifecycle subprocess waiters can find the
+        // mini event loop on tick.
+        let uws_loop = manager.event_loop.r#loop();
+        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     // SAFETY: as above.
     unsafe { &mut *manager_ptr }.lockfile = Box::new(Lockfile::default());

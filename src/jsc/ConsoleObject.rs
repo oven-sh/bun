@@ -423,9 +423,6 @@ fn message_with_type_and_level_(
     let mut writer_adapter = IoWriterAdapter(raw_writer);
     let writer: &mut dyn bun_io::Write = &mut writer_adapter;
 
-    // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
-    // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
-    // the test-runner crate split lands.
     if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }

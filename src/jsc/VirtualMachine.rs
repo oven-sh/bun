@@ -1672,11 +1672,14 @@ impl VirtualMachine {
         //
         // PORT NOTE (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
-        // fn(...)` and (debug) `debug_thread_id: ThreadId` have no all-zero
-        // repr. We therefore never materialize `&mut VirtualMachine` until all
-        // such fields have been `ptr::write`n via `addr_of_mut!`; every other
-        // field is zero-valid (`Option`/`Vec`/integers/raw-ptr/atomic-mutex)
-        // so the zero-fill stands in for the Zig struct-init defaults.
+        // fn(...)`, (debug) `debug_thread_id: ThreadId`, every `Vec`/`Box`/
+        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
+        // (`&[u8]` references), and `Option<bool>` (bool-niche → zero = Some)
+        // have no all-zero repr. We therefore never materialize
+        // `&mut VirtualMachine` until all such fields have been `ptr::write`n
+        // via `addr_of_mut!`; remaining fields are zero-valid
+        // (integers/raw-ptr/atomic-mutex/`Option<NonNull>`/`Option<Box>`) so
+        // the zero-fill stands in for the Zig struct-init defaults.
         let layout = core::alloc::Layout::new::<VirtualMachine>();
         // SAFETY: `layout` is non-zero-sized; `alloc_zeroed` returns either a
         // valid aligned ptr or null (handled by `handle_alloc_error`).
@@ -1739,6 +1742,30 @@ impl VirtualMachine {
             // explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
+            // `Option<bool>` uses the bool's invalid range (2) as the niche, so
+            // all-zero bytes decode as `Some(false)` — for TLS that would
+            // silently disable certificate verification. Write `None` explicitly.
+            addr_of_mut!((*vm).default_tls_reject_unauthorized).write(None);
+            addr_of_mut!((*vm).ipc).write(None);
+            // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
+            // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
+            // `URL` is a struct of `&[u8]` references — all-zero bytes violate
+            // their validity invariants even when len/cap are 0. Write the
+            // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
+            addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).argv).write(Vec::new());
+            addr_of_mut!((*vm).macros).write(Default::default());
+            addr_of_mut!((*vm).macro_entry_points).write(Default::default());
+            addr_of_mut!((*vm).auto_killer).write(Default::default());
+            addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
+            addr_of_mut!((*vm).entry_point).write(Default::default());
+            addr_of_mut!((*vm).origin).write(Default::default());
+            addr_of_mut!((*vm).ref_strings).write(Default::default());
+            addr_of_mut!((*vm).modules).write(Default::default());
+            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
+            addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
+            addr_of_mut!((*vm).gc_controller).write(Default::default());
+            addr_of_mut!((*vm).channel_ref).write(Default::default());
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             #[cfg(debug_assertions)]

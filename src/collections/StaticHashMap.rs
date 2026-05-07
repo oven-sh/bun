@@ -77,12 +77,16 @@ impl<K, V> Entry<K, V> {
     #[inline]
     fn empty() -> Self
     where
-        K: Copy,
-        V: Copy,
+        K: Copy + Default,
+        V: Copy + Default,
     {
-        // SAFETY: matches Zig `std.mem.zeroes(K)` / `undefined` — key/value of an
-        // empty entry (hash == EMPTY_HASH) are never read.
-        Self { hash: EMPTY_HASH, key: unsafe { core::mem::zeroed() }, value: unsafe { core::mem::zeroed() } }
+        // PORT NOTE: Zig used `std.mem.zeroes(K)` / `undefined` — key/value of
+        // an empty entry (hash == EMPTY_HASH) are never read. Rust cannot use
+        // `mem::zeroed()` here: K may be `&[u8]` (or any `Copy` type with a
+        // niche), for which all-zero bytes violate the validity invariant
+        // regardless of whether the value is later read. Use `Default` for the
+        // unread placeholder instead.
+        Self { hash: EMPTY_HASH, key: K::default(), value: V::default() }
     }
 }
 
@@ -232,8 +236,12 @@ impl<K: 'static, V: 'static, Ctx, const MAX_LOAD_PERCENTAGE: u64> HashMapMixin<K
     }
 }
 
-impl<K: Copy + 'static, V: Copy + 'static, Ctx: HashContext<K>, const MAX_LOAD_PERCENTAGE: u64>
-    HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
+impl<
+        K: Copy + Default + 'static,
+        V: Copy + Default + 'static,
+        Ctx: HashContext<K>,
+        const MAX_LOAD_PERCENTAGE: u64,
+    > HashMap<K, V, Ctx, MAX_LOAD_PERCENTAGE>
 {
     pub fn init_capacity(capacity: u64) -> Result<Self, AllocError> {
         debug_assert!(capacity.is_power_of_two());
@@ -335,8 +343,8 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
 
     fn clear_retaining_capacity(&mut self)
     where
-        K: Copy,
-        V: Copy,
+        K: Copy + Default,
+        V: Copy + Default,
     {
         self.storage_mut().fill(Entry::empty());
         *self.len_mut() = 0;
@@ -359,7 +367,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn put_assume_capacity(&mut self, key: K, value: V)
     where
         K: Copy,
-        V: Copy,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
         self.put_assume_capacity_context(key, value, Ctx::default());
@@ -368,7 +376,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn put_assume_capacity_context(&mut self, key: K, value: V, ctx: Ctx)
     where
         K: Copy,
-        V: Copy,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
         let result = self.get_or_put_assume_capacity_context(key, ctx);
@@ -380,7 +388,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, V>
     where
         K: Copy,
-        V: Copy,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
         self.get_or_put_assume_capacity_context(key, Ctx::default())
@@ -389,13 +397,14 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn get_or_put_assume_capacity_context(&mut self, key: K, ctx: Ctx) -> GetOrPutResult<'_, V>
     where
         K: Copy,
-        V: Copy,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        // SAFETY: `value` is never read while `hash != EMPTY_HASH` until written
-        // by the caller via `value_ptr`. Matches Zig `value = undefined`.
+        // PORT NOTE: Zig left `value = undefined` (never read until the caller
+        // writes via `value_ptr`). Use `Default` for the placeholder — V may
+        // not be zero-valid.
         let mut it: Entry<K, V> =
-            Entry { hash: ctx.hash(&key), key, value: unsafe { core::mem::zeroed() } };
+            Entry { hash: ctx.hash(&key), key, value: V::default() };
         let shift = self.shift();
         let mut i = to_idx(it.hash >> shift);
 
@@ -504,8 +513,8 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
 
     fn delete(&mut self, key: K) -> Option<V>
     where
-        K: Copy,
-        V: Copy,
+        K: Copy + Default,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
         self.delete_context(key, Ctx::default())
@@ -513,8 +522,8 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
 
     fn delete_context(&mut self, key: K, ctx: Ctx) -> Option<V>
     where
-        K: Copy,
-        V: Copy,
+        K: Copy + Default,
+        V: Copy + Default,
         Ctx: HashContext<K>,
     {
         let hash = ctx.hash(&key);
@@ -574,10 +583,11 @@ impl<V> SortedEntry<V> {
     #[inline]
     fn empty() -> Self
     where
-        V: Copy,
+        V: Copy + Default,
     {
-        // SAFETY: value of an empty entry is never read (Zig `undefined`).
-        Self { hash: SORTED_EMPTY_HASH, value: unsafe { core::mem::zeroed() } }
+        // PORT NOTE: value of an empty entry is never read (Zig `undefined`).
+        // Use `Default` — V may not be zero-valid (e.g. `&T`).
+        Self { hash: SORTED_EMPTY_HASH, value: V::default() }
     }
 }
 
@@ -607,7 +617,7 @@ pub struct SortedHashMap<V, const MAX_LOAD_PERCENTAGE: u64> {
     // del_probe_count: usize,
 }
 
-impl<V: Copy, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOAD_PERCENTAGE> {
+impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOAD_PERCENTAGE> {
     pub fn init() -> Result<Self, AllocError> {
         Self::init_capacity(16)
     }
@@ -703,9 +713,10 @@ impl<V: Copy, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOAD_PERCENTA
         debug_assert!((self.len as u64) < (1u64 << (63 - self.shift + 1)));
         debug_assert!(cmp(key, SORTED_EMPTY_HASH) != Ordering::Equal);
 
-        // SAFETY: value never read until caller writes via `value_ptr`.
+        // PORT NOTE: Zig left `value = undefined` (never read until caller
+        // writes via `value_ptr`). Use `Default` — V may not be zero-valid.
         let mut it: SortedEntry<V> =
-            SortedEntry { hash: key, value: unsafe { core::mem::zeroed() } };
+            SortedEntry { hash: key, value: V::default() };
         let mut i = idx(key, self.shift);
 
         let mut inserted_at: Option<usize> = None;

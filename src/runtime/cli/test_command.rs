@@ -1889,16 +1889,17 @@ impl TestCommand {
 
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
-        // PORT NOTE (layering): `InitOptions` is the low-tier surface — it carries
-        // `log`/`env_loader`/`smol`/`is_main_thread`. `args: api::TransformOptions`
-        // and `debugger: cli::Command::Debugger` live in forward-dep crates and are
-        // routed through `RuntimeHooks::{init_runtime_state,ensure_debugger}` instead
-        // (see VirtualMachine.rs `Options` PORT NOTE and `vm.ensure_debugger(false)`
-        // below). `store_fd` is patched post-init (matches `init_with_module_graph`
-        // / `init_worker`).
+        // PORT NOTE (layering): `InitOptions` carries the low-tier subset
+        // (`transform_options`/`debugger` live in `bun_options_types`, a dep of
+        // `bun_jsc`, so they thread through here and are consumed by
+        // `RuntimeHooks::init_runtime_state` → `Transpiler::init` /
+        // `configureDebugger`). `store_fd` is patched post-init (matches
+        // `init_with_module_graph` / `init_worker`).
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
+                transform_options: core::mem::take(&mut ctx.args),
+                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(
                     (&mut *env_loader as *mut DotEnv::Loader<'_>).cast::<DotEnv::Loader<'static>>(),

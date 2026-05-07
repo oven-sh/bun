@@ -1612,7 +1612,7 @@ impl FFI {
             return val;
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments("Expected at least one symbol");
+            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
         }
 
         let mut dylib: bun_sys::DynLib = 'brk: {
@@ -1743,9 +1743,9 @@ impl FFI {
     pub fn link_symbols(global: &JSGlobalObject, object_value: JSValue) -> JSValue {
         #[cfg(not(feature = "tinycc"))]
         {
-            let _ = global.throw(
-                "bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)",
-            );
+            let _ = global.throw(format_args!(
+                "bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)"
+            ));
             return JSValue::ZERO;
         }
         jsc::mark_binding();
@@ -1765,7 +1765,7 @@ impl FFI {
             return val;
         }
         if symbols.len() == 0 {
-            return global.to_invalid_arguments("Expected at least one symbol");
+            return global.to_invalid_arguments(format_args!("Expected at least one symbol"));
         }
 
         let obj = JSValue::create_empty_object(global, symbols.len());
@@ -3261,7 +3261,9 @@ fn make_napi_env_if_needed<'a>(
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi() });
+            // PORT NOTE: `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
+            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
+            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
         }
     }
     None

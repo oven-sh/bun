@@ -523,11 +523,11 @@ impl ShellSubprocess {
             spawn_options.no_sigpipe = no_sigpipe;
         }
 
-        let cmd_parent = &mut *spawn_args.cmd_parent;
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
         // completion. Zig threads this implicitly via `Base.interpreter`; the
-        // NodeId-arena port stashes it on `Cmd.interp`.
-        let interp = cmd_parent.interp;
+        // NodeId-arena port plumbs it explicitly through `SpawnArgs`.
+        let interp = spawn_args.interp;
+        let cmd_parent = &mut *spawn_args.cmd_parent;
         // Build the `[*:null]?[*:0]const u8` argv view for spawnProcess. Zig's
         // `Cmd.args` is `ArrayList(?[*:0]const u8)` so it just appends `null`;
         // the Rust port stores `Vec<Vec<u8>>`, so materialise a contiguous
@@ -1231,6 +1231,12 @@ impl Readable {
 pub struct SpawnArgs<'a> {
     pub arena: &'a mut Arena,
     pub cmd_parent: &'a mut ShellCmd,
+    /// Backref so [`PipeReader`] async-I/O callbacks can drive
+    /// [`Yield::run`]. Zig threaded the interpreter implicitly via
+    /// `Base.interpreter`; the NodeId-arena port drops that field, so the
+    /// spawning `Cmd` passes it explicitly here and it is plumbed through
+    /// `Readable::init` → `PipeReader::create`.
+    pub interp: *mut crate::shell::interpreter::Interpreter,
 
     pub override_env: bool,
     pub env_array: Vec<*const c_char>,
@@ -1315,10 +1321,12 @@ impl<'a> SpawnArgs<'a> {
     pub fn default<const IS_SYNC: bool>(
         arena: &'a mut Arena,
         cmd_parent: &'a mut ShellCmd,
+        interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
     ) -> SpawnArgs<'a> {
         let mut out = SpawnArgs {
             arena,
+            interp,
 
             override_env: false,
             env_array: Vec::new(),

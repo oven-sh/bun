@@ -1344,7 +1344,7 @@ pub mod testing_apis {
         // (a layout-compatible mirror — see `shell/mod.rs` and the transmute
         // in `Interpreter::parse`); transmute back for JSON formatting.
         let script_ast: bun_shell_parser::ast::Script<'_> = unsafe {
-            core::mem::transmute::<super::ast::Script, bun_shell_parser::ast::Script<'_>>(
+            core::mem::transmute::<crate::shell::ast::Script, bun_shell_parser::ast::Script<'_>>(
                 script_ast,
             )
         };

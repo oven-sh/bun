@@ -764,15 +764,11 @@ impl RunCommand {
         // field-shape drift is resolved.
         {
             let b = &mut vm.transpiler;
-            // PORT NOTE: `Transpiler<'static>` requires a `'static` borrow but
-            // `ctx` is `&'_ mut ContextData`. The `BunInstall` box is process-
-            // lifetime in practice (CLI parse-once, never freed — Zig stored
-            // the raw pointer); erase the borrow lifetime via raw-pointer
-            // round-trip per PORTING.md §process-lifetime borrows.
-            b.options.install = ctx
-                .install
-                .as_deref()
-                .map(|p| unsafe { &*(p as *const api::BunInstall) });
+            // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref
+            // into the CLI's `Box<BunInstall>` (process-lifetime — Zig stored
+            // the raw `?*BunInstall`). `as_deref` yields `&BunInstall`, which
+            // `NonNull::from` converts without the lifetime tie.
+            b.options.install = ctx.install.as_deref().map(::core::ptr::NonNull::from);
             b.resolver.opts.global_cache = ctx.debug.global_cache;
             b.options.global_cache = ctx.debug.global_cache;
             b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;

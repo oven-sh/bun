@@ -1177,7 +1177,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                 Output::flush();
                 Output::pretty(format_args!("<b>Flags:<r>"));
                 Output::flush();
-                clap::simple_help(arguments::BUILD_ONLY_PARAMS);
+                clap::simple_help(&arguments::BUILD_ONLY_PARAMS);
                 Output::pretty(format_args!("{}", const_format::concatcp!("\n\n", OUTRO_TEXT)));
                 Output::flush();
             }

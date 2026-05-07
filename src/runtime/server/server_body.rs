@@ -411,41 +411,6 @@ pub type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
     PreparedRequestFor<'a, ServerRequestContext<SSL, DEBUG>>;
 
-// `TypeList` impl for `AnyServer`'s `TaggedPtrUnion` (Zig comptime reflection).
-// PORT NOTE: local marker struct so `TypeList`/`UnionMember` impls satisfy
-// orphan rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple,
-// which is foreign even when every element is local.
-pub struct AnyServerTypes;
-impl bun_ptr::tagged_pointer::TypeList for AnyServerTypes {
-    const LEN: usize = 4;
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
-        match tag {
-            1024 => Some("HTTPServer"),
-            1023 => Some("HTTPSServer"),
-            1022 => Some("DebugHTTPServer"),
-            1021 => Some("DebugHTTPSServer"),
-            _ => None,
-        }
-    }
-}
-impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for HTTPServer {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
-    const NAME: &'static str = "HTTPServer";
-}
-impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for HTTPSServer {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1023;
-    const NAME: &'static str = "HTTPSServer";
-}
-impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for DebugHTTPServer {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1022;
-    const NAME: &'static str = "DebugHTTPServer";
-}
-impl bun_ptr::tagged_pointer::UnionMember<AnyServerTypes> for DebugHTTPSServer {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1021;
-    const NAME: &'static str = "DebugHTTPSServer";
-}
-
 // ─── BunInfo (CYCLEBREAK move-in from bun_core::Global) ──────────────────────
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
 // hands it to `JSON.toAST`, which reflects over fields at comptime. Rust has no
@@ -539,20 +504,7 @@ pub mod BunInfo {
     }
 }
 
-// ─── write_status ────────────────────────────────────────────────────────────
-pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws_sys::NewAppResponse<SSL>>, status: u16) {
-    if let Some(resp) = resp_ptr {
-        if let Some(text) = HTTPStatusText::get(status) {
-            resp.write_status(text);
-        } else {
-            let mut status_text_buf = [0u8; 48];
-            let mut cursor = &mut status_text_buf[..];
-            write!(cursor, "{} HM", status).expect("unreachable");
-            let written = 48 - cursor.len();
-            resp.write_status(&status_text_buf[..written]);
-        }
-    }
-}
+pub use super::write_status;
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 // PORT NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
@@ -4287,24 +4239,26 @@ where
                         }
                     }
                     crate::server::AnyRoute::Html(html_bundle_route) => {
-                        if let Some(dev_server) = self.dev_server.as_deref_mut() {
-                            // SAFETY: RefPtr.data is a live NonNull while in the route table.
-                            let bundle = unsafe { (*html_bundle_route.data.as_ptr()).html_bundle() };
-                            bun_core::handle_oom(dev_server.html_router.put(&entry.path, bundle));
-                        } else {
-                            server_config::apply_static_route::<SSL, html_bundle::Route>(
-                                any_server, app!(), html_bundle_route.data.as_ptr(),
-                                &entry.path, entry.method,
-                            );
-                            if Self::HAS_H3 {
-                                if let Some(h3_app) = self.h3_app {
-                                    server_config::apply_static_route_h3::<html_bundle::Route>(
-                                        any_server, unsafe { &mut *h3_app },
-                                        html_bundle_route.data.as_ptr(),
-                                        &entry.path, entry.method,
-                                    );
-                                }
+                        // server.zig:2902 — applyStaticRoute is unconditional;
+                        // dev.html_router.put is *additional* when a DevServer
+                        // exists, not an alternative.
+                        server_config::apply_static_route::<SSL, html_bundle::Route>(
+                            any_server, app!(), html_bundle_route.data.as_ptr(),
+                            &entry.path, entry.method,
+                        );
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                server_config::apply_static_route_h3::<html_bundle::Route>(
+                                    any_server, unsafe { &mut *h3_app },
+                                    html_bundle_route.data.as_ptr(),
+                                    &entry.path, entry.method,
+                                );
                             }
+                        }
+                        if let Some(dev_server) = self.dev_server.as_deref_mut() {
+                            bun_core::handle_oom(
+                                dev_server.html_router.put(&entry.path, html_bundle_route.data.as_ptr()),
+                            );
                         }
                         needs_plugins = true;
                     }

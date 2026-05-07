@@ -493,12 +493,10 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
         unsafe { (*this).set_server(Some(server)) };
     }
     unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_request(this, req, resp) }
+        Self::on_request(this, req, resp)
     }
     unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_head_request(this, req, resp) }
+        Self::on_head_request(this, req, resp)
     }
 }
 
@@ -508,12 +506,10 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
         unsafe { (*this).server.set(Some(server)) };
     }
     unsafe fn on_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_request(this, req, resp) }
+        Self::on_request(this, req, resp)
     }
     unsafe fn on_head_request(this: *mut Self, req: bun_uws_sys::AnyRequest, resp: bun_uws_sys::AnyResponse) {
-        // SAFETY: forwarded to the inherent impl with the same contract.
-        unsafe { Self::on_head_request(this, req, resp) }
+        Self::on_head_request(this, req, resp)
     }
 }
 

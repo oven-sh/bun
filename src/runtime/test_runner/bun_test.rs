@@ -660,9 +660,10 @@ impl BunTest {
         let _g = group_begin!();
 
         // Zig sets up allocation_scope/gpa/arena first then re-assigns *this.
-        // In Rust we construct directly.
-        // PORT NOTE: `AllocationScope` is a unit-struct stub in `bun_alloc`.
-        let allocation_scope = AllocationScope;
+        // In Rust we construct directly. Zig: `.init(outer_gpa)` — `outer_gpa` was
+        // dropped per PORTING.md §Allocators (non-AST crate); `init_default()`
+        // resolves to the global mimalloc-backed `StdAllocator`.
+        let allocation_scope = AllocationScope::init_default();
 
         BunTest {
             bun_test_root,

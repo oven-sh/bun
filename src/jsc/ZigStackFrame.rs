@@ -56,12 +56,14 @@ impl ZigStackFrame {
         let mut frame: api::StackFrame = api::StackFrame::default();
         if !self.function_name.is_empty() {
             let slicer = self.function_name.to_utf8();
-            // TODO(port): Zig did `(try slicer.cloneIfBorrowed(allocator)).slice()`.
+            // Zig: `(try slicer.cloneIfBorrowed(allocator)).slice()` — clone-if-borrowed then leak
+            // the slice into `frame.function_name`. `Box::from(slice)` always copies, which is the
+            // semantic equivalent now that the field owns its bytes (drops the Zig leak).
             // TODO: Memory leak? `frame.function_name` may have just been allocated by this
             // function, but it doesn't seem like we ever free it. Changing to `toUTF8Owned` would
             // make the ownership clearer, but would also make the memory leak worse without an
             // additional free.
-            frame.function_name = Box::<[u8]>::from(slicer.as_bytes());
+            frame.function_name = Box::<[u8]>::from(slicer.slice());
         }
 
         if !self.source_url.is_empty() {
@@ -137,15 +139,14 @@ pub struct SourceURLFormatter<'a> {
 
 impl<'a> fmt::Display for SourceURLFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): `Output::pretty_fmt!` is assumed to be a macro that expands to a `&'static str`
-        // literal (substituting `<r>`/`<cyan>`/etc. for ANSI sequences at compile time), so it can
-        // be used as a `write!` format string. Phase B must provide this in `bun_core`.
+        // `Output::pretty_fmt!` expands to a `&'static str` literal (substituting `<r>`/`<cyan>`/
+        // etc. for ANSI sequences at compile time), so it is usable as a `write!` format string.
         if self.enable_color {
             f.write_str(Output::pretty_fmt!("<r><cyan>", true))?;
         }
 
         let source_slice_ = self.source_url.to_utf8();
-        let mut source_slice: &[u8] = source_slice_.as_bytes();
+        let mut source_slice: &[u8] = source_slice_.slice();
         // `defer source_slice_.deinit()` — handled by Drop on Utf8Slice.
 
         if !self.remapped {
@@ -171,7 +172,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                 };
                 if not_root && source_slice.starts_with(self.root_path) {
                     let root_path = strings::without_trailing_slash(self.root_path);
-                    let relative_path = strings::without_leading_path_separator(
+                    let relative_path = strings::paths::without_leading_path_separator(
                         &source_slice[self.root_path.len()..],
                     );
                     f.write_str(Output::pretty_fmt!("<d>", true))?;
@@ -336,7 +337,6 @@ impl fmt::Display for NameFormatter {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/ZigStackFrame.zig (252 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      Output::pretty_fmt! must be a macro expanding to &'static str literal (used as write! format string); verify bun_str::String Drop semantics vs explicit .deref() in #[repr(C)] FFI struct.
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
-use bun_str::String as BunString;
-use bun_bundler::options::Format;
+use bun_string::String as BunString;
+use bun_options_types::Format;
 
 /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
 #[repr(C)]
@@ -10,7 +10,6 @@ pub struct CachedBytecode {
     _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn generateCachedModuleByteCodeFromSourceCode(
         source_provider_url: *mut BunString,

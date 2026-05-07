@@ -6,9 +6,9 @@ bun_core::declare_scope!(AutoKiller, hidden);
 
 #[derive(Default)]
 pub struct ProcessAutoKiller {
-    // TODO(port): lifetime — keys are intrusively-refcounted *Process; consider
-    // bun_ptr::IntrusiveRc<Process> once that type lands. Stored as raw ptr to
-    // preserve identity-hash semantics of Zig AutoArrayHashMap.
+    /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
+    /// on remove/drop). Stored as raw ptr to preserve identity-hash semantics
+    /// of Zig `AutoArrayHashMap(*Process, void)`.
     pub processes: ArrayHashMap<*mut Process, ()>,
     pub enabled: bool,
     pub ever_enabled: bool,
@@ -32,10 +32,10 @@ impl ProcessAutoKiller {
 
     fn kill_processes(&mut self) -> u32 {
         let mut count: u32 = 0;
-        while let Some((process, ())) = self.processes.pop() {
+        while let Some(entry) = self.processes.pop() {
             // SAFETY: every key in `processes` was ref()'d on insert and is live
             // until the matching deref() below.
-            let p = unsafe { &*process };
+            let p = unsafe { &mut *entry.key };
             if !p.has_exited() {
                 bun_core::scoped_log!(AutoKiller, "process.kill {}", p.pid);
                 count += p.kill(SignalCode::DEFAULT.0).is_ok() as u32;
@@ -63,8 +63,11 @@ impl ProcessAutoKiller {
     /// identity semantics for the map key without a const→mut provenance cast.
     pub fn on_subprocess_spawn(&mut self, process: *mut Process) {
         if self.enabled {
-            // Map key is identity (raw ptr) — see TODO(port) on the field.
-            self.processes.insert(process, ());
+            // Zig: `put(...) catch return` — alloc failure means we never took
+            // a ref, so just bail. `put` here is fallible only on OOM.
+            if self.processes.put(process, ()).is_err() {
+                return;
+            }
             // SAFETY: caller passes a live Process; we take a ref to extend its
             // lifetime for as long as it sits in `processes`.
             unsafe { (*process).ref_() };

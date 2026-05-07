@@ -127,6 +127,75 @@ pub type VersionSlice = ExternalSlice<SemverVersion>;
 pub type DependencySlice = ExternalSlice<Dependency>;
 pub type ResolutionSlice = ExternalSlice<PackageID>;
 
+// ─── Repository (data) ────────────────────────────────────────────────────
+// MOVE_DOWN from `bun_install::repository` — the buffer-relative data struct
+// (5×`SemverString`) carried in [`ResolutionValue::git`/`::github`] and in
+// `Dependency.Version.Value`. Behaviour (git CLI exec, parse, fmt) stays as
+// `bun_install::repository::RepositoryExt`. Lives here so the opaque
+// resolver-visible [`Resolution`] projection can name a real type and so
+// `bun_install_types` consumers can size the union without depending on
+// `bun_install`.
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Repository {
+    pub owner: SemverString,
+    pub repo: SemverString,
+    pub committish: SemverString,
+    pub resolved: SemverString,
+    pub package_name: SemverString,
+}
+
+impl Repository {
+    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> core::cmp::Ordering {
+        use core::cmp::Ordering;
+        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        if owner_order != Ordering::Equal {
+            return owner_order;
+        }
+        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        if repo_order != Ordering::Equal {
+            return repo_order;
+        }
+        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+    }
+
+    pub fn count<B: bun_semver::string::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+        builder.count(self.owner.slice(buf));
+        builder.count(self.repo.slice(buf));
+        builder.count(self.committish.slice(buf));
+        builder.count(self.resolved.slice(buf));
+        builder.count(self.package_name.slice(buf));
+    }
+
+    pub fn clone<B: bun_semver::string::StringBuilder>(
+        &self,
+        buf: &[u8],
+        builder: &mut B,
+    ) -> Repository {
+        Repository {
+            owner: builder.append::<SemverString>(self.owner.slice(buf)),
+            repo: builder.append::<SemverString>(self.repo.slice(buf)),
+            committish: builder.append::<SemverString>(self.committish.slice(buf)),
+            resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
+            package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
+        }
+    }
+
+    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if self.resolved.is_empty() || rhs.resolved.is_empty() {
+            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+        }
+        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
+    }
+}
+
 // ─── Dependency / Behavior ────────────────────────────────────────────────
 
 pub mod behavior {

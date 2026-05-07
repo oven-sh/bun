@@ -1115,12 +1115,16 @@ const ENABLE_AUTO_CORK: bool = false; // ENABLE CORK OPTIMIZATION
 const ENABLE_ALLOCATOR_POOL: bool = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 const MAX_BUFFER_SIZE: u32 = 32768;
 
+/// `bun.HiveArray(H2FrameParser, 256).Fallback` — per-thread slab of 256
+/// parser slots with heap fallback. Lazily boxed on first use (the inline
+/// array is ~tens of KB and would otherwise sit in every thread's TLS).
+type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
+
 thread_local! {
     static CORK_BUFFER: RefCell<[u8; 16386]> = const { RefCell::new([0u8; 16386]) };
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
-    // PERF(port): was HiveArray(H2FrameParser, 256).Fallback — profile in Phase B
-    static POOL: RefCell<Option<Box<HiveArray<H2FrameParser, 256>>>> = const { RefCell::new(None) };
+    static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<[u8; 16384]> = const { RefCell::new([0u8; 16384]) };
 }
 

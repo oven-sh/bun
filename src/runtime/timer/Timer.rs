@@ -509,64 +509,14 @@ impl All {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Method bodies on canonical sibling types (`mod.rs` definitions).
-// Ported from TimeoutObject.zig / ImmediateObject.zig / DateHeaderTimer.zig.
+// Ported from DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
-// `TimeoutObject::{init, from_js}` now live in `super::timeout_object`
-// (canonical port of `TimeoutObject.zig`); the inherent `init` constructor
-// and the `JsClass`-derived `from_js` are re-exported via `super::TimeoutObject`.
-
-impl ImmediateObject {
-    pub fn init(
-        global_this: &JSGlobalObject,
-        id: i32,
-        callback: JSValue,
-        arguments: JSValue,
-    ) -> JSValue {
-        // internals are initialized by init()
-        let immediate: *mut Self = Box::into_raw(Box::new(Self {
-            ref_count: core::cell::Cell::new(1),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::ImmediateObject),
-            // Zig wrote `.internals = undefined`; every field is overwritten by
-            // `internals.init()` below before any read.
-            internals: TimerObjectInternals::default(),
-        }));
-        let js_value = JSImmediate::to_js(immediate.cast(), global_this);
-        let _keep = EnsureStillAlive(js_value);
-        // SAFETY: `immediate` was just allocated above and is exclusively owned here;
-        // `internals.init()` writes every field via `*self = Self { … }`.
-        unsafe {
-            (*immediate).internals.init(
-                js_value,
-                global_this,
-                id,
-                Kind::SetImmediate,
-                0,
-                callback,
-                arguments,
-            );
-        }
-
-        // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
-        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
-            Debugger::did_schedule_async_call(
-                global_this,
-                Debugger::AsyncCallType::DOMTimer,
-                ID { id, kind: KindBig::SetImmediate }.async_id(),
-                true,
-            );
-        }
-
-        js_value
-    }
-
-    /// `jsc.Codegen.JSImmediate.fromJS` — unwrap the `m_ctx` payload pointer if
-    /// `value` is (a subclass of) the JS `Immediate` wrapper.
-    #[inline]
-    pub fn from_js(value: JSValue) -> Option<*mut Self> {
-        JSImmediate::from_js(value).map(|p| p.cast::<Self>())
-    }
-}
+// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
+// live in `super::{timeout_object, immediate_object}` (canonical ports of
+// `TimeoutObject.zig` / `ImmediateObject.zig`); the inherent `init` constructor
+// and the `JsClass`-derived `from_js` are re-exported via
+// `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.

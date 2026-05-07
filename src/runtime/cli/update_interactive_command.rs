@@ -904,19 +904,14 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
-        // needs `&mut manager.manifests` while we hold shared field-path
-        // borrows on `manager.lockfile.*` / `manager.options.*`. Route `pm`
-        // as a raw pointer end-to-end (the callee projects only fields
-        // disjoint from `manifests` and never materializes
-        // `&mut PackageManager`), and project the `manifests` receiver
-        // through the same raw root so receiver and `pm` arg share
-        // provenance. Shared reborrows of `manager.{lockfile,options}` from
-        // the original `&mut` do not pop `pm_ptr`'s SharedReadWrite tag under
-        // Stacked Borrows (reads do not invalidate SRW items). The returned
-        // `OutdatedPackage`s do *not* borrow from `manager`, so the caller
-        // may keep using `manager` afterwards.
-        let pm_ptr: *mut PackageManager = manager;
+        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
+        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
+        // Hoist the four scalars that path reads into a by-value
+        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
+        // (`&mut manager.manifests` against `&manager.lockfile` /
+        // `&manager.options`). The returned `OutdatedPackage`s do *not*
+        // borrow from `manager`, so the caller may keep using it afterwards.
+        let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes.as_deref();

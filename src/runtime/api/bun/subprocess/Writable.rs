@@ -103,9 +103,13 @@ impl<'a> Writable<'a> {
 
         // SAFETY: `stdin` is a valid `*mut Writable`; the `&mut` lives only for
         // the duration of `replace`. Moving the payload out and writing `.Ignore`
-        // here mirrors Zig's trailing `this.* = .{.ignore}` (hoisted before
-        // `on_stdin_destroyed` so no `stdin` borrow outlives the whole-struct
-        // reborrow; `update_has_pending_activity` does not read `stdin`).
+        // here hoists Zig's trailing `this.* = .{.ignore}` ahead of
+        // `on_stdin_destroyed` — in Zig that write follows a `deref()` that may
+        // free `process`, which would be a write-after-free. The only observable
+        // difference is `has_pending_activity_stdio()` seeing `Ignore` (== false)
+        // instead of a just-deref'd `Buffer` (== true) inside
+        // `update_has_pending_activity`, which is the state it converges to
+        // immediately after anyway.
         match core::mem::replace(unsafe { &mut *stdin }, Writable::Ignore) {
             Writable::Buffer(buffer) => {
                 buffer.deref();

@@ -26,8 +26,9 @@ impl S3Stat {
         last_modified: &[u8],
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
-        let mut date_str = BunString::init(last_modified);
-        // `date_str` drops (derefs) at end of scope.
+        // `bun_str::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
+        // Zig `defer date_str.deref()` runs on both the `Ok` and `?`-error paths.
+        let mut date_str = OwnedString::new(BunString::init(last_modified));
         let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
 
         Ok(Box::new(S3Stat {
@@ -61,9 +62,14 @@ impl S3Stat {
     pub fn finalize(this: *mut Self) {
         // SAFETY: `this` was produced by `Box::into_raw` in the codegen'd
         // wrapper; finalize is called exactly once on the mutator thread.
-        // Dropping the Box runs `BunString::drop` (deref) on `etag` and
-        // `content_type`, matching the Zig `deref()` + `bun.destroy(this)`.
-        drop(unsafe { Box::from_raw(this) });
+        let this = unsafe { Box::from_raw(this) };
+        // `bun_str::String` is `#[derive(Copy)]` with NO `Drop` impl
+        // (src/string/lib.rs), so dropping the Box alone would leak the +1
+        // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
+        // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
+        this.etag.deref();
+        this.content_type.deref();
+        drop(this);
     }
 }
 

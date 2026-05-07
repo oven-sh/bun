@@ -1183,7 +1183,7 @@ pub struct H2FrameParser {
 
     streams: BunHashMap<u32, *mut Stream>,
 
-    hpack: Option<Box<lshpack::HPACK>>,
+    hpack: Option<lshpack::HpackHandle>,
 
     has_nonnative_backpressure: bool,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
@@ -5804,7 +5804,11 @@ impl H2FrameParser {
 
         this_ref.strong_this.set_strong(this_value, global_object);
 
-        this_ref.hpack = Some(unsafe { Box::from_raw(lshpack::HPACK::init(this_ref.local_settings.header_table_size)) });
+        // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
+        // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
+        // before freeing). Wrapping it in `Box::from_raw` and letting `Box` drop
+        // would `mi_free` the struct but leak the encoder/decoder internals.
+        this_ref.hpack = Some(lshpack::HpackHandle::new(this_ref.local_settings.header_table_size));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings);
         } else {
@@ -5852,9 +5856,8 @@ impl H2FrameParser {
         self.write_buffer.clear_and_free();
         self.write_buffer_offset = 0;
 
-        if let Some(hpack) = self.hpack.take() {
-            drop(hpack);
-        }
+        // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).
+        self.hpack = None;
     }
 
     fn deinit(&mut self) {

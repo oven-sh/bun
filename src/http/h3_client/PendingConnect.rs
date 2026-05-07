@@ -64,22 +64,19 @@ impl PendingConnect {
     /// SAFETY: `this` must be the pointer produced by `Box::into_raw` in `register`
     /// and must not be used after this call (it is freed here).
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
-        // SAFETY: `this` is the Box::into_raw'd ptr from register; live until dropped at end of fn.
-        let session = unsafe { (*this).session };
-        // Zig: defer { session.deref(); bun.destroy(this); }
-        let _guard = scopeguard::guard((), move |_| {
-            ClientSession::deref(session);
-            // SAFETY: `this` was Box::into_raw'd in `register`; not used after this point.
-            unsafe { drop(Box::from_raw(this)) };
-        });
+        // SAFETY: `this` was Box::into_raw'd in `register`; reclaim it so the Box drops at
+        // end of scope — `Drop` derefs `session` and the allocation is freed.
+        // (Zig: defer { session.deref(); bun.destroy(this); })
+        let this = unsafe { Box::from_raw(this) };
+        let session = this.session;
 
-        // SAFETY: session is kept alive by the ref we hold for the duration of this fn.
+        // SAFETY: session is kept alive by the ref `this` holds for the duration of this fn.
         let s = unsafe { &mut *session };
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
             // connection nobody will use.
             // SAFETY: pc is a live C handle; cancel() consumes it.
-            unsafe { (*(*this).pc).cancel() };
+            unsafe { (*this.pc).cancel() };
             if !s.closed {
                 Self::fail_session(session, bun_core::err!("Aborted"));
             }
@@ -87,7 +84,7 @@ impl PendingConnect {
         }
         // SAFETY: pc is a live C handle; resolved() consumes it and returns the
         // connected quic socket or None on DNS failure.
-        let Some(qs) = (unsafe { (*(*this).pc).resolved() }) else {
+        let Some(qs) = (unsafe { (*this.pc).resolved() }) else {
             Self::fail_session(session, bun_core::err!("DNSResolutionFailed"));
             return;
         };

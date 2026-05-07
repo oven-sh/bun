@@ -2537,6 +2537,26 @@ pub mod scoped_debug_writer {
     thread_local! {
         pub static DISABLE_INSIDE_LOG: Cell<isize> = const { Cell::new(0) };
     }
+
+    /// RAII guard that suppresses scoped logging for the lifetime of the guard
+    /// (Zig: `disable_inside_log += 1; defer disable_inside_log -= 1;`).
+    #[must_use]
+    pub struct DisableGuard(());
+
+    impl DisableGuard {
+        #[inline]
+        pub fn new() -> Self {
+            DISABLE_INSIDE_LOG.set(DISABLE_INSIDE_LOG.get() + 1);
+            Self(())
+        }
+    }
+
+    impl Drop for DisableGuard {
+        #[inline]
+        fn drop(&mut self) {
+            DISABLE_INSIDE_LOG.set(DISABLE_INSIDE_LOG.get() - 1);
+        }
+    }
 }
 
 pub fn disable_scoped_debug_writer() {

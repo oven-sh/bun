@@ -501,16 +501,11 @@ impl OutputFile {
             panic!("TODO windows");
         }
 
-        let guard = scopeguard::guard((), move |_| {
-            if do_close {
-                let _ = bun_sys::close(fd_out);
-                let _ = bun_sys::close(fd_in);
-            }
-        });
+        let _close_out = do_close.then(|| bun_sys::CloseOnDrop::new(fd_out));
+        let _close_in = do_close.then(|| bun_sys::CloseOnDrop::new(fd_in));
 
         bun_sys::copy_file(fd_in, fd_out)?;
 
-        drop(guard);
         Ok(())
     }
 }

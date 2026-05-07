@@ -1695,7 +1695,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = url.fragment_identifier();
+            let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> =

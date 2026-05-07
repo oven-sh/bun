@@ -3,7 +3,7 @@
 // with a type-erased per-format printer; this test pins the observable
 // output so that refactor stays honest.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const ESC = "\x1b";

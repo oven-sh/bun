@@ -346,19 +346,25 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let blob = Box::new(S3File::construct_s3_file_with_s3_credentials_and_options(
-            global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
-        )?);
-        // PORT NOTE: avoid the (currently duplicated) `Blob::to_js` inherent —
-        // an S3-backed blob always routes to `s3_file::to_js_unchecked`.
-        Ok(S3File::to_js_unchecked(global, Box::into_raw(blob)))
+        let blob = Box::into_raw(Box::new(
+            S3File::construct_s3_file_with_s3_credentials_and_options(
+                global,
+                path,
+                options,
+                &ptr.credentials,
+                ptr.options,
+                ptr.acl,
+                ptr.storage_class,
+                ptr.request_payer,
+            )?,
+        ));
+        // Zig: `blob.toJS(globalThis)` — runs `calculateEstimatedByteSize()`
+        // before wrapping the heap Blob in a JSS3File so JSC sees the correct
+        // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
+        // that owns the heap pointer), same as `S3File::construct_internal_js`.
+        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Box::into_raw`;
+        // `to_js` hands ownership of that pointer to the C++ wrapper.
+        Ok(unsafe { &mut *blob }.to_js(global))
     }
 
     #[bun_jsc::host_fn(method)]

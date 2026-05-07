@@ -2398,11 +2398,16 @@ impl DevServer {
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
                     let generation: u32 = route_bundle.client_script_generation;
-                    // TODO(port): bun.String.createFormat with raw bytes-as-hex
+                    // Zig: `"{x}{x}", .{ asBytes(&u32), asBytes(&u32) }` → fixed
+                    // 8-char native-endian byte hex per u32; `on_js_request`
+                    // slices exactly 16 chars and decodes via `parse_hex_to_int`.
+                    let mut hex = [0u8; 16];
+                    bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
+                    bun_core::fmt::bytes_to_hex_lower(&generation.to_ne_bytes(), &mut hex[8..]);
+                    // SAFETY: `bytes_to_hex_lower` writes ASCII [0-9a-f] only.
+                    let hex_str = unsafe { ::core::str::from_utf8_unchecked(&hex) };
                     let s = OwnedString::new(BunString::create_format(format_args!(
-                        concat!("/_bun/client", "/route-{:x}{:x}.js"),
-                        // TODO(port): Zig used asBytes() (LE-layout hex), not numeric hex
-                        bundle_index, generation,
+                        "{CLIENT_PREFIX}/route-{hex_str}.js",
                     )));
                     let js = s.to_js(global)?;
                     framework_bundle.cached_client_bundle_url = jsc::StrongOptional::create(js, global);

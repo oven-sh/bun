@@ -764,10 +764,14 @@ pub mod random {
             offset = assert_offset(global, offset_value, element_size, buf.byte_len)?;
         }
 
-        let size: u32 = if size_value.is_undefined() {
-            (buf.byte_len - offset as usize) as u32
+        // Zig keeps `size: usize` here (`buf.byte_len - offset`, both usize). The
+        // `assert_size` branch is bounded by `MAX_POSSIBLE_LENGTH` (≤ i32::MAX) so widening
+        // its `u32` result is lossless; the default branch must NOT truncate to `u32` —
+        // a >4 GiB ArrayBuffer remainder would silently fill only `(n % 2^32)` bytes.
+        let size: usize = if size_value.is_undefined() {
+            buf.byte_len - offset as usize
         } else {
-            assert_size(global, size_value, element_size, offset, buf.byte_len)?
+            assert_size(global, size_value, element_size, offset, buf.byte_len)? as usize
         };
 
         if size == 0 {
@@ -779,7 +783,7 @@ pub mod random {
             value: buf_value,
             bytes: buf.slice_mut().as_mut_ptr(),
             offset,
-            length: size as usize,
+            length: size,
             result: (),
         };
         Job::init_and_schedule(global, callback, ctx)?;

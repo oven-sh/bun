@@ -1222,11 +1222,9 @@ impl Value {
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                if unsafe { (***str).can_use_as_utf8() } {
-                    // PORT NOTE: Zig dups the +1 ref; until `Value::WTFStringImpl` drops the
-                    // `Arc<>` wrapper, hand the raw ptr through (the *self = Used below
-                    // releases our side).
-                    AnyBlob::WTFStringImpl(**str)
+                if unsafe { (**str).can_use_as_utf8() } {
+                    // Transfer the body's +1 to AnyBlob; `*self = Used` below drops nothing.
+                    AnyBlob::WTFStringImpl(*str)
                 } else {
                     return None;
                 }
@@ -1250,9 +1248,9 @@ impl Value {
             Value::InternalBlob(b) => AnyBlob::InternalBlob(b),
             Value::WTFStringImpl(str) => 'brk: {
                 // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                let wtf_ref = unsafe { &**str };
+                let wtf_ref = unsafe { &*str };
                 if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
-                    // str dropped at end of scope (deref)
+                    // Zig: `defer str.deref()` — release the body's +1.
                     wtf_ref.deref();
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
                         // Zig: `fromOwnedSlice(@constCast(utf8.slice()))` — transfer
@@ -1261,7 +1259,8 @@ impl Value {
                         was_string: true,
                     });
                 } else {
-                    break 'brk AnyBlob::WTFStringImpl(*str);
+                    // Transfer the body's +1 into AnyBlob.
+                    break 'brk AnyBlob::WTFStringImpl(str);
                 }
             }
             // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
@@ -1286,7 +1285,7 @@ impl Value {
         let any_blob: AnyBlob = match core::mem::replace(self, Value::Used) {
             Value::Blob(b) => AnyBlob::Blob(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(b),
-            Value::WTFStringImpl(s) => AnyBlob::WTFStringImpl(*s),
+            Value::WTFStringImpl(s) => AnyBlob::WTFStringImpl(s),
             // Value::InlineBlob(b) => AnyBlob::InlineBlob(b),
             Value::Locked(mut l) => l
                 .to_any_blob_allow_promise()

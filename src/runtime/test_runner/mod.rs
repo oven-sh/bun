@@ -20,12 +20,10 @@ pub mod diff {
     pub mod print_diff;
 }
 
-// ─── JSC-heavy core — gated as one unit on bun_jsc dep ───────────────────
-// TODO(b2-blocked): bun_jsc — drop every `` below once
-// `bun_jsc.workspace = true` is uncommented in src/runtime/Cargo.toml.
-// Nothing inside is body-stubbed; the whole tree goes live at once.
-//
-// `cfg_jsc!` lets us flip one token instead of 18.
+// ─── JSC-heavy core ──────────────────────────────────────────────────────
+// `cfg_jsc!` is a historical no-op grouping macro kept so the 18 module decls
+// stay one logical unit (and so a future `#[cfg]` can be re-introduced at a
+// single token if `bun_jsc` ever needs to be feature-gated again).
 macro_rules! cfg_jsc { ($($i:item)*) => { $( $i )* }; }
 
 cfg_jsc! {
@@ -115,13 +113,12 @@ pub mod expect {
     }
     pub(crate) use __get_signature as get_signature;
 
-    // ── shims over `bun_jsc` API gaps ─────────────────────────────────
-    // The Phase-A matcher drafts were written against a slightly newer
-    // `bun_jsc` surface (`JSValue::to_fmt`, `Formatter: Default`,
-    // `JSGlobalObject::throw_pretty`, `BigIntCompare`, etc.). Rather than
-    // touch 75 files we provide thin extension traits / aliases here so the
-    // drafts compile unchanged. Each shim is `// TODO(port)`-tagged for
-    // Phase B once the upstream method lands in `bun_jsc`.
+    // ── call-convention adapters over `bun_jsc` inherents ────────────
+    // The Phase-A matcher drafts were written against a slightly different
+    // `bun_jsc` surface (argument order, builder-style setters, two-arg
+    // `throw_*`). Rather than touch 75 files we provide thin extension
+    // traits / aliases here that forward to the now-landed inherents — no
+    // local FFI re-decls, no semantic divergence.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
     use bun_jsc::console_object::Formatter;

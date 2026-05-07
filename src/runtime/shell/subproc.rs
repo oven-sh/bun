@@ -449,14 +449,12 @@ impl ShellSubprocess {
             if !spawn_args.override_env && spawn_args.env_array.is_empty() {
                 // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
                 let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-                // PORT NOTE: `as_slice()` *includes* the trailing `None`; strip it —
+                // PORT NOTE: `as_slice()` *includes* the trailing null; strip it —
                 // the common tail below re-appends one null terminator.
                 let entries = envmap.as_slice();
-                spawn_args.env_array.extend(
-                    entries[..entries.len().saturating_sub(1)]
-                        .iter()
-                        .map(|opt| opt.unwrap_or(core::ptr::null())),
-                );
+                spawn_args
+                    .env_array
+                    .extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
                 Some(envmap)
             } else {
                 None

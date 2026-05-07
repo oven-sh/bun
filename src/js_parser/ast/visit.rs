@@ -1769,6 +1769,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 // but `G::Decl` lacks the derive (its fields are all
                                 // `Copy`). Per-element bitwise copy matches Zig
                                 // `appendSlice` semantics.
+                                //
+                                // The parse pass allocates `decls` in the bump arena
+                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
+                                // global-heap buffer before growing it. In Zig both ends
+                                // are mimalloc so `appendSlice` just reallocs in place.
+                                prev_local.decls.transfer_ownership();
                                 for d in local.decls.slice() {
                                     // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
                                     prev_local

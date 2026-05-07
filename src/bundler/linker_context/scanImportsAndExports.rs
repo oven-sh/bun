@@ -601,11 +601,17 @@ pub fn scan_imports_and_exports(
                 .graph
                 .allocator()
                 .alloc_slice_fill_default::<u8>(string_buffer_len);
-            let mut builder = bun_string::StringBuilder {
+            // PORT NOTE: `StringBuilder::drop` reconstructs a `Box<[u8]>` from
+            // `ptr`/`cap` and frees it via the global allocator. Here the
+            // backing buffer is arena-owned (bumpalo), so dropping would hand
+            // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
+            // the arena reclaims the storage on reset, matching Zig's implicit
+            // no-destructor semantics.
+            let mut builder = core::mem::ManuallyDrop::new(bun_string::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
                 ptr: core::ptr::NonNull::new(string_buffer.as_mut_ptr()),
-            };
+            });
 
             // Pre-generate symbols for re-exports CommonJS symbols in case they
             // are necessary later. This is done now because the symbols map cannot be

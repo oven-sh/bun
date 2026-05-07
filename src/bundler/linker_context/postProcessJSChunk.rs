@@ -138,8 +138,14 @@ pub fn post_process_js_chunk(
             });
         }
 
-        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
-        let ast_view = ast.to_ast();
+        // PORT NOTE: `MultiArrayList::get` bitwise-reads each column
+        // (`ptr::read`); the storage retains ownership of every Drop field
+        // (`named_imports`, `parts`, `top_level_symbols_to_parts`, …), so the
+        // gathered struct must NOT run Drop. Zig has no destructors so the
+        // by-value copy is harmless there.
+        let ast_view = core::mem::ManuallyDrop::new(
+            c.graph.ast.get(chunk.entry_point.source_index() as usize).to_ast(),
+        );
         let source = c.get_source(chunk.entry_point.source_index());
         let target = unsafe { &(*c.resolver).opts }.target;
 
@@ -825,7 +831,10 @@ pub fn generate_entry_point_tail_js<'a>(
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
     let mut stmts: Vec<Stmt> = Vec::new();
-    let ast: JSAst = c.graph.ast.get(source_index as usize);
+    // PORT NOTE: `MultiArrayList::get` bitwise-reads each column; the storage
+    // retains ownership of every Drop field, so neither this `BundledAst` nor
+    // the `ast_view: Ast` derived from it below may run Drop.
+    let ast = core::mem::ManuallyDrop::new(c.graph.ast.get(source_index as usize));
 
     match c.options.output_format {
         options::OutputFormat::Esm => {
@@ -1247,7 +1256,8 @@ pub fn generate_entry_point_tail_js<'a>(
         ..Default::default()
     };
 
-    let ast_view = ast.to_ast();
+    let ast_view =
+        core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
     // SAFETY: `import_records` is a `BabyList` pointing into the bundler arena,
     // which outlives `'a` (the chunk-processing scope). Detach the borrow from
     // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.

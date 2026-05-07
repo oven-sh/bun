@@ -857,10 +857,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         };
         // PORT NOTE: Zig assigned `env_array.items = envp` (sentinel slice — the
         // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
-        // `as_slice()` *includes* the trailing `None`, so strip it; the common
+        // `as_slice()` *includes* the trailing null, so strip it; the common
         // tail below re-appends one after the optional NODE_CHANNEL_* entries.
+        // TODO(port): `env_array` itself is still `Vec<Option<*const c_char>>`,
+        // which is *not* FFI-transparent (see NullDelimitedEnvMap layout note);
+        // it must become `Vec<*const c_char>` before this path is exercised.
         let entries = envmap.as_slice();
-        env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
+        env_array.extend(
+            entries[..entries.len().saturating_sub(1)]
+                .iter()
+                .map(|p| Some(*p)),
+        );
         inherited_env_storage = Some(envmap);
     }
     let _ = &inherited_env_storage;

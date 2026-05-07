@@ -66,7 +66,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     };
 
     // referencing everything by array makes the code a lot more annoying :(
-    let mut ast: JSAst = c.graph.ast.get(source_index);
+    //
+    // PORT NOTE: `MultiArrayList::get` bitwise-reads each column (`ptr::read`);
+    // the storage retains ownership of every Drop field (`parts`, `symbols`,
+    // `named_imports`, …), so the gathered struct must NOT run Drop. Zig has
+    // no destructors so the by-value copy is harmless there. The local `flags`
+    // mutation below is intentional and stays scoped to this read view.
+    let mut ast = core::mem::ManuallyDrop::new(c.graph.ast.get(source_index));
 
     // For HMR, part generation is entirely special cased.
     // - export wrapping is already done.

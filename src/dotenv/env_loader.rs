@@ -1587,7 +1587,7 @@ impl Map {
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
         let envp_count = self.map.count();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
-        let mut envp_buf: Vec<Option<*const c_char>> = Vec::with_capacity(envp_count + 1);
+        let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
         {
             let mut it = self.map.iterator();
             let mut i: usize = 0;
@@ -1599,14 +1599,14 @@ impl Map {
                 env_buf[klen] = b'=';
                 env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
                 // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(Some(env_buf.as_ptr() as *const c_char));
+                envp_buf.push(env_buf.as_ptr() as *const c_char);
                 storage.push(env_buf);
                 i += 1;
             }
             #[cfg(debug_assertions)]
             debug_assert!(i == envp_count);
         }
-        envp_buf.push(None); // sentinel
+        envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap { storage, envp: envp_buf.into_boxed_slice() })
     }
 
@@ -1809,20 +1809,29 @@ impl Map {
 /// Owns the `K=V\0` strings backing a `[*:null]?[*:0]const u8` envp array.
 /// Replaces the Zig arena passed to `createNullDelimitedEnvMap`; dropping this
 /// frees every entry (PORTING.md §Forbidden: no Box::leak).
+///
+/// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
+/// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
+/// already nullable, so `Option<*const T>` is *not* niche-optimized — it is a
+/// 2-word `(tag, ptr)` pair. Casting `*const Option<*const c_char>` to
+/// `*const *const c_char` for `execve()` interleaves `Some`-discriminant
+/// `0x1` words between the real pointers and the kernel faults with `EFAULT`.
+/// Zig's `?[*:0]const u8` *is* a single nullable thin pointer; the Rust
+/// equivalent for FFI is `*const c_char`, not `Option<*const c_char>`.
 pub struct NullDelimitedEnvMap {
     storage: Vec<Box<[u8]>>,
-    envp: Box<[Option<*const c_char>]>,
+    envp: Box<[*const c_char]>,
 }
 
 impl NullDelimitedEnvMap {
-    /// `[:null]?[*:0]const u8` — last element is `None`.
+    /// `[:null]?[*:0]const u8` — last element is `ptr::null()`.
     #[inline]
-    pub fn as_slice(&self) -> &[Option<*const c_char>] {
+    pub fn as_slice(&self) -> &[*const c_char] {
         &self.envp
     }
     /// Raw `*const ?[*:0]const u8` for FFI (`envp`-style).
     #[inline]
-    pub fn as_ptr(&self) -> *const Option<*const c_char> {
+    pub fn as_ptr(&self) -> *const *const c_char {
         self.envp.as_ptr()
     }
 }

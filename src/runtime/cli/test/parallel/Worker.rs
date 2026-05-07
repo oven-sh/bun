@@ -12,7 +12,7 @@ use bun_io;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
-use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]
@@ -140,10 +140,8 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            // SAFETY: `Option<*const c_char>` has the same layout as `*const c_char`
-            // (null-pointer optimization), so the cast is repr-transparent.
             let mut spawned =
-                spawn::spawn_process(&options, coord.argv.as_ptr().cast(), coord.envps[this.idx as usize].as_ptr().cast())?
+                spawn::spawn_process(&options, coord.argv.as_ptr(), coord.envps[this.idx as usize].as_ptr())?
                     .map_err(|e| {
                         Output::err(e, "spawnProcess failed for test worker", ());
                         bun_core::err!("SpawnFailed")

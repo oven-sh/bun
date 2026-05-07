@@ -19,7 +19,7 @@ use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
-    self as spawn, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
+    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult, SpawnResultExt as _,
 };
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -288,7 +288,7 @@ fn get_argv(
     path: &[u8],
     cwd: &[u8],
     argv0: &mut Option<*const c_char>,
-    argv: &mut Vec<Option<*const c_char>>,
+    argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
     if args.is_empty_or_undefined_or_null() {
@@ -320,7 +320,7 @@ fn get_argv(
     )?;
 
     *argv0 = Some(argv0_result.argv0.as_ptr());
-    argv.push(Some(argv0_result.arg0.as_ptr()));
+    argv.push(argv0_result.arg0.as_ptr());
     // Transfer ownership to the caller's backing store so the pointers above
     // stay valid past `spawn_process` (Zig used a bump arena freed at fn exit).
     storage.push(argv0_result.argv0);
@@ -346,7 +346,7 @@ fn get_argv(
         }
 
         let owned = arg.to_owned_slice_z();
-        argv.push(Some(owned.as_ptr()));
+        argv.push(owned.as_ptr());
         storage.push(owned);
         arg_index += 1;
     }
@@ -399,7 +399,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut cstr_storage: Vec<ZBox> = Vec::new();
 
     let mut override_env = false;
-    let mut env_array: Vec<Option<*const c_char>> = Vec::new();
+    let mut env_array: Vec<CStrPtr> = Vec::new();
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
     let jsc_vm: &mut jsc::VirtualMachineRef = unsafe { &mut *global_this.bun_vm() };
@@ -418,7 +418,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut on_disconnect_callback = JSValue::ZERO;
     // SAFETY: `transpiler.env` is the per-VM DotEnv loader, valid for VM lifetime.
     let mut path: &[u8] = unsafe { (*jsc_vm.transpiler.env).get(b"PATH") }.unwrap_or(b"");
-    let mut argv: Vec<Option<*const c_char>> = Vec::new();
+    let mut argv: Vec<CStrPtr> = Vec::new();
     let mut cmd_value = JSValue::ZERO;
     let mut detached = false;
     let mut args = args_;
@@ -859,15 +859,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
         // `as_slice()` *includes* the trailing null, so strip it; the common
         // tail below re-appends one after the optional NODE_CHANNEL_* entries.
-        // TODO(port): `env_array` itself is still `Vec<Option<*const c_char>>`,
-        // which is *not* FFI-transparent (see NullDelimitedEnvMap layout note);
-        // it must become `Vec<*const c_char>` before this path is exercised.
         let entries = envmap.as_slice();
-        env_array.extend(
-            entries[..entries.len().saturating_sub(1)]
-                .iter()
-                .map(|p| Some(*p)),
-        );
+        env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
         inherited_env_storage = Some(envmap);
     }
     let _ = &inherited_env_storage;
@@ -951,10 +944,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             };
             // PERF(port): was assume_capacity
-            env_array.push(Some(pipe_env.as_ptr() as *const c_char));
+            env_array.push(pipe_env.as_ptr() as *const c_char);
 
             // PERF(port): was assume_capacity
-            env_array.push(Some(match ipc_mode {
+            env_array.push(match ipc_mode {
                 // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
                 IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0".as_ptr() as *const c_char,
                 IPC::Mode::Advanced => {
@@ -964,8 +957,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    env_array.push(None);
-    argv.push(None);
+    env_array.push(core::ptr::null());
+    argv.push(core::ptr::null());
 
     if IS_SYNC {
         for (i, io) in stdio.iter_mut().enumerate() {
@@ -1095,14 +1088,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut spawned = match spawn::spawn_process(
         &spawn_options,
-        argv.as_ptr() as *const *const c_char,
-        env_array.as_ptr() as *const *const c_char,
+        argv.as_ptr(),
+        env_array.as_ptr(),
     ) {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             drop(spawn_options);
-            let display_path: &ZStr = if !argv.is_empty() && argv[0].is_some() {
+            let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is a NUL-terminated string we built above.
-                unsafe { &*(CStr::from_ptr(argv[0].unwrap()).to_bytes() as *const [u8] as *const ZStr) }
+                unsafe { &*(CStr::from_ptr(argv[0]).to_bytes() as *const [u8] as *const ZStr) }
             } else {
                 ZStr::EMPTY
             };
@@ -1133,9 +1126,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
                     | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && argv[0].is_some() {
+                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is a NUL-terminated string we built above.
-                            unsafe { &*(CStr::from_ptr(argv[0].unwrap()).to_bytes() as *const [u8] as *const ZStr) }
+                            unsafe { &*(CStr::from_ptr(argv[0]).to_bytes() as *const [u8] as *const ZStr) }
                         } else {
                             ZStr::EMPTY
                         };
@@ -1895,7 +1888,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 pub fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
-    envp: &mut Vec<Option<*const c_char>>,
+    envp: &mut Vec<CStrPtr>,
     path: &mut &[u8],
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
@@ -1969,7 +1962,7 @@ pub fn append_envp_from_js(
             };
         }
 
-        envp.push(Some(line.as_ptr()));
+        envp.push(line.as_ptr());
         storage.push(line);
     }
     Ok(())

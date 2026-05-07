@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int};
 #[cfg(any(windows, target_os = "macos"))]
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
@@ -39,15 +39,12 @@ use bun_sys::windows::libuv as uv;
 // (`ProcessExitHandler { owner, vtable }`), so no global hook registration is
 // required.
 
-// posix_spawn(2) wrappers — moved alongside this file into `bun_spawn`.
+// posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
 #[allow(unused_imports)]
-use crate::posix_spawn::posix_spawn;
-#[cfg(unix)]
-#[allow(unused_imports)]
-use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
-/// `posix_spawn::WaitPidResult` — re-exported now that `super::bun_spawn` is
-/// un-gated. `status` is `u32` there (Zig `c_int` reinterpreted via the
-/// `W*` macros); `Status::from` casts before matching.
+use bun_spawn_sys::posix_spawn::posix_spawn;
+/// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
+/// is `u32` there (Zig `c_int` reinterpreted via the `W*` macros);
+/// `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
 #[cfg(windows)]
@@ -69,136 +66,17 @@ pub mod spawn_sys {
 
 bun_core::declare_scope!(PROCESS, visible);
 
-#[cfg(unix)]
-pub type PidT = libc::pid_t;
+// ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
+// The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
+// moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
+// Re-export here so existing `bun_spawn::process::*` paths keep resolving.
+pub use bun_spawn_sys::{
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, FdT, PidFdType, PidT, PosixSpawnOptions,
+    PosixSpawnResult, PosixStdio, Rusage, StdioKind,
+};
+pub use bun_spawn_sys::spawn_process::{rusage_zeroed, IoCounters, WinRusage, WinTimeval};
 #[cfg(windows)]
-pub type PidT = uv::uv_pid_t;
-
-#[cfg(unix)]
-pub type FdT = libc::c_int;
-#[cfg(not(unix))]
-pub type FdT = i32;
-
-#[derive(Default, Clone, Copy)]
-pub struct WinTimeval {
-    pub sec: i64,
-    pub usec: i64,
-}
-
-#[derive(Default, Clone, Copy)]
-pub struct WinRusage {
-    pub utime: WinTimeval,
-    pub stime: WinTimeval,
-    pub maxrss: u64,
-    // ixrss, idrss, isrss, minflt, majflt, nswap: u0 in Zig — zero-sized, omitted
-    pub inblock: u64,
-    pub oublock: u64,
-    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: u0 in Zig — zero-sized, omitted
-}
-
-#[repr(C)]
-#[derive(Default)]
-#[allow(non_snake_case)] // mirrors Win32 IO_COUNTERS field names exactly
-pub struct IoCounters {
-    pub ReadOperationCount: u64,
-    pub WriteOperationCount: u64,
-    pub OtherOperationCount: u64,
-    pub ReadTransferCount: u64,
-    pub WriteTransferCount: u64,
-    pub OtherTransferCount: u64,
-}
-
-#[cfg(windows)]
-unsafe extern "system" {
-    // TODO(port): move to runtime_sys
-    fn GetProcessIoCounters(handle: bun_sys::windows::HANDLE, counters: *mut IoCounters) -> c_int;
-}
-
-#[cfg(windows)]
-pub fn uv_getrusage(process: &mut uv::uv_process_t) -> WinRusage {
-    let mut usage_info = Rusage::default();
-    let process_pid: *mut c_void = process.process_handle;
-    type WinTime = bun_sys::windows::FILETIME;
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut starttime: WinTime = unsafe { core::mem::zeroed() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut exittime: WinTime = unsafe { core::mem::zeroed() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut kerneltime: WinTime = unsafe { core::mem::zeroed() };
-    // SAFETY: all-zero is a valid FILETIME (POD C struct)
-    let mut usertime: WinTime = unsafe { core::mem::zeroed() };
-    // We at least get process times
-    // SAFETY: FFI call with valid out-pointers
-    if unsafe {
-        bun_sys::windows::GetProcessTimes(
-            process_pid,
-            &mut starttime,
-            &mut exittime,
-            &mut kerneltime,
-            &mut usertime,
-        )
-    } == 1
-    {
-        let mut temp: u64 = ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.stime.sec = i64::try_from(temp / 10_000_000).unwrap();
-            usage_info.stime.usec = i64::try_from(temp % 1_000_000).unwrap();
-        }
-        temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
-        if temp > 0 {
-            usage_info.utime.sec = i64::try_from(temp / 10_000_000).unwrap();
-            usage_info.utime.usec = i64::try_from(temp % 1_000_000).unwrap();
-        }
-    }
-    let mut counters = IoCounters::default();
-    // SAFETY: FFI call with valid out-pointer
-    let _ = unsafe { GetProcessIoCounters(process_pid, &mut counters) };
-    usage_info.inblock = counters.ReadOperationCount;
-    usage_info.oublock = counters.WriteOperationCount;
-
-    let Ok(memory) = bun_sys::windows::GetProcessMemoryInfo(process_pid) else {
-        return usage_info;
-    };
-    usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
-
-    usage_info
-}
-
-#[cfg(windows)]
-pub type Rusage = WinRusage;
-// std.posix.rusage has no .freebsd arm; field names also differ
-// (ru_* instead of bare). Define a layout-compatible struct so
-// ResourceUsage can use the same field names everywhere.
-#[cfg(target_os = "freebsd")]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Rusage {
-    pub utime: libc::timeval,
-    pub stime: libc::timeval,
-    pub maxrss: isize,
-    pub ixrss: isize,
-    pub idrss: isize,
-    pub isrss: isize,
-    pub minflt: isize,
-    pub majflt: isize,
-    pub nswap: isize,
-    pub inblock: isize,
-    pub oublock: isize,
-    pub msgsnd: isize,
-    pub msgrcv: isize,
-    pub nsignals: isize,
-    pub nvcsw: isize,
-    pub nivcsw: isize,
-}
-#[cfg(all(unix, not(target_os = "freebsd")))]
-pub type Rusage = libc::rusage;
-
-// TODO(port): provide a uniform `Rusage::zeroed()` helper across cfgs
-#[inline]
-fn rusage_zeroed() -> Rusage {
-    // SAFETY: all-zero is a valid Rusage on every platform (POD C struct / Default-able WinRusage)
-    unsafe { core::mem::zeroed() }
-}
+pub use bun_spawn_sys::uv_getrusage;
 
 /// §Dispatch cold-path vtable. One static instance per high-tier handler type.
 /// Replaces the Zig `TaggedPointerUnion` 12-way `inline switch`.
@@ -249,11 +127,6 @@ impl ProcessExitHandler {
         unsafe { (vt.on_process_exit)(self.owner, process, status, rusage) };
     }
 }
-
-#[cfg(target_os = "linux")]
-pub type PidFdType = FdT;
-#[cfg(not(target_os = "linux"))]
-pub type PidFdType = (); // u0 in Zig
 
 pub struct Process {
     pub pid: PidT,
@@ -1336,7 +1209,6 @@ pub mod waiter_thread_posix {
         }
     }
 
-    static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
     const STACK_SIZE: usize = 512 * 1024;
 
     // Singleton — Zig `pub var instance: WaiterThread = .{};`. The waiter
@@ -1363,12 +1235,12 @@ pub mod waiter_thread_posix {
     impl WaiterThreadPosix {
         #[inline]
         pub fn set_should_use_waiter_thread() {
-            SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
+            bun_spawn_sys::waiter_thread_flag::set();
         }
 
         #[inline]
         pub fn should_use_waiter_thread() -> bool {
-            SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
+            bun_spawn_sys::waiter_thread_flag::get()
         }
 
         pub fn append(process: *mut Process) {
@@ -1396,7 +1268,7 @@ pub mod waiter_thread_posix {
         }
 
         pub fn reload_handlers() {
-            if !SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed) {
+            if !bun_spawn_sys::waiter_thread_flag::get() {
                 return;
             }
 
@@ -1420,7 +1292,7 @@ pub mod waiter_thread_posix {
     }
 
     pub fn init() -> Result<(), std::io::Error> {
-        debug_assert!(SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed));
+        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
 
         // SAFETY: `started` is atomic; raced fetch_max is fine.
         if unsafe { (*instance()).started.fetch_max(1, Ordering::Relaxed) } > 0 {
@@ -1519,109 +1391,10 @@ pub mod WaiterThread {
 }
 
 
-pub struct PosixSpawnOptions {
-    pub stdin: PosixStdio,
-    pub stdout: PosixStdio,
-    pub stderr: PosixStdio,
-    pub ipc: Option<Fd>,
-    pub extra_fds: Box<[PosixStdio]>,
-    pub cwd: Box<[u8]>,
-    pub detached: bool,
-    pub windows: (),
-    pub argv0: Option<*const c_char>,
-    pub stream: bool,
-    pub sync: bool,
-    pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
-    /// Apple Extension: If this bit is set, rather
-    /// than returning to the caller, posix_spawn(2)
-    /// and posix_spawnp(2) will behave as a more
-    /// featureful execve(2).
-    pub use_execve_on_macos: bool,
-    /// If we need to call `socketpair()`, this
-    /// sets SO_NOSIGPIPE when true.
-    ///
-    /// If false, this avoids setting SO_NOSIGPIPE
-    /// for stdout. This is used to preserve
-    /// consistent shell semantics.
-    pub no_sigpipe: bool,
-    /// setpgid(0, 0) in the child so it leads its own process group. The parent
-    /// can then `kill(-pid, sig)` to signal the child and all its descendants.
-    /// Not exposed to JS yet.
-    pub new_process_group: bool,
-    /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
-    pub pty_slave_fd: i32,
-    /// Windows-only ConPTY handle; void placeholder on POSIX.
-    pub pseudoconsole: (),
-    /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
-    /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
-    /// it when the spawning thread dies. When null, defaults to SIGKILL if
-    /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
-    /// PDEATHSIG). Not exposed to JS yet.
-    pub linux_pdeathsig: Option<u8>,
-}
 
-impl Default for PosixSpawnOptions {
-    fn default() -> Self {
-        Self {
-            stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Ignore,
-            stderr: PosixStdio::Ignore,
-            ipc: None,
-            extra_fds: Box::default(),
-            cwd: Box::default(),
-            detached: false,
-            windows: (),
-            argv0: None,
-            stream: true,
-            sync: false,
-            can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: false,
-            use_execve_on_macos: false,
-            no_sigpipe: true,
-            new_process_group: false,
-            pty_slave_fd: -1,
-            pseudoconsole: (),
-            linux_pdeathsig: None,
-        }
-    }
-}
-
-/// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
-/// `process` leaf. The sibling `subprocess` module re-exports this.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum StdioKind {
-    Stdin = 0,
-    Stdout = 1,
-    Stderr = 2,
-}
-
-impl StdioKind {
-    #[inline]
-    pub fn to_fd(self) -> Fd {
-        match self {
-            StdioKind::Stdin => Fd::stdin(),
-            StdioKind::Stdout => Fd::stdout(),
-            StdioKind::Stderr => Fd::stderr(),
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Dup2 {
-    pub out: StdioKind,
-    pub to: StdioKind,
-}
-
-pub enum PosixStdio {
-    Path(Box<[u8]>),
-    Inherit,
-    Ignore,
-    Buffer,
-    Ipc,
-    Pipe(Fd),
-    // TODO: remove this entry, it doesn't seem to be used
-    Dup2(Dup2),
-}
+// (PosixSpawnOptions / StdioKind / Dup2 / PosixStdio moved to bun_spawn_sys —
+// re-exported above. Windows option/result types stay here: they embed
+// `*mut Process` / `EventLoopHandle` and so cannot live in the leaf -sys crate.)
 
 #[cfg(windows)]
 pub struct WindowsSpawnResult {
@@ -1774,152 +1547,18 @@ impl WindowsStdio {
 // whose ownership is transferred to `WindowsStdioResult` on success; callers
 // must invoke `WindowsStdio::deinit` explicitly on the error path (Zig spec).
 
-pub struct PosixSpawnResult {
-    pub pid: PidT,
-    pub pidfd: Option<PidFdType>,
-    pub stdin: Option<Fd>,
-    pub stdout: Option<Fd>,
-    pub stderr: Option<Fd>,
-    pub ipc: Option<Fd>,
-    pub extra_pipes: Vec<ExtraPipe>,
-    pub memfds: [bool; 3],
-    // ESRCH can happen when requesting the pidfd
-    pub has_exited: bool,
+/// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
+/// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
+/// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
+/// trait method so callers keep the `.to_process(loop_, sync)` spelling.
+pub trait SpawnResultExt {
+    fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process;
 }
 
-impl Default for PosixSpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            ipc: None,
-            extra_pipes: Vec::new(),
-            memfds: [false, false, false],
-            has_exited: false,
-        }
-    }
-}
-
-/// Entry in `extra_pipes` for a stdio slot at index >= 3.
-pub enum ExtraPipe {
-    /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
-    /// `Subprocess.stdio[N]` and close it in `finalizeStreams`.
-    OwnedFd(Fd),
-    /// The caller supplied this fd in the stdio array; expose it via
-    /// `Subprocess.stdio[N]` but never close it — the caller retains ownership.
-    UnownedFd(Fd),
-    /// Nothing to expose for this slot (`"ignore"`, `"inherit"`, a path, or
-    /// the IPC channel after ownership has been transferred to uSockets).
-    Unavailable,
-}
-
-impl ExtraPipe {
-    pub fn fd(&self) -> Fd {
-        match self {
-            ExtraPipe::OwnedFd(f) | ExtraPipe::UnownedFd(f) => *f,
-            ExtraPipe::Unavailable => Fd::INVALID,
-        }
-    }
-}
-
-impl PosixSpawnResult {
-    pub fn close(&mut self) {
-        use bun_sys::FdExt as _;
-        for item in self.extra_pipes.iter() {
-            match item {
-                ExtraPipe::OwnedFd(f) => f.close(),
-                ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
-            }
-        }
-        self.extra_pipes.clear();
-        self.extra_pipes.shrink_to_fit();
-    }
-}
-
-impl PosixSpawnResult {
-    #[cfg(unix)]
-    pub fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process {
+#[cfg(unix)]
+impl SpawnResultExt for PosixSpawnResult {
+    fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process {
         Process::init_posix(self, event_loop, sync_)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
-        // `analytics.kernel_version()` (semver compare); until that helper is
-        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
-        // below to fall back on older kernels.
-        // TODO(port): wire bun_analytics::kernel_version() once available.
-        bun_sys::O::NONBLOCK as u32
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        if WaiterThread::should_use_waiter_thread() {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open));
-        }
-
-        let pidfd_flags = Self::pidfd_flags_for_linux();
-
-        let attempt = 'brk: {
-            let rc = bun_sys::pidfd_open(self.pid, pidfd_flags);
-            if let Err(e) = &rc {
-                if e.get_errno() == bun_sys::E::EINVAL {
-                    // Retry once, incase they don't support PIDFD_NONBLOCK.
-                    break 'brk bun_sys::pidfd_open(self.pid, 0);
-                }
-            }
-            rc
-        };
-        match attempt {
-            Err(err) => {
-                match err.get_errno() {
-                    // seccomp filters can be used to block this system call or pidfd's altogether
-                    // https://github.com/moby/moby/issues/42680
-                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
-                    bun_sys::E::ENOSYS
-                    // EOPNOTSUPP == ENOTSUP on Linux (both 95).
-                    | bun_sys::E::ENOTSUP
-                    | bun_sys::E::EPERM
-                    | bun_sys::E::EACCES
-                    | bun_sys::E::EINVAL => {
-                        WaiterThread::set_should_use_waiter_thread();
-                        return Err(err);
-                    }
-
-                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                    // Until we switch to CLONE_PIDFD, this needs to be handled separately.
-                    bun_sys::E::ESRCH => {}
-
-                    // For all other cases, ensure we don't leak the child process on error
-                    // That would cause Zombie processes to accumulate.
-                    _ => {
-                        loop {
-                            let mut status: i32 = 0;
-                            // SAFETY: libc wait4
-                            let rc = unsafe {
-                                libc::wait4(self.pid, &mut status, 0, core::ptr::null_mut())
-                            };
-                            match bun_sys::get_errno(rc as isize) {
-                                bun_sys::E::SUCCESS => {}
-                                bun_sys::E::EINTR => continue,
-                                _ => {}
-                            }
-                            break;
-                        }
-                    }
-                }
-                Err(err)
-            }
-            Ok(fd) => Ok(fd.native()),
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, bun_sys::Tag::pidfd_open))
     }
 }
 
@@ -1940,35 +1579,15 @@ pub type SpawnProcessResult = WindowsSpawnResult;
 
 // ─── spawn_process bodies + sync runner ──────────────────────────────────────
 
-// Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
-#[cfg(target_os = "macos")]
-const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
-#[cfg(target_os = "macos")]
-const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
-
 mod spawn_process_body {
 use super::*;
-use core::ffi::CStr;
 use bun_sys::FdExt as _;
 
-pub fn spawn_process(
-    options: &SpawnOptions,
-    argv: *const *const c_char, // [*:null]?[*:0]const u8
-    envp: *const *const c_char,
-) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
-    #[cfg(unix)]
-    {
-        spawn_process_posix(options, argv, envp)
-    }
-    #[cfg(not(unix))]
-    {
-        spawn_process_windows(options, argv, envp)
-    }
-}
+#[cfg(unix)]
+pub use bun_spawn_sys::spawn_process_posix;
 
 /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
-/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
+/// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
 #[cfg(unix)]
 struct AutoCloseFd(Fd);
 
@@ -1982,7 +1601,6 @@ impl AutoCloseFd {
     const fn invalid() -> Self {
         Self(Fd::INVALID)
     }
-    /// Borrow the inner handle (`Fd` is `Copy`).
     #[inline]
     fn fd(&self) -> Fd {
         self.0
@@ -1998,400 +1616,18 @@ impl Drop for AutoCloseFd {
     }
 }
 
-/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
-/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
-/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
-/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
-/// on error returns. `on_error` is disarmed on the success path.
-///
-/// This exists so that bare `?` on `actions.*` propagates without leaking
-/// the parent-side socketpair ends pushed earlier in the loop.
-///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
-/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
-/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
-/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
-/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
-/// cleanup to cover those value-error returns as well. The fds in
-/// `to_close_on_error` are parent-side ends never handed back to the caller on
-/// any error path, so closing them is the correct behavior.
-#[cfg(unix)]
-struct PosixSpawnFdGuard {
-    to_set_cloexec: Vec<Fd>,
-    to_close_at_end: Vec<Fd>,
-    to_close_on_error: Vec<Fd>,
-    on_error: bool,
-}
-
-#[cfg(unix)]
-impl Drop for PosixSpawnFdGuard {
-    fn drop(&mut self) {
-        if self.on_error {
-            for fd in self.to_close_on_error.iter() {
-                fd.close();
-            }
-        }
-        for fd in self.to_set_cloexec.iter() {
-            let _ = bun_sys::set_close_on_exec(*fd);
-        }
-        for fd in self.to_close_at_end.iter() {
-            fd.close();
-        }
-    }
-}
-
-#[cfg(unix)]
-pub fn spawn_process_posix(
-    options: &PosixSpawnOptions,
-    argv: *const *const c_char,
-    envp: *const *const c_char,
-) -> Result<bun_sys::Result<PosixSpawnResult>, bun_core::Error> {
-    bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
-    let mut actions = PosixSpawnActions::init()?;
-    // defer actions.deinit() — Drop
-
-    let mut attr = PosixSpawnAttr::init()?;
-    // defer attr.deinit() — Drop
-
-    let mut flags: i32 = libc::POSIX_SPAWN_SETSIGDEF as i32 | libc::POSIX_SPAWN_SETSIGMASK as i32;
-
-    #[cfg(target_os = "macos")]
+pub fn spawn_process(
+    options: &SpawnOptions,
+    argv: Argv, // [*:null]?[*:0]const u8
+    envp: Envp,
+) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
+    #[cfg(unix)]
     {
-        flags |= super::POSIX_SPAWN_CLOEXEC_DEFAULT;
-
-        if options.use_execve_on_macos {
-            flags |= super::POSIX_SPAWN_SETEXEC;
-
-            if matches!(options.stdin, PosixStdio::Buffer)
-                || matches!(options.stdout, PosixStdio::Buffer)
-                || matches!(options.stderr, PosixStdio::Buffer)
-            {
-                Output::panic(
-                    "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                    &[],
-                );
-            }
-        }
+        spawn_process_posix(options, argv, envp)
     }
-
-    if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            flags |= libc::POSIX_SPAWN_SETSID as i32;
-        }
-        attr.detached = true;
-    }
-
-    // Pass PTY slave fd to attr for controlling terminal setup
-    attr.pty_slave_fd = options.pty_slave_fd;
-    attr.new_process_group = options.new_process_group;
-
-    #[cfg(target_os = "linux")]
+    #[cfg(not(unix))]
     {
-        // Explicit per-spawn value wins; otherwise no-orphans mode defaults
-        // every child to SIGKILL-on-parent-death so non-Bun descendants are
-        // covered without relying on env-var inheritance, and the prctl happens
-        // in the vfork child before exec so there's no startup race.
-        attr.linux_pdeathsig = if let Some(sig) = options.linux_pdeathsig {
-            i32::from(sig)
-        } else if ParentDeathWatchdog::should_default_spawn_pdeathsig() {
-            libc::SIGKILL
-        } else {
-            0
-        };
-    }
-
-    if !options.cwd.is_empty() {
-        actions.chdir(&options.cwd)?;
-    }
-    let mut spawned = PosixSpawnResult::default();
-    let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // errdefer extra_fds.deinit() — Vec drops on ?
-    // PERF(port): was stack-fallback allocator (2048)
-    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
-    // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
-    let mut cleanup = PosixSpawnFdGuard {
-        to_set_cloexec: Vec::new(),
-        to_close_at_end: Vec::new(),
-        to_close_on_error: Vec::new(),
-        on_error: true,
-    };
-
-    let _ = attr.set(flags as _);
-    let _ = attr.reset_signals();
-
-    if let Some(ipc) = options.ipc {
-        actions.inherit(ipc)?;
-        spawned.ipc = Some(ipc);
-    }
-
-    let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-    // PORT NOTE: reshaped for borrowck — Zig holds [3]*?bun.FD into spawned;
-    // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
-    let mut dup_stdout_to_stderr: bool = false;
-
-    'stdio: for i in 0..3usize {
-        let fileno = Fd::from_native(FdT::try_from(i).unwrap());
-        let flag: u32 = (if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY }) as u32;
-
-        match stdio_options[i] {
-            PosixStdio::Dup2(dup2) => {
-                // This is a hack to get around the ordering of the spawn actions.
-                // If stdout is set so that it redirects to stderr, the order of actions will be like this:
-                // 0. dup2(stderr, stdout) - this makes stdout point to stderr
-                // 1. setup stderr (will make stderr point to write end of `stderr_pipe_fds`)
-                // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
-                // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
-                // Right now we only allow one output redirection so it's okay.
-                if i == 1 && dup2.to == StdioKind::Stderr {
-                    dup_stdout_to_stderr = true;
-                } else {
-                    actions.dup2(dup2.to.to_fd(), dup2.out.to_fd())?;
-                }
-            }
-            PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
-            }
-            PosixStdio::Ipc | PosixStdio::Ignore => {
-                actions.open_z(
-                    fileno,
-                    // SAFETY: literal is NUL-terminated with no interior NUL.
-                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
-                    flag | bun_sys::O::CREAT as u32,
-                    0o664,
-                )?;
-            }
-            PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
-            }
-            PosixStdio::Buffer => {
-                #[cfg(target_os = "linux")]
-                'use_memfd: {
-                    if !options.stream && i > 0 && bun_sys::can_use_memfd() {
-                        // use memfd if we can
-                        let label: &CStr = match i {
-                            0 => c"spawn_stdio_stdin",
-                            1 => c"spawn_stdio_stdout",
-                            2 => c"spawn_stdio_stderr",
-                            _ => c"spawn_stdio_generic",
-                        };
-
-                        let fd = match bun_sys::memfd_create(label, bun_sys::MemfdFlags::CrossProcess)
-                        {
-                            Ok(fd) => fd,
-                            Err(_) => break 'use_memfd,
-                        };
-
-                        cleanup.to_close_on_error.push(fd);
-                        cleanup.to_set_cloexec.push(fd);
-                        actions.dup2(fd, fileno)?;
-                        set_spawned_stdio(&mut spawned, i, fd);
-                        spawned.memfds[i] = true;
-                        continue 'stdio;
-                    }
-                }
-
-                let fds: [Fd; 2] = 'brk: {
-                    let pair_result = if !options.no_sigpipe {
-                        bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
-                    } else {
-                        bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
-                    };
-                    let pair = match pair_result {
-                        Ok(p) => p,
-                        Err(e) => return Ok(Err(e)),
-                    };
-                    break 'brk [pair[if i == 0 { 1 } else { 0 }], pair[if i == 0 { 0 } else { 1 }]];
-                };
-
-                // Note: we intentionally do NOT call shutdown() on the
-                // socketpair fds. On SOCK_STREAM socketpairs, shutdown(fd, SHUT_WR)
-                // sends a FIN to the peer, which causes programs that poll the
-                // write end for readability (e.g. Python's asyncio connect_write_pipe)
-                // to interpret it as "connection closed" and tear down their transport.
-                // The socketpair is already used unidirectionally by convention.
-                #[cfg(target_os = "macos")]
-                {
-                    // macOS seems to default to around 8 KB for the buffer size
-                    // this is comically small.
-                    // TODO: investigate if this should be adjusted on Linux.
-                    let so_recvbuf: c_int = 1024 * 512;
-                    let so_sendbuf: c_int = 1024 * 512;
-                    // SAFETY: setsockopt with valid fds
-                    unsafe {
-                        if i == 0 {
-                            libc::setsockopt(
-                                fds[1].cast(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[0].cast(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        } else {
-                            libc::setsockopt(
-                                fds[0].cast(),
-                                libc::SOL_SOCKET,
-                                libc::SO_RCVBUF,
-                                &so_recvbuf as *const _ as *const c_void,
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                            libc::setsockopt(
-                                fds[1].cast(),
-                                libc::SOL_SOCKET,
-                                libc::SO_SNDBUF,
-                                &so_sendbuf as *const _ as *const c_void,
-                                core::mem::size_of::<c_int>() as u32,
-                            );
-                        }
-                    }
-                }
-
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
-
-                if !options.sync {
-                    if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
-                        return Ok(Err(e));
-                    }
-                }
-
-                actions.dup2(fds[1], fileno)?;
-                if fds[1] != fileno {
-                    actions.close(fds[1])?;
-                }
-
-                set_spawned_stdio(&mut spawned, i, fds[0]);
-            }
-            PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
-                set_spawned_stdio(&mut spawned, i, *fd);
-            }
-        }
-    }
-
-    if dup_stdout_to_stderr {
-        if let PosixStdio::Dup2(d) = stdio_options[1] {
-            actions.dup2(d.to.to_fd(), d.out.to_fd())?;
-        }
-    }
-
-    for (i, ipc) in options.extra_fds.iter().enumerate() {
-        let fileno = Fd::from_native(FdT::try_from(3 + i).unwrap());
-
-        match ipc {
-            PosixStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
-            PosixStdio::Inherit => {
-                actions.inherit(fileno)?;
-                extra_fds.push(ExtraPipe::Unavailable);
-            }
-            PosixStdio::Ignore => {
-                actions.open_z(
-                    fileno,
-                    // SAFETY: literal is NUL-terminated with no interior NUL.
-                    unsafe { CStr::from_bytes_with_nul_unchecked(b"/dev/null\0") },
-                    bun_sys::O::RDWR as u32,
-                    0o664,
-                )?;
-                extra_fds.push(ExtraPipe::Unavailable);
-            }
-            PosixStdio::Path(path) => {
-                actions.open(fileno, path, (bun_sys::O::RDWR | bun_sys::O::CREAT) as u32, 0o664)?;
-                extra_fds.push(ExtraPipe::Unavailable);
-            }
-            PosixStdio::Ipc | PosixStdio::Buffer => {
-                let is_ipc = matches!(ipc, PosixStdio::Ipc);
-                let fds: [Fd; 2] = match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
-                    Ok(p) => p,
-                    Err(e) => return Ok(Err(e)),
-                };
-
-                if !options.sync && !is_ipc {
-                    if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
-                        return Ok(Err(e));
-                    }
-                }
-
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
-
-                actions.dup2(fds[1], fileno)?;
-                if fds[1] != fileno {
-                    actions.close(fds[1])?;
-                }
-                extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
-            }
-            PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
-                // The fd was supplied by the caller (a number in the stdio array) and is
-                // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
-                // mark it unowned so finalizeStreams leaves it open.
-                extra_fds.push(ExtraPipe::UnownedFd(*fd));
-            }
-        }
-    }
-
-    // SAFETY: argv is null-terminated, argv[0] is non-null
-    let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
-    // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
-    let argv0_cstr = unsafe { CStr::from_ptr(argv0) };
-    let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
-
-    match spawn_result {
-        Err(err) => {
-            return Ok(Err(err));
-        }
-        Ok(pid) => {
-            spawned.pid = pid;
-            spawned.extra_pipes = extra_fds;
-
-            #[cfg(target_os = "linux")]
-            {
-                // If it's spawnSync and we want to block the entire thread
-                // don't even bother with pidfd. It's not necessary.
-                if !options.can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-                    // Get a pidfd, which is a file descriptor that represents a process.
-                    // This lets us avoid a separate thread to wait on the process.
-                    match spawned.pifd_from_pid() {
-                        Ok(pidfd) => {
-                            spawned.pidfd = Some(pidfd);
-                        }
-                        Err(err) => {
-                            // we intentionally do not clean up any of the file descriptors in this case
-                            // you could have data sitting in stdout, just waiting.
-                            if err.get_errno() == bun_sys::E::ESRCH {
-                                spawned.has_exited = true;
-                                // a real error occurred. one we should not assume means pidfd_open is blocked.
-                            } else if !WaiterThread::should_use_waiter_thread() {
-                                return Ok(Err(err));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Disarm `errdefer`; the unconditional `defer` (cloexec +
-            // close_at_end) runs from `cleanup`'s Drop on the way out.
-            cleanup.on_error = false;
-            return Ok(Ok(spawned));
-        }
-    }
-}
-
-#[cfg(unix)]
-fn set_spawned_stdio(spawned: &mut PosixSpawnResult, i: usize, fd: Fd) {
-    match i {
-        0 => spawned.stdin = Some(fd),
-        1 => spawned.stdout = Some(fd),
-        2 => spawned.stderr = Some(fd),
-        _ => unreachable!(),
+        spawn_process_windows(options, argv, envp)
     }
 }
 
@@ -2799,13 +2035,7 @@ pub mod sync {
     #[cfg(windows)]
     pub type SpawnOptionsStdio = WindowsStdio;
 
-    // TODO(port): unify constructor helpers across the two Stdio enums
-    #[cfg(unix)]
-    impl PosixStdio {
-        fn inherit() -> Self { PosixStdio::Inherit }
-        fn ignore() -> Self { PosixStdio::Ignore }
-        fn buffer() -> Self { PosixStdio::Buffer }
-    }
+    // PosixStdio constructor helpers live in `bun_spawn_sys` (inherent impl).
     #[cfg(windows)]
     impl WindowsStdio {
         fn inherit() -> Self { WindowsStdio::Inherit }
@@ -3263,25 +2493,13 @@ pub mod sync {
     }
 
     // Forward signals from parent to the child process.
-    // TODO(port): move to runtime_sys
-    unsafe extern "C" {
-        fn Bun__registerSignalsForForwarding();
-        fn Bun__unregisterSignalsForForwarding();
-
-        // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.
-        fn Bun__noOrphans_begin(kq: c_int, root: libc::pid_t);
-        fn Bun__noOrphans_releaseKq();
-        fn Bun__noOrphans_onFork();
-        fn Bun__noOrphans_onExit(pid: libc::pid_t);
-
-        // The PID to forward signals to.
-        // Set to 0 when unregistering.
-        static mut Bun__currentSyncPID: i64;
-
-        // Race condition: a signal could be sent before spawnProcessPosix returns.
-        // We need to make sure to send it after the process is spawned.
-        fn Bun__sendPendingSignalIfNecessary();
-    }
+    // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
+    #[allow(unused_imports)]
+    use bun_spawn_sys::ffi::{
+        Bun__currentSyncPID, Bun__noOrphans_begin, Bun__noOrphans_onExit,
+        Bun__noOrphans_onFork, Bun__noOrphans_releaseKq, Bun__registerSignalsForForwarding,
+        Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
+    };
 
     /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
     /// construction, unregisters and restores the crash-handler signal

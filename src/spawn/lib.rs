@@ -30,9 +30,25 @@ use core::ffi::c_char;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// Port of `src/runtime/api/bun/spawn.zig`.
-#[path = "posix_spawn.rs"]
-pub mod posix_spawn;
+/// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
+/// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
+/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
+/// keep resolving.
+pub mod posix_spawn {
+    pub use bun_spawn_sys::posix_spawn::*;
+
+    pub mod bun_spawn {
+        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
+        pub use crate::process as process;
+        pub use crate::process::{
+            spawn_process, sync, Process, SpawnOptions, SpawnProcessResult, Status,
+        };
+        #[cfg(windows)]
+        pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
+    }
+    pub use bun_spawn as BunSpawn;
+    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
+}
 
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
 /// `Status` / `SpawnOptions` / `SpawnResult`. Port of
@@ -51,10 +67,13 @@ pub mod static_pipe_writer;
 
 pub use bun_event_loop::EventLoopHandle;
 
+// Raw OS-spawn types from the leaf -sys crate.
+pub use bun_spawn_sys::{ffi, Argv, CStrPtr, Envp};
+
 pub use process::{
     spawn_process, Dup2, Exited, ExtraPipe, PidT, Poller, Process,
     ProcessExitHandler, ProcessExitVTable, Rusage, SignalCodeExt, SpawnOptions,
-    SpawnProcessResult, Status, StdioKind, WaiterThread,
+    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread,
 };
 /// Compat re-export: the `process::spawn_sys` shim module was dissolved into
 /// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on

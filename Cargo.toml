@@ -103,6 +103,7 @@ members = [
   "src/which",
   "src/transpiler",
   "src/spawn",
+  "src/spawn_sys",
   "src/bunfig",
   "src/bun_bin",
 ]
@@ -224,6 +225,7 @@ bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
 bun_spawn = { path = "src/spawn" }
+bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }

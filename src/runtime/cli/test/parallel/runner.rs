@@ -282,12 +282,11 @@ pub fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[Option<*const c_char>]>, bun_core::Error> {
-    // TODO(port): return type — Zig `[:null]?[*:0]const u8` (null-sentinel slice
-    // of nullable C-strings). String storage was arena-owned in Zig; here strings
-    // are leaked/boxed and need an owner. Revisit when spawn signature is ported.
+fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
+    // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
+    // String storage was arena-owned in Zig; here strings are leaked/boxed.
     // PERF(port): was arena bulk-free — profile in Phase B
-    let mut argv: Vec<Option<*const c_char>> = Vec::new();
+    let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
     // Helper: format → NUL-terminated, return raw ptr. Ownership TODO above.
@@ -307,84 +306,84 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[Option<*const c_
     };
     let lit = |s: &'static [u8]| -> *const c_char { s.as_ptr() as *const c_char };
 
-    argv.push(Some(
+    argv.push(
         bun_core::self_exe_path()
             .map_err(|_| bun_core::err!("SelfExePathFailed"))?
             .as_ptr(),
-    ));
-    argv.push(Some(lit(b"test\0")));
-    argv.push(Some(lit(b"--test-worker\0")));
-    argv.push(Some(lit(b"--isolate\0")));
+    );
+    argv.push(lit(b"test\0"));
+    argv.push(lit(b"--test-worker\0"));
+    argv.push(lit(b"--isolate\0"));
 
-    argv.push(Some(print_z(format_args!("--timeout={}", opts.default_timeout_ms))?));
+    argv.push(print_z(format_args!("--timeout={}", opts.default_timeout_ms))?);
     if opts.run_todo {
-        argv.push(Some(lit(b"--todo\0")));
+        argv.push(lit(b"--todo\0"));
     }
     if opts.only {
-        argv.push(Some(lit(b"--only\0")));
+        argv.push(lit(b"--only\0"));
     }
     if opts.reporters.dots {
-        argv.push(Some(lit(b"--dots\0")));
+        argv.push(lit(b"--dots\0"));
     }
     if opts.reporters.only_failures {
-        argv.push(Some(lit(b"--only-failures\0")));
+        argv.push(lit(b"--only-failures\0"));
     }
     if opts.update_snapshots {
-        argv.push(Some(lit(b"--update-snapshots\0")));
+        argv.push(lit(b"--update-snapshots\0"));
     }
     if opts.concurrent {
-        argv.push(Some(lit(b"--concurrent\0")));
+        argv.push(lit(b"--concurrent\0"));
     }
     if opts.randomize {
-        argv.push(Some(lit(b"--randomize\0")));
+        argv.push(lit(b"--randomize\0"));
     }
     if let Some(seed) = opts.seed {
-        argv.push(Some(print_z(format_args!("--seed={}", seed))?));
+        argv.push(print_z(format_args!("--seed={}", seed))?);
     }
     // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
     // (test_command.zig handleTestCompleted), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
     if opts.repeat_count > 0 {
-        argv.push(Some(print_z(format_args!("--rerun-each={}", opts.repeat_count))?));
+        argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
     }
     if opts.retry > 0 {
-        argv.push(Some(print_z(format_args!("--retry={}", opts.retry))?));
+        argv.push(print_z(format_args!("--retry={}", opts.retry))?);
     }
-    argv.push(Some(print_z(format_args!("--max-concurrency={}", opts.max_concurrency))?));
+    argv.push(print_z(format_args!("--max-concurrency={}", opts.max_concurrency))?);
     if let Some(pattern) = &opts.test_filter_pattern {
-        argv.push(Some(lit(b"-t\0")));
-        argv.push(Some(dupe_z(pattern)));
+        argv.push(lit(b"-t\0"));
+        argv.push(dupe_z(pattern));
     }
     for preload in ctx.preloads.iter() {
-        argv.push(Some(lit(b"--preload\0")));
-        argv.push(Some(dupe_z(preload)));
+        argv.push(lit(b"--preload\0"));
+        argv.push(dupe_z(preload));
     }
     if let Some(define) = &ctx.args.define {
         debug_assert_eq!(define.keys.len(), define.values.len());
         for (key, value) in define.keys.iter().zip(define.values.iter()) {
-            argv.push(Some(lit(b"--define\0")));
-            argv.push(Some(print_z(format_args!(
+            argv.push(lit(b"--define\0"));
+            argv.push(print_z(format_args!(
                 "{}={}",
                 bstr::BStr::new(key),
                 bstr::BStr::new(value)
-            ))?));
+            ))?);
         }
     }
     if let Some(loaders) = &ctx.args.loaders {
         debug_assert_eq!(loaders.extensions.len(), loaders.loaders.len());
         for (ext, loader) in loaders.extensions.iter().zip(loaders.loaders.iter()) {
-            argv.push(Some(lit(b"--loader\0")));
-            argv.push(Some(print_z(format_args!(
+            argv.push(lit(b"--loader\0"));
+            argv.push(print_z(format_args!(
                 "{}:{}",
                 bstr::BStr::new(ext),
                 api_loader_tag_name(*loader)
-            ))?));
+            ))?);
         }
     }
     if let Some(tsconfig) = &ctx.args.tsconfig_override {
-        argv.push(Some(lit(b"--tsconfig-override\0")));
-        argv.push(Some(dupe_z(tsconfig)));
+        argv.push(lit(b"--tsconfig-override\0"));
+        argv.push(dupe_z(tsconfig));
     }
     // PORT NOTE: was `inline for` over heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
@@ -398,57 +397,57 @@ fn build_worker_argv(ctx: &Command::ContextData) -> Result<Box<[Option<*const c_
     ];
     for (flag, values) in multi_value_flags {
         for value in values {
-            argv.push(Some(flag.as_ptr() as *const c_char));
-            argv.push(Some(dupe_z(value)));
+            argv.push(flag.as_ptr() as *const c_char);
+            argv.push(dupe_z(value));
         }
     }
     if ctx.args.preserve_symlinks.unwrap_or(false) {
-        argv.push(Some(lit(b"--preserve-symlinks\0")));
+        argv.push(lit(b"--preserve-symlinks\0"));
     }
     if ctx.runtime_options.smol {
-        argv.push(Some(lit(b"--smol\0")));
+        argv.push(lit(b"--smol\0"));
     }
     if ctx.runtime_options.experimental_http2_fetch {
-        argv.push(Some(lit(b"--experimental-http2-fetch\0")));
+        argv.push(lit(b"--experimental-http2-fetch\0"));
     }
     if ctx.runtime_options.experimental_http3_fetch {
-        argv.push(Some(lit(b"--experimental-http3-fetch\0")));
+        argv.push(lit(b"--experimental-http3-fetch\0"));
     }
     if ctx.args.allow_addons == Some(false) {
-        argv.push(Some(lit(b"--no-addons\0")));
+        argv.push(lit(b"--no-addons\0"));
     }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
-        argv.push(Some(lit(b"--no-macros\0")));
+        argv.push(lit(b"--no-macros\0"));
     }
     if ctx.args.disable_default_env_files {
-        argv.push(Some(lit(b"--no-env-file\0")));
+        argv.push(lit(b"--no-env-file\0"));
     }
     if let Some(jsx) = &ctx.args.jsx {
         if !jsx.factory.is_empty() {
-            argv.push(Some(print_z(format_args!("--jsx-factory={}", bstr::BStr::new(&jsx.factory)))?));
+            argv.push(print_z(format_args!("--jsx-factory={}", bstr::BStr::new(&jsx.factory)))?);
         }
         if !jsx.fragment.is_empty() {
-            argv.push(Some(print_z(format_args!("--jsx-fragment={}", bstr::BStr::new(&jsx.fragment)))?));
+            argv.push(print_z(format_args!("--jsx-fragment={}", bstr::BStr::new(&jsx.fragment)))?);
         }
         if !jsx.import_source.is_empty() {
-            argv.push(Some(print_z(format_args!(
+            argv.push(print_z(format_args!(
                 "--jsx-import-source={}",
                 bstr::BStr::new(&jsx.import_source)
-            ))?));
+            ))?);
         }
-        argv.push(Some(print_z(format_args!(
+        argv.push(print_z(format_args!(
             "--jsx-runtime={}",
             jsx_runtime_tag_name(jsx.runtime)
-        ))?));
+        ))?);
         if jsx.side_effects {
-            argv.push(Some(lit(b"--jsx-side-effects\0")));
+            argv.push(lit(b"--jsx-side-effects\0"));
         }
     }
     if opts.coverage.enabled {
-        argv.push(Some(lit(b"--coverage\0")));
+        argv.push(lit(b"--coverage\0"));
     }
 
-    argv.push(None);
+    argv.push(core::ptr::null());
     // Zig: `argv.items[0 .. argv.items.len - 1 :null]` — sentinel slice excluding
     // the trailing null from len but keeping it as sentinel. Rust callers index
     // by .len() so we keep the None in the boxed slice.

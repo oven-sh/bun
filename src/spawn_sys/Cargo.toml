@@ -1,0 +1,18 @@
+[package]
+name = "bun_spawn_sys"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bstr.workspace = true
+libc.workspace = true
+scopeguard.workspace = true
+bun_analytics.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys.workspace = true

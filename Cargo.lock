@@ -110,6 +110,7 @@ dependencies = [
  "bun_core",
  "bun_io",
  "bun_ptr",
+ "bun_spawn_sys",
  "bun_string",
  "bun_sys",
  "bun_threading",
@@ -193,6 +194,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bumpalo",
+ "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_simdutf_sys",
@@ -2074,11 +2076,25 @@ dependencies = [
  "bun_io",
  "bun_output",
  "bun_ptr",
+ "bun_spawn_sys",
  "bun_string",
  "bun_sys",
  "bun_threading",
  "libc",
  "parking_lot",
+ "scopeguard",
+]
+
+[[package]]
+name = "bun_spawn_sys"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_analytics",
+ "bun_core",
+ "bun_libuv_sys",
+ "bun_sys",
+ "libc",
  "scopeguard",
 ]
 

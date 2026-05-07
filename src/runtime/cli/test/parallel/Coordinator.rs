@@ -27,9 +27,9 @@ pub struct Coordinator<'a> {
     pub reporter: &'a mut CommandLineReporter,
     pub files: Vec<PathString>,
     pub cwd: &'a [u8],
-    // TODO(port): [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
+    // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: Box<[Option<*const c_char>]>,
+    pub argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
     // TODO(port): []const [:null]?[*:0]const u8 — see argv note.

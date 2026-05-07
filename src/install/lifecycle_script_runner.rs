@@ -15,7 +15,7 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
-use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
+use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, SpawnResultExt as _, Status};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt as _};
 use bun_aio::Loop as AsyncLoop;

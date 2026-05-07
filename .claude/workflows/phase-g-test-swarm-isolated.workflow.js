@@ -80,6 +80,11 @@ const REVIEW_S = {
 const RUN_IN_CG = `systemd-run --scope --quiet -p MemoryMax=64G -p MemorySwapMax=0 -p TasksMax=4096 --unit=${CG}-$RANDOM --`;
 const HARD = `**HARD RULES:** Work ONLY in ${WT} on branch claude/phase-g-tswarm-s${SHARD}. REAL fixes from .zig spec, NOT stubs/suppressions.
 
+**FIX LAYERING, DON'T WORK AROUND IT.** If a low-tier crate needs a type/fn from a high-tier crate:
+- MOVE the type/fn DOWN to the lower crate (it belongs there if low-tier needs it)
+- OR use the \`extern "Rust"\` link-time pattern (low crate declares, high crate defines — see PORTING.md §Global mutable state)
+- NEVER: runtime-registered hooks, type-erased \`*mut c_void\` round-trips, duplicate types, \`transmute\` between nominally-distinct crate types
+
 **NO NEW \`unsafe {}\` outside FFI.** If you reach for \`unsafe { &mut *ptr }\` / \`unsafe { &*ptr }\` / \`unsafe { ptr.cast().as_ref() }\`:
 - Change the fn signature to take \`&mut T\`/\`&T\` and let the (one) caller do the deref — or better, find why the caller has a raw ptr at all.
 - Raw-ptr field on a struct → add a safe accessor on the struct, not per-call-site unsafe.

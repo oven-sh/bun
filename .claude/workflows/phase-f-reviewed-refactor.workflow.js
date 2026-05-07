@@ -15,17 +15,17 @@ export const meta = {
 const A = typeof args === "string" ? JSON.parse(args) : args || {};
 if (!A.worktree) throw new Error("worktree required; args=" + JSON.stringify(A));
 const WT = A.worktree;
-const BRANCH = (A.branch) || `claude/phase-f-${WT.replace(/^.*bun-5-/, "")}`;
+const BRANCH = A.branch || `claude/phase-f-${WT.replace(/^.*bun-5-/, "")}`;
 const GOAL =
-  (A.goal) ||
+  A.goal ||
   (() => {
     throw new Error("goal required");
   })();
-const SCOPE = (A.scope) || "src/";
-const ANTI = (A.anti_pattern) || "";
-const CHECK_CMD = (A.check_cmd) || "cargo check --workspace --keep-going";
-const SMOKE = (A.smoke) || `bun bd -e 'console.log(1+1)' 2>&1 | head -5`;
-const MAX_ROUNDS = (A.max_rounds) || 6;
+const SCOPE = A.scope || "src/";
+const ANTI = A.anti_pattern || "";
+const CHECK_CMD = A.check_cmd || "cargo check --workspace --keep-going";
+const SMOKE = A.smoke || `bun bd -e 'console.log(1+1)' 2>&1 | head -5`;
+const MAX_ROUNDS = A.max_rounds || 6;
 
 const APPLY_S = {
   type: "object",
@@ -142,11 +142,13 @@ Return {check_ok, smoke_ok, errors:[...], smoke_output}. DO NOT edit.`,
 **Read the diff:** \`git -C ${WT} diff ${round === 1 ? "origin/claude/phase-a-port" : history[history.length - 1]?.apply?.commit || "HEAD~2"}..HEAD -- '${SCOPE}'\`
 
 **Look for (in order of severity):**
-1. **UB introduced:** new aliasing &mut, transmute lifetime extension, uninit reads, data races, ptr provenance loss
-2. **Semantics changed vs .zig spec:** read the .zig file at the same path. Does the Rust now diverge (different control flow, error handling, side effects, alloc/free pairing)?
-3. **Anti-pattern NOT actually fixed:** ${ANTI ? `\`grep -rn '${ANTI}' ${WT}/${SCOPE}\` — still present?` : "did the refactor achieve the goal, or just move code around?"}
-4. **Performance regressed:** new alloc per-call, new indirection on hot path, lost monomorphization, lost inline
-5. **Incorrectness:** off-by-one, wrong match arm, missed error case
+1. **NEW non-FFI unsafe:** \`git -C ${WT} diff origin/claude/phase-a-port..HEAD | grep '^+.*unsafe {'\` — for each: is it an extern/FFI call? If NOT → REJECT (fix = take \`&mut T\`, push deref to caller).
+2. **Layering workaround instead of fix:** new runtime-registered hook, \`*mut c_void\` type-erase round-trip, \`transmute\` between crate types, duplicated type → REJECT (fix = move type down or \`extern "Rust"\`).
+3. **UB introduced:** new aliasing &mut, transmute lifetime extension, uninit reads, data races, ptr provenance loss
+4. **Semantics changed vs .zig spec:** read the .zig file at the same path. Does the Rust now diverge (different control flow, error handling, side effects, alloc/free pairing)?
+5. **Anti-pattern NOT actually fixed:** ${ANTI ? `\`grep -rn '${ANTI}' ${WT}/${SCOPE}\` — still present?` : "did the refactor achieve the goal, or just move code around?"}
+6. **Performance regressed:** new alloc per-call, new indirection on hot path, lost monomorphization, lost inline
+7. **Incorrectness:** off-by-one, wrong match arm, missed error case
 
 **accept:true** ONLY if no severity:"ub" or severity:"semantics" findings AND build is clean. Otherwise accept:false.
 

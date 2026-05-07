@@ -1661,7 +1661,7 @@ pub fn init(
                             #[cfg(windows)]
                             let maybe_workspace_path = {
                                 parent_path_buf[..child_path.len()].copy_from_slice(child_path);
-                                path::dangerously_convert_path_to_posix_in_place::<u8>(
+                                resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
                                     &mut parent_path_buf[..child_path.len()],
                                 );
                                 &parent_path_buf[..child_path.len()]
@@ -1674,15 +1674,20 @@ pub fn init(
                                 // Intern via the resolver's DirnameStore so the slice is
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                                found = true;
                                 let _ = child_json.close();
+                                // Zig sets `found = true` here so the deferred close is
+                                // skipped; defuse the guard to the same effect. On the
+                                // Windows `seekTo` error path Zig also leaves the file
+                                // open (defer sees `found == true`), which `into_inner`
+                                // before `seek_to(0)?` preserves.
+                                let json_file =
+                                    scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 #[cfg(windows)]
                                 {
-                                    json_file_guard.seek_to(0)?;
+                                    json_file.seek_to(0)?;
                                 }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
-                                let json_file = scopeguard::ScopeGuard::into_inner(json_file_guard);
                                 break 'root_package_json_file json_file;
                             }
                         }
@@ -1879,7 +1884,12 @@ pub fn init(
                 patch_task_fifo: PatchTaskFifo::init(),
                 log: ctx.log,
                 root_dir: entries_option,
-                env: Some(NonNull::from(env)),
+                // PORT NOTE: reborrow `&mut *env` so the local stays usable for
+                // the post-construction `BUN_MANIFEST_CACHE` / `options.load`
+                // reads (Zig PackageManager.zig:910 keeps using `env` after
+                // storing it in the struct). `NonNull` is a raw pointer —
+                // ending the reborrow here does not alias the later uses.
+                env: Some(NonNull::from(&mut *env)),
                 cpu_count,
                 thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count as u32,

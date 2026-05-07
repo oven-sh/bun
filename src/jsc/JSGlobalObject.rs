@@ -954,13 +954,8 @@ impl JSGlobalObject {
         unsafe { &*JSC__JSGlobalObject__vm(self) }
     }
 
-    /// Raw `*mut JSC::VM` for FFI predicates that take a VM pointer
-    /// (e.g. [`JSValue::as_exception`]). C++ does not write through it.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut VM {
-        // SAFETY: JSC guarantees the VM outlives the global object.
-        unsafe { JSC__JSGlobalObject__vm(self) }
-    }
+    // `vm_ptr()` is defined once on the crate-root `impl JSGlobalObject` (lib.rs)
+    // so it's reachable before this module is fully resolved; do not duplicate here.
 
     pub fn delete_module_registry_entry(&self, name_: &ZigString) -> JsResult<()> {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `name_` borrow outlives the call.

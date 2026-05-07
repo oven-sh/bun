@@ -867,7 +867,7 @@ impl Response {
         Ok(Response {
             body: scopeguard::ScopeGuard::into_inner(body),
             init,
-            url: OwnedString::new(self.url.clone()),
+            url: self.url.clone(),
             redirected: self.redirected,
             ..Default::default()
         })
@@ -1284,7 +1284,7 @@ impl Init {
         Ok(Init {
             headers,
             status_code: self.status_code,
-            status_text: OwnedString::new(self.status_text.clone()),
+            status_text: self.status_text.clone(),
             method: self.method,
         })
     }

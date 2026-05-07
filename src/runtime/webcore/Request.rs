@@ -276,7 +276,26 @@ impl Request {
     /// and `impl BodyMixin for Request` supplies this as a trait method.
     #[inline]
     pub fn get_body_value(&mut self) -> &mut BodyValue {
-        &mut self.body
+        self.body_value_mut()
+    }
+
+    /// Zig: `this.#body.value` (immutable view).
+    #[inline]
+    pub(crate) fn body_value(&self) -> &BodyValue {
+        // SAFETY: `body` is a +1 ref into the VM-owned hive allocator; the
+        // slot is live until `finalize()` (or the JS wrapper's GC finalizer)
+        // calls `unref()`. `Request` is `!Sync` so no concurrent &mut exists.
+        unsafe { &(*self.body.as_ptr()).value }
+    }
+
+    /// Zig: `&this.#body.value`.
+    #[inline]
+    pub(crate) fn body_value_mut(&mut self) -> &mut BodyValue {
+        // SAFETY: see `body_value`. `&mut self` guarantees exclusive access on
+        // the Rust side; the aliasing `RequestContext.request_body` pointer is
+        // only dereferenced while no `&mut Request` is live (single-threaded
+        // event-loop sequencing).
+        unsafe { &mut (*self.body.as_ptr()).value }
     }
 
     // Returns if the request has headers already cached/set.
@@ -310,7 +329,7 @@ impl Request {
             // we don't have a request context, so we need to create an empty headers object
             self.headers = Some(HeadersRef::create_empty());
             // PORT NOTE: reshaped for borrowck — Zig read `blob.content_type`
-            // through `self.body` while holding `self.headers`. Snapshot the
+            // through `self.body_value()` while holding `self.headers`. Snapshot the
             // pointer first; `Blob.content_type` is a raw `*const [u8]` that
             // stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match &*self.body {

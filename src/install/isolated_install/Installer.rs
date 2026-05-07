@@ -246,9 +246,14 @@ impl<'a> Installer<'a> {
         );
         // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
         // sole ownership lives in this scope. Mirrors Zig `defer patch_task.deinit()`.
-        let _guard = scopeguard::guard((), |_| unsafe {
-            install::PatchTask::destroy(patch_task_ptr);
-        });
+        struct PatchTaskGuard(*mut install::PatchTask<'static>);
+        impl Drop for PatchTaskGuard {
+            fn drop(&mut self) {
+                // SAFETY: exclusive owner; created by `Box::into_raw` in `new_*`.
+                unsafe { install::PatchTask::destroy(self.0) };
+            }
+        }
+        let _guard = PatchTaskGuard(patch_task_ptr.cast());
         // SAFETY: exclusive owner — see above.
         let patch_task = unsafe { &mut *patch_task_ptr };
         bun_core::handle_oom(patch_task.apply());
@@ -2083,9 +2088,9 @@ impl<'a> Installer<'a> {
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_bins = pkgs.items_bin();
 
-        let link_target_buf = paths::path_buffer_pool::get();
-        let link_dest_buf = paths::path_buffer_pool::get();
-        let link_rel_buf = paths::path_buffer_pool::get();
+        let mut link_target_buf = paths::path_buffer_pool::get();
+        let mut link_dest_buf = paths::path_buffer_pool::get();
+        let mut link_rel_buf = paths::path_buffer_pool::get();
 
         let mut seen: StringHashMap<()> = StringHashMap::default();
 
@@ -2412,7 +2417,8 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             ResolutionTag::Workspace => {
-                buf.append(pkg_res.value.workspace.slice(string_buf));
+                // SAFETY: `tag == Workspace` discriminates the active variant.
+                buf.append(unsafe { pkg_res.value.workspace }.slice(string_buf));
                 buf.append(b"node_modules");
             }
             _ => {
@@ -2509,14 +2515,20 @@ impl<'a> Installer<'a> {
                 }
             }
             ResolutionTag::Workspace => {
-                buf.append(pkg_res.value.workspace.slice(string_buf));
+                // SAFETY: `tag == Workspace` discriminates the active variant.
+                buf.append(unsafe { pkg_res.value.workspace }.slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                let symlink_dir_path = directories::global_link_dir_path(self.manager);
+                // PORT NOTE: Zig `globalLinkDirPath()` lazily initializes; this
+                // accessor takes `&mut PackageManager`, but `append_store_path`
+                // is called from `&self` contexts after the link dir has already
+                // been ensured (see `Installer::run`). Read the cached field.
+                let symlink_dir_path: &[u8] = &self.manager.global_link_dir_path;
 
                 buf.clear();
                 buf.append(symlink_dir_path);
-                buf.append(pkg_res.value.symlink.slice(string_buf));
+                // SAFETY: `tag == Symlink` discriminates the active variant.
+                buf.append(unsafe { pkg_res.value.symlink }.slice(string_buf));
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];

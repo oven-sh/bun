@@ -12,6 +12,7 @@ use bun_str::ZStr;
 use crate::lockfile::{
     DependencyIDList, DependencyIDSlice, DepSorter, Lockfile,
 };
+use crate::lockfile::package::{PackageListExt as _, PackageSliceExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::{
     invalid_dependency_id, invalid_package_id, Dependency, DependencyID, PackageID,

@@ -349,7 +349,7 @@ pub fn parse_override_value(
         name_hash,
         literal_sliced.slice,
         &literal_sliced,
-        log,
+        &mut *log,
         package_manager,
     ) {
         Some(v) => v,

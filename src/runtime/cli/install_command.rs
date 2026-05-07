@@ -6,7 +6,7 @@ use bun_install::package_manager_real::{
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 
 use crate::build_command::BuildCommand;
-use crate::command::{self, ContextData};
+use crate::command::ContextData;
 use crate::Cli;
 
 pub struct InstallCommand;
@@ -110,26 +110,39 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             Analyzer::on_analyze(analyzer, result)
         }
 
-        let mut analyzer = Analyzer {
-            ctx: ctx as *mut ContextData,
-            cli: &mut cli as *mut CommandLineArguments,
-        };
-
         // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
         // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
-        // owned buffer (small one-shot list — no perf concern).
+        // owned buffer (small one-shot list — no perf concern). Captured *before*
+        // raw-ptr aliasing of `cli` below so the access goes through the live
+        // `&mut cli` borrow.
         let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
             .iter()
             .map(|s| Box::<[u8]>::from(*s))
             .collect();
 
+        // Derive raw pointers from the existing `&mut` borrows; all subsequent
+        // access to `ctx` / `cli` in this branch goes through these (Zig
+        // `Command.Context` is a freely-aliasing `*ContextData`).
+        let ctx_ptr: *mut ContextData = ctx;
+        let mut analyzer = Analyzer {
+            ctx: ctx_ptr,
+            cli: &raw mut cli,
+        };
+
         let mut fetcher = DependenciesScanner {
-            ctx: &mut analyzer as *mut Analyzer as *mut (),
+            ctx: (&raw mut analyzer).cast::<()>(),
             entry_points,
             on_fetch: on_fetch_trampoline,
         };
 
-        BuildCommand::exec(command::get(), Some(&mut fetcher))?;
+        // Zig: `bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher)`.
+        // `Command.get()` resolves to the same `*ContextData` already held in
+        // `ctx`; reborrow through `ctx_ptr` rather than minting a fresh
+        // `&'static mut` from the global static (which would alias the
+        // still-live `ctx` parameter under stacked borrows).
+        // SAFETY: `ctx_ptr` was just derived from the live `ctx: &mut
+        // ContextData` parameter; `ctx` is not accessed again in this branch.
+        BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher))?;
         return Ok(());
     }
 

@@ -1488,7 +1488,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
     pub listener: Option<NonNull<Listener>>,
-    pub global_this: *const JSGlobalObject,
+    pub global_this: &'static JSGlobalObject,
     pub vm: *mut VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }
@@ -1496,6 +1496,177 @@ pub struct WindowsNamedPipeListeningContext {
 #[cfg(not(windows))]
 pub struct WindowsNamedPipeListeningContext {
     _priv: (),
+}
+
+#[cfg(not(windows))]
+impl WindowsNamedPipeListeningContext {
+    /// Unreachable on POSIX — `ListenerType::NamedPipe` is never constructed
+    /// here. Kept so the `match` arms in `stop`/`finalize` type-check on both
+    /// platforms without per-arm `#[cfg]`.
+    pub unsafe fn close_pipe_and_deinit(_this: *mut Self) {}
+}
+
+#[cfg(windows)]
+impl WindowsNamedPipeListeningContext {
+    fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
+        // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
+        // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
+        let this_ref = unsafe { &mut *this };
+        // SAFETY: `vm` is the per-thread VirtualMachine; valid until process exit.
+        let shutting_down = unsafe { (*this_ref.vm).is_shutting_down() };
+        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
+            // connection dropped or vm is shutting down or we are deiniting/closing
+            return;
+        }
+        // SAFETY: checked Some above.
+        let listener = unsafe { this_ref.listener.unwrap().as_mut() };
+        use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
+        let socket: PipeSocketType = if this_ref.ctx.is_some() {
+            PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
+        } else {
+            PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
+        };
+
+        let client = WindowsNamedPipeContext::create(this_ref.global_this, socket);
+
+        // SAFETY: `client` was just heap-allocated by `create()`; exclusive here.
+        let result = unsafe {
+            (*client)
+                .named_pipe
+                .get_accepted_by(&mut this_ref.uv_pipe, this_ref.ctx.map(|p| p.as_ptr()))
+        };
+        if result.is_err() {
+            // connection dropped
+            WindowsNamedPipeContext::deref(client);
+        }
+    }
+
+    /// `uv_connection_cb` trampoline — recovers `*Self` from `handle.data`
+    /// (set by `Pipe::listen`) and forwards to [`on_client_connect`].
+    unsafe extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
+        // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
+        let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
+        Self::on_client_connect(this, status);
+    }
+
+    unsafe extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
+        // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`.
+        let this = unsafe { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
+        Self::deinit(this);
+    }
+
+    /// # Safety
+    /// `this` must be the unique owner (the `ListenerType::NamedPipe` slot was
+    /// already cleared by the caller).
+    pub unsafe fn close_pipe_and_deinit(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live heap allocation.
+        unsafe {
+            (*this).listener = None;
+            (*this).uv_pipe.data = this.cast::<c_void>();
+            (*this).uv_pipe.close(Self::on_pipe_closed);
+        }
+    }
+
+    pub fn listen(
+        global_this: &'static JSGlobalObject,
+        path: &[u8],
+        backlog: i32,
+        ssl_config: Option<&SSLConfig>,
+        listener: *mut Listener,
+    ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
+        // `bun.TrivialNew` — heap-allocate at the final address so libuv can
+        // store a pointer back into `uv_pipe`.
+        let this = Box::into_raw(Box::new(WindowsNamedPipeListeningContext {
+            // SAFETY: all-zero is a valid pre-init `uv_pipe_t` (C struct,
+            // initialised by `uv_pipe_init`).
+            uv_pipe: unsafe { core::mem::zeroed() },
+            listener: NonNull::new(listener),
+            global_this,
+            // SAFETY: bun_vm() returns the per-thread VM; valid for program lifetime.
+            vm: unsafe { global_this.bun_vm() },
+            ctx: None,
+        }));
+        // SAFETY: just allocated, non-null, exclusive.
+        let this_ref = unsafe { &mut *this };
+
+        // errdefer: once the uv pipe handle is registered with the loop it must be closed via
+        // uv_close; before that point we can free the struct directly. `deinit()` also
+        // frees the SSL context if one was created.
+        let pipe_initialized = core::cell::Cell::new(false);
+        let cleanup = scopeguard::guard((), |()| {
+            if pipe_initialized.get() {
+                // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
+                unsafe { Self::close_pipe_and_deinit(this) };
+            } else {
+                Self::deinit(this);
+            }
+        });
+
+        if let Some(ssl_options) = ssl_config {
+            boringssl::load();
+
+            let ctx_opts = ssl_options.as_usockets();
+            let mut err = uws::create_bun_socket_error_t::none;
+            // Create SSL context using uSockets to match behavior of node.js
+            match ctx_opts.create_ssl_context(&mut err) {
+                Some(ctx) => this_ref.ctx = NonNull::new(ctx.cast::<boring_sys::SSL_CTX>()),
+                None => return Err(bun_core::err!("InvalidOptions")),
+            }
+        }
+
+        // SAFETY: vm.uv_loop() returns the process-wide libuv loop.
+        let init_result = this_ref
+            .uv_pipe
+            .init(unsafe { (*this_ref.vm).uv_loop() }.cast(), false);
+        if init_result.errno().is_some() {
+            return Err(bun_core::err!("FailedToInitPipe"));
+        }
+        pipe_initialized.set(true);
+
+        let listen_rc = if path[path.len() - 1] == 0 {
+            // is already null terminated
+            this_ref.uv_pipe.listen_named_pipe(
+                &path[..path.len() - 1],
+                backlog,
+                this.cast::<c_void>(),
+                Self::uv_on_client_connect,
+            )
+        } else {
+            let mut path_buf = PathBuffer::uninit();
+            // we need to null terminate the path
+            let len = path.len().min(path_buf.len() - 1);
+            path_buf[..len].copy_from_slice(&path[..len]);
+            path_buf[len] = 0;
+            this_ref.uv_pipe.listen_named_pipe(
+                &path_buf[..len],
+                backlog,
+                this.cast::<c_void>(),
+                Self::uv_on_client_connect,
+            )
+        };
+        if listen_rc.errno().is_some() {
+            return Err(bun_core::err!("FailedToBindPipe"));
+        }
+        //TODO: add readableAll and writableAll support if someone needs it
+        // if(uv.uv_pipe_chmod(&this.uvPipe, uv.UV_WRITABLE | uv.UV_READABLE) != 0) {
+        // this.closePipeAndDeinit();
+        // return error.FailedChmodPipe;
+        //}
+
+        scopeguard::ScopeGuard::into_inner(cleanup);
+        Ok(this)
+    }
+
+    fn deinit(this: *mut Self) {
+        // SAFETY: `this` is a live `Box::into_raw` allocation; this is the last owner.
+        unsafe {
+            (*this).listener = None;
+            if let Some(ctx) = (*this).ctx.take() {
+                boring_sys::SSL_CTX_free(ctx.as_ptr());
+            }
+            drop(Box::from_raw(this));
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

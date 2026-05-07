@@ -153,6 +153,17 @@ impl Dependency {
         strings::cmp_strings_asc(&(),lhs_name, rhs_name)
     }
 
+    /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
+    /// accepts a strict-weak `lessThan`; Rust's sort requires a full
+    /// `Ordering`). Same key as `is_less_than`: behavior group, then name ASC.
+    pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
+        let behavior = lhs.behavior.cmp(&rhs.behavior);
+        if behavior != Ordering::Equal {
+            return behavior;
+        }
+        lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
+    }
+
     pub fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],

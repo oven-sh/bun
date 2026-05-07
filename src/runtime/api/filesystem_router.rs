@@ -20,7 +20,6 @@ pub mod kind_enum {
 }
 
 use core::cell::{RefCell, UnsafeCell};
-use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_jsc::{
@@ -722,7 +721,8 @@ impl MatchedRoute {
     }
 
     pub fn init(
-        match_: RouterMatch<'static>,
+        match_: RouterMatch<'_>,
+        pathname_backing: ZigStringSlice,
         origin: Option<*mut RefString>,
         asset_prefix: Option<*mut RefString>,
         base_dir: *mut RefString,
@@ -731,8 +731,27 @@ impl MatchedRoute {
         // live for this call. Clone its contents into our own holder before re-pointing.
         let params_list = unsafe { (*match_.params).clone() };
 
+        // SAFETY (self-referential lifetime erasure): `RouterMatch<'_>` borrows two
+        // backing stores —
+        //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
+        //       (process-lifetime arena, see `bun_router::PathString::slice`), so are
+        //       genuinely `'static`;
+        //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
+        //       which we move into the same heap-stable Box below. The Box is never moved
+        //       after construction (JsClass m_ctx payload), so those bytes are valid for
+        //       `Self`'s lifetime.
+        // `params` is a raw `*mut`; re-pointed at `params_list_holder` below before any
+        // read through it. This is the standard Rust self-referential pattern (no
+        // `Pin`/ouroboros because JsClass codegen owns the Box<Self>); it does NOT extend
+        // a borrow past its allocation — ownership was transferred, not leaked.
+        let match_static: RouterMatch<'static> =
+            unsafe { core::mem::transmute::<RouterMatch<'_>, RouterMatch<'static>>(match_) };
+        let params_list: route_param::List<'static> = unsafe {
+            core::mem::transmute::<route_param::List<'_>, route_param::List<'static>>(params_list)
+        };
+
         let mut route = Box::new(MatchedRoute {
-            route_holder: UnsafeCell::new(match_),
+            route_holder: UnsafeCell::new(match_static),
             route: core::ptr::null(),
             asset_prefix,
             origin,
@@ -740,6 +759,7 @@ impl MatchedRoute {
             query_string_map: None,
             param_map: None,
             params_list_holder: UnsafeCell::new(params_list),
+            pathname_backing,
             needs_deinit: true,
         });
         // PORT NOTE: `base_dir.ref()` / `o.ref()` / `prefix.ref()` — bump refcounts.
@@ -769,16 +789,11 @@ impl MatchedRoute {
         this_ref.query_string_map = None;
         this_ref.param_map = None;
         if this_ref.needs_deinit {
-            let pathname = this_ref.route().pathname;
-            if !pathname.is_empty()
-                // SAFETY: pathname.as_ptr() is a valid (possibly non-mimalloc) pointer;
-                // mi_is_in_heap_region only reads heap metadata and accepts any pointer.
-                && unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(pathname.as_ptr().cast()) }
-            {
-                // SAFETY: pointer was allocated by mimalloc (checked above).
-                unsafe { bun_alloc::mimalloc::mi_free(pathname.as_ptr() as *mut c_void) };
-            }
-
+            // PORT NOTE: Zig did `if mi_is_in_heap_region(pathname.ptr) { mi_free(pathname.ptr) }`
+            // to free the leaked `path` from `match`. We own that allocation as
+            // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
+            // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
+            this_ref.pathname_backing = ZigStringSlice::EMPTY;
             *this_ref.params_list_holder.get_mut() = route_param::List::default();
         }
 

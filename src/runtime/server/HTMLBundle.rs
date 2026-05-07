@@ -573,11 +573,11 @@ impl Route {
                 // PORT NOTE: reshaped for borrowck — Zig appended every route in
                 // iteration order then mutably called `html_route.clone()` through
                 // a raw ptr aliasing the route table. `AnyRoute::Static` carries
-                // `Rc<StaticRoute>` here, so we instead defer appending the HTML
-                // entry-point until after cloning (when we still hold the sole
-                // `Rc`), which keeps the `&mut` borrow sound. Static routes are
-                // keyed by `dest_path`, so registration order is immaterial.
-                let mut this_html_route: Option<(std::rc::Rc<StaticRoute>, Box<[u8]>)> = None;
+                // an intrusive `*mut StaticRoute` here; defer appending the HTML
+                // entry-point until after cloning so we retain the sole owner for
+                // the `clone()` mutable borrow. Static routes are keyed by
+                // `dest_path`, so registration order is immaterial.
+                let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> = None;
 
                 // Create static routes for each output file
                 // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
@@ -636,19 +636,18 @@ impl Route {
                     }
 
                     let cached_blob_size = blob.size() as u64;
-                    // PORT NOTE: `AnyRoute::Static` carries `Rc<StaticRoute>` while
-                    // `StaticRoute` itself also has an intrusive `ref_count` Cell
-                    // (used by the uws on_aborted/on_writable userdata round-trip).
-                    // The two coexist until `AnyRoute` migrates to `*mut StaticRoute`.
-                    let static_route = std::rc::Rc::new(StaticRoute {
-                        ref_count: Cell::new(1),
-                        blob,
-                        server: Cell::new(Some(server)),
-                        status_code: 200,
-                        headers,
-                        cached_blob_size,
-                        has_content_disposition: false,
-                    });
+                    // SAFETY: Box::into_raw never returns null.
+                    let static_route = unsafe {
+                        core::ptr::NonNull::new_unchecked(Box::into_raw(Box::new(StaticRoute {
+                            ref_count: Cell::new(1),
+                            blob,
+                            server: Cell::new(Some(server)),
+                            status_code: 200,
+                            headers,
+                            cached_blob_size,
+                            has_content_disposition: false,
+                        })))
+                    };
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
@@ -674,14 +673,13 @@ impl Route {
                     ));
                 }
 
-                let (mut html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
+                let (html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
                     panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
                 });
-                let html_route_clone = bun_core::handle_oom(
-                    std::rc::Rc::get_mut(&mut html_route)
-                        .expect("sole Rc owner before registration")
-                        .clone(global_this),
-                );
+                // SAFETY: html_route is a fresh Box::into_raw with ref_count=1;
+                // sole owner before registration.
+                let html_route_clone =
+                    bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
                     AnyRoute::Static(html_route),

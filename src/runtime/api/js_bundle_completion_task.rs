@@ -12,7 +12,7 @@ use core::ptr::{self, NonNull};
 
 use bun_aio::KeepAlive;
 use bun_bundler::bundle_v2::{
-    BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
+    dispatch, BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin,
 };
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
@@ -449,34 +449,24 @@ unsafe extern "C" {
     );
 }
 
-// ─── COMPLETION_DISPATCH vtable ──────────────────────────────────────────────
-// The bundler holds `*mut JSBundleCompletionTask` opaquely; field reads are
-// routed through this vtable so the struct layout stays in `bun_runtime`.
-static COMPLETION_VTABLE: bun_bundler::DeferredBatchTask::CompletionDispatch =
-    bun_bundler::DeferredBatchTask::CompletionDispatch {
-        result_is_err: |c| {
-            // SAFETY: `c` is a live backref the bundler set in `BundleThread`.
-            matches!(unsafe { &(*c.as_ptr().cast::<JSBundleCompletionTask>()).result }, BundleV2Result::Err(_))
-        },
-        enqueue_task_concurrent: |c, task| {
-            // SAFETY: `c` is a live backref; `jsc_event_loop` is valid for the
-            // process lifetime once `Bun.build` is reachable.
-            unsafe {
-                (*(*c.as_ptr().cast::<JSBundleCompletionTask>()).jsc_event_loop)
-                    .enqueue_task_concurrent(task)
-            }
-        },
-    };
-
-/// Register the `COMPLETION_DISPATCH` vtable so `bun_bundler` can read
-/// `result`/`jsc_event_loop` without knowing this struct's layout.
-/// Called from `bun_runtime::init()`.
-pub fn register_completion_dispatch() {
-    bun_bundler::DeferredBatchTask::COMPLETION_DISPATCH.store(
-        &COMPLETION_VTABLE as *const _ as *mut _,
-        core::sync::atomic::Ordering::Release,
-    );
-}
+// ─── CompletionDispatch vtable ───────────────────────────────────────────────
+// §Dispatch — the bundler holds `JSBundleCompletionTask` as a
+// `dispatch::CompletionHandle` (erased owner + this `&'static` vtable) so the
+// struct layout stays in `bun_runtime`.
+static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
+    result_is_err: |c| {
+        // SAFETY: `c` is a live backref the bundler set in `BundleThread`.
+        matches!(unsafe { &(*c.as_ptr().cast::<JSBundleCompletionTask>()).result }, BundleV2Result::Err(_))
+    },
+    enqueue_task_concurrent: |c, task| {
+        // SAFETY: `c` is a live backref; `jsc_event_loop` is valid for the
+        // process lifetime once `Bun.build` is reachable.
+        unsafe {
+            (*(*c.as_ptr().cast::<JSBundleCompletionTask>()).jsc_event_loop)
+                .enqueue_task_concurrent(task)
+        }
+    },
+};
 
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
 // Hands BundleThread the field accessors it needs without exposing the layout.

@@ -791,6 +791,47 @@ impl NetworkTask {
         }
         self.response = HTTPClientResult::default();
     }
+
+    /// Initialize a freshly-vended pool slot in place, mirroring Zig's
+    /// `network_task.* = .{ .task_id = …, .callback = undefined, .allocator = …,
+    /// .package_manager = …, .apply_patch_task = … }` — a full struct overwrite
+    /// that resets every other field to its struct default. The slot may be
+    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
+    /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
+    /// contents are never dropped on `put`), so each field is written via
+    /// `addr_of_mut!().write()` without dropping the previous value.
+    ///
+    /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
+    /// `request_buffer`, `response_buffer`) are left untouched — callers MUST
+    /// overwrite `callback` (via `for_manifest`/`for_tarball`) before the task
+    /// is observed; the buffers are populated by `schedule()`.
+    ///
+    /// # Safety
+    /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
+    /// slot returned by `get()`; its prior contents are treated as garbage
+    /// (matches Zig — no destructors run).
+    pub unsafe fn write_init(
+        slot: *mut NetworkTask,
+        task_id: crate::package_manager_task::Id,
+        package_manager: *const PackageManager,
+        apply_patch_task: Option<Box<PatchTask>>,
+    ) {
+        use core::ptr::addr_of_mut;
+        unsafe {
+            addr_of_mut!((*slot).task_id).write(task_id);
+            addr_of_mut!((*slot).package_manager).write(package_manager);
+            addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
+            // Struct-default fields (Zig: `= .{}` / `= 0` / `= null` / `= &[_]u8{}`).
+            addr_of_mut!((*slot).response).write(HTTPClientResult::default());
+            addr_of_mut!((*slot).url_buf).write(Box::default());
+            addr_of_mut!((*slot).retried).write(0);
+            addr_of_mut!((*slot).next).write(ptr::null_mut());
+            addr_of_mut!((*slot).tarball_stream).write(None);
+            addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
+            addr_of_mut!((*slot).streaming_committed).write(false);
+            addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -642,6 +642,8 @@ macro_rules! js_class_module {
                 fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+                #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
+                fn __dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool;
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             unsafe extern "C" {
@@ -653,6 +655,8 @@ macro_rules! js_class_module {
                 fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+                #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
+                fn __dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool;
             }
 
             /// Return the wrapped native pointer if `value` is (a subclass of)
@@ -694,6 +698,21 @@ macro_rules! js_class_module {
                 // only; the C++ side reads the cached structure/constructor
                 // from `Zig::GlobalObject`.
                 unsafe { __get_constructor(global.as_ptr()) }
+            }
+
+            /// Detach (`ptr = null`) or replace the wrapped native pointer on
+            /// an existing JS wrapper. Returns `false` if `value` is not (a
+            /// subclass of) the wrapper type. Mirrors Zig
+            /// `js.dangerouslySetPtr` (ZigGeneratedClasses.zig).
+            ///
+            /// # Safety
+            /// Caller must ensure the previous `m_ctx` is finalized exactly
+            /// once elsewhere — the C++ side overwrites without freeing.
+            #[inline]
+            pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool {
+                // SAFETY: `value` is a valid encoded JSValue; the C++ side
+                // type-checks before writing `m_ctx`.
+                unsafe { __dangerously_set_ptr(value, ptr) }
             }
         }
     };

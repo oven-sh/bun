@@ -41,7 +41,6 @@ use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chu
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
 use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
-use crate::dispatch::BYTECODE_HOOK;
 
 /// `bun.BYTECODE_EXTENSION` (bun.zig). Local because `bun_core` doesn't
 /// re-export it; matches `bun.rs::bytecode_extension`.
@@ -826,16 +825,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         Loader::Js
                     };
 
-                    // CYCLEBREAK GENUINE: jsc::{VirtualMachine, initialize, CachedBytecode}
-                    // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
-                    let bytecode_vt = BYTECODE_HOOK
-                        .load(core::sync::atomic::Ordering::Acquire);
-                    if matches!(chunk.content, crate::chunk::Content::Javascript(_))
-                        && loader.is_javascript_like()
-                        && !bytecode_vt.is_null()
-                    {
-                        // SAFETY: hook registered once at runtime init, never freed.
-                        let bytecode_vt = unsafe { &*bytecode_vt };
+                    // CYCLEBREAK §Dispatch: jsc::{VirtualMachine, initialize,
+                    // CachedBytecode} vtable carried on `LinkerOptions.bytecode`.
+                    // `None` = bytecode unavailable.
+                    if let Some(bytecode_vt) = c.options.bytecode.filter(|_| {
+                        matches!(chunk.content, crate::chunk::Content::Javascript(_))
+                            && loader.is_javascript_like()
+                    }) {
                         unsafe { (bytecode_vt.set_bundler_thread)(true) };
                         unsafe { (bytecode_vt.initialize_jsc)(false) };
                         let mut fdpath = bun_paths::PathBuffer::uninit();

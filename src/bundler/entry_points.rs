@@ -154,9 +154,13 @@ impl ClientEntryPoint {
     }
 
     
+    // PORT NOTE: takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
+    // `'static`-field `bun_logger::fs::PathName`) so callers with a borrowed path
+    // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
+    // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
     pub fn generate_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
-        original_path: &Fs::PathName,
+        original_path: &bun_paths::fs::PathName<'_>,
     ) -> &'a [u8] {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
         // SAFETY: FileSystem singleton is initialized before bundling.
@@ -261,8 +265,16 @@ impl ClientEntryPoint {
             code = &entry.code_buffer[..n];
         }
 
+        // `bun_logger::fs::PathName` → `bun_paths::fs::PathName<'static>`: field-identical
+        // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
+        let original_path_borrowed = bun_paths::fs::PathName {
+            dir: original_path.dir,
+            base: original_path.base,
+            ext: original_path.ext,
+            filename: original_path.filename,
+        };
         entry.source = logger::Source::init_path_string(
-            Self::generate_entry_point_path(&mut entry.path_buffer.0, original_path),
+            Self::generate_entry_point_path(&mut entry.path_buffer.0, &original_path_borrowed),
             code,
         );
         entry.source.path.namespace = b"client-entry";

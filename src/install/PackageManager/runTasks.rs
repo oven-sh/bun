@@ -986,7 +986,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     continue;
                 }
-                let manifest = &task.data.package_manifest;
+                // SAFETY: `task.tag == PackageManifest` — `data.package_manifest`
+                // is the active union arm.
+                let manifest: &npm::PackageManifest = unsafe { &task.data.package_manifest };
 
                 manager.manifests.insert(manifest.pkg.name.hash, manifest)?;
 
@@ -1121,7 +1123,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             extract_ctx,
                             task.id,
                             dependency_id,
-                            &mut task.data.extract,
+                            // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
+                            // is the active union arm.
+                            unsafe { &mut task.data.extract },
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
@@ -1134,7 +1138,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     dependency_id,
                     resolution,
-                    &task.data.extract,
+                    // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
+                    // is the active union arm.
+                    unsafe { &task.data.extract },
                     log_level,
                 ) {
                     'handle_pkg: {
@@ -1191,7 +1197,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     }
                                     manager.process_dependency_list_item(
                                         dep,
-                                        Some(any_root),
+                                        Some(&mut *any_root),
                                         install_peer,
                                     )?;
                                 }
@@ -1438,7 +1444,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             extract_ctx,
                             task.id,
                             git_checkout.dependency_id,
-                            &mut task.data.git_checkout,
+                            // SAFETY: `task.tag == GitCheckout` — `data.git_checkout`
+                            // is the active union arm.
+                            unsafe { &mut task.data.git_checkout },
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
@@ -1451,7 +1459,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut package_id,
                     git_checkout.dependency_id,
                     resolution,
-                    &task.data.git_checkout,
+                    // SAFETY: `task.tag == GitCheckout` — `data.git_checkout` is the
+                    // active union arm.
+                    unsafe { &task.data.git_checkout },
                     log_level,
                 ) {
                     'handle_pkg: {
@@ -1496,7 +1506,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     repo.package_name = pkg.name;
                                     manager.process_dependency_list_item(
                                         dep,
-                                        Some(any_root),
+                                        Some(&mut *any_root),
                                         install_peer,
                                     )?;
                                 }

@@ -63,6 +63,94 @@ pub(crate) mod bun_json {
             ExprAccessors::as_property(self, key).map(|q| q.expr)
         }
     }
+
+    /// JSON-shape view over both the T2 `bun_logger::js_ast::Expr` and the T4
+    /// `bun_js_parser::Expr`. `Bin::parse_append` / `Negatable::from_json` are
+    /// generic over this so callers holding either tier's `Expr` (text-lockfile
+    /// JSON vs. YAML/package.json migration) call the *one* canonical body
+    /// instead of carrying a per-tier copy of the algorithm. Only the
+    /// EObject/EArray/EString shapes are surfaced — that is the full JSON
+    /// surface both routines touch.
+    pub trait JsonExprView: Sized {
+        type Prop;
+        /// `e_string` → its UTF-8 bytes (`E.String.data` is `&'static [u8]`
+        /// in both tiers — Store/arena-backed, lives until reset).
+        fn json_utf8_string(&self) -> Option<&'static [u8]>;
+        /// `e_object` → property slice.
+        fn json_object_props(&self) -> Option<&[Self::Prop]>;
+        /// `e_array` → item slice.
+        fn json_array_items(&self) -> Option<&[Self]>;
+        /// `prop.key.?.asString()`.
+        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]>;
+        /// `prop.value.?.asString()`.
+        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]>;
+    }
+
+    impl JsonExprView for Expr {
+        type Prop = Property;
+        #[inline]
+        fn json_utf8_string(&self) -> Option<&'static [u8]> {
+            match &self.data {
+                ExprData::EString(s) if s.is_utf8() => Some(s.data),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn json_object_props(&self) -> Option<&[Self::Prop]> {
+            match &self.data {
+                ExprData::EObject(o) => Some(o.properties.slice()),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn json_array_items(&self) -> Option<&[Self]> {
+            match &self.data {
+                ExprData::EArray(a) => Some(a.items.slice()),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]> {
+            prop.key.as_ref().and_then(Self::json_utf8_string)
+        }
+        #[inline]
+        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]> {
+            prop.value.as_ref().and_then(Self::json_utf8_string)
+        }
+    }
+
+    impl JsonExprView for bun_js_parser::Expr {
+        type Prop = bun_js_parser::G::Property;
+        #[inline]
+        fn json_utf8_string(&self) -> Option<&'static [u8]> {
+            match &self.data {
+                bun_js_parser::ExprData::EString(s) => Some(s.data),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn json_object_props(&self) -> Option<&[Self::Prop]> {
+            match &self.data {
+                bun_js_parser::ExprData::EObject(o) => Some(o.properties.slice()),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn json_array_items(&self) -> Option<&[Self]> {
+            match &self.data {
+                bun_js_parser::ExprData::EArray(a) => Some(a.items.slice()),
+                _ => None,
+            }
+        }
+        #[inline]
+        fn prop_key_str(prop: &Self::Prop) -> Option<&'static [u8]> {
+            prop.key.as_ref().and_then(Self::json_utf8_string)
+        }
+        #[inline]
+        fn prop_value_str(prop: &Self::Prop) -> Option<&'static [u8]> {
+            prop.value.as_ref().and_then(Self::json_utf8_string)
+        }
+    }
 }
 
 /// `bun_fs` → resolver-tier `FileSystem` is shimmed under `bun_sys::fs`

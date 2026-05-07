@@ -31,7 +31,6 @@ use bun_sys::{
     write_file_with_path_buffer, FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData,
     WriteFileEncoding,
 };
-use crate::bundle_v2::dispatch::BYTECODE_HOOK;
 
 /// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
 const BYTECODE_EXTENSION: &str = ".jsc";
@@ -358,12 +357,12 @@ pub fn write_output_files_to_disk(
                     Loader::Js
                 };
 
-                // CYCLEBREAK GENUINE: jsc::{VirtualMachine, initialize, CachedBytecode}
-                // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
-                let bytecode_vt = BYTECODE_HOOK.load(core::sync::atomic::Ordering::Acquire);
-                if loader.is_javascript_like() && !bytecode_vt.is_null() {
-                    // SAFETY: hook is registered once at runtime init and never freed.
-                    let bytecode_vt = unsafe { &*bytecode_vt };
+                // CYCLEBREAK §Dispatch: jsc::{VirtualMachine, initialize,
+                // CachedBytecode} vtable carried on `LinkerOptions.bytecode`.
+                // `None` = bytecode unavailable.
+                if let Some(bytecode_vt) =
+                    c.options.bytecode.filter(|_| loader.is_javascript_like())
+                {
                     unsafe { (bytecode_vt.set_bundler_thread)(true) };
                     unsafe { (bytecode_vt.initialize_jsc)(false) };
                     let mut fdpath = PathBuffer::uninit();

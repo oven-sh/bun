@@ -4,9 +4,10 @@ use std::io::Write as _;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_http::{self as http, HeaderBuilder};
+use bun_install::lockfile::Lockfile;
 use bun_install::package_manager::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::PackageManager;
+use bun_install::{CommandLineArguments, PackageManager, Subcommand};
 use bun_interchange::json as bun_json;
 use bun_libdeflate_sys::libdeflate;
 use bun_logger as logger;
@@ -14,6 +15,7 @@ use bun_logger::js_ast::{Expr, ExprData};
 use bun_str::{strings, MutableString};
 use bun_url::URL;
 
+use crate::cli::package_manager_command::PackageManagerCommand;
 use crate::cli::Command;
 
 // TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
@@ -64,14 +66,49 @@ impl AuditResult {
 pub struct AuditCommand;
 
 impl AuditCommand {
-    // TODO(port): `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
+    // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
     pub fn exec(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
-        let _ = ctx;
-        // Body depends on `bun_install::CommandLineArguments::parse`,
-        // `bun_install::Subcommand::Audit`, `bun_install::PackageManager::init`,
-        // and `PackageManager.options.json_output` — all gated behind the
-        // upstream `package_manager_real` un-gate (reconciler-6).
-        todo!("blocked_on: bun_install::PackageManager::init / bun_install::Subcommand::Audit")
+        let cli = CommandLineArguments::parse(Subcommand::Audit)?;
+        // PORT NOTE: `init` consumes `cli`; capture the fields read after it.
+        let audit_level = cli.audit_level;
+        let production = cli.production;
+        let audit_ignore_list = cli.audit_ignore_list;
+
+        let (pm_ptr, _original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
+        {
+            Ok(v) => v,
+            Err(err) => {
+                if err == bun_core::err!("MissingPackageJSON") {
+                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+                    if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
+                        Output::err_generic(
+                            "No package.json was found for directory \"{s}\"",
+                            (BStr::new(cwd.as_bytes()),),
+                        );
+                    } else {
+                        Output::err_generic("No package.json was found", ());
+                    }
+                    Output::note("Run \"bun init\" to initialize a project");
+                    Global::exit(1);
+                }
+
+                return Err(err);
+            }
+        };
+        // SAFETY: `init` returns the process-singleton `*mut PackageManager`,
+        // non-null and exclusively owned by this thread for the command's
+        // duration (mirrors Zig's `*PackageManager`).
+        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
+
+        let code = Self::audit(
+            ctx,
+            manager,
+            manager.options.json_output,
+            audit_level,
+            production,
+            audit_ignore_list,
+        )?;
+        Global::exit(code);
     }
 
     /// Returns the exit code of the command. 0 if no vulnerabilities were found, 1 if vulnerabilities were found.
@@ -92,10 +129,23 @@ impl AuditCommand {
         ));
         Output::flush();
 
-        // TODO(port): blocked_on bun_install::PackageManager::lockfile (stub gated).
-        // let load_lockfile = pm.lockfile.load_from_cwd(pm, ctx.log, true);
-        // PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
-        let _ = ctx;
+        // PORT NOTE: reshaped for borrowck — Zig calls
+        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which
+        // aliases `*PackageManager` with `*Lockfile`. Detach the
+        // `Box<Lockfile>` from `pm` so `load_from_cwd` can take
+        // `Option<&mut PackageManager>` without overlapping the `&mut self`
+        // lockfile borrow.
+        {
+            // SAFETY: `ctx.log` is set by `Command::create` for every
+            // subcommand and is non-null for the command's lifetime; no other
+            // `&mut Log` is live here.
+            let log = unsafe { &mut *ctx.log };
+            let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
+            let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
+            PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
+            drop(load_lockfile);
+            pm.lockfile = lockfile_box;
+        }
 
         let dependency_tree = build_dependency_tree(pm)?;
 

@@ -8,15 +8,6 @@ pub struct ContentOptions {
     pub html: bool,
 }
 
-// Eight `.classes.ts` wrapper types — real defs (raw `*mut lolhtml::*`
-// plus `JsRef`/`Strong`) are below; re-exported here so callers see
-// `crate::api::html_rewriter::HTMLRewriter` directly.
-pub use _jsc_gated::{
-    AttributeIterator, BufferOutputSink, Comment, DocEnd, DocType, Element, EndTag, HTMLRewriter,
-    TextChunk,
-};
-
-mod _jsc_gated {
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -307,19 +298,11 @@ impl HTMLRewriter {
                 // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
                 // wrapper's `m_ctx` so its GC finalize is a no-op, then finalize
                 // the native side ourselves (Zig: html_rewriter.zig:223-226).
-                #[cfg(all(windows, target_arch = "x86_64"))]
-                unsafe extern "sysv64" {
-                    fn Response__dangerouslySetPtr(value: JSValue, ptr: *mut core::ffi::c_void) -> bool;
-                }
-                #[cfg(not(all(windows, target_arch = "x86_64")))]
-                unsafe extern "C" {
-                    fn Response__dangerouslySetPtr(value: JSValue, ptr: *mut core::ffi::c_void) -> bool;
-                }
                 // SAFETY: `v` is the live JS wrapper (kept on stack via
                 // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
                 // and finalized exactly once.
                 unsafe {
-                    let _ = Response__dangerouslySetPtr(v, core::ptr::null_mut());
+                    let _ = bun_jsc::generated::JSResponse::dangerously_set_ptr(v, core::ptr::null_mut());
                     // Manually invoke the finalizer to ensure it does what we want
                     Response::finalize(r);
                 }
@@ -604,10 +587,6 @@ pub struct BufferOutputSink {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: StrongOptional,
-    // TODO(b2-blocked): `webcore::body::ValueBufferer` is defined inside
-    // Body.rs's ` mod _jsc_gated` block. Field gated until that
-    // un-gates; downstream usages are gated alongside.
-    
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     pub tmp_sync_error: Option<NonNull<JSValue>>, // TODO(port): lifetime — points at a stack local in init()
 }
@@ -773,19 +752,14 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe {
             (*sink).ref_();
-            // TODO(b2-blocked): `webcore::body::ValueBufferer` is gated upstream
-            // (Body.rs `_jsc_gated`). Un-gate this initialization with the field.
-            
-            {
-                (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
-                    sink as *mut core::ffi::c_void,
-                    // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
-                    // `on_finished_buffering` takes `*mut BufferOutputSink`. The
-                    // wrapper trampoline restores the concrete type.
-                    Self::on_finished_buffering_trampoline,
-                    (*sink).global,
-                ));
-            }
+            (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
+                sink as *mut core::ffi::c_void,
+                // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
+                // `on_finished_buffering` takes `*mut BufferOutputSink`. The
+                // wrapper trampoline restores the concrete type.
+                Self::on_finished_buffering_trampoline,
+                (*sink).global,
+            ));
         }
         response_js_value.ensure_still_alive();
 
@@ -2589,8 +2563,6 @@ impl WrapperLike for Element {
     fn invalidate(&mut self) { Element::invalidate(self) }
     const HAS_INVALIDATE: bool = true;
 }
-
-} // mod _jsc_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

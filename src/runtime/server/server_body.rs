@@ -622,79 +622,12 @@ pub fn write_status<const SSL: bool>(resp_ptr: Option<&mut uws_sys::NewAppRespon
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-pub enum AnyRoute {
-    /// Serve a static file
-    /// "/robots.txt": new Response(...),
-    // PORT NOTE (layering): StaticRoute/FileRoute carry an intrusive
-    // `ref_count: Cell<u32>` and are heap-allocated via `Box::into_raw`; their
-    // constructors return `*mut Self`. `Rc<T>` would add a second header and
-    // break the round-trip with uws callback userdata. Hold them as raw
-    // intrusive-refcounted pointers (matches Zig `*StaticRoute` / `*FileRoute`).
-    Static(NonNull<StaticRoute>),
-    /// Serve a file from disk
-    File(NonNull<FileRoute>),
-    /// Bundle an HTML import
-    /// import html from "./index.html";
-    /// "/": html,
-    Html(RefPtr<html_bundle::Route>),
-    /// Use file system routing.
-    /// "/*": {
-    ///   "dir": import.meta.resolve("./pages"),
-    ///   "style": "nextjs-pages",
-    /// }
-    FrameworkRouter(bake::framework_router::TypeIndex),
-}
+// PORT NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
+// `super` (mod.rs). The `impl` block below adds the JS-facing constructors
+// (`from_js`/`from_options`/…) on the same type — same crate, split by file.
+pub use super::AnyRoute;
 
 impl AnyRoute {
-    pub fn memory_cost(&self) -> usize {
-        match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.memory_cost(),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.memory_cost(),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.memory_cost(),
-            AnyRoute::FrameworkRouter(_) => mem::size_of::<bake::FileSystemRouterType>(),
-        }
-    }
-
-    pub fn set_server(&self, server: Option<super::AnyServer>) {
-        match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.server.set(server),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.set_server(server),
-            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-            AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.server.set(server),
-            AnyRoute::FrameworkRouter(_) => {} // DevServer contains .server field
-        }
-    }
-
-    pub fn deref_(&self) {
-        match self {
-            // SAFETY: intrusive refcount; ptr was Box::into_raw'd with rc=1.
-            AnyRoute::Static(p) => unsafe { StaticRoute::deref_(p.as_ptr()) },
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { FileRoute::deref_(p.as_ptr()) },
-            AnyRoute::Html(html_bundle_route) => html_bundle_route.deref(),
-            AnyRoute::FrameworkRouter(_) => {} // not reference counted
-        }
-    }
-
-    pub fn ref_(&self) {
-        match self {
-            // SAFETY: intrusive-refcounted ptr; live while held in the route table.
-            AnyRoute::Static(p) => unsafe { p.as_ref() }.ref_(),
-            // SAFETY: see above.
-            AnyRoute::File(p) => unsafe { p.as_ref() }.ref_(),
-            AnyRoute::Html(html_bundle_route) => {
-                // SAFETY: RefPtr.data is a live NonNull while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(html_bundle_route.data.as_ptr()) };
-            }
-            AnyRoute::FrameworkRouter(_) => {} // not reference counted
-        }
-    }
-
     fn bundled_html_manifest_item_from_js(
         argument: JSValue,
         index_path: &[u8],
@@ -790,7 +723,7 @@ impl AnyRoute {
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
         let _ = (global, headers, path);
-        todo!("blocked_on: Rc<FileRoute>/Rc<StaticRoute> vs *mut init, Blob::find_or_create_file_from_path disambiguation");
+        todo!("blocked_on: Blob::find_or_create_file_from_path disambiguation");
         {
         // The file/static route doesn't ref it.
         let blob = Blob::find_or_create_file_from_path(path, global, false);
@@ -938,11 +871,13 @@ impl AnyRoute {
             }
         }
 
-        if let Some(_file_route) = FileRoute::from_js(global, argument)? {
-            todo!("blocked_on: Rc<FileRoute> from *mut FileRoute (intrusive refcount)");
+        if let Some(file_route) = FileRoute::from_js(global, argument)? {
+            // SAFETY: from_js returns a freshly Box::into_raw'd FileRoute (rc=1).
+            return Ok(Some(AnyRoute::File(unsafe { NonNull::new_unchecked(file_route) })));
         }
         match StaticRoute::from_js(global, argument)? {
-            Some(_s) => todo!("blocked_on: Rc<StaticRoute> from *mut StaticRoute (intrusive refcount)"),
+            // SAFETY: from_js returns a freshly Box::into_raw'd StaticRoute (rc=1).
+            Some(s) => Ok(Some(AnyRoute::Static(unsafe { NonNull::new_unchecked(s) }))),
             None => Ok(None),
         }
     }

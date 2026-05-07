@@ -5852,8 +5852,9 @@ impl RouteIndexAndRecurseFlag {
 // is used throughout; Phase B should add a `new()` and update callsites.
 
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
+#[derive(Default)]
 pub struct EntryPointList {
-    pub set: ArrayHashMap<Box<[u8]>, entry_point_list::Flags>,
+    pub set: bun_collections::StringArrayHashMap<entry_point_list::Flags>,
 }
 
 pub mod entry_point_list {
@@ -5871,7 +5872,7 @@ pub mod entry_point_list {
 }
 
 impl EntryPointList {
-    pub fn empty() -> EntryPointList { EntryPointList { set: ArrayHashMap::new() } }
+    pub fn empty() -> EntryPointList { EntryPointList::default() }
 
     pub fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> Result<(), bun_core::Error> {
         self.append(
@@ -5890,7 +5891,7 @@ impl EntryPointList {
 
     /// Deduplictes requests to bundle the same file twice.
     pub fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> Result<(), bun_core::Error> {
-        let gop = self.set.get_or_put(Box::<[u8]>::from(abs_path))?;
+        let gop = self.set.get_or_put(abs_path)?;
         if gop.found_existing {
             *gop.value_ptr |= flags;
         } else {

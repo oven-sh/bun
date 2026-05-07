@@ -373,6 +373,10 @@ pub struct ShellCpTask {
     pub src_absolute: Option<Vec<u8>>,
     pub tgt_absolute: Option<Vec<u8>>,
     pub cwd_path: Vec<u8>,
+    /// Guards `verbose_output` — `cp_on_copy` is called from work-pool
+    /// threads (concurrently per copied file) while the directory walk is
+    /// still fanning out. Spec: cp.zig `verbose_output_lock`.
+    pub verbose_output_lock: parking_lot::Mutex<()>,
     pub verbose_output: Vec<u8>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
@@ -397,6 +401,7 @@ impl ShellCpTask {
             src_absolute: None,
             tgt_absolute: None,
             cwd_path,
+            verbose_output_lock: parking_lot::Mutex::new(()),
             verbose_output: Vec::new(),
             err: None,
             task: ShellTask::new(evtloop),
@@ -404,8 +409,10 @@ impl ShellCpTask {
     }
 
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
-    /// buffer (printed to stdout once the cp finishes).
+    /// buffer (printed to stdout once the cp finishes). Called from work-pool
+    /// threads; serialised via `verbose_output_lock`.
     fn on_copy_impl(&mut self, src: &[u8], dest: &[u8]) {
+        let _guard = self.verbose_output_lock.lock();
         // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
         self.verbose_output.reserve(src.len() + dest.len() + 5);
         self.verbose_output.extend_from_slice(src);

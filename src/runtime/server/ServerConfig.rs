@@ -588,13 +588,10 @@ fn any_route_from_js(
 ) -> JsResult<Option<AnyRoute>> {
     use super::server_body::AnyRoute as BodyAnyRoute;
     Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
-        BodyAnyRoute::Static(rc) => AnyRoute::Static(rc),
-        BodyAnyRoute::File(rc) => AnyRoute::File(rc),
-        // RefPtr<Route> → *const Route: transfer the strong ref into the raw
-        // pointer via `into_raw()`. `AnyRoute::deref_` (mod.rs) decrements via
-        // the intrusive refcount, so the count stays balanced.
-        BodyAnyRoute::Html(refptr) => AnyRoute::Html(refptr.into_raw() as *const _),
-        BodyAnyRoute::FrameworkRouter(idx) => AnyRoute::FrameworkRouter(idx.get()),
+        BodyAnyRoute::Static(p) => AnyRoute::Static(p),
+        BodyAnyRoute::File(p) => AnyRoute::File(p),
+        BodyAnyRoute::Html(refptr) => AnyRoute::Html(refptr),
+        BodyAnyRoute::FrameworkRouter(idx) => AnyRoute::FrameworkRouter(idx),
     }))
 }
 

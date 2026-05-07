@@ -728,7 +728,7 @@ impl TarballStream {
         // tokenizeScalar.rest() — need byte offset of remainder, not just
         // iterator. `split().filter()` loses that, so use a manual
         // index-of-first-'/' + skip-leading-'/' instead.
-        let rest: &[OSPathChar] = tokenizer_rest_placeholder(&pathname[..]);
+        let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
         // SAFETY: `rest` is a suffix of the original NUL-terminated `pathname`;
         // `rest.ptr[rest.len]` is the same NUL byte.
         pathname = unsafe { OSPathSliceZ::from_raw(rest.as_ptr(), rest.len()) };
@@ -1365,12 +1365,13 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
     }
 }
 
-// TODO(port): helper for `std.mem.tokenizeScalar(...).rest()` semantics on
-// `[OSPathChar]` — after one `next()`, Zig's `TokenIterator.rest()` first
-// SKIPS any delimiters at the current index (vendor/zig/lib/std/mem.zig)
-// before returning `buffer[index..]`, so for `"package/index.js"` the result
-// is `"index.js"` (no leading `/`). Phase B: move into bun_str or bun_paths.
-fn tokenizer_rest_placeholder(s: &[OSPathChar]) -> &[OSPathChar] {
+// `std.mem.tokenizeScalar(OSPathChar, s, '/')` followed by one `next()` then
+// `.rest()`: Zig's `TokenIterator.rest()` first SKIPS any delimiters at the
+// current index (vendor/zig/lib/std/mem.zig) before returning
+// `buffer[index..]`, so for `"package/index.js"` the result is `"index.js"`
+// (no leading `/`).
+// TODO(port): Phase B — hoist into bun_str or bun_paths if reused elsewhere.
+fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {
         i += 1;
@@ -1392,7 +1393,7 @@ use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/TarballStream.zig (940 lines)
-//   confidence: medium
-//   todos:      7
-//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/step/open_archive/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant/cross-call `&mut` aliasing and so libarchive client_data provenance roots at the Box allocation; extract_task/package_manager are raw ptrs; tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
+//   confidence: high
+//   todos:      1
+//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/step/open_archive/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant/cross-call `&mut` aliasing and so libarchive client_data provenance roots at the Box allocation; extract_task/package_manager are raw ptrs.
 // ──────────────────────────────────────────────────────────────────────────

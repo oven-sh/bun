@@ -23,7 +23,8 @@ pub struct Stream {
     // BACKREF: this Stream is owned by `session.streams`; raw ptr per LIFETIMES class BACKREF.
     pub session: *mut ClientSession,
     // BACKREF: weak back-pointer, cleared before terminal callbacks.
-    pub client: Option<NonNull<HTTPClient>>,
+    // Lifetime-erased — the stream never reads borrowed fields through this.
+    pub client: Option<NonNull<HTTPClient<'static>>>,
 
     /// HEADERS + CONTINUATION fragments, decoded once END_HEADERS arrives.
     pub header_block: Vec<u8>,
@@ -97,7 +98,7 @@ impl Stream {
     pub fn new(
         id: u32,
         session: *mut ClientSession,
-        client: Option<NonNull<HTTPClient>>,
+        client: Option<NonNull<HTTPClient<'static>>>,
         send_window: i32,
     ) -> Box<Self> {
         Box::new(Self {

@@ -20,8 +20,8 @@ use crate::h3_client as h3;
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
     pub session: *mut ClientSession,
-    // TODO(port): lifetime — backref to the originating HTTP client (cleared on detach).
-    pub client: Option<NonNull<HttpClient>>,
+    // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
+    pub client: Option<NonNull<HttpClient<'static>>>,
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
     pub qstream: Option<NonNull<quic::Stream>>,
 
@@ -46,10 +46,10 @@ impl Stream {
     /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
     /// `Box::from_raw`.
-    pub fn new(session: *mut ClientSession, client: &mut HttpClient) -> *mut Stream {
+    pub fn new(session: *mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
         Box::into_raw(Box::new(Stream {
             session,
-            client: Some(NonNull::from(client)),
+            client: Some(client.as_erased_ptr()),
             qstream: None,
             decoded_headers: Vec::new(),
             body_buffer: Vec::new(),

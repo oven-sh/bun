@@ -57,7 +57,9 @@ pub struct FetchTasklet {
     // Box::into_raw); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
     // borrowed for `cancel/drain`, so model as raw like Zig's `?*ResumableSink`.
     pub sink: Option<*mut ResumableSink>,
-    pub http: Option<Box<AsyncHTTP>>,
+    // Self-referential: borrows from `request_body` / `request_headers` owned
+    // by sibling fields, so the lifetime is erased to `'static`.
+    pub http: Option<Box<AsyncHTTP<'static>>>,
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
     pub javascript_vm: &'static VirtualMachine,
@@ -1697,7 +1699,7 @@ impl FetchTasklet {
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
-    pub fn callback(task: *mut FetchTasklet, async_http: *mut AsyncHTTP, result: HTTPClientResult) {
+    pub fn callback(task: *mut FetchTasklet, async_http: *mut AsyncHTTP<'static>, result: HTTPClientResult) {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         // SAFETY: task ref held by HTTP thread callback registration

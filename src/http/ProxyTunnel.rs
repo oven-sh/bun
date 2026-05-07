@@ -21,7 +21,7 @@ bun_core::declare_scope!(http_proxy_tunnel, visible);
 // + dealloc via IntrusiveRc).
 pub type RefPtr = bun_ptr::IntrusiveRc<ProxyTunnel>;
 
-type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient>;
+type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
 // PORT NOTE: Zig used `NewHTTPContext(B).HTTPSocket`; inherent associated types
@@ -520,7 +520,7 @@ impl ProxyTunnel {
 
         // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
         let custom_options = ssl_options.as_usockets_for_client_verification();
-        match SSLWrapper::<*mut HTTPClient>::init_from_options(
+        match ProxyTunnelWrapper::init_from_options(
             custom_options,
             true,
             SSLWrapperHandlers {
@@ -529,7 +529,7 @@ impl ProxyTunnel {
                 on_handshake,
                 on_close,
                 write: write_encrypted,
-                ctx: this as *mut HTTPClient,
+                ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {
             Ok(w) => proxy_tunnel_ref.wrapper = Some(w),
@@ -727,7 +727,7 @@ impl ProxyTunnel {
         // consumed could leave unsent bytes that would corrupt the next request.
         self.write_buffer.reset();
         if let Some(wrapper) = &mut self.wrapper {
-            wrapper.handlers.ctx = client as *mut HTTPClient;
+            wrapper.handlers.ctx = client.as_erased_ptr().as_ptr();
         }
         self.socket = Socket::from_generic::<IS_SSL>(socket);
         // SAFETY: `self` was created by `start` (Box::into_raw); we transfer the

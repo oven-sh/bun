@@ -305,21 +305,14 @@ impl UpgradeCommand {
             }
         }
 
-        // SAFETY: env_loader's backing storage is process-static (env block /
-        // leaked map); the URL borrows are valid for 'static. Zig had no
-        // lifetime here.
-        let http_proxy: Option<URL<'static>> = unsafe {
-            core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(
-                env_loader.get_http_proxy_for(&api_url),
-            )
-        };
+        let http_proxy = env_loader.get_http_proxy_for(&api_url);
 
         let metadata_body: &'static mut MutableString =
             Box::leak(Box::new(MutableString::init(2048)?));
         let headers_buf: &'static [u8] = Box::leak(headers_buf.into_boxed_slice());
 
         // ensure very stable memory address
-        let async_http: Box<HTTP::AsyncHTTP> = Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
@@ -330,8 +323,6 @@ impl UpgradeCommand {
             None,
             HTTP::FetchRedirect::Follow,
         ));
-        let async_http = Box::leak(async_http);
-        // TODO(port): Zig leaks this allocation intentionally for stable address
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
@@ -698,17 +689,9 @@ impl UpgradeCommand {
             }
         };
 
-        // PORT NOTE: AsyncHTTP::init_sync wants `URL<'static>`; leak the zip_url
-        // bytes (Zig used a static module-level buffer).
-        let zip_url_bytes: &'static [u8] =
-            Box::leak(core::mem::take(&mut version.zip_url));
-        let zip_url = URL::parse(zip_url_bytes);
-        // SAFETY: see `get_latest_version` — env_loader storage is process-static.
-        let http_proxy: Option<URL<'static>> = unsafe {
-            core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(
-                env_loader.get_http_proxy_for(&zip_url),
-            )
-        };
+        let zip_url_bytes = core::mem::take(&mut version.zip_url);
+        let zip_url = URL::parse(&zip_url_bytes);
+        let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
             let refresher: *mut Progress::Progress =
@@ -723,7 +706,7 @@ impl UpgradeCommand {
             let zip_file_buffer =
                 Box::leak(Box::new(MutableString::init(version.size.max(1024) as usize)?));
 
-            let async_http = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
+            let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
                 HTTP::Method::GET,
                 zip_url,
                 headers::EntryList::default(),
@@ -733,7 +716,7 @@ impl UpgradeCommand {
                 http_proxy,
                 None,
                 HTTP::FetchRedirect::Follow,
-            )));
+            ));
             // SAFETY: progress is leaked; AsyncHTTP holds a NonNull into it.
             async_http.client.progress_node = Some(unsafe { NonNull::new_unchecked(progress) });
             // TODO(port): lifetime — progress_node stores a borrow of progress

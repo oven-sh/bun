@@ -63,7 +63,7 @@ pub struct HttpThread {
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
     /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
     /// the HTTP thread; never accessed concurrently.
-    pub deferred_tasks: Vec<*mut AsyncHttp>,
+    pub deferred_tasks: Vec<*mut AsyncHttp<'static>>,
     /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
     /// `socket_async_http_abort_tracker` — the request is either not yet started
     /// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
@@ -225,7 +225,7 @@ pub struct LibdeflateState {
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode field offset in Phase B.
-pub type Queue = UnboundedQueue<AsyncHttp>;
+pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 #[derive(Clone)]
 pub struct InitOpts {

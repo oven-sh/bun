@@ -14,7 +14,7 @@ macro_rules! log { ($($t:tt)*) => { bun_core::scoped_log!(HTTPInternalState, $($
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 
-pub struct InternalState {
+pub struct InternalState<'a> {
     pub response_message_buffer: MutableString,
     /// pending response is the temporary storage for the response headers, url and status code
     /// this uses shared_response_headers_buf to store the headers
@@ -42,7 +42,7 @@ pub struct InternalState {
     pub total_body_received: usize,
     // TODO(port): self-borrow into `original_request_body.bytes`; raw slice ptr to avoid lifetime on struct
     pub request_body: *const [u8],
-    pub original_request_body: HTTPRequestBody,
+    pub original_request_body: HTTPRequestBody<'a>,
     pub request_sent_len: usize,
     pub fail: Option<Error>,
     pub request_stage: HTTPStage,
@@ -84,7 +84,7 @@ impl Default for InternalStateFlags {
     }
 }
 
-impl Default for InternalState {
+impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
@@ -112,12 +112,9 @@ impl Default for InternalState {
     }
 }
 
-impl InternalState {
-    pub fn init(body: HTTPRequestBody, body_out_str: &mut MutableString) -> InternalState {
-        let request_body: *const [u8] = match &body {
-            HTTPRequestBody::Bytes(bytes) => bytes.as_ref() as *const [u8],
-            _ => b"" as *const [u8],
-        };
+impl<'a> InternalState<'a> {
+    pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
+        let request_body: *const [u8] = body.slice() as *const [u8];
         InternalState {
             original_request_body: body,
             request_body,

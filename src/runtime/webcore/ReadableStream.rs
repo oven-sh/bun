@@ -347,7 +347,7 @@ impl ReadableStream {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
                         event_loop: jsc::EventLoopHandle::init(
-                            unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                            global_this.bun_vm().as_mut().event_loop().cast(),
                         ),
                         start_offset: Some(blob.offset as usize),
                         max_size: if blob.size != webcore::blob::MAX_SIZE {
@@ -372,7 +372,7 @@ impl ReadableStream {
                 // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is the
                 // process-singleton dotenv loader, set during init and never null.
                 let proxy = unsafe {
-                    (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+                    (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
                 };
                 let proxy_url = proxy.as_ref().map(|p| p.href);
 
@@ -408,7 +408,7 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                         event_loop: jsc::EventLoopHandle::init(
-                            unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                            global_this.bun_vm().as_mut().event_loop().cast(),
                         ),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
@@ -437,7 +437,7 @@ impl ReadableStream {
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                 event_loop: jsc::EventLoopHandle::init(
-                    unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                    global_this.bun_vm().as_mut().event_loop().cast(),
                 ),
                 ..Default::default()
             },

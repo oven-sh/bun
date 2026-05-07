@@ -379,7 +379,7 @@ pub use self::regular_expression::RegularExpression;
 pub use self::text_codec::TextCodec;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
-pub use self::js_cell::JSCell;
+pub use self::js_cell::{JSCell, JsCell};
 pub use self::error_code::{ErrorBuilder, ErrorCode};
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
 pub use self::error_code::ErrorCode as ErrCode;

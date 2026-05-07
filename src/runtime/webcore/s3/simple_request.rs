@@ -559,7 +559,7 @@ pub fn execute_simple_s3_request(
         callback,
         range: options.range,
         headers,
-        vm: VirtualMachine::get(),
+        vm: VirtualMachine::get_mut_ptr(),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),

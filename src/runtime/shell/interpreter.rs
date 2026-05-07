@@ -2706,7 +2706,7 @@ pub fn create_shell_interpreter(
 
     let arguments_ = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = unsafe { &*global.bun_vm() };
+    let vm = global.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
 
     let resolve = arguments
@@ -2736,7 +2736,7 @@ pub fn create_shell_interpreter(
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
     // dereferencing for `event_loop()` is sound on the mutator thread.
-    let event_loop = EventLoopHandle::init(unsafe { (*global.bun_vm()).event_loop() } as *mut ());
+    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop() as *mut ());
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
@@ -2780,7 +2780,7 @@ pub fn create_shell_interpreter(
         (*interpreter).this_jsvalue = js_value;
         (*interpreter)
             .keep_alive
-            .ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm()));
+            .ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()));
     }
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)

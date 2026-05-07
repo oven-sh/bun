@@ -251,7 +251,7 @@ impl InspectorHTTPServerAgent {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
     // SAFETY: VM singleton is process-lifetime.
-    let vm = unsafe { &mut *VirtualMachine::get() };
+    let vm = VirtualMachine::get().as_mut();
     if let Some(debugger) = &mut vm.debugger {
         debugger.http_server_agent.agent = NonNull::new(agent);
     }

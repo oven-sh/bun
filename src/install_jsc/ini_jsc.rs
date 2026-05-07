@@ -51,7 +51,7 @@ impl IniTestingAPIs {
         let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
             // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
             // `transpiler.env` is set during VM init (transpiler.rs).
-            unsafe { (*global.bun_vm()).transpiler.env }
+            global.bun_vm().as_mut().transpiler.env
         } else {
             let mut envmap = dotenv::map::HashTable::new();
             let Some(envobj) = envjs.get_object() else {
@@ -197,7 +197,7 @@ impl IniTestingAPIs {
 
         // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
         // `transpiler.env` is set during VM init (transpiler.rs).
-        let env = unsafe { &mut *(*global.bun_vm()).transpiler.env };
+        let env = unsafe { &mut *global.bun_vm().as_mut().transpiler.env };
         // TODO(port): lifetime — `Parser::init` ties `src: &'a [u8]` and
         // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
         // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped

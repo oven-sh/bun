@@ -326,7 +326,7 @@ impl MySQLConnection {
         // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
         // while `mysql_group` also wants `&VirtualMachine`; route through a raw
         // pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut crate::jsc::VirtualMachine = crate::jsc::VirtualMachine::get();
+        let vm_ptr: *mut crate::jsc::VirtualMachine = crate::jsc::VirtualMachine::get_mut_ptr();
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // produce overlapping `&mut` (rare_data accesses a disjoint field).
         let tls_group: *mut bun_uws::SocketGroup =

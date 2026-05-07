@@ -348,7 +348,7 @@ impl Config {
 
                 // TODO: JSC -> Ast conversion
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = unsafe { &mut *VirtualMachine::get() };
+                let vm = VirtualMachine::get().as_mut();
                 if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
                     &mut self.log,
                     &logger::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
@@ -395,7 +395,7 @@ impl Config {
                 let source =
                     logger::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-                let vm = unsafe { &mut *VirtualMachine::get() };
+                let vm = VirtualMachine::get().as_mut();
                 let Ok(Some(json)) = vm.transpiler.resolver.caches.json.parse_json(
                     &mut self.log,
                     &source,
@@ -1027,7 +1027,7 @@ pub fn constructor(
     }
 
     // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
-    let vm = unsafe { &mut *VirtualMachine::get() };
+    let vm = VirtualMachine::get().as_mut();
     let transpiler = match Transpiler::Transpiler::init(
         arena_ref,
         &mut config.log,
@@ -1250,7 +1250,7 @@ impl JSTranspiler {
         jsc::mark_binding();
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
         // defer args.deinit() → Drop
         let Some(code_arg) = args.next() else {
@@ -1341,7 +1341,7 @@ impl JSTranspiler {
         jsc::mark_binding();
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
@@ -1396,7 +1396,7 @@ impl JSTranspiler {
         let arguments = callframe.arguments_old::<3>();
 
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
         // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
@@ -1605,7 +1605,7 @@ impl JSTranspiler {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments.slice());
         // defer args.deinit() → Drop
 

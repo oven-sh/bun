@@ -350,7 +350,7 @@ impl ScopeFunctions {
         }
 
         // handle test reporter agent for debugger
-        let vm = global.bun_vm();
+        let vm = global.bun_vm().as_mut();
         let mut test_id_for_debugger: i32 = 0;
         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for any
         // Bun-owned global; single JS thread so no aliasing across this borrow.

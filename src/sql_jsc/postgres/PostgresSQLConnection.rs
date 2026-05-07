@@ -1134,7 +1134,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // (same pointer as `global_object.bun_vm()`, asserted in debug builds). Avoids
         // deriving `*mut` from the `&VirtualMachine` above, which would make `vm()`'s
         // `&mut *self.vm` UB.
-        vm: VirtualMachine::get(),
+        vm: VirtualMachine::get_mut_ptr(),
         statements: PreparedStatementsMap::default(),
         prepared_statement_id: 0,
         pending_activity_count: AtomicU32::new(0),

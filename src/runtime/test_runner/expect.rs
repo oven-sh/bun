@@ -407,7 +407,7 @@ impl Expect {
                     promise.set_handled(vm);
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
+            global_this.bun_vm().as_mut().wait_for_promise(promise);
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -819,7 +819,7 @@ impl Expect {
         value: JSValue,
     ) -> JsResult<(Option<JSValue>, JSValue)> {
         // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        let vm = global_this.bun_vm().as_mut();
 
         let mut return_value_from_function: JSValue = JSValue::ZERO;
 
@@ -1402,7 +1402,7 @@ impl Expect {
         }
 
         // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-        unsafe { (*global_this.bun_vm()).auto_garbage_collect() };
+        global_this.bun_vm().as_mut().auto_garbage_collect();
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1458,7 +1458,7 @@ impl Expect {
             promise.set_handled(vm);
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
+            global_this.bun_vm().as_mut().wait_for_promise(promise);
 
             result = promise.result(vm);
             result.ensure_still_alive();
@@ -1469,7 +1469,7 @@ impl Expect {
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    unsafe { &mut *VirtualMachine::get() }.run_error_handler(result, None);
+                    VirtualMachine::get().as_mut().run_error_handler(result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
@@ -1544,7 +1544,7 @@ impl Expect {
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = unsafe { (*global_this.bun_vm()).auto_gc_on_drop() };
+        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
@@ -1623,7 +1623,7 @@ impl Expect {
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = unsafe { (*global_this.bun_vm()).auto_gc_on_drop() };
+        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1643,7 +1643,7 @@ impl Expect {
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = unsafe { (*global_this.bun_vm()).auto_gc_on_drop() };
+        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();

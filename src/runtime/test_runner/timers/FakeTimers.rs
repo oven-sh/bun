@@ -61,7 +61,7 @@ impl CurrentTime {
     // PORT NOTE: Zig took `v: struct { offset: *const timespec, js: ?f64 = null }` —
     // anonymous param struct inlined as separate args. LIFETIMES.tsv: offset = BORROW_PARAM → &Timespec.
     pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
-        let vm = global.bun_vm();
+        let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write().unwrap() = *offset;
         }
@@ -82,7 +82,7 @@ impl CurrentTime {
     }
 
     pub fn clear(&self, global: &JSGlobalObject) {
-        let vm = global.bun_vm();
+        let vm = global.bun_vm().as_mut();
         {
             *self.offset_raw.write().unwrap() = MIN_TIMESPEC;
         }
@@ -219,7 +219,7 @@ impl FakeTimers {
         }
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes erased `*mut ()` for the VM (CYCLEBREAK).
-        unsafe { (*next).fire(&now_el, vm.cast()) };
+        unsafe { (*next).fire(&now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
 
         self.assert_valid(AssertMode::Unlocked);
     }

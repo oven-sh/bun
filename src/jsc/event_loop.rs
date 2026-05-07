@@ -912,7 +912,7 @@ impl EventLoop {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         // SAFETY: bun_vm() returns the live owning VM for this global; field read only.
-        let jsc_vm = unsafe { (*global_object.bun_vm()).jsc_vm };
+        let jsc_vm = global_object.bun_vm().as_mut().jsc_vm;
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }
@@ -1008,7 +1008,7 @@ impl EventLoop {
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live owning VM for this global; we only read
     // fields and call &-methods on it for the duration of this host fn.
-    let vm_ref = unsafe { &*global_object.bun_vm() };
+    let vm_ref = global_object.bun_vm();
     // SAFETY: event_loop() returns a non-null raw pointer into the owning VM.
     let event_loop = unsafe { &*vm_ref.event_loop() };
     let result = JSValue::create_empty_object(global_object, 3);
@@ -1041,7 +1041,7 @@ pub extern "C" fn Bun__EventLoop__runCallback1(
     // SAFETY: called from C++ with a valid live global; bun_vm() and
     // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0]) };
+    unsafe { (*global.bun_vm().as_mut().event_loop()).run_callback(callback, global, this_value, &[arg0]) };
 }
 
 #[unsafe(no_mangle)]
@@ -1055,7 +1055,7 @@ pub extern "C" fn Bun__EventLoop__runCallback2(
     // SAFETY: called from C++ with a valid live global; bun_vm() and
     // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0, arg1]) };
+    unsafe { (*global.bun_vm().as_mut().event_loop()).run_callback(callback, global, this_value, &[arg0, arg1]) };
 }
 
 #[unsafe(no_mangle)]
@@ -1070,7 +1070,7 @@ pub extern "C" fn Bun__EventLoop__runCallback3(
     // SAFETY: called from C++ with a valid live global; bun_vm() and
     // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    unsafe { (*(*global.bun_vm()).event_loop()).run_callback(callback, global, this_value, &[arg0, arg1, arg2]) };
+    unsafe { (*global.bun_vm().as_mut().event_loop()).run_callback(callback, global, this_value, &[arg0, arg1, arg2]) };
 }
 
 #[unsafe(no_mangle)]
@@ -1078,7 +1078,7 @@ pub extern "C" fn Bun__EventLoop__enter(global: *mut JSGlobalObject) {
     // SAFETY: called from C++ with a valid live global; bun_vm() and
     // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    unsafe { (*(*global.bun_vm()).event_loop()).enter() };
+    unsafe { (*global.bun_vm().as_mut().event_loop()).enter() };
 }
 
 #[unsafe(no_mangle)]
@@ -1086,7 +1086,7 @@ pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
     // SAFETY: called from C++ with a valid live global; bun_vm() and
     // event_loop() return non-null raw pointers into the owning VM.
     let global = unsafe { &*global };
-    unsafe { (*(*global.bun_vm()).event_loop()).exit() };
+    unsafe { (*global.bun_vm().as_mut().event_loop()).exit() };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1244,7 +1244,7 @@ pub fn __bun_js_event_loop_create_null_delimited_env_map(
 pub fn __bun_js_event_loop_current() -> *mut () {
     // SAFETY: `VirtualMachine::get()` panics if no VM on this thread;
     // `event_loop()` returns the live `*mut EventLoop` self-pointer.
-    unsafe { (*VirtualMachine::get()).event_loop().cast() }
+    VirtualMachine::get().as_mut().event_loop().cast()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

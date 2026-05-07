@@ -167,7 +167,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // laundered through a shared-ref `*const _ as *mut` hop — the vtable
         // slots (`file_polls`, `set_after_event_loop_callback`) write through
         // it.
-        jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm())
+        jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr())
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
@@ -1722,7 +1722,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let tcp = input_socket as *mut us_socket_t;
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
         // outlives this call.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        let vm = global_this.bun_vm().as_mut();
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(),
@@ -1751,7 +1751,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
-            event_loop: unsafe { &*(*global_this.bun_vm()).event_loop() },
+            event_loop: unsafe { &*global_this.bun_vm().as_mut().event_loop() },
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -1875,7 +1875,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // paired with m_connectedWebSocket.
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; VM
         // outlives this call.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        let vm = global_this.bun_vm().as_mut();
         let ws = Box::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
@@ -1904,7 +1904,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // `&'static`-tied borrow that would lock `vm` for the rest of the
             // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
-            event_loop: unsafe { &*(*global_this.bun_vm()).event_loop() },
+            event_loop: unsafe { &*global_this.bun_vm().as_mut().event_loop() },
             deflate: None,
             receiving_compressed: false,
             message_is_compressed: false,
@@ -2299,7 +2299,7 @@ impl Mask {
         input: &[u8],
     ) {
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let entropy = unsafe { &mut *global_this.bun_vm() }.rare_data().entropy_slice(4);
+        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 
@@ -2312,7 +2312,7 @@ impl Mask {
     /// `&mut [u8]` + `&[u8]` aliasing. Callers that masked in-place use this.
     pub fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let entropy = unsafe { &mut *global_this.bun_vm() }.rare_data().entropy_slice(4);
+        let entropy = global_this.bun_vm().as_mut().rare_data().entropy_slice(4);
         mask_buf.copy_from_slice(&entropy[..4]);
         let mask = *mask_buf;
 

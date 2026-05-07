@@ -1230,7 +1230,7 @@ impl Value {
             }
             Value::InternalBlob(ib) => {
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
-                let global = unsafe { &*(*VirtualMachine::get()).global };
+                let global = unsafe { &*VirtualMachine::get().as_mut().global };
                 let new_blob = Blob::init(
                     ib.to_owned_slice(),
                     // we will never resize it from here
@@ -1248,7 +1248,7 @@ impl Value {
                 // hold keeps it alive across `to_utf8_if_needed`/`latin1_slice`.
                 let wtf_ref = unsafe { &*wtf };
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
-                let global = unsafe { &*(*VirtualMachine::get()).global };
+                let global = unsafe { &*VirtualMachine::get().as_mut().global };
                 let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
                     // Zig: `fromOwnedSlice(@constCast(allocated_slice.slice()))` — transfer
                     // ownership of the heap-allocated UTF-8 buffer (no copy).

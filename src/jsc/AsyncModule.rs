@@ -728,7 +728,7 @@ impl AsyncModule {
         let global_this = this.global_this();
         // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
         // thread); the Zig `globalThis.bunVM()` returns the same pointer.
-        let jsc_vm = unsafe { &mut *VirtualMachine::get() };
+        let jsc_vm = VirtualMachine::get().as_mut();
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
             jsc_vm.package_manager().end_progress_bar();
@@ -1237,7 +1237,7 @@ impl AsyncModule {
         let specifier: &[u8] = unsafe { &*(self.specifier() as *const [u8]) };
         let path_text: &[u8] = unsafe { &*(self.path_text() as *const [u8]) };
         let path = Fs::Path::init(path_text);
-        let jsc_vm = VirtualMachine::get();
+        let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
         // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw

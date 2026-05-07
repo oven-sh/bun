@@ -290,7 +290,7 @@ impl FileExt for File {
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },
-                    unsafe { &mut *global_this.bun_vm() },
+                    global_this.bun_vm().as_mut(),
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
@@ -393,7 +393,7 @@ impl S3Ext for S3 {
         // `transpiler.env` is the process-singleton dotenv loader, never null
         // once the VM is initialised.
         let proxy_url: Option<URL<'_>> = unsafe {
-            (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+            (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
         };
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
@@ -488,7 +488,7 @@ impl S3Ext for S3 {
         // `transpiler.env` is the process-singleton dotenv loader, never null
         // once the VM is initialised.
         let proxy_url: Option<URL<'_>> = unsafe {
-            (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+            (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
         };
         let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;

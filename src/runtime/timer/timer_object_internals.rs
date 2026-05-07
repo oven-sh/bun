@@ -248,7 +248,7 @@ impl TimerObjectInternals {
         callback: JSValue,
         arguments: JSValue,
     ) {
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get_mut_ptr();
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
@@ -734,7 +734,7 @@ impl TimerObjectInternals {
     /// The per-thread `RuntimeState` and `VirtualMachine` are installed (always
     /// true on the JS thread by the time a timer can be dropped).
     pub unsafe fn deinit(&mut self) {
-        let vm = VirtualMachine::get();
+        let vm = VirtualMachine::get_mut_ptr();
         let kind = self.flags.kind();
 
         let state = crate::jsc_hooks::runtime_state();
@@ -818,7 +818,7 @@ impl TimerObjectInternals {
         // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
         // on such a timer would otherwise leak an event-loop ref and hang the process.
         if !did_have_js_ref && !self.get_destroyed() {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), true);
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), true);
         }
 
         Ok(this_value)
@@ -832,7 +832,7 @@ impl TimerObjectInternals {
         self.flags.set_has_js_ref(false);
 
         if did_have_js_ref {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), false);
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get_mut_ptr(), false);
         }
 
         Ok(this_value)
@@ -858,7 +858,7 @@ impl TimerObjectInternals {
         }
 
         self.this_value.set_strong(this_value, global_object);
-        self.reschedule(this_value, VirtualMachine::get(), global_object.as_ptr());
+        self.reschedule(this_value, VirtualMachine::get_mut_ptr(), global_object.as_ptr());
 
         Ok(this_value)
     }

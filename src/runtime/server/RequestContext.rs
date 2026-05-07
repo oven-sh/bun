@@ -856,7 +856,7 @@ where
         let mut message: Vec<u8> = Vec::new();
         let _ = write!(&mut message, "{}", Output::pretty_fmt::<false>(fmt));
         // SAFETY: VirtualMachine::get() returns the live VM raw ptr.
-        let cwd = unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir };
+        let cwd = unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir };
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: Some(message.into_boxed_slice()),
             router: None,
@@ -2236,7 +2236,7 @@ where
                     let credentials = s3.get_credentials();
                     let path = s3.path();
                     // SAFETY: bun_vm() returns the live VM raw ptr.
-                    let env = unsafe { (*global_this.bun_vm()).transpiler.env };
+                    let env = global_this.bun_vm().as_mut().transpiler.env;
                     // SAFETY: env is a live *mut dotenv::Loader for the VM lifetime.
                     let proxy_url = unsafe { (*env).get_http_proxy(true, None, None) }
                         .map(|proxy| proxy.href);

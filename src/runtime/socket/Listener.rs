@@ -194,7 +194,7 @@ impl Listener {
         }
 
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
-        let vm: &'static mut VirtualMachine = unsafe { &mut *VirtualMachine::get() };
+        let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
         // SAFETY: JSC_BORROW — global lives for the program.
         let global_static: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
@@ -653,7 +653,7 @@ impl Listener {
             unsafe { (*sc).borrow() }
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
-            let vm = unsafe { &mut *VirtualMachine::get() };
+            let vm = VirtualMachine::get().as_mut();
             SSLConfig::from_js(vm, global, tls)?
         } {
             // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
@@ -921,7 +921,7 @@ impl Listener {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
         // SAFETY: bun_vm() returns a JSC_BORROW that lives for the program; widen to 'static.
-        let vm: &'static mut VirtualMachine = unsafe { &mut *VirtualMachine::get() };
+        let vm: &'static mut VirtualMachine = VirtualMachine::get().as_mut();
         let global_static: &'static JSGlobalObject =
             unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) };
 

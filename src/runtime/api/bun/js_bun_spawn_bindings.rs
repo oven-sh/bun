@@ -402,7 +402,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut env_array: Vec<CStrPtr> = Vec::new();
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
-    let jsc_vm: &mut jsc::VirtualMachineRef = unsafe { &mut *global_this.bun_vm() };
+    let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
     // SAFETY: `transpiler.fs` is the singleton `FileSystem` instance, valid for VM lifetime.
     let mut cwd: &[u8] = unsafe { (*jsc_vm.transpiler.fs).top_level_dir };

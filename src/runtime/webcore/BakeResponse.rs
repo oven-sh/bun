@@ -83,7 +83,7 @@ pub fn constructor(
     if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
         *bake_ssr_has_jsx = 0;
         if arguments[0].is_jsx_element(global_this)? {
-            let vm = global_this.bun_vm();
+            let vm = global_this.bun_vm().as_mut();
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
             if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
                 assert_streaming_disabled(
@@ -116,7 +116,7 @@ pub fn construct_redirect(
     let response = Response::construct_redirect_impl(global_this, callframe)?;
     let response = Box::new(response);
 
-    let vm = global_this.bun_vm();
+    let vm = global_this.bun_vm().as_mut();
     // Check if dev_server_async_local_storage is set (indicating we're in Bun dev server)
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
@@ -151,7 +151,7 @@ pub fn construct_render(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
-    let vm = global_this.bun_vm();
+    let vm = global_this.bun_vm().as_mut();
 
     // Check if dev server async local_storage is set
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.

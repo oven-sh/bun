@@ -25,7 +25,7 @@ impl JSCDeferredWorkTask {
     pub fn run(&mut self) -> Result<(), JsTerminated> {
         // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; `global` is
         // initialized during VM startup and remains valid for the VM's lifetime.
-        let global_this = unsafe { &*(*VirtualMachine::get()).global };
+        let global_this = unsafe { &*VirtualMachine::get().as_mut().global };
         let mut scope = ExceptionValidationScope::init(global_this);
         // Zig: `defer scope.deinit()` — there is no `Drop` impl for ExceptionValidationScope
         // (it wraps a placement-constructed C++ TopExceptionScope), so register an explicit
@@ -81,7 +81,7 @@ pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
     // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; its event loop is
     // always initialized. `paused` points to a live bool for the duration of the call.
-    unsafe { (*(*VirtualMachine::get()).event_loop()).tick_while_paused(&mut *paused) };
+    unsafe { (*VirtualMachine::get().as_mut().event_loop()).tick_while_paused(&mut *paused) };
 }
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.

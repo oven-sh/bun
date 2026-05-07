@@ -414,7 +414,7 @@ impl Route {
         let development = server.config().development;
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a Bun-owned
         // global; single-threaded JS thread, no other &mut alias active.
-        let vm = unsafe { &mut *global.bun_vm() };
+        let vm = global.bun_vm().as_mut();
 
         let mut config = JSBundlerConfig::default();
         // PORT NOTE: `errdefer config.deinit(allocator)` — `Config` owns its fields and

@@ -61,7 +61,7 @@ impl CppWebSocket {
     pub fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; event loop is entered.
         unsafe { WebSocket__didAbruptClose(self, reason) };
@@ -71,7 +71,7 @@ impl CppWebSocket {
     pub fn did_close(&self, code: u16, reason: &mut BunString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; reason outlives the call.
         unsafe { WebSocket__didClose(self, code, reason) };
@@ -81,7 +81,7 @@ impl CppWebSocket {
     pub fn did_receive_text(&self, clone: bool, text: &ZigString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; text outlives the call.
         unsafe { WebSocket__didReceiveText(self, clone, text) };
@@ -91,7 +91,7 @@ impl CppWebSocket {
     pub fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; bytes points to byte_len valid bytes.
         unsafe { WebSocket__didReceiveBytes(self, bytes, byte_len, opcode) };
@@ -101,7 +101,7 @@ impl CppWebSocket {
     pub fn reject_unauthorized(&self) -> bool {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket.
         let result = unsafe { WebSocket__rejectUnauthorized(self) };
@@ -119,7 +119,7 @@ impl CppWebSocket {
     ) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; all pointers are valid for the call duration.
         unsafe {
@@ -144,7 +144,7 @@ impl CppWebSocket {
     ) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+        let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; tunnel/buffered_data are valid for the call duration.
         unsafe {

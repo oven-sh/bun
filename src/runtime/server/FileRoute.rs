@@ -163,7 +163,7 @@ impl FileRoute {
                 // SAFETY: `VirtualMachine::get()` returns the live per-thread
                 // singleton; FileRoute is only ever reached from a server
                 // request callback on the JS thread.
-                let global = unsafe { (*VirtualMachine::get()).global() };
+                let global = VirtualMachine::get().as_mut().global();
                 let date_f64 = bun_jsc::bun_string_jsc::parse_date(&mut string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));

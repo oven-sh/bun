@@ -207,7 +207,7 @@ impl PostgresSQLQuery {
         let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
+        let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
         let event_loop = unsafe { vm.event_loop_mut() };
         let js_err = postgres_error_to_js(global_object, None, err);
@@ -234,7 +234,7 @@ impl PostgresSQLQuery {
         let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, true) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
+        let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
         let event_loop = unsafe { vm.event_loop_mut() };
         event_loop.run_callback(function, global_object, this_value, &[
@@ -295,7 +295,7 @@ impl PostgresSQLQuery {
         let Some(target_value) = (unsafe { (*this_ptr).get_target(global_object, is_last) }) else { return };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
+        let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm.sql_state().postgresql_context.on_query_resolve_fn.get().unwrap();
         let event_loop = unsafe { vm.event_loop_mut() };
 

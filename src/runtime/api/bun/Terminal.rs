@@ -404,7 +404,7 @@ impl Terminal {
             term_name,
             // SAFETY: bun_vm() returns the live VM raw pointer for this global.
             event_loop_handle: EventLoopHandle::init(
-                unsafe { (*global_object.bun_vm()).event_loop() }.cast(),
+                global_object.bun_vm().as_mut().event_loop().cast(),
             ),
             global_this: core::ptr::NonNull::from(global_object),
             writer: IOWriter::default(),
@@ -1651,7 +1651,7 @@ impl Terminal {
         if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
             let global_this = self.global();
             // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-            unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
+            unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
                 callback,
                 global_this,
                 this_jsvalue,
@@ -1731,7 +1731,7 @@ impl Terminal {
         };
 
         // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-        unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
+        unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
             callback,
             global_this,
             this_jsvalue,
@@ -1791,7 +1791,7 @@ impl Terminal {
             .to_node_buffer(global_this);
 
         // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-        unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
+        unsafe { &mut *global_this.bun_vm().as_mut().event_loop() }.run_callback(
             callback,
             global_this,
             this_jsvalue,

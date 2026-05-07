@@ -112,7 +112,7 @@ impl ImmediateObject {
         }
 
         // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
-        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
+        if global_this.bun_vm().as_mut().is_inspector_enabled() {
             Debugger::did_schedule_async_call(
                 global_this,
                 Debugger::AsyncCallType::DOMTimer,
@@ -197,7 +197,7 @@ impl ImmediateObject {
 
     #[bun_jsc::host_fn(method)]
     pub fn dispose(this: &mut Self, global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.internals.cancel(global_this.bun_vm());
+        this.internals.cancel(global_this.bun_vm_ptr());
         Ok(JSValue::UNDEFINED)
     }
 }

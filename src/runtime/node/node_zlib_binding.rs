@@ -373,7 +373,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.this_value_mut().set(global_this, this_value);
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        let vm = unsafe { &*global_this.bun_vm() };
+        let vm = global_this.bun_vm();
         *this.task_mut() = WorkPoolTask {
             node: Default::default(),
             callback: Self::async_job_run_task,
@@ -419,7 +419,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // SAFETY: `global_this` backref is valid for the lifetime of `this`.
         let global: &JSGlobalObject = unsafe { &*this.global_this() };
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        let vm = unsafe { &*global.bun_vm() };
+        let vm = global.bun_vm();
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref(); defer
         // this.poll_ref.unref(vm);` (run at scope exit in reverse order). We
         // call them explicitly on every return path instead of via scopeguard,
@@ -725,7 +725,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         });
 
         // SAFETY: `bun_vm()` and `event_loop()` are non-null for a Bun-owned global.
-        let vm = unsafe { &*global_this.bun_vm() };
+        let vm = global_this.bun_vm();
         unsafe { &mut *vm.event_loop() }.run_callback(
             callback,
             global_this,

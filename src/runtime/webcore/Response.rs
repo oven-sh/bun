@@ -949,7 +949,7 @@ impl Response {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
-        let mut args = bun_jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
         // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
@@ -1070,7 +1070,7 @@ impl Response {
         let args_list = callframe.arguments_old::<4>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
-        let mut args = bun_jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &args_list.ptr[0..args_list.len]);
+        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         let mut url_string_slice = ZigStringSlice::empty();
         // url_string_slice drops at scope exit

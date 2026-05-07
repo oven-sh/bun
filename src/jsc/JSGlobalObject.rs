@@ -924,7 +924,7 @@ impl JSGlobalObject {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
             // SAFETY: bun_vm() returns the live VirtualMachine for this global.
-            let _ = unsafe { &mut *self.bun_vm() }.uncaught_exception(self, exception, false);
+            let _ = self.bun_vm().as_mut().uncaught_exception(self, exception, false);
         }
     }
 
@@ -963,21 +963,22 @@ impl JSGlobalObject {
         self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
-    /// Shared-reference accessor for the Bun `VirtualMachine`. Prefer
-    /// [`bun_vm`](Self::bun_vm) when you need to write through; this is for
-    /// read-only callers (e.g. `ArgumentsSlice::init`) so they don't have to
-    /// open-code `unsafe { &*global.bun_vm() }` at every site.
+    /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
+    /// [`bun_vm`](Self::bun_vm) kept for call-site compatibility.
     #[inline]
-    pub fn bun_vm_ref(&self) -> &VirtualMachine {
-        // SAFETY: the VM owns this global and outlives it; pointer is non-null
-        // (debug-asserted in `bun_vm()`) and never freed while a global exists.
-        unsafe { &*self.bun_vm() }
+    pub fn bun_vm_ref(&self) -> &'static VirtualMachine {
+        self.bun_vm()
     }
 
-    /// Returns the Bun `VirtualMachine` owning this global. Returns a raw
-    /// pointer (mirroring Zig's `*jsc.VirtualMachine`) so re-entrant callers
-    /// don't mint aliased `&mut`; deref locally at the use site.
-    pub fn bun_vm(&self) -> *mut VirtualMachine {
+    /// Returns the Bun `VirtualMachine` owning this global as a safe
+    /// `&'static`. The VM is a per-thread singleton allocated once in
+    /// `VirtualMachine::init` and never freed while a global exists, so the
+    /// `'static` lifetime is sound. Mutation goes through
+    /// [`JsCell`](crate::JsCell)-wrapped fields or
+    /// [`VirtualMachine::as_mut`]; legacy raw-pointer paths use
+    /// [`Self::bun_vm_ptr`].
+    #[inline]
+    pub fn bun_vm(&self) -> &'static VirtualMachine {
         #[cfg(debug_assertions)]
         {
             // if this fails
@@ -991,7 +992,9 @@ impl JSGlobalObject {
                 panic!("This thread lacks a Bun VM");
             }
         }
-        self.bun_vm_unsafe() as *mut VirtualMachine
+        // SAFETY: the VM owns this global and outlives it; pointer is non-null
+        // (debug-asserted above) and never freed while a global exists.
+        unsafe { &*(self.bun_vm_unsafe() as *const VirtualMachine) }
     }
 
     pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {

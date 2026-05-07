@@ -17,7 +17,7 @@ impl TestingAPIs {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
         let Some(old_folder_jsval) = arguments.next_eat() else {
             return Err(global.throw(format_args!("expected 2 strings")));
@@ -80,7 +80,7 @@ impl TestingAPIs {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
         let Some(patchfile_src_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!(
@@ -120,7 +120,7 @@ impl TestingAPIs {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
         let Some(patchfile_js) = arguments.next_eat() else {
             let _ = global.throw(format_args!("apply: expected at least 1 argument, got 0"));

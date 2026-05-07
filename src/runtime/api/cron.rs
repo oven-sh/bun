@@ -55,7 +55,7 @@ fn vm_ctx() -> bun_aio::EventLoopCtx {
 /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
 #[inline]
 unsafe fn vm_mut<'a>() -> &'a mut VirtualMachine {
-    unsafe { &mut *VirtualMachine::get() }
+    VirtualMachine::get().as_mut()
 }
 
 /// Recover this thread's `timer::All` heap (b2-cycle: `vm.timer` is `()` in
@@ -1439,7 +1439,7 @@ impl CronJob {
         // thread-local raw pointer (`VirtualMachine::get`) instead of upcasting
         // `&VirtualMachine` so the `invalid_reference_casting` lint stays clean.
         let _ = vm;
-        let rare = unsafe { &mut *VirtualMachine::get() }.rare_data.as_mut();
+        let rare = VirtualMachine::get().as_mut().rare_data.as_mut();
         if let Some(rare) = rare {
             if let Some(i) = rare.cron_jobs.iter().position(|&j| j as *mut () == needle) {
                 rare.cron_jobs.swap_remove(i);
@@ -1580,7 +1580,7 @@ impl CronJob {
                     let global_ref = unsafe { &*vm.global };
                     // SAFETY: single JS thread; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = unsafe { &mut *VirtualMachine::get() }
+                    let _ = VirtualMachine::get().as_mut()
                         .uncaught_exception(global_ref, err, false);
                 }
                 Self::schedule_next(this, vm);
@@ -1631,7 +1631,7 @@ impl CronJob {
                     // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
                     let global_ref = unsafe { &*vm.global };
-                    unsafe { &mut *VirtualMachine::get() }
+                    VirtualMachine::get().as_mut()
                         .unhandled_rejection(global_ref, reason, result);
                 }
             }
@@ -1643,7 +1643,7 @@ impl CronJob {
     #[bun_jsc::host_fn(method)]
     pub fn stop(this: &mut Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the per-thread singleton.
-        Self::self_stop(this, unsafe { &*this.global.bun_vm() });
+        Self::self_stop(this, this.global.bun_vm());
         Ok(frame.this())
     }
 
@@ -1691,7 +1691,7 @@ impl CronJob {
         };
 
         // SAFETY: `bun_vm()` returns the per-thread singleton.
-        let vm = unsafe { &mut *global.bun_vm() };
+        let vm = global.bun_vm().as_mut();
 
         let job = Box::into_raw(Box::new(CronJob {
             ref_count: Cell::new(1),
@@ -1758,7 +1758,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
     // SAFETY: `bun_vm()` returns the per-thread singleton.
-    let vm = unsafe { &*this_ref.global.bun_vm() };
+    let vm = this_ref.global.bun_vm();
     if let Some(js_this) = this_ref.this_value.try_get() {
         js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
     }
@@ -1774,7 +1774,7 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     // SAFETY: pending_ref holds a ref on `this`.
     let this_ref = unsafe { &mut *this };
     // SAFETY: `bun_vm()` returns the per-thread singleton.
-    let vm = unsafe { &mut *this_ref.global.bun_vm() };
+    let vm = this_ref.global.bun_vm().as_mut();
     let err = args[0];
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this_ref.this_value.try_get() {
@@ -2132,7 +2132,7 @@ fn resolve_path(
     path_: &[u8],
 ) -> Result<ZString, bun_core::Error> {
     // SAFETY: `bun_vm()` returns the per-thread singleton.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     let srcloc = frame.get_caller_src_loc(global);
     let caller_utf8 = srcloc.str.to_utf8();
     let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());

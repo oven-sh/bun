@@ -101,7 +101,7 @@ pub extern "C" fn Bun__Chrome__ensure(
             // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
-        let vm = global.bun_vm();
+        let vm = global.bun_vm_ptr();
         // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let user_data_dir = if user_data_dir.is_null() { None } else { Some(unsafe { CStr::from_ptr(user_data_dir) }) };
         // SAFETY: caller passes valid NUL-terminated strings when non-null.

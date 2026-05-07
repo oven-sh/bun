@@ -944,7 +944,7 @@ impl ServePlugins {
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         // SAFETY: `bun_vm()` returns the JS-thread singleton; `transpiler.options` is
         // process-lifetime once VM is initialized.
-        let bunfig_path: &[u8] = unsafe { &(*global.bun_vm()).transpiler.options.bunfig_path };
+        let bunfig_path: &[u8] = unsafe { &global.bun_vm().as_mut().transpiler.options.bunfig_path };
         let bunfig_folder: &[u8] =
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path);
 
@@ -973,7 +973,7 @@ impl ServePlugins {
         // SAFETY: `bun_vm()` returns a live raw `*mut VirtualMachine`;
         // `event_loop()` returns a live raw `*mut EventLoop`. Reborrowed for
         // each call so no aliased `&mut` outlives the statement.
-        unsafe { (*(*global.bun_vm()).event_loop()).enter() };
+        unsafe { (*global.bun_vm().as_mut().event_loop()).enter() };
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -982,7 +982,7 @@ impl ServePlugins {
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
         // SAFETY: see `enter()` above.
-        unsafe { (*(*global.bun_vm()).event_loop()).exit() };
+        unsafe { (*global.bun_vm().as_mut().event_loop()).exit() };
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1083,7 +1083,7 @@ impl ServePlugins {
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         // SAFETY: bun_vm() returns a non-null *mut to the active VM
-        unsafe { &mut *global.bun_vm() }.run_error_handler(err, None);
+        global.bun_vm().as_mut().run_error_handler(err, None);
     }
 }
 
@@ -1284,7 +1284,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn vm_mut(&self) -> &mut jsc::virtual_machine::VirtualMachine {
         // SAFETY: per-thread singleton; caller is on the JS thread and holds
         // no other `&mut VirtualMachine` for this scope.
-        unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() }
+        jsc::virtual_machine::VirtualMachine::get().as_mut()
     }
 
     /// `server.zig:notifyInspectorServerStopped`. Unbounded so `deinit()` (in
@@ -2090,7 +2090,7 @@ where
         }
 
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args_slice = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments);
+        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), arguments);
 
         let mut new_config = ServerConfig::from_js(global, &mut args_slice, server_config::FromJSOptions {
             allow_bake_config: false,
@@ -2131,7 +2131,7 @@ where
         let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args = jsc::ArgumentsSlice::init(unsafe { &*ctx.bun_vm() }, arguments);
+        let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
 
         let first_arg = args.next_eat().unwrap();
         let mut body = BodyValue::Null;
@@ -3214,7 +3214,7 @@ where
                 Err(_) => return, // TODO: properly propagate exception upwards
             };
             // SAFETY: bun_vm()/event_loop() return live raw pointers tied to the global.
-            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope((*global.bun_vm()).event_loop()) };
+            let _scope = unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().as_mut().event_loop()) };
             if let Err(err) = callback.call(
                 global,
                 JSValue::UNDEFINED,

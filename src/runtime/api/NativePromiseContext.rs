@@ -171,7 +171,7 @@ impl DeferredDerefTask {
     pub fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
-        let vm = unsafe { &*VirtualMachine::get() };
+        let vm = VirtualMachine::get();
         // Process is dying; the leak no longer matters and the task
         // queue won't drain.
         if vm.is_shutting_down() {

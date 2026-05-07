@@ -463,7 +463,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `&'static` borrow stored on Handlers (that's `invalid_reference_casting`).
         // No aliasing `&mut` held across the `rare_data()` borrow — `vm`
         // reborrowed immutably for the 2nd arg.
-        let group = unsafe { &mut *VirtualMachine::get() }
+        let group = VirtualMachine::get().as_mut()
             .rare_data()
             .bun_connect_group::<SSL>(vm);
         let kind: uws::SocketKind = if SSL {
@@ -2657,7 +2657,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if !t.is_boolean() {
                     ssl_opts = SSLConfig::from_js(
                         // SAFETY: per-thread VM singleton.
-                        unsafe { &mut *VirtualMachine::get() },
+                        VirtualMachine::get().as_mut(),
                         global,
                         t,
                     )?;
@@ -2667,7 +2667,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if !tls_js.is_boolean() {
                 ssl_opts = SSLConfig::from_js(
                     // SAFETY: per-thread VM singleton.
-                    unsafe { &mut *VirtualMachine::get() },
+                    VirtualMachine::get().as_mut(),
                     global,
                     tls_js,
                 )?;
@@ -2768,7 +2768,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name.as_deref());
         // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
-        let group = unsafe { &mut *VirtualMachine::get() }
+        let group = VirtualMachine::get().as_mut()
             .rare_data()
             .bun_connect_group::<true>(vm);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
@@ -3600,7 +3600,7 @@ pub fn js_upgrade_duplex_to_tls(
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
             ssl_opts =
-                SSLConfig::from_js(unsafe { &mut *VirtualMachine::get() }, global, tls)?;
+                SSLConfig::from_js(VirtualMachine::get().as_mut(), global, tls)?;
         } else if tls.to_boolean() {
             ssl_opts = Some(SSLConfig::default());
         }
@@ -3681,7 +3681,7 @@ pub fn js_upgrade_duplex_to_tls(
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
-        ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
+        ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get_mut_ptr());
         // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
         // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
         // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.

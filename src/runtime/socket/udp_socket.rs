@@ -113,7 +113,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     }
 
     // SAFETY: VM singleton is live for the JS thread.
-    let event_loop = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+    let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
     event_loop.enter();
     // SAFETY: globalThis stored at construction; VM outlives socket.
     let global_this = unsafe { &*this.global_this };
@@ -464,7 +464,7 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
             socket: None,
             config: UDPSocketConfig::default(),
@@ -610,7 +610,7 @@ impl UDPSocket {
         let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
         // SAFETY: global_this stored at construction; VM outlives socket.
         let global_this = unsafe { &*self.global_this };
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm().as_mut();
 
         if err.is_termination_exception() {
             return;

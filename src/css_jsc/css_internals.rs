@@ -87,7 +87,7 @@ pub fn testing_impl(
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
     let mut arguments =
-        bun_jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
+        bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
     let Some(source_arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!(
             "minifyTestWithOptions: expected 2 arguments, got 0"
@@ -345,7 +345,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
     let mut arguments =
-        bun_jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
+        bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
     let Some(source_arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 0")));
     };

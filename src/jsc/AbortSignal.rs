@@ -462,7 +462,7 @@ pub extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // context to obtain).
     // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create;
     // VM singleton is process-lifetime.
-    unsafe { Timeout::deinit(this, VirtualMachine::get()) }
+    unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

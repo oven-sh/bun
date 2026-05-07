@@ -392,7 +392,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
     // outlives this call frame.
-    let vm = unsafe { &mut *VirtualMachine::get() };
+    let vm = VirtualMachine::get().as_mut();
 
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     // PORT NOTE: in Rust, owned locals (Box/Vec/BunString/etc.) Drop on early return,
@@ -1469,10 +1469,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(not(windows))]
                 // SAFETY: bun_vm() returns the live thread-local VM pointer; `transpiler.fs`
                 // is a raw `*mut FileSystem` set during init.
-                let cwd = unsafe { (*(*global_this.bun_vm()).transpiler.fs).top_level_dir };
+                let cwd = unsafe { (*global_this.bun_vm().as_mut().transpiler.fs).top_level_dir };
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = unsafe { (*global_this.bun_vm()).main() };
+                let main = global_this.bun_vm().as_mut().main();
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
                     cwd,
                     &mut path_buf,
@@ -1752,7 +1752,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // SAFETY: `bun_vm()` returns the live thread-local VM pointer; `transpiler.env`
         // is set during init and live for the VM lifetime.
         let env_creds = s3_credentials_from_env(unsafe {
-            (*(*global_this.bun_vm()).transpiler.env).get_s3_credentials()
+            (*global_this.bun_vm().as_mut().transpiler.env).get_s3_credentials()
         });
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,

@@ -313,7 +313,7 @@ impl SubscriptionCtx {
         }
 
         // SAFETY: callback runs on the JS thread; VM is alive for the duration.
-        let vm = unsafe { &mut *VirtualMachine::get() };
+        let vm = VirtualMachine::get().as_mut();
         let event_loop = vm.event_loop();
         // SAFETY: VM-owned; non-null on the JS thread.
         unsafe { (*event_loop).enter() };
@@ -2120,7 +2120,7 @@ impl Options {
             } else if tls.is_object() {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
-                    SSLConfig::from_js(unsafe { &*global_object.bun_vm() }, global_object, tls)?
+                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
                 {
                     this.tls = valkey::TLS::Custom(ssl_config);
                 } else {

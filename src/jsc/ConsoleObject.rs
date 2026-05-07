@@ -301,7 +301,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references — matches the Zig shape (`*ConsoleObject` field).
-    unsafe { (*global.bun_vm()).console as *mut ConsoleObject }
+    global.bun_vm().as_mut().console as *mut ConsoleObject
 }
 
 /// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
@@ -1159,7 +1159,7 @@ impl<'a> DynWriteAdapter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
-    let vm = unsafe { &mut *VirtualMachine::get() };
+    let vm = VirtualMachine::get().as_mut();
 
     let mut source_code_slice: Option<bun_string::ZigStringSlice> = None;
 
@@ -3606,7 +3606,7 @@ pub mod formatter {
                     {
                         let mut adapter = DynWriteAdapter::new(&mut *writer_);
                         // SAFETY: per-thread VM.
-                        let vm = unsafe { &mut *VirtualMachine::get() };
+                        let vm = VirtualMachine::get().as_mut();
                         vm.print_errorlike_object(
                             value,
                             None,

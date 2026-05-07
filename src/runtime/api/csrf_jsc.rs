@@ -171,7 +171,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
                 Some(s) => s.slice(),
                 // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
                 // on the JS thread so the VM singleton is exclusively reachable here.
-                None => unsafe { &mut *global.bun_vm() }
+                None => global.bun_vm().as_mut()
                     .rare_data()
                     .default_csrf_secret(),
             },
@@ -298,7 +298,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             Some(s) => s.slice(),
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
             // on the JS thread so the VM singleton is exclusively reachable here.
-            None => unsafe { &mut *global.bun_vm() }
+            None => global.bun_vm().as_mut()
                 .rare_data()
                 .default_csrf_secret(),
         },

@@ -948,7 +948,7 @@ impl Subprocess<'_> {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.try_get().unwrap_or(JSValue::ZERO);
         let global_this = self.global_this();
-        let jsc_vm = global_this.bun_vm();
+        let jsc_vm = global_this.bun_vm().as_mut();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage = Some(*rusage);
         let is_sync = self.flags.contains(Flags::IS_SYNC);
@@ -1390,7 +1390,7 @@ impl Subprocess<'_> {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
                         // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-                        let event_loop = unsafe { (*global_this.bun_vm()).event_loop() };
+                        let event_loop = global_this.bun_vm().as_mut().event_loop();
                         unsafe {
                             (*event_loop).run_callback(
                                 cb,
@@ -1426,7 +1426,7 @@ impl Subprocess<'_> {
             if let Some(callback) = Self::consume_on_disconnect_callback(this_jsvalue, global_this)
             {
                 // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
-                let event_loop = unsafe { (*global_this.bun_vm()).event_loop() };
+                let event_loop = global_this.bun_vm().as_mut().event_loop();
                 unsafe {
                     (*event_loop).run_callback(
                         callback,

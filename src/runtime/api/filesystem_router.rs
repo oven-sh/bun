@@ -144,7 +144,7 @@ impl FileSystemRouter {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm_ptr = global_this.bun_vm();
+        let vm_ptr = global_this.bun_vm_ptr();
         let vm = unsafe { &mut *vm_ptr };
 
         let mut root_dir_path: ZigStringSlice =
@@ -365,7 +365,7 @@ impl FileSystemRouter {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
-        let vm_ptr = global_this.bun_vm();
+        let vm_ptr = global_this.bun_vm_ptr();
         #[allow(unused_mut)]
         let mut path = input_path;
         #[cfg(windows)]
@@ -453,7 +453,7 @@ impl FileSystemRouter {
 
         let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm_ptr = global_this.bun_vm();
+        let vm_ptr = global_this.bun_vm_ptr();
 
         let mut log = Log::Log::new();
         // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
@@ -951,7 +951,7 @@ impl MatchedRoute {
                 unsafe { (*base_dir).leak() }
             } else {
                 // SAFETY: VM singleton is alive on the JS thread for the duration of this getter.
-                unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir }
+                unsafe { (*VirtualMachine::get().as_mut().transpiler.fs).top_level_dir }
             },
             &origin_url,
             if let Some(prefix) = this.asset_prefix {

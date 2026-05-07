@@ -393,7 +393,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 // the global; `event_loop()` returns its self-referential
                 // `*mut EventLoop`. Both outlive this call.
                 unsafe {
-                    (*(*global_object.bun_vm()).event_loop()).run_callback(
+                    (*global_object.bun_vm().as_mut().event_loop()).run_callback(
                         ondrain,
                         global_object,
                         JSValue::UNDEFINED,
@@ -435,7 +435,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 // SAFETY: see `drain()` — VM/event-loop pointers are live for the
                 // global's lifetime.
                 unsafe {
-                    (*(*global_object.bun_vm()).event_loop()).run_callback(
+                    (*global_object.bun_vm().as_mut().event_loop()).run_callback(
                         callback,
                         global_object,
                         JSValue::UNDEFINED,

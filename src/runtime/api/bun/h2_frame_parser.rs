@@ -986,7 +986,7 @@ impl Handlers {
         let mut handlers = Handlers {
             binary_type: BinaryType::Buffer,
             // SAFETY: bun_vm() never returns null; VM outlives every JS object (effectively 'static).
-            vm: unsafe { &*global_object.bun_vm() },
+            vm: global_object.bun_vm(),
             global_object: global_object as *const _,
         };
 
@@ -1882,7 +1882,7 @@ impl Stream {
         if !FINALIZING {
             // SAFETY: VirtualMachine::get() returns the thread-local VM (non-null while
             // JS is running); event_loop() returns a non-null *mut EventLoop owned by it.
-            unsafe { (*(*VirtualMachine::get()).event_loop()).process_gc_timer() };
+            unsafe { (*VirtualMachine::get().as_mut().event_loop()).process_gc_timer() };
         }
     }
 }

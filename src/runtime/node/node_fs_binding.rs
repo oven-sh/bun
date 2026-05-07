@@ -36,7 +36,7 @@ fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
 ) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine`; borrowed only
     // for the duration of argument parsing on the JS thread.
-    let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+    let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
 
@@ -70,7 +70,7 @@ fn run_async<A: FsArgument>(
     create_task: fn(&JSGlobalObject, &mut Binding, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
     // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-    let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
 
@@ -116,7 +116,7 @@ fn run_async<A: FsArgument>(
     // `switch (comptime function_name) { else => {} }` — the `.cp` /
     // `.readdir` arms are handled by their dedicated bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
-    let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(global, this, args, vm))
 }
 
@@ -176,7 +176,7 @@ impl Binding {
     /// `to_thread_safe()` instead, so the arena is dropped with `slice`.
     pub fn cp(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
         slice.will_be_async = true;
 
@@ -197,14 +197,14 @@ impl Binding {
         }
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
-        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
     pub fn cp_sync(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+        let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let cp_args = args::Cp::from_js(global, &mut slice)?;
@@ -224,7 +224,7 @@ impl Binding {
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
     pub fn readdir(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
         slice.will_be_async = true;
 
@@ -245,7 +245,7 @@ impl Binding {
         }
 
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
-        let vm: &mut VirtualMachine = unsafe { &mut *global.bun_vm() };
+        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         if rd_args.recursive {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
         }
@@ -256,7 +256,7 @@ impl Binding {
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
     pub fn watch(this: &mut Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+        let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
@@ -278,7 +278,7 @@ impl Binding {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+        let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
@@ -300,7 +300,7 @@ impl Binding {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = unsafe { &*global.bun_vm() };
+        let vm: &VirtualMachine = global.bun_vm();
         let _slice = ArgumentsSlice::init(vm, frame.arguments());
 
         if global.has_exception() {
@@ -391,7 +391,7 @@ impl Binding {
 pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     let mut module = Binding::new(Binding::default());
 
-    let vm = global.bun_vm();
+    let vm = global.bun_vm_ptr();
     module.node_fs.vm = NonNull::new(vm);
 
     // SAFETY: `module` was `Box::new`-allocated; ownership transfers to the GC

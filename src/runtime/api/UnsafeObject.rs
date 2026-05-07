@@ -30,7 +30,7 @@ pub fn gc_aggression_level(
 ) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
-    let vm = unsafe { &mut *global.bun_vm() };
+    let vm = global.bun_vm().as_mut();
     let ret = JSValue::js_number(vm.aggressive_garbage_collection as i32 as f64);
     let value = frame.arguments_old::<1>().ptr[0];
 
@@ -81,7 +81,7 @@ unsafe extern "C" {
 #[bun_jsc::host_fn]
 fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-    let _vm = unsafe { &*global.bun_vm() };
+    let _vm = global.bun_vm();
     // TODO(port): blocked_on: bun_alloc::Arena::dump_stats — `VirtualMachine.arena` is now
     // `Option<NonNull<bumpalo::Bump>>` and bumpalo has no `dump_stats()`; the original
     // mimalloc-arena stat dump needs a dedicated shim once the arena type lands.

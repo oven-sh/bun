@@ -2804,14 +2804,10 @@ function generateRust(
 
   // memoryCost / estimatedSize / ZigStructSize
   if (memoryCost) {
-    thunk(symbolName(typeName, "memoryCost"), `(this: *mut ${T}) -> usize`, `    unsafe { ${T}::memory_cost(&*this) }`);
+    thunk(symbolName(typeName, "memoryCost"), `(this: *mut ${T}) -> usize`, `    ${T}::memory_cost(&*this)`);
   }
   if (estimatedSize) {
-    thunk(
-      symbolName(typeName, "estimatedSize"),
-      `(this: *mut ${T}) -> usize`,
-      `    unsafe { ${T}::estimated_size(&*this) }`,
-    );
+    thunk(symbolName(typeName, "estimatedSize"), `(this: *mut ${T}) -> usize`, `    ${T}::estimated_size(&*this)`);
   }
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
@@ -2824,14 +2820,18 @@ function generateRust(
     thunk(
       symbolName(typeName, "hasPendingActivity"),
       `(this: *mut ${T}) -> bool`,
-      `    unsafe { ${T}::has_pending_activity(&*this) }`,
+      `    ${T}::has_pending_activity(&*this)`,
     );
   }
 
   if (finalize) {
     // `finalize` receives the raw `*mut Self` (not `&mut`) so the impl may
     // `Box::from_raw` / `drop_in_place` without an outstanding mutable borrow.
-    thunk(classSymbolName(typeName, "finalize"), `(this: *mut ${T})`, `    unsafe { ${T}::finalize(this) }`);
+    thunk(
+      classSymbolName(typeName, "finalize"),
+      `(this: *mut ${T})`,
+      `    host_fn::host_fn_finalize(this, |t| ${T}::finalize(t))`,
+    );
   }
 
   if (construct && !noConstructor) {
@@ -2839,17 +2839,13 @@ function generateRust(
       thunk(
         classSymbolName(typeName, "construct"),
         `(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void`,
-        `    let global = unsafe { &*global };\n` +
-          `    let callframe = unsafe { &*callframe };\n` +
-          `    bun_jsc::host_fn::host_construct_result(global, || ${T}::constructor(global, callframe, this_value)).cast()`,
+        `    host_fn::host_fn_construct_this(global, callframe, this_value, ${T}::constructor).cast()`,
       );
     } else {
       thunk(
         classSymbolName(typeName, "construct"),
         `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void`,
-        `    let global = unsafe { &*global };\n` +
-          `    let callframe = unsafe { &*callframe };\n` +
-          `    bun_jsc::host_fn::host_construct_result(global, || ${T}::constructor(global, callframe)).cast()`,
+        `    host_fn::host_fn_construct(global, callframe, ${T}::constructor).cast()`,
       );
     }
   }
@@ -2858,9 +2854,7 @@ function generateRust(
     thunk(
       classSymbolName(typeName, "call"),
       `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
-      `    let global = unsafe { &*global };\n` +
-        `    let callframe = unsafe { &*callframe };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || ${T}::call(global, callframe))`,
+      `    host_fn::host_fn_static(global, callframe, ${T}::call)`,
     );
   }
 
@@ -2868,12 +2862,13 @@ function generateRust(
     thunk(
       symbolName(typeName, "getInternalProperties"),
       `(this: *mut ${T}, global: *mut JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    let global = unsafe { &*global };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::get_internal_properties(&mut *this, global, this_value) })`,
+      `    host_fn::host_fn_internal_props(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
     );
   }
 
   // ── proto getters / setters / fns ────────────────────────────────────────
+  // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
+  // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
   {
     const seen = new Map<string, string>();
     const exportNames = name => zigExportName(seen, n => protoSymbolName(typeName, n), proto[name]);
@@ -2888,8 +2883,9 @@ function generateRust(
         thunk(
           names.getter,
           `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject) -> JSValue`,
-          `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global) })`,
+          thisValue
+            ? `    host_fn::host_fn_getter_this(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            : `    host_fn::host_fn_getter(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
 
@@ -2898,8 +2894,9 @@ function generateRust(
         thunk(
           names.setter,
           `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject, value: JSValue) -> bool`,
-          `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_setter_result(global, || unsafe { ${T}::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global, value) })`,
+          thisValue
+            ? `    host_fn::host_fn_setter_this(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            : `    host_fn::host_fn_setter(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }
 
@@ -2913,16 +2910,15 @@ function generateRust(
           thunk(
             names.DOMJIT,
             `(this: *mut ${T}, global: *mut JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    let global = unsafe { &*global };\n` +
-              `    unsafe { ${T}::${fastId}(&mut *this, global${args.length ? ", " + argFwd : ""}) }`,
+            `    ${T}::${fastId}(&mut *this, &*global${args.length ? ", " + argFwd : ""})`,
           );
         }
         thunk(
           names.fn,
           `(this: *mut ${T}, global: *mut JSGlobalObject, callframe: *mut CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
-          `    let global = unsafe { &*global };\n` +
-            `    let callframe = unsafe { &*callframe };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::${id}(&mut *this, global, callframe${passThis ? ", js_this_value" : ""}) })`,
+          passThis
+            ? `    host_fn::host_fn_this_value(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
+            : `    host_fn::host_fn_this(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
         );
       }
     }
@@ -2943,8 +2939,7 @@ function generateRust(
         thunk(
           names.getter,
           `(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
-          `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || ${T}::${id}(global, this_value, prop))`,
+          `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${T}::${id}(g, t, p))`,
         );
       }
 
@@ -2953,8 +2948,7 @@ function generateRust(
         thunk(
           names.setter,
           `(global: *mut JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
-          `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_setter_result(global, || ${T}::${id}(global, this_value, value, prop))`,
+          `    host_fn::host_fn_static_setter(global, this_value, value, prop, |g, t, v, p| ${T}::${id}(g, t, v, p))`,
         );
       }
 
@@ -2968,16 +2962,13 @@ function generateRust(
           thunk(
             names.DOMJIT,
             `(global: *mut JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    let global = unsafe { &*global };\n` +
-              `    ${T}::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
+            `    ${T}::${fastId}(&*global, this_value${args.length ? ", " + argFwd : ""})`,
           );
         }
         thunk(
           names.fn,
           `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
-          `    let global = unsafe { &*global };\n` +
-            `    let callframe = unsafe { &*callframe };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || ${T}::${id}(global, callframe))`,
+          `    host_fn::host_fn_static(global, callframe, |g, c| ${T}::${id}(g, c))`,
         );
       }
     }
@@ -2988,22 +2979,19 @@ function generateRust(
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
       `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-      `    let global = unsafe { &*global };\n` +
-        `    unsafe { ${T}::on_structured_clone_serialize(&mut *this, global, ctx, write_bytes) }`,
+      `    ${T}::on_structured_clone_serialize(&mut *this, &*global, ctx, write_bytes)`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
         `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-        `    let global = unsafe { &*global };\n` +
-          `    unsafe { ${T}::on_structured_clone_transfer(&mut *this, global, ctx, write_bytes) }`,
+        `    ${T}::on_structured_clone_transfer(&mut *this, &*global, ctx, write_bytes)`,
       );
     }
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: *mut JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    let global = unsafe { &*global };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
+      `    host_fn::host_fn_result(&*global, || ${T}::on_structured_clone_deserialize(&*global, ptr, end))`,
     );
   }
 

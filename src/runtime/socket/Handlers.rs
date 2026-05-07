@@ -193,7 +193,7 @@ impl Handlers {
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ = unsafe { &mut *global_object.bun_vm() }
+            let _ = global_object.bun_vm().as_mut()
                 .uncaught_exception(global_object, args[1], false);
             return false;
         }
@@ -237,7 +237,7 @@ impl Handlers {
             },
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
-            vm: unsafe { &*global_object.bun_vm() },
+            vm: global_object.bun_vm(),
             global_object,
             active_connections: 0,
             mode: if is_server { SocketMode::Server } else { SocketMode::Client },
@@ -415,7 +415,7 @@ impl SocketConfig {
                 GeneratedTls::Object(ssl) => {
                     // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single
                     // JS thread, no aliasing `&mut VirtualMachine` outlives this call.
-                    let vm_mut = unsafe { &mut *global.bun_vm() };
+                    let vm_mut = global.bun_vm().as_mut();
                     SSLConfig::from_generated(vm_mut, global, ssl)?
                 }
             };

@@ -1154,7 +1154,7 @@ impl Request {
     ) -> JsResult<Request> {
         let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
-        let body = body::hive_alloc(unsafe { &mut *global_this.bun_vm() }, BodyValue::Null);
+        let body = body::hive_alloc(global_this.bun_vm().as_mut(), BodyValue::Null);
         let mut req = Request {
             url: BunString::empty(),
             headers: None,
@@ -1682,7 +1682,7 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm().as_mut();
         let body_ = 'brk: {
             if let Some(js_ref) = self.js_ref.try_get() {
                 if let Some(stream) = js_gen::stream_get_cached(js_ref) {

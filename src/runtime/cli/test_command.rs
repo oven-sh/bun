@@ -1691,7 +1691,7 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_str::St
     // TODO(port): std.fs.path.extension — using bun_path equivalent
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
-    let loader_by_ext = unsafe { (*VirtualMachine::get()).transpiler.options.loader(ext) };
+    let loader_by_ext = VirtualMachine::get().as_mut().transpiler.options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_bundler::options::Loader::File) {

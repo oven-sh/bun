@@ -334,7 +334,7 @@ impl All {
     ) -> JsResult<()> {
         bun_jsc::mark_binding!();
 
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm_ptr();
         // SAFETY: see `sleep`.
         let all = unsafe { &mut *timer_all() };
 

@@ -1265,7 +1265,7 @@ impl FetchTasklet {
         // TODO(port): narrow error set
         // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
         // this tasklet (process-lifetime singleton on the JS thread).
-        let jsc_vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
+        let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             // PORT NOTE: Zig used `bun.new(AsyncHTTP, undefined)` then `init()` below.
@@ -1305,7 +1305,7 @@ impl FetchTasklet {
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(unsafe { &mut *global_this.bun_vm() }),
+            tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
             ref_count: AtomicU32::new(1),
         });
 
@@ -1321,7 +1321,7 @@ impl FetchTasklet {
         let mut proxy: Option<ZigURL> = None;
         // SAFETY: `transpiler.env` is a `*mut bun_dotenv::Loader` self-ptr field on the VM;
         // uniquely accessed here on the JS thread.
-        let env = unsafe { &mut *(*global_this.bun_vm()).transpiler.env };
+        let env = unsafe { &mut *global_this.bun_vm().as_mut().transpiler.env };
         if let Some(proxy_opt) = &fetch_options.proxy {
             if !proxy_opt.is_empty() {
                 //if is empty just ignore proxy

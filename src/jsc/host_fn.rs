@@ -221,6 +221,201 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
     to_js_host_call(global, || f().into_host_fn_return())
 }
 
+// ──────────────────────── safe codegen-thunk entry points ────────────────────────
+//
+// `generate-classes.ts::generateRust()` emits per-property `#[no_mangle]` thunks
+// that previously open-coded `unsafe { &*global }` / `unsafe { &mut *this }` /
+// `unsafe { &*callframe }` at every site (~4k `unsafe` blocks in the generated
+// file alone). These wrappers centralise those derefs: the generated thunk is
+// now a one-liner `host_fn_this(this, global, callframe, T::method)` and the
+// user's inherent method takes safe `&mut self` / `&JSGlobalObject` /
+// `&CallFrame`. User methods that need the `VirtualMachine` call
+// `global.bun_vm()` (now safe, returns `&'static VirtualMachine`).
+//
+// SAFETY (shared across all `host_fn_*` below): the C++ caller
+// (`ZigGeneratedClasses.cpp`) guarantees `this` / `global` / `callframe` are
+// non-null, properly-aligned, and live for the duration of the call. The
+// generated thunk is `unsafe extern "C"` — that `unsafe` is the contract; the
+// body here just performs the deref it licenses.
+
+/// Prototype method: `fn(&mut self, &JSGlobalObject, &CallFrame) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_this<T, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    f: impl FnOnce(&mut T, &JSGlobalObject, &CallFrame) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, callframe, this) = unsafe { (&*global, &*callframe, &mut *this) };
+    host_fn_result(global, || f(this, global, callframe))
+}
+
+/// Prototype method (passThis): `fn(&mut self, &JSGlobalObject, &CallFrame, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_this_value<T, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    js_this: JSValue,
+    f: impl FnOnce(&mut T, &JSGlobalObject, &CallFrame, JSValue) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, callframe, this) = unsafe { (&*global, &*callframe, &mut *this) };
+    host_fn_result(global, || f(this, global, callframe, js_this))
+}
+
+/// Prototype getter: `fn(&mut self, &JSGlobalObject) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_getter<T, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: *mut JSGlobalObject,
+    f: impl FnOnce(&mut T, &JSGlobalObject) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, this) = unsafe { (&*global, &mut *this) };
+    host_fn_result(global, || f(this, global))
+}
+
+/// Prototype getter (this: true): `fn(&mut self, JSValue, &JSGlobalObject) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_getter_this<T, R: IntoHostFnReturn>(
+    this: *mut T,
+    this_value: JSValue,
+    global: *mut JSGlobalObject,
+    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, this) = unsafe { (&*global, &mut *this) };
+    host_fn_result(global, || f(this, this_value, global))
+}
+
+/// Prototype setter: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_setter<T, R: IntoHostSetterReturn>(
+    this: *mut T,
+    global: *mut JSGlobalObject,
+    value: JSValue,
+    f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
+) -> bool {
+    // SAFETY: see block comment above.
+    let (global, this) = unsafe { (&*global, &mut *this) };
+    host_setter_result(global, || f(this, global, value))
+}
+
+/// Prototype setter (this: true): `fn(&mut self, JSValue, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_setter_this<T, R: IntoHostSetterReturn>(
+    this: *mut T,
+    this_value: JSValue,
+    global: *mut JSGlobalObject,
+    value: JSValue,
+    f: impl FnOnce(&mut T, JSValue, &JSGlobalObject, JSValue) -> R,
+) -> bool {
+    // SAFETY: see block comment above.
+    let (global, this) = unsafe { (&*global, &mut *this) };
+    host_setter_result(global, || f(this, this_value, global, value))
+}
+
+/// Static / class method or `call`: `fn(&JSGlobalObject, &CallFrame) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_static<R: IntoHostFnReturn>(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    host_fn_result(global, || f(global, callframe))
+}
+
+/// Static getter: `fn(&JSGlobalObject, JSValue, PropertyName) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_static_getter<P, R: IntoHostFnReturn>(
+    global: *mut JSGlobalObject,
+    this_value: JSValue,
+    prop: P,
+    f: impl FnOnce(&JSGlobalObject, JSValue, P) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let global = unsafe { &*global };
+    host_fn_result(global, || f(global, this_value, prop))
+}
+
+/// Static setter: `fn(&JSGlobalObject, JSValue, JSValue, PropertyName) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_static_setter<P, R: IntoHostSetterReturn>(
+    global: *mut JSGlobalObject,
+    this_value: JSValue,
+    value: JSValue,
+    prop: P,
+    f: impl FnOnce(&JSGlobalObject, JSValue, JSValue, P) -> R,
+) -> bool {
+    // SAFETY: see block comment above.
+    let global = unsafe { &*global };
+    host_setter_result(global, || f(global, this_value, value, prop))
+}
+
+/// Constructor: `fn(&JSGlobalObject, &CallFrame) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_construct<R: IntoHostConstructReturn>(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
+) -> *mut c_void {
+    // SAFETY: see block comment above.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    host_construct_result(global, || f(global, callframe))
+}
+
+/// Constructor (constructNeedsThis): `fn(&JSGlobalObject, &CallFrame, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_construct_this<R: IntoHostConstructReturn>(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+    this_value: JSValue,
+    f: impl FnOnce(&JSGlobalObject, &CallFrame, JSValue) -> R,
+) -> *mut c_void {
+    // SAFETY: see block comment above.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    host_construct_result(global, || f(global, callframe, this_value))
+}
+
+/// `getInternalProperties`: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
+#[track_caller]
+#[inline]
+pub unsafe fn host_fn_internal_props<T, R: IntoHostFnReturn>(
+    this: *mut T,
+    global: *mut JSGlobalObject,
+    this_value: JSValue,
+    f: impl FnOnce(&mut T, &JSGlobalObject, JSValue) -> R,
+) -> JSValue {
+    // SAFETY: see block comment above.
+    let (global, this) = unsafe { (&*global, &mut *this) };
+    host_fn_result(global, || f(this, global, this_value))
+}
+
+/// Finalizer: `fn(*mut T)`. The user impl receives the raw pointer (not
+/// `&mut`) so it may `Box::from_raw` / `drop_in_place` without an outstanding
+/// borrow. This wrapper exists only so the generated thunk body contains zero
+/// `unsafe` tokens. Takes a closure (not `unsafe fn`) so user impls of any
+/// ABI / safety qualifier coerce.
+#[inline]
+pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(*mut T)) {
+    f(this)
+}
+
 /// Codegen thunk entry for prototype setters.
 #[track_caller]
 #[inline]

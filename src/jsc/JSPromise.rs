@@ -86,7 +86,7 @@ impl<'a, T> Weak<'a, T> {
         // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
         // `enter_scope` calls `enter()` now and `exit()` on drop (RAII for Zig's
         // `loop.enter(); defer loop.exit();`).
-        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let loop_ = VirtualMachine::get().as_mut().event_loop();
         let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.reject(global, val);
     }
@@ -98,7 +98,7 @@ impl<'a, T> Weak<'a, T> {
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
         // SAFETY: see `reject_task`.
-        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let loop_ = VirtualMachine::get().as_mut().event_loop();
         let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.resolve(global, val);
     }
@@ -203,7 +203,7 @@ impl Strong {
         // SAFETY: `VirtualMachine::get()` returns the JS-thread singleton; `event_loop()`
         // returns the raw VM-owned `*mut EventLoop`, valid for the process lifetime.
         // `enter_scope` calls `enter()` now and `exit()` on drop.
-        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let loop_ = VirtualMachine::get().as_mut().event_loop();
         let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.reject(global, Ok(val))
     }
@@ -220,7 +220,7 @@ impl Strong {
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
     pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: see `reject_task`.
-        let loop_ = unsafe { (*VirtualMachine::get()).event_loop() };
+        let loop_ = VirtualMachine::get().as_mut().event_loop();
         let _guard = unsafe { crate::event_loop::EventLoop::enter_scope(loop_) };
         self.resolve(global, val)
     }
@@ -470,7 +470,7 @@ impl JSPromise {
         {
             // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
             // per VirtualMachine::event_loop() contract.
-            let loop_ = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+            let loop_ = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
@@ -493,7 +493,7 @@ impl JSPromise {
         {
             // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
             // per VirtualMachine::event_loop() contract.
-            let loop_ = unsafe { &mut *(*VirtualMachine::get()).event_loop() };
+            let loop_ = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
             loop_.debug.js_call_count_outside_tick_queue +=
                 (!loop_.debug.is_inside_tick_queue) as usize;
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {

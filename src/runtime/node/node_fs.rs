@@ -7349,7 +7349,7 @@ pub extern "C" fn Bun__mkdirp(global_this: *mut JSGlobalObject, path: *const c_c
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
     // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
     let node_fs: &mut NodeFS =
-        unsafe { &mut *((*global_this.bun_vm()).node_fs() as *mut NodeFS) };
+        unsafe { &mut *(global_this.bun_vm().as_mut().node_fs() as *mut NodeFS) };
     !matches!(
         node_fs.mkdir_recursive(&args::Mkdir {
             path: PathLike::String(PathString::init(path_bytes)),

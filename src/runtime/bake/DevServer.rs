@@ -125,7 +125,7 @@ impl DevServer {
     #[inline]
     pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
         debug_assert!(::core::ptr::eq(self.vm, VirtualMachine::get()));
-        unsafe { &mut *VirtualMachine::get() }
+        VirtualMachine::get().as_mut()
     }
 
     // ── transpiler accessors ───────────────────────────────────────────────

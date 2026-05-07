@@ -220,7 +220,7 @@ pub extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_
         return ptr::null_mut();
     }
 
-    let vm = VirtualMachine::get();
+    let vm = VirtualMachine::get_mut_ptr();
 
     // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
     // non-null per caller contract; `event_loop().imminent_gc_timer` lives as

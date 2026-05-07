@@ -109,7 +109,7 @@ pub fn create_and_schedule_completion_task(
     global_this: &JSGlobalObject,
     event_loop: *mut EventLoop,
 ) -> Result<*mut JSBundleCompletionTask, bun_core::Error> {
-    let vm = global_this.bun_vm();
+    let vm = global_this.bun_vm_ptr();
     // SAFETY: `bun_vm()` returns the JS-thread VirtualMachine; non-null for a Bun global.
     let env = unsafe { (*vm).transpiler.env };
     let completion = Box::into_raw(Box::new(JSBundleCompletionTask {
@@ -534,7 +534,7 @@ impl JSBundleCompletionTask {
         let _drop_ref = scopeguard::guard(ctx, |p| unsafe { RefCount::<Self>::deref(p) });
 
         // SAFETY: bun_vm() is non-null for a Bun global.
-        let vm = unsafe { (*this.global_this).bun_vm() };
+        let vm = unsafe { (*this.global_this).bun_vm_ptr() };
         this.poll_ref.unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
         if this.cancelled {
             return Ok(());

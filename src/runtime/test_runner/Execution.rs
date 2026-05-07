@@ -350,7 +350,7 @@ impl Execution {
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = unsafe { (*global_this.bun_vm()).auto_killer.kill() };
+                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
                         let _ = kill_count.processes; // not yet reported here (Zig discards too)
                     }
                 }
@@ -639,7 +639,7 @@ impl Execution {
 
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
-                if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_mut() } {
+                if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
                     if debugger.test_reporter_agent.is_enabled() {
                         debugger
                             .test_reporter_agent
@@ -717,7 +717,7 @@ impl Execution {
             let entry = unsafe { entry_ptr.as_ref() };
             if entry.base.test_id_for_debugger != 0 {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
-                if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_mut() } {
+                if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
                     if debugger.test_reporter_agent.is_enabled() {
                         use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(

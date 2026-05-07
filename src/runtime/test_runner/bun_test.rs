@@ -74,7 +74,7 @@ fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
 fn strong_create(value: JSValue) -> Strong {
     // SAFETY: `VirtualMachine::get()` is the live per-thread VM; `global`
     // is non-null after VM init.
-    let global = unsafe { &*(*VirtualMachine::get()).global };
+    let global = unsafe { &*VirtualMachine::get().as_mut().global };
     Strong::create(value, global)
 }
 
@@ -226,7 +226,7 @@ pub mod js_fns {
                 ..Default::default()
             };
 
-            let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
+            let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm_ptr()) else {
                 if tag == GenericHookTag::OnTestFinished {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
@@ -818,7 +818,7 @@ impl BunTest {
             // error is only reported for the first done() call
             if was_error {
                 // SAFETY: bun_vm() returns the live per-thread VM.
-                let _ = unsafe { &mut *global_this.bun_vm() }.uncaught_exception(global_this, value, false);
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
@@ -909,7 +909,7 @@ impl BunTest {
             RunTestsTask::call(this).map_err(Into::into)
         }
         let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, call_erased);
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm().as_mut();
         let Some(strong) = weak.upgrade() else {
             // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
             // see src/ptr/ref_count.rs / src/collections/baby_list.rs for the same mapping).
@@ -1307,7 +1307,7 @@ impl BunTest {
         }
 
         // SAFETY: bun_vm() returns the live per-thread VM.
-        unsafe { (*global_this.bun_vm()).run_error_handler(exception, None) };
+        global_this.bun_vm().as_mut().run_error_handler(exception, None);
 
         if matches!(
             handle_status,

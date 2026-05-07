@@ -995,7 +995,7 @@ impl ServerConfig {
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver =
-                        unsafe { &mut (*global.bun_vm()).transpiler.resolver };
+                        &mut global.bun_vm().as_mut().transpiler.resolver;
                     let framework = bb::Framework::auto(&arena, resolver, router_types)
                         .map_err(|e| {
                             global.throw_error(e, "Framework::auto")

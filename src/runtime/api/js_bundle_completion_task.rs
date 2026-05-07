@@ -25,23 +25,24 @@ use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::event_loop::EventLoop;
 use bun_logger as logger;
 use bun_options_types::schema::api;
-use bun_options_types::CompileTarget::OperatingSystem;
+use bun_core::env::OperatingSystem;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::{RefCount, RefCounted};
 use bun_standalone_graph::StandaloneModuleGraph::{
     self as standalone_graph, target_base_public_path, to_executable, CompileErrorReason,
-    CompileResult, Flags as StandaloneFlags, WindowsOptions,
+    CompileResult, Flags as StandaloneFlags,
 };
+use bun_options_types::WindowsOptions;
 use bun_string::String as BunString;
 use bun_str::strings;
 use bun_sys::{self as sys, Dir, Fd, OpenDirOptions};
-use bun_threading::WorkPool;
+use bun_jsc::WorkPool;
 
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::output_file_jsc::OutputFileJsc as _;
-use crate::node::node_fs::{self, args as fs_args, NodeFS};
+use crate::node::fs::{self as node_fs, args as fs_args, NodeFS};
 use crate::node::types::{
     Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer,
 };
@@ -57,7 +58,7 @@ pub struct JSBundleCompletionTask {
     pub global_this: *const JSGlobalObject,
     pub promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
-    pub env: *const bun_dotenv::Loader,
+    pub env: *const bun_dotenv::Loader<'static>,
     pub log: logger::Log,
     pub cancelled: bool,
 
@@ -1085,7 +1086,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // erased BACKREF — see LinkerContext.rs:50); cast through raw to erase
         // `'a` since the loop lives exactly as long as `bump` and `BundleV2`.
         let any_loop = bump.alloc(bun_event_loop::AnyEventLoop::default());
-        let event_loop: bun_bundler::bundle_v2::EventLoop = Some(
+        let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(
             NonNull::from(&mut *any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>(),
         );
 

@@ -5991,30 +5991,20 @@ impl<'a> Resolver<'a> {
             && esm_.is_some()
             && strings::is_npm_package_name(esm_.as_ref().unwrap().name)
         {
-            // TODO(b2-blocked): bun_install — the global-cache auto-install path
-            // is tightly coupled to PackageManager/Lockfile internals (see
-            // FORWARD_DECL stubs above). Re-gated until those crates compile;
-            // `use_package_manager()` is `false` outside standalone+global_cache
-            // anyway, so the live resolver never reaches this on the bundler path.
-            
-            {
             let esm = esm_.as_ref().unwrap().with_auto_version();
             'load_module_from_cache: {
-                // TODO(port): the global-cache auto-install path below is large and
-                // tightly coupled to PackageManager internals. The control flow is
-                // ported but several PackageManager method signatures are guesses.
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                // PORT NOTE (Stacked Borrows): `get_package_manager` returns
-                // `&mut PackageManager` tied to `&mut self`; the body below
-                // re-borrows `self` for `enqueue_dependency_to_resolve` /
-                // `debug_logs` / `log()`. PackageManager lives in a separate
-                // allocation (`NonNull` field), so derive a raw pointer once
-                // and re-borrow per use — disjoint from `self`'s storage.
-                let manager_ptr: *mut PackageManager = self.get_package_manager();
+                //
+                // PORT NOTE (Stacked Borrows): `get_package_manager` returns the
+                // `*mut dyn AutoInstaller` raw pointer; the body below re-borrows
+                // `self` for `enqueue_dependency_to_resolve` / `debug_logs` /
+                // `log()`. The PackageManager lives in a separate allocation, so
+                // derive a raw pointer once and re-borrow per use — disjoint
+                // from `self`'s storage.
+                let manager_ptr: *mut dyn AutoInstaller = self.get_package_manager();
                 // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
                 macro_rules! manager { () => { unsafe { &mut *manager_ptr } } }
-                let manager = manager!();
                 let mut dependency_version = Dependency::Version::default();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let mut string_buf: &[u8] = esm.version;
@@ -6029,11 +6019,11 @@ impl<'a> Resolver<'a> {
                         let resolve_from_lockfile = package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
                         if resolve_from_lockfile {
-                            let dependencies = &manager.lockfile.packages.items_dependencies()[package_json.package_manager_package_id as usize];
+                            let dependencies = manager!().lockfile_package_dependencies(package_json.package_manager_package_id);
 
                             // try to find this package name in the dependencies of the enclosing package
-                            dependencies_list = dependencies.get(manager.lockfile.buffers.dependencies.items());
-                            string_buf = manager.lockfile.buffers.string_bytes.items();
+                            dependencies_list = dependencies.get(manager!().lockfile_dependencies_buf());
+                            string_buf = manager!().lockfile_string_bytes();
                         } else if esm_.as_ref().unwrap().version.is_empty() {
                             // If you don't specify a version, default to the one chosen in your package.json
                             dependencies_list = package_json.dependencies.map.values();
@@ -6049,10 +6039,10 @@ impl<'a> Resolver<'a> {
                             dependency_behavior = dependency.behavior;
 
                             if resolve_from_lockfile {
-                                let resolutions = &manager.lockfile.packages.items_resolutions()[package_json.package_manager_package_id as usize];
+                                let resolutions = manager!().lockfile_package_resolutions(package_json.package_manager_package_id);
 
                                 // found it!
-                                break 'brk resolutions.get(manager.lockfile.buffers.resolutions.items())[dependency_id];
+                                break 'brk resolutions.get(manager!().lockfile_resolutions_buf())[dependency_id];
                             }
 
                             break;
@@ -6091,26 +6081,25 @@ impl<'a> Resolver<'a> {
                                 return MatchResultUnion::Failure(bun_core::err!("VersionSpecifierNotAllowedHere"));
                             }
                             string_buf = esm.version;
-                            dependency_version = match Dependency::parse(
+                            dependency_version = match manager!().parse_dependency(
                                 Semver::String::init(esm.name, esm.name),
                                 None,
                                 esm.version,
                                 &sliced_string,
                                 self.log(),
-                                manager as *const _,
                             ) {
                                 Some(v) => v,
                                 None => break 'load_module_from_cache,
                             };
                         }
 
-                        if let Some(id) = manager.lockfile.resolve_package_from_name_and_version(esm.name, &dependency_version) {
+                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version) {
                             resolved_package_id = id;
                         }
                     }
 
                     if resolved_package_id != Install::INVALID_PACKAGE_ID {
-                        break 'brk manager.lockfile.packages.items_resolution()[resolved_package_id as usize].clone();
+                        break 'brk manager!().lockfile_package_resolution(resolved_package_id);
                     }
 
                     // unsupported or not found dependency, we might need to install it to the cache
@@ -6145,12 +6134,12 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                let dir_path_for_resolution = match manager.path_for_resolution(resolved_package_id, &resolution, bufs!(path_in_global_disk_cache)) {
+                let dir_path_for_resolution = match manager!().path_for_resolution(resolved_package_id, &resolution, bufs!(path_in_global_disk_cache)) {
                     Ok(p) => p,
                     Err(err) => {
                         // if it's missing, we need to install it
                         if err == bun_core::err!("FileNotFound") {
-                            match manager.get_preinstall_state(resolved_package_id) {
+                            match manager!().get_preinstall_state(resolved_package_id) {
                                 Install::PreinstallState::Done => {
                                     // PORT NOTE: `MatchResult.path_pair` is `Path<'static>`;
                                     // intern `import_path` so the disabled-module record
@@ -6175,21 +6164,16 @@ impl<'a> Resolver<'a> {
                                     let (cloned, string_buf) = esm.copy().expect("unreachable");
 
                                     if st == Install::PreinstallState::Extract {
-                                        // PORT NOTE: split borrow — args read `manager.lockfile`
-                                        // immutably; compute before the `&mut manager` call.
-                                        let dependency_id = manager.lockfile.buffers
-                                            .legacy_package_to_dependency_id(None, resolved_package_id)
+                                        let dependency_id = manager!()
+                                            .lockfile_legacy_package_to_dependency_id(resolved_package_id)
                                             .expect("unreachable");
-                                        // PERF(port): owned copy to drop the `&manager.lockfile`
-                                        // borrow before the `&mut manager` call below.
-                                        let npm_url: Box<[u8]> =
-                                            Box::from(manager.lockfile.str(&resolution.value.npm.url));
-                                        if let Err(enqueue_download_err) = manager.enqueue_package_for_download(
+                                        // The npm version + URL live inside `resolution.value`;
+                                        // the `AutoInstaller` impl decodes them itself.
+                                        if let Err(enqueue_download_err) = manager!().enqueue_package_for_download(
                                             esm.name,
                                             dependency_id,
                                             resolved_package_id,
-                                            resolution.value.npm.version,
-                                            &npm_url,
+                                            &resolution,
                                             Install::TaskCallbackContext { root_request_id: 0 },
                                             None,
                                         ) {

@@ -5453,21 +5453,11 @@ impl Blob {
     }
 }
 
-} // mod _jsc_gated
-
-// Re-export the write-file glue so sibling modules (S3File.rs) can call it
-// without reaching through the private `_jsc_gated` shim module.
-pub use _jsc_gated::{WriteFileOptions, write_file_internal};
-// Re-export the mkdirp helper + types for blob/copy_file.rs (CopyFile open path).
-pub use _jsc_gated::{MkdirpTarget, Retry, mkdir_if_not_exists};
-// Re-export for Body.rs `writeFormat` (Blob size pretty-printer).
-pub use _jsc_gated::write_format_for_size;
-
 // ──────────────────────────────────────────────────────────────────────────
-// Un-gated core constructors / JS bridging (B-2 round: init_with_store / to_js
-// / construct_bun_file / find_or_create_file_from_path). These were lifted
-// out of `_jsc_gated` so `Bun.file` / `Bun.stdin` / `Bun.stdout` / `Bun.stderr`
-// callers in BunObject/ReadableStream/Archive/server resolve.
+// Core constructors / JS bridging (init_with_store / to_js /
+// find_or_create_file_from_path). These are referenced by `Bun.file` /
+// `Bun.stdin` / `Bun.stdout` / `Bun.stderr` callers in BunObject /
+// ReadableStream / Archive / server.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Blob {

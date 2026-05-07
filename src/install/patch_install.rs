@@ -216,13 +216,15 @@ impl<'a> PatchTask<'a> {
                 self.apply().expect("OOM");
             }
         }
-        // PORT NOTE: the queue is typed against the crate-level `PatchTask` stub
-        // (intrusive `next` link only); cast through that erased shape until the
-        // two types unify under `package_manager_real`.
+        // PORT NOTE: `patch_task_queue` is `UnboundedQueue<PatchTask<'static>>`;
+        // erase the `'a` (BACKREF lifetime) at the raw-pointer boundary.
         self.manager
             .patch_task_queue
-            .push(self as *mut Self as *mut crate::PatchTask);
-        self.manager.wake();
+            .push(self as *mut Self as *mut PatchTask<'static>);
+        // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
+        // `wake_raw` only touches atomics / the event loop and never aliases an
+        // exclusive borrow held elsewhere.
+        unsafe { PackageManager::wake_raw(self.manager as *const _ as *mut PackageManager) };
     }
 
     pub fn run_from_main_thread(
@@ -764,13 +766,14 @@ impl<'a> PatchTask<'a> {
 
     pub fn notify(&mut self) {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
-        // PORT NOTE: the queue is typed against the crate-level `PatchTask` stub
-        // (intrusive `next` link only); cast through that erased shape until the
-        // two types unify under `package_manager_real`.
+        // `patch_task_queue` is `UnboundedQueue<PatchTask<'static>>`; erase the
+        // `'a` (BACKREF lifetime) at the raw-pointer boundary.
         self.manager
             .patch_task_queue
-            .push(self as *mut Self as *mut crate::PatchTask);
-        self.manager.wake();
+            .push(self as *mut Self as *mut PatchTask<'static>);
+        // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
+        // `wake_raw` only touches atomics / the event loop.
+        unsafe { PackageManager::wake_raw(self.manager as *const _ as *mut PackageManager) };
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {
@@ -825,18 +828,18 @@ impl<'a> PatchTask<'a> {
         name_and_version_hash: u64,
     ) -> *mut PatchTask<'a> {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
-        // TODO(port): MultiArrayList column accessor naming (`items(.name)` → `items_name()`).
 
-        // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut self` while
-        // `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably. Clone
-        // the slice/resolution out first.
+        // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
+        // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
+        // Clone the slice/resolution out first.
         let pkg_name_slice =
             pkg_name.slice(&pkg_manager.lockfile.buffers.string_bytes).to_vec();
-        let resolution_clone =
+        let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize].clone();
 
         let mut folder_path_buf = PathBuffer::uninit();
-        let stuff = pkg_manager.compute_cache_dir_and_subpath(
+        let stuff = package_manager::compute_cache_dir_and_subpath(
+            pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
             &mut folder_path_buf,

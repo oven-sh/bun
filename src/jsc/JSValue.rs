@@ -1442,21 +1442,6 @@ impl FromAny for u16 {
         Ok(JSValue::js_number_from_int32(self as i32))
     }
 }
-
-// Zig: `if (bun.trait.isNumber(Type)) return jsNumberWithType(Type, value)` —
-// small ints widen to i32 → JSValue.
-impl FromAny for u8 {
-    #[inline]
-    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number_from_int32(self as i32))
-    }
-}
-impl FromAny for u16 {
-    #[inline]
-    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number_from_int32(self as i32))
-    }
-}
 impl FromAny for &[u16] {
     /// Zig: `[]const u16` → `createEmptyArray` + `putIndex(.jsNumber(item))`
     /// (JSValue.zig:2390 — the inline numeric-slice arm).

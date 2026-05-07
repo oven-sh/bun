@@ -2,6 +2,7 @@ use core::ffi::CStr;
 
 use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -73,10 +74,15 @@ impl Echo {
             }
         }
 
-        if Builtin::of(interp, cmd).stdout.needs_io().is_some() {
-            // TODO(b2-blocked): IOWriter::enqueue — async stdout.
+        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
-            return Yield::suspended();
+            // PORT NOTE: reshaped for borrowck — clone output to drop the
+            // borrow on `interp` before taking `&mut` for enqueue.
+            let buf = Self::state_mut(interp, cmd).output.clone();
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stdout
+                .enqueue(child, &buf, safeguard);
         }
         // PORT NOTE: reshaped for borrowck — clone output to drop the borrow
         // on `interp` before calling write_no_io.
@@ -115,5 +121,5 @@ impl Echo {
 // PORT STATUS
 //   source:     src/shell/builtin/echo.zig (242 lines)
 //   confidence: medium
-//   blocked_on: IOWriter::enqueue (async path), -e escape handling
+//   blocked_on: -e escape handling
 // ──────────────────────────────────────────────────────────────────────────

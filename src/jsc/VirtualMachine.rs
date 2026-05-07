@@ -1374,6 +1374,58 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+    /// `bun.deleteAllPoolsForThreadExit()` — spec web_worker.zig:766. The full
+    /// pool-set spans `bun_runtime` thread-locals; high tier owns the body.
+    pub delete_all_pools_for_thread_exit: unsafe fn(),
+}
+
+/// `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — supplies the
+/// `platform_event_loop` slot needed by `KeepAlive::{ref_, unref}` so callers
+/// in this crate can `.ref()` a SPECIFIC VM's loop (e.g. a worker reffing its
+/// parent) rather than the thread-local one returned by `aio::get_vm_ctx`.
+/// PORT NOTE: in Zig the `KeepAlive::ref(anytype)` accepted `*VirtualMachine`
+/// directly; the Rust port uses a manual vtable (cycle-break for `bun_aio`).
+pub static VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::EventLoopCtxVTable {
+    platform_event_loop: {
+        unsafe fn f(owner: *mut ()) -> *mut bun_aio::Loop {
+            // SAFETY: `owner` is `*mut VirtualMachine` (erased in `event_loop_ctx`).
+            unsafe { (*owner.cast::<VirtualMachine>()).uws_loop() }
+        }
+        f
+    },
+    // Unreached by `KeepAlive::{ref_, unref}` (only `platform_event_loop`).
+    file_polls: { unsafe fn f(_: *mut ()) -> *mut bun_aio::Store { unreachable!() } f },
+    alloc_file_poll: { unsafe fn f(_: *mut ()) -> *mut bun_aio::FilePoll { unreachable!() } f },
+    is_js: { unsafe fn f(_: *mut ()) -> bool { true } f },
+    increment_pending_unref_counter: {
+        unsafe fn f(owner: *mut ()) {
+            // SAFETY: `owner` is `*mut VirtualMachine`.
+            unsafe { (*owner.cast::<VirtualMachine>()).pending_unref_counter += 1 };
+        }
+        f
+    },
+    ref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
+    unref_concurrently: { unsafe fn f(_: *mut ()) { unreachable!() } f },
+    after_event_loop_callback: {
+        unsafe fn f(_: *mut ()) -> Option<bun_aio::OpaqueCallback> { unreachable!() }
+        f
+    },
+    set_after_event_loop_callback: {
+        unsafe fn f(_: *mut (), _: Option<bun_aio::OpaqueCallback>, _: *mut c_void) { unreachable!() }
+        f
+    },
+};
+
+impl VirtualMachine {
+    /// Erase `self` into the cycle-break `EventLoopCtx` shape so `bun_aio`
+    /// types (`KeepAlive`, `FilePoll`) can ref/unref this SPECIFIC VM's loop.
+    /// Distinct from `bun_aio::get_vm_ctx(AllocatorType::Js)` which returns the
+    /// thread-local VM's ctx — `set_ref` / `release_parent_poll_ref` need the
+    /// PARENT's loop, not the worker thread's.
+    #[inline]
+    pub fn event_loop_ctx(this: *mut Self) -> bun_aio::EventLoopCtx {
+        bun_aio::EventLoopCtx { owner: this.cast(), vtable: &VM_EVENT_LOOP_CTX_VTABLE }
+    }
 }
 
 /// Subset of [`InitOptions`] passed to [`RuntimeHooks::init_worker_vm`].

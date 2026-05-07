@@ -417,8 +417,27 @@ const DIGESTED_HMAC_256_LEN: usize = 32;
 // ProxyEnvStorage
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Serialises `Bun__setEnvValue`'s slot swap + `env.map.put` against a worker's
+/// `clone_from` + `env.map.cloneWithAllocator`. Closes two races: (1) worker
+/// reading a slot `Arc` concurrently with the parent dropping it to refcount 0;
+/// (2) the env map being iterated during clone while the parent's `put()`
+/// rehashes it. Callers hold the guard across the paired env-map op — the
+/// mutex doubles as the env-map serialisation point even though it owns only
+/// the slots.
+///
+/// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
 #[derive(Default)]
-pub struct ProxyEnvStorage {
+pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
+
+impl ProxyEnvStorage {
+    #[inline]
+    pub fn lock(&self) -> parking_lot::MutexGuard<'_, ProxyEnvSlots> {
+        self.0.lock()
+    }
+}
+
+#[derive(Default)]
+pub struct ProxyEnvSlots {
     #[allow(non_snake_case)]
     pub HTTP_PROXY: Option<Arc<RefCountedEnvValue>>,
     pub http_proxy: Option<Arc<RefCountedEnvValue>>,
@@ -428,14 +447,6 @@ pub struct ProxyEnvStorage {
     #[allow(non_snake_case)]
     pub NO_PROXY: Option<Arc<RefCountedEnvValue>>,
     pub no_proxy: Option<Arc<RefCountedEnvValue>>,
-
-    /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
-    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
-    /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
-    /// with the parent's deref → free on the same pointer; (2) the env.map's
-    /// backing ArrayHashMap being iterated during clone while the parent's
-    /// put() rehashes it.
-    pub lock: Mutex,
 }
 
 pub struct Slot<'a> {
@@ -462,7 +473,7 @@ macro_rules! for_each_proxy_field {
     }};
 }
 
-impl ProxyEnvStorage {
+impl ProxyEnvSlots {
     pub fn slot(&mut self, name: &[u8]) -> Option<Slot<'_>> {
         // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
         // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and

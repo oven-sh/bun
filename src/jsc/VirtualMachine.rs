@@ -2377,18 +2377,36 @@ impl<'a> SourceMapHandlerGetter<'a> {
         Self { vm, printer, _marker: core::marker::PhantomData }
     }
 
-    /// Exclusive access to the owning `VirtualMachine`.
+    /// Read-only view of `(*vm).debugger` via raw place projection.
     ///
-    /// SAFETY: `vm` is never null — it is set either from a live
-    /// `&'a mut VirtualMachine` in `source_map_handler` (exclusive for `'a`,
-    /// enforced by `PhantomData<&'a mut ()>`), or from `from_raw` whose caller
-    /// guarantees the VM outlives `'a` and that only the worker-safe leaf
-    /// fields (`source_mappings`, `debugger`) are touched. All call sites
-    /// project immediately to one of those leaf fields, so the full `&mut`
-    /// here is no broader than the pre-accessor raw `&mut *self.vm`.
+    /// SAFETY: `vm` is never null (set from a live `&'a mut VirtualMachine` in
+    /// `source_map_handler`, or via `from_raw` whose caller guarantees the VM
+    /// outlives `'a`). Deliberately projects through the raw pointer to the
+    /// leaf field WITHOUT forming an intermediate `&VirtualMachine` /
+    /// `&mut VirtualMachine`: on the off-JS-thread `TranspilerJob::run` path
+    /// the JS thread is concurrently live on the same VM, AND the running
+    /// `&mut TranspilerJob` is itself stored inside
+    /// `(*vm).transpiler_store.store`, so a whole-VM retag would be a data
+    /// race and would invalidate the caller's `&mut self` tag (Stacked
+    /// Borrows). Only the worker-safe `debugger` bytes are retagged here.
     #[inline]
-    fn vm_mut(&mut self) -> &mut VirtualMachine {
-        unsafe { &mut *self.vm }
+    fn vm_debugger(&self) -> Option<&crate::debugger::Debugger> {
+        unsafe { (*self.vm).debugger.as_deref() }
+    }
+
+    /// Exclusive access to `(*vm).source_mappings` via raw place projection.
+    ///
+    /// SAFETY: as for `vm_debugger` — `vm` is never null, and we project
+    /// `(*self.vm).source_mappings` directly so only the leaf field's bytes
+    /// are retagged. A whole-VM `&mut *self.vm` here would (a) race with the
+    /// JS thread on the `from_raw` worker path, (b) overlap the caller's own
+    /// `&mut TranspilerJob` storage inside `vm.transpiler_store`, and (c) on
+    /// the main-thread jsc_hooks path, overlap the already-formed
+    /// `&mut (*jsc_vm).transpiler` receiver borrow. The leaf projection
+    /// touches none of those bytes.
+    #[inline]
+    fn vm_source_mappings_mut(&mut self) -> &mut SavedSourceMap {
+        unsafe { &mut (*self.vm).source_mappings }
     }
 
     /// Raw pointer to the active `BufferPrinter`.
@@ -2411,15 +2429,15 @@ impl<'a> SourceMapHandlerGetter<'a> {
         // (VSCode-extension) clients fall through to the `source_mappings`
         // fast-path handler.
         let wants_inline_source_map = matches!(
-            self.vm_mut().debugger,
-            Some(ref d) if d.mode != crate::debugger::Mode::Connect
+            self.vm_debugger(),
+            Some(d) if d.mode != crate::debugger::Mode::Connect
         );
         if !wants_inline_source_map {
             // `source_mappings` is a value field on the VM, exclusively
             // borrowed for the returned handler's lifetime (bounded by
             // `&mut self`).
             return bun_js_printer::SourceMapHandler::for_(
-                &mut self.vm_mut().source_mappings,
+                self.vm_source_mappings_mut(),
             );
         }
         bun_js_printer::SourceMapHandler::for_(self)
@@ -2452,7 +2470,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         let prefix_len =
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
-        self.vm_mut().source_mappings.put_mappings(source, chunk.buffer)?;
+        self.vm_source_mappings_mut().put_mappings(source, chunk.buffer)?;
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg

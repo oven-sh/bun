@@ -9,7 +9,7 @@ use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BY
 // bun_sys (project-wide cycle break — `instance()`/`top_level_dir()` route
 // through a runtime-installed vtable). This is an import-path redirect, not
 // a type relocation.
-use bun_sys::fs::FileSystem;
+use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;

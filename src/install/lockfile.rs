@@ -1699,8 +1699,8 @@ impl<'a> Printer<'a> {
         }
 
         // Zig: `_ = try FileSystem.init(null);` — bootstraps the resolver FS
-        // singleton (and installs the `bun_sys::fs` vtable). `Printer::print`
-        // is an entry point (`bun bun.lockb`), so the singleton may not exist yet.
+        // singleton. `Printer::print` is an entry point (`bun bun.lockb`), so
+        // the singleton may not exist yet.
         let _ = FileSystem::init(None)?;
 
         let mut lockfile = Box::<Lockfile>::default();
@@ -1791,13 +1791,10 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` is typed against the `bun_sys::fs::DirEntry`
-        // seam (bun_dotenv sits below `bun_resolver` in the crate graph). Go
-        // through the resolver-provided typed adapter rather than open-coding
-        // the `as *mut ZST` reinterpret here — the seam erase lives in
-        // `bun_resolver::fs::DirEntry::as_sys_seam_mut` next to `SYS_FS_VTABLE`.
+        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
+        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            entries.as_sys_seam_mut(),
+            &*entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,

@@ -46,6 +46,21 @@ pub struct PostgresSQLQuery {
     pub flags: Flags,
 }
 
+// Zig `deinit`: `if (this.statement) |s| s.deref()` then deref query/cursor_name,
+// then `destroy(this)`. `query`/`cursor_name` are `BunString` (already Drop) and
+// `destroy` is `Box::from_raw` in `deref_`; only the raw `*mut PostgresSQLStatement`
+// needs an explicit deref here.
+impl Drop for PostgresSQLQuery {
+    fn drop(&mut self) {
+        if let Some(stmt) = self.statement.take() {
+            // SAFETY: `stmt` was produced by `Box::into_raw` (in `do_run` or
+            // PostgresSQLConnection's statements map) and was ref'd when stored
+            // into `self.statement`.
+            unsafe { stmt_deref(stmt) };
+        }
+    }
+}
+
 impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
@@ -182,9 +197,6 @@ impl PostgresSQLQuery {
         Some(target)
     }
 
-    // Zig deinit: drops statement (deref), query (deref), cursor_name (deref), then destroy(self).
-    // All fields are Drop in Rust; Box::from_raw in deref_ handles destroy. No explicit Drop impl needed.
-
     pub fn finalize(this: *mut Self) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
         // SAFETY: called from the JSC finalizer on the mutator thread; `this` is the
@@ -200,7 +212,7 @@ impl PostgresSQLQuery {
 
     pub fn on_write_fail(
         &mut self,
-        err: bun_core::Error,
+        err: AnyPostgresError,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
@@ -222,11 +234,7 @@ impl PostgresSQLQuery {
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
         let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
         let event_loop = unsafe { vm.event_loop_mut() };
-        // PORT NOTE: Zig narrowed `err` to `AnyPostgresError`. The Rust call chain
-        // funnels through `bun_core::Error`, so build the JS error generically via
-        // throw+take (the only no-FFI-extern path that yields a `JSValue` here).
-        let _ = global_object.throw_error(err, "failed to write query");
-        let js_err = global_object.take_exception(JsError::Thrown);
+        let js_err = postgres_error_to_js(global_object, None, err);
         event_loop.run_callback(function, global_object, this_value, &[
             target_value,
             js_err.to_error().unwrap_or(js_err),
@@ -377,9 +385,7 @@ impl PostgresSQLQuery {
             }
         }
         if !pending_value.js_type().is_array_like() {
-            return Err(global_this.throw_value(global_this.ERR_INVALID_ARG_TYPE(
-                format_args!("The \"query\" argument's \"pendingValue\" must be of type Array"),
-            )));
+            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
         }
 
         let ptr = Box::into_raw(Box::new(PostgresSQLQuery::default()));
@@ -436,9 +442,7 @@ impl PostgresSQLQuery {
     pub fn set_mode_from_js(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let js_mode = callframe.argument(0);
         if js_mode.is_empty_or_undefined_or_null() || !js_mode.is_number() {
-            return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
-                format_args!("The \"setMode\" argument's \"mode\" must be of type Number"),
-            )));
+            return Err(global_object.throw_invalid_argument_type("setMode", "mode", "Number"));
         }
 
         let mode = js_mode.coerce::<i32>(global_object)?;
@@ -448,9 +452,7 @@ impl PostgresSQLQuery {
             1 => PostgresSQLQueryResultMode::Values,
             2 => PostgresSQLQueryResultMode::Raw,
             _ => {
-                return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
-                    format_args!("The \"mode\" argument must be of type Number"),
-                )));
+                return Err(global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode));
             }
         };
         this.flags.result_mode = result_mode;
@@ -491,9 +493,7 @@ impl PostgresSQLQuery {
         let query = arguments[1];
 
         if !query.is_object() {
-            return Err(global_object.throw_value(global_object.ERR_INVALID_ARG_TYPE(
-                format_args!("The \"run\" argument's \"query\" must be of type Query"),
-            )));
+            return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
 
         let this_value = callframe.this();
@@ -818,14 +818,10 @@ impl PostgresSQLQuery {
     }
 }
 
-// Suppress dead-code on `AnyPostgresError` import (kept for Phase B narrowing).
-#[allow(dead_code)]
-const _: Option<AnyPostgresError> = None;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/PostgresSQLQuery.zig (539 lines)
 //   confidence: medium
 //   todos:      9
-//   notes:      statement field switched to *mut (matches PreparedStatementsMap + PostgresSQLConnection accessors); Flags is a plain struct (callers field-access directly); on_write_fail accepts bun_core::Error to match callers (Zig had AnyPostgresError); deref_ takes *mut Self and on_* scopeguards/do_run route all access through derived raw ptr (SB-safe).
+//   notes:      statement field switched to *mut (matches PreparedStatementsMap + PostgresSQLConnection accessors); Flags is a plain struct (callers field-access directly); deref_ takes *mut Self and on_* scopeguards/do_run route all access through derived raw ptr (SB-safe).
 // ──────────────────────────────────────────────────────────────────────────

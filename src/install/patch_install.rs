@@ -6,8 +6,7 @@ use bstr::BStr;
 use bun_core::{Global, Output};
 use bun_logger::{self as logger, Loc, Log};
 use bun_paths::{self as path, PathBuffer};
-// MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
-use bun_sys::fs::FileSystem;
+use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_string::{strings, ZStr};
 use bun_sys::{self as sys, Fd, FdExt};

@@ -1798,7 +1798,7 @@ impl PostgresSQLConnection {
                             if let Some(err_) = self.global().try_take_exception() {
                                 req.on_js_error(err_, self.global());
                             } else {
-                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                req.on_write_fail(err, self.global(), self.get_queries_array());
                             }
                             if offset == 0 {
                                 unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -1880,7 +1880,7 @@ impl PostgresSQLConnection {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
-                                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                                req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
                                                 unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -1907,7 +1907,7 @@ impl PostgresSQLConnection {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
-                                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                                req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
                                                 unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -1977,7 +1977,7 @@ impl PostgresSQLConnection {
                                             } else {
                                                 statement.status = StatementStatus::Failed;
                                                 statement.error_response = Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                                req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
                                                 unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -2030,7 +2030,7 @@ impl PostgresSQLConnection {
                                             } else {
                                                 statement.status = StatementStatus::Failed;
                                                 statement.error_response = Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                                req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             debug_assert!(offset == 0);
                                             unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -2066,7 +2066,7 @@ impl PostgresSQLConnection {
                                         } else {
                                             statement.error_response = Some(StatementError::PostgresError(err));
                                             statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                            req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
                                         unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -2080,7 +2080,7 @@ impl PostgresSQLConnection {
                                         } else {
                                             statement.error_response = Some(StatementError::PostgresError(err));
                                             statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(err.into(), self.global(), self.get_queries_array());
+                                            req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
                                         unsafe { PostgresSQLQuery::deref_(req_ptr) };

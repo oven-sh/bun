@@ -405,15 +405,12 @@ pub mod fs {
         /// (process-lifetime).
         #[inline]
         pub fn read_directory(
-            &self,
+            &mut self,
             dir: &[u8],
             generation: Generation,
             store_fd: bool,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
-            // SAFETY: `self` is the process-static singleton; `read_directory`
-            // is serialized through `RealFS.entries_mutex` internally.
-            let fs = unsafe { &mut *(self as *const Self as *mut Self) };
-            let r = fs.fs.read_directory(dir, None, generation, store_fd)?;
+            let r = self.fs.read_directory(dir, None, generation, store_fd)?;
             // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
             // to `'static` so `&mut self` is dropped before the caller binds the slot.
             Ok(unsafe { &mut *(r as *mut EntriesOption) })
@@ -1393,14 +1390,96 @@ pub mod fs {
         #[doc(hidden)]
         #[deprecated(note = "deleted; pass &DirEntry directly")]
         pub fn _seam_removed(&self) {}
+    }
 
-        /// Mutable variant of [`Self::as_sys_seam`].
-        #[inline]
-        pub fn as_sys_seam_mut(&mut self) -> &mut bun_sys::fs::DirEntry {
-            // SAFETY: see `as_sys_seam`. `&mut self` guarantees exclusive
-            // access; the seam ZST has no fields, so the reborrow does not
-            // alias any data the caller can also reach through `self`.
-            unsafe { &mut *(self as *mut Self as *mut bun_sys::fs::DirEntry) }
+    /// Compat re-exports for callers that named the seam-type aliases.
+    pub use EntryKind as FsEntryKind;
+    pub use dir_entry::Err as DirEntryErr;
+
+    // ── RealFS.Tmpfile ───────────────────────────────────────────────────
+    /// Port of `FileSystem.RealFS.Tmpfile` (fs.zig). The Zig POSIX impl never
+    /// touched its `*RealFS` arg (it always opens at cwd); the Windows impl
+    /// only needs the temp-dir path, which routes via `get_default_temp_dir`.
+    pub struct RealFsTmpfile {
+        pub fd: bun_sys::Fd,
+        pub dir_fd: bun_sys::Fd,
+        #[cfg(windows)]
+        pub existing_path: Box<[u8]>,
+    }
+    impl Default for RealFsTmpfile {
+        fn default() -> Self {
+            Self {
+                fd: bun_sys::Fd::INVALID,
+                dir_fd: bun_sys::Fd::INVALID,
+                #[cfg(windows)]
+                existing_path: Box::default(),
+            }
+        }
+    }
+    impl RealFsTmpfile {
+        #[inline] pub fn file(&self) -> bun_sys::File { bun_sys::File::from_fd(self.fd) }
+
+        pub fn close(&mut self) {
+            if self.fd.is_valid() {
+                let _ = bun_sys::close(self.fd);
+                self.fd = bun_sys::Fd::INVALID;
+            }
+        }
+
+        /// Zig: `Tmpfile.create(*RealFS, name)` — POSIX path opens at cwd
+        /// (the `*RealFS` arg is unused there); Windows opens under the
+        /// process temp dir.
+        pub fn create(&mut self, name: &ZStr) -> core::result::Result<(), bun_core::Error> {
+            #[cfg(not(windows))]
+            {
+                // We originally used a temporary directory, but it caused EXDEV.
+                let dir_fd = bun_sys::Fd::cwd();
+                self.dir_fd = dir_fd;
+                let flags = bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
+                // S_IRWXU == 0o700
+                self.fd = bun_sys::openat(dir_fd, name, flags, 0o700)?;
+                Ok(())
+            }
+            #[cfg(windows)]
+            {
+                let tmp = RealFS::get_default_temp_dir();
+                let tmp_dir = bun_sys::open_dir_at(bun_sys::Fd::cwd(), tmp).map(bun_sys::Dir::from_fd)?;
+                self.dir_fd = tmp_dir.fd();
+                let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
+                self.fd = bun_sys::openat(tmp_dir.fd(), name, flags, 0)?;
+                let mut buf = bun_paths::PathBuffer::uninit();
+                let existing_path = bun_sys::get_fd_path(self.fd, &mut buf)?;
+                self.existing_path = Box::<[u8]>::from(&*existing_path);
+                Ok(())
+            }
+        }
+
+        /// Zig: `Tmpfile.promoteToCWD(from_name, name)`.
+        pub fn promote_to_cwd(
+            &mut self,
+            from_name: &ZStr,
+            name: &ZStr,
+        ) -> core::result::Result<(), bun_core::Error> {
+            #[cfg(not(windows))]
+            {
+                debug_assert!(self.fd != bun_sys::Fd::INVALID);
+                debug_assert!(self.dir_fd != bun_sys::Fd::INVALID);
+                bun_sys::move_file_z_with_handle(
+                    self.fd, self.dir_fd, from_name, bun_sys::Fd::cwd(), name,
+                )?;
+                self.close();
+                Ok(())
+            }
+            #[cfg(windows)]
+            {
+                let _ = from_name;
+                self.close();
+                // TODO(port-windows): MoveFileExW with MOVEFILE_COPY_ALLOWED |
+                // MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                // (fs.zig TmpfileWindows.promoteToCWD). Route via renameat for now.
+                bun_sys::renameat_z(self.dir_fd, from_name, bun_sys::Fd::cwd(), name)
+                    .map_err(Into::into)
+            }
         }
     }
 

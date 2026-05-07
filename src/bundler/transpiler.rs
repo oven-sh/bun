@@ -653,15 +653,12 @@ impl<'a> Transpiler<'a> {
                     return Ok(());
                 };
                 // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` accepts the
-                // `bun_sys::fs::DirEntry` seam type because `bun_dotenv` sits
-                // below `bun_resolver` in the crate graph; go through the
-                // resolver-provided typed adapter rather than open-coding the
-                // `as *mut ZST` reinterpret here.
+                // (BSSMap-owned). `dot_env::Loader::load` takes
+                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
+                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
                 // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
                 // sole `&mut` for the call.
-                let dir: &mut bun_sys::fs::DirEntry =
-                    unsafe { &mut *dir }.as_sys_seam_mut();
+                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit

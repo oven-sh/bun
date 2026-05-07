@@ -153,10 +153,11 @@ pub(crate) mod bun_json {
     }
 }
 
-/// `bun_fs` → resolver-tier `FileSystem` is shimmed under `bun_sys::fs`
-/// (see MOVE_DOWN(b0) note in src/sys/lib.rs).
+/// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
+/// `bun_install` depends on `bun_resolver` directly (no cycle), so re-export
+/// the real types instead of routing through any lower-tier shim.
 pub(crate) mod bun_fs {
-    pub use bun_sys::fs::*;
+    pub use bun_resolver::fs::*;
 }
 
 /// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of

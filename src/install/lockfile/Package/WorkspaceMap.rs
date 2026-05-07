@@ -306,7 +306,7 @@ impl WorkspaceMap {
 
                 let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
                 if cwd.is_empty() {
-                    cwd = bun_sys::fs::FileSystem::instance().top_level_dir();
+                    cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
                 // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (Phase A: heap-backed),

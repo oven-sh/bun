@@ -1061,11 +1061,9 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    // PORT NOTE: `FileSystem.RealFS.Tmpfile` lives in `bun_resolver::fs`;
-    // `bun_install` has no `bun_resolver` dep, so use the moved-down
-    // `bun_sys::fs::RealFsTmpfile` (same fields/behavior, no `&mut RealFS` arg
-    // — the POSIX path never used it; Windows opens via `get_default_temp_dir`).
-    let mut tmpfile = sys::fs::RealFsTmpfile::default();
+    // PORT NOTE: `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used
+    // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
+    let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
     secret[0..8].copy_from_slice(&u64::try_from(bun_core::time::milli_timestamp()).unwrap().to_le_bytes());
     let mut base64_bytes = [0u8; 64];

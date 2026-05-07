@@ -19,8 +19,6 @@ libc.workspace = true
 bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-# css_jsc IS the css binding — it legitimately needs bundler's css feature.
-bun_bundler = { workspace = true, features = ["css"] }
 bun_collections.workspace = true
 bun_css.workspace = true
 bun_jsc.workspace = true

@@ -1477,10 +1477,10 @@ impl Expect {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
                     unsafe { &mut *VirtualMachine::get() }.run_error_handler(result, None);
-                    return Err(global_this.throw2(
-                "Matcher `{f}` returned a promise that rejected",
-                format_args!("{}", matcher_name),
-                    ));
+                    return Err(global_this.throw(format_args!(
+                        "Matcher `{}` returned a promise that rejected",
+                        matcher_name,
+                    )));
                 }
             }
         }

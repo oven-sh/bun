@@ -2911,6 +2911,15 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]>;
+    /// Look up `name` (any path — checks the standalone virtual-root prefix
+    /// first) and return the embedded file's canonical name slice if present.
+    /// Spec `StandaloneModuleGraph.find`.
+    fn find(&self, name: &[u8]) -> Option<&[u8]>;
+    /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
+    /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).
+    /// Baked-in `'static` constant; surfaced here so low-tier callers
+    /// (worker entry-point resolution) don't need the concrete graph type.
+    fn base_public_path_with_default_suffix(&self) -> &'static [u8];
 }
 
 /// `Dependency` namespace as the body spells it (Zig: `Dependency.Version` /

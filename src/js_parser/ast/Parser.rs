@@ -1608,7 +1608,7 @@ impl<'a> Parser<'a> {
                     p.log.add_range_error_with_notes(
                         Some(p.source),
                         record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice().into(),
+                        b"Cannot use import statement with CommonJS-only features".as_slice(),
                         notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
                     )?;
                 }

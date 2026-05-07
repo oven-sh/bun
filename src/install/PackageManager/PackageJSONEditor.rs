@@ -1032,22 +1032,23 @@ pub fn edit(
     };
     for request in updates.iter_mut() {
         if let Some(e_string) = request.e_string {
-            // SAFETY: `e_string` is a `*mut E::EString` into the thread-local Expr Store/arena,
-            // captured at one of two provenance sites:
-            //   (a) the freshly `Expr::init`ed empty value string in `new_dependencies` (the
+            // SAFETY: `e_string` is a `*mut E::EString` captured at one of two provenance sites:
+            //   (a) the freshly `Expr::allocate`d empty value string in `new_dependencies` (the
             //       `e_string().unwrap().as_ptr()` call inside the `while k < new_dependencies.len()`
-            //       loop), or
-            //   (b) a *pre-existing* arena slot from the parsed `current_package_json` input tree
+            //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
+            //   (b) a pre-existing slot from the parsed `current_package_json` input tree
             //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan; Zig:447 / Zig:467).
-            // In both cases the arena slot is pinned for the duration of `edit`: the thread-local
-            // Store is held live by `ExprDisabler::disable()` taken at function entry, and the
-            // `*current_package_json = Expr::init(...)` reassignments above only overwrite a
-            // Copy `Expr` handle — they never reset the arena. The Expr tree only references the
-            // slot via `StoreRef` (a Copy `NonNull`), and no `&`/`&mut` derived from a `StoreRef`
-            // to the same `E::EString` is live inside this loop body, so this is the sole mutable
-            // borrow — matches the Zig original which stores `?*E.String` for this deferred-write
-            // pattern.
+            //       dependency-group scan; Zig:447 / Zig:467) — backed by the thread-local Expr
+            //       Store, which the *caller* guarantees stays live for the duration of `edit`
+            //       (it owns the parsed tree).
+            // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
+            // Store use, not a keep-alive — it exists precisely so that the (a)-path nodes are
+            // never Store-backed. The `*current_package_json = Expr::allocate(...)` reassignments
+            // above only overwrite a Copy `Expr` handle; they never reset either arena. The Expr
+            // tree references the slot via `StoreRef` (a Copy `NonNull`) and no `&`/`&mut`
+            // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
+            // so this is the sole mutable borrow — matches the Zig original which stores
+            // `?*E.String` for this deferred-write pattern.
             let e_string = unsafe { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized

@@ -1246,12 +1246,16 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     // (NUL-stripped) once and use it for both the path resolver and the error
     // message so we don't print a literal `\0`.
     // SAFETY: trailing-NUL invariant established by `init()` for any non-empty
-    // value; for empty (`b""`) `from_raw(_, 0)` is the canonical empty `ZStr`.
-    let abs_ca_z = unsafe {
-        ZStr::from_raw(
-            opts.abs_ca_file_name.as_ptr(),
-            opts.abs_ca_file_name.len().saturating_sub(1),
-        )
+    // value; the empty default (`b""`) maps to `ZStr::EMPTY`.
+    let abs_ca_z: &ZStr = if opts.abs_ca_file_name.is_empty() {
+        ZStr::EMPTY
+    } else {
+        unsafe {
+            ZStr::from_raw(
+                opts.abs_ca_file_name.as_ptr(),
+                opts.abs_ca_file_name.len() - 1,
+            )
+        }
     };
     match err {
         http::InitError::LoadCAFile => {

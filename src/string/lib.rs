@@ -263,8 +263,8 @@ impl String {
     /// `(comptime fmt, args: anytype)` into [`core::fmt::Arguments`].
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
         use core::fmt::Write;
-        // PORT NOTE: Zig used a 512-byte stackFallback. SmallVec<512> would be
-        // ideal; for B-2 a heap buffer is acceptable (cold path, error msgs).
+        // PORT NOTE: Zig used a 512-byte stackFallback; this is a cold path
+        // (error messages), so a heap buffer is fine.
         if let Some(s) = args.as_str() {
             return Self::clone_utf8(s.as_bytes());
         }

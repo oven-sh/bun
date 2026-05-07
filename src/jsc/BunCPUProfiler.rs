@@ -193,7 +193,6 @@ fn generate_default_filename(
 ) -> Result<&[u8], ProfilerError> {
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
     // Use microsecond timestamp for uniqueness
-    // TODO(port): verify bun_core::Timespec::now API name/signature
     let timespec = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();

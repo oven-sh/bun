@@ -735,9 +735,9 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    pub fn load(
+    pub fn load<D: DirEntryProbe + ?Sized>(
         &mut self,
-        dir: &mut bun_sys::fs::DirEntry,
+        dir: &D,
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,

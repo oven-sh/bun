@@ -91,7 +91,10 @@ impl ByteStream {
     }
 
     pub fn setup(&mut self) {
-        *self = Self::default();
+        // Called immediately after `ByteStream::default()` construction (Zig
+        // wrote into `undefined`); the old value owns nothing the new one
+        // reuses, so dropping it is the intended reset.
+        drop(core::mem::take(self));
     }
 
     pub fn on_start(&mut self) -> streams::Start {

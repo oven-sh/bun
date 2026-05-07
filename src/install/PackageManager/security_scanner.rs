@@ -1074,13 +1074,20 @@ impl<'a> SecurityScanSubprocess<'a> {
         argv0_buf.push(0);
         let mut argv3_buf: Vec<u8> = self.code.to_vec();
         argv3_buf.push(0);
-        let mut argv: [Option<*const core::ffi::c_char>; 5] = [
-            Some(argv0_buf.as_ptr().cast()),
-            Some(b"--no-install\0".as_ptr().cast()),
-            Some(b"-e\0".as_ptr().cast()),
-            Some(argv3_buf.as_ptr().cast()),
-            None,
+        // Element type MUST be bare `*const c_char` (null sentinel), never
+        // `Option<*const c_char>`: raw pointers are already nullable, and
+        // `Option<*const T>` is a 2-word (tag, ptr) pair — casting that to
+        // `Argv` interleaves discriminant words and EFAULTs in the kernel.
+        let mut argv: [*const core::ffi::c_char; 5] = [
+            argv0_buf.as_ptr().cast(),
+            b"--no-install\0".as_ptr().cast(),
+            b"-e\0".as_ptr().cast(),
+            argv3_buf.as_ptr().cast(),
+            core::ptr::null(),
         ];
+        const _: () = assert!(
+            core::mem::size_of::<[*const core::ffi::c_char; 5]>() == 5 * core::mem::size_of::<usize>()
+        );
 
         #[cfg(windows)]
         {
@@ -1101,7 +1108,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(unix)]
     fn spawn_posix(
         &mut self,
-        argv: &mut [Option<*const core::ffi::c_char>; 5],
+        argv: &mut [*const core::ffi::c_char; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -1150,7 +1157,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     #[cfg(windows)]
     fn spawn_windows(
         &mut self,
-        argv: &mut [Option<*const core::ffi::c_char>; 5],
+        argv: &mut [*const core::ffi::c_char; 5],
         ipc_output_fds: [Fd; 2],
     ) -> Result<(), Error> {
         use bun_sys::windows::libuv as uv;

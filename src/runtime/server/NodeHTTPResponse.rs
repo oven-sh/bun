@@ -122,8 +122,9 @@ impl UpgradeCTX {
     // this can be called multiple times
     // PORT NOTE: Zig `deinit` renamed `reset` — mid-lifetime reset, not a destructor (PORTING.md: never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
-        // Dropping the old Box<[u8]> values frees them; raw pointers are nulled.
-        *self = UpgradeCTX::default();
+        // Dropping the taken value frees the old `Box<[u8]>` headers; raw
+        // pointers are nulled. Nothing from the old value is reused.
+        drop(core::mem::take(self));
     }
 
     pub fn preserve_web_socket_headers_if_needed(&mut self) {

@@ -340,8 +340,9 @@ fn read_package_json_from_disk<R: ResolverContext + IsWorkspace>(
             let file = File::from_fd(
                 bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?,
             );
-            let _close = scopeguard::guard((), |_| {
-                let _ = file.close();
+            // defer file.close()
+            let file = scopeguard::guard(file, |f| {
+                let _ = f.close();
             });
 
             body.reset();

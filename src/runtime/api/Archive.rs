@@ -28,10 +28,8 @@ use bun_libarchive as libarchive;
 /// does not yet expose `FileType`, so mirror the constant locally.
 const FILETYPE_REGULAR: u32 = 0o100000;
 
-// TODO(port): codegen aliases (`js`, `toJS`, `fromJS`, `fromJSDirect`) are wired by
-// `#[bun_jsc::JsClass]`; the Zig `pub const js = jsc.Codegen.JSArchive;` lines are deleted.
-
 /// Compression options for the archive
+#[derive(Clone, Copy)]
 pub enum Compression {
     None,
     Gzip(GzipOptions),

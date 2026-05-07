@@ -158,48 +158,10 @@ impl JSValueSqlExt for JSValue {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// uws.us_bun_verify_error_t::toJS
-//
-// Layering: the canonical impl lives in `bun_runtime::socket::uws_jsc`, but
-// `bun_runtime` *depends on* this crate, so importing it would cycle. The body
-// only needs `bun_uws` + `bun_jsc::SystemError` (both already lower-tier deps
-// of this crate), so it is hosted here for both `mysql::JSMySQLConnection` and
-// `postgres::PostgresSQLConnection`. Matches `src/runtime/socket/uws_jsc.zig`.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub fn verify_error_to_js(
-    err: &bun_uws::us_bun_verify_error_t,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    let code: &[u8] = if err.code.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `code` is a NUL-terminated C string owned by uSockets
-        // for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.code) }.to_bytes()
-    };
-    let reason: &[u8] = if err.reason.is_null() {
-        b""
-    } else {
-        // SAFETY: non-null `reason` is a NUL-terminated C string owned by
-        // uSockets for the duration of the handshake callback.
-        unsafe { core::ffi::CStr::from_ptr(err.reason) }.to_bytes()
-    };
-
-    let fallback = bun_jsc::SystemError {
-        errno: 0,
-        code: bun_string::String::clone_utf8(code),
-        message: bun_string::String::clone_utf8(reason),
-        path: bun_string::String::empty(),
-        syscall: bun_string::String::empty(),
-        hostname: bun_string::String::empty(),
-        fd: core::ffi::c_int::MIN,
-        dest: bun_string::String::empty(),
-    };
-
-    Ok(fallback.to_error_instance(global))
-}
+// `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
+// `bun_runtime` and this crate import the single canonical body (was
+// triplicated across runtime/socket/uws_jsc, here, and PostgresSQLConnection).
+pub use bun_jsc::system_error::verify_error_to_js;
 
 // ──────────────────────────────────────────────────────────────────────────
 // uws.create_bun_socket_error_t::toJS

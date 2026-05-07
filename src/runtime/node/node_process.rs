@@ -374,15 +374,15 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     // PORT NOTE: bun.pathLiteral inlined — bun_paths has no path_literal! macro yet.
     const EVAL_SUFFIX: &[u8] = if cfg!(windows) { b"\\[eval]" } else { b"/[eval]" };
     const STDIN_SUFFIX: &[u8] = if cfg!(windows) { b"\\[stdin]" } else { b"/[stdin]" };
-    if !vm.main.is_empty()
-        && !strings::ends_with(vm.main, EVAL_SUFFIX)
-        && !strings::ends_with(vm.main, STDIN_SUFFIX)
+    if !vm.main().is_empty()
+        && !strings::ends_with(vm.main(), EVAL_SUFFIX)
+        && !strings::ends_with(vm.main(), STDIN_SUFFIX)
     {
         if worker.is_some_and(|w| w.eval_mode()) {
             args_list.push(BunString::static_(b"[worker eval]"));
             // PERF(port): was assume_capacity
         } else {
-            args_list.push(BunString::borrow_utf8(vm.main));
+            args_list.push(BunString::borrow_utf8(vm.main()));
             // PERF(port): was assume_capacity
         }
     }

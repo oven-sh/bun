@@ -2925,8 +2925,13 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1394 `initWorker`.
+    ///
+    /// PORT NOTE: takes `&WebWorker` (not `&mut`) — the worker thread may only
+    /// hold a shared reference to its `WebWorker` (the parent / main thread
+    /// concurrently observes it; see `web_worker.rs` worker-thread `&self`
+    /// note). All accesses on `worker` here are read-only.
     pub fn init_worker(
-        worker: &mut crate::web_worker::WebWorker,
+        worker: &crate::web_worker::WebWorker,
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {

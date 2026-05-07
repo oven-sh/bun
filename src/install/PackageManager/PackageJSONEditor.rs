@@ -352,7 +352,8 @@ pub fn edit_update_no_args(
                                 b"latest"
                             };
 
-                            dep.value = Some(Expr::init(
+                            dep.value = Some(Expr::allocate(
+                                arena,
                                 E::EString::init(temp_version),
                                 logger::Loc::EMPTY,
                             ));
@@ -494,7 +495,8 @@ pub fn edit_update_no_args(
                                                 bstr::BStr::new(&new_version)
                                             )
                                             .unwrap();
-                                            dep.value = Some(Expr::init(
+                                            dep.value = Some(Expr::allocate(
+                                                arena,
                                                 E::EString::init(leak_str(v)),
                                                 logger::Loc::EMPTY,
                                             ));
@@ -504,7 +506,8 @@ pub fn edit_update_no_args(
                                         // fallthrough and replace entire version.
                                     }
 
-                                    dep.value = Some(Expr::init(
+                                    dep.value = Some(Expr::allocate(
+                                        arena,
                                         E::EString::init(leak_str(new_version)),
                                         logger::Loc::EMPTY,
                                     ));

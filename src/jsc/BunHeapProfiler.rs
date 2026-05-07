@@ -68,13 +68,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
             let dir_path =
                 resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
             if !dir_path.is_empty() {
-                // PORT NOTE: reshaped for borrowck — `make_path` borrows
-                // `dir_path` (tied to `path_buf`); copy into a stack buffer so
-                // the retry below can re-borrow `path_buf` mutably.
-                let mut dir_buf = PathBuffer::uninit();
-                let n = dir_path.len();
-                dir_buf.as_mut_slice()[..n].copy_from_slice(dir_path);
-                let _ = Fd::cwd().make_path(&dir_buf.as_slice()[..n]);
+                let _ = Fd::cwd().make_path(dir_path);
                 // Retry write
                 #[cfg(windows)]
                 let retry_result =

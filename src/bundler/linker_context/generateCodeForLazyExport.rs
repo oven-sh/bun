@@ -142,11 +142,11 @@ pub fn generate_code_for_lazy_export(
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,
-                // TODO(port): LIFETIMES.tsv said `HashMap<Ref, ()>`; Zig is AutoArrayHashMap → ArrayHashMap per collections map.
+                // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [BabyList<ImportRecord>],
-                // TODO(port): lifetime — type-erased `*mut BundlerStyleSheet` SoA column.
+                // Type-erased `*mut BundlerStyleSheet` SoA column (BundledAst.rs).
                 all_css_asts: &'a [Option<*mut core::ffi::c_void>],
                 all_sources: &'a [Source],
                 all_symbols: &'a [SymbolList],
@@ -363,8 +363,9 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // TODO(port): `parts: undefined` — Rust forbids uninit refs; rebound per-iteration below.
-            // PORT NOTE: reshaped for borrowck — Visitor constructed inside the loop with fresh `parts` borrow.
+            // PORT NOTE: Zig left `parts: undefined` and rebound per-iteration; Rust
+            // forbids uninit refs, so the Visitor is constructed inside the loop with
+            // a fresh `parts` borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
             // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`

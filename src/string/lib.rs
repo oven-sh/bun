@@ -635,6 +635,26 @@ impl String {
         }
     }
 
+    /// `bun.String.utf16ByteLength` — number of bytes the UTF-16LE encoding of
+    /// `self` would occupy (string.zig:301).
+    pub fn utf16_byte_length(&self) -> usize {
+        match self.tag {
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf).utf16_byte_length() },
+            Tag::ZigString | Tag::StaticZigString => unsafe { self.value.zig.utf16_byte_length() },
+            Tag::Dead | Tag::Empty => 0,
+        }
+    }
+
+    /// `bun.String.latin1ByteLength` — number of bytes the Latin-1 encoding of
+    /// `self` would occupy (string.zig:309).
+    pub fn latin1_byte_length(&self) -> usize {
+        match self.tag {
+            Tag::WTFStringImpl => unsafe { (*self.value.wtf).latin1_byte_length() },
+            Tag::ZigString | Tag::StaticZigString => unsafe { self.value.zig.latin1_byte_length() },
+            Tag::Dead | Tag::Empty => 0,
+        }
+    }
+
     /// `bun.String.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
     pub fn to_owned_slice_z(&self) -> bun_core::ZBox {
         self.to_zig_string().to_owned_slice_z()

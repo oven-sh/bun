@@ -2713,7 +2713,7 @@ impl Log {
         &mut self,
         source: Option<&Source>,
         r: Range,
-        text: Str,
+        text: impl IntoText,
         notes: Box<[Data]>,
     ) -> Result<(), AllocError> {
         self.errors += 1;

@@ -719,22 +719,6 @@ impl Yield {
 }
 
 impl Task {
-    /// Shared borrow of the owning [`Installer`].
-    ///
-    /// `installer` is a BACKREF: the `Installer` owns `tasks[]` and outlives
-    /// every `Task` it schedules. The pointer is never null.
-    ///
-    /// Only `&` is exposed: `run()` executes concurrently on the thread pool
-    /// across many `Task`s sharing the same `*mut Installer`, so a `&mut`
-    /// accessor would alias. Callers needing to reach `manager` / `lockfile`
-    /// for mutation must go through the raw pointer directly (see the
-    /// provenance comment in [`Self::run`]).
-    #[inline]
-    pub fn installer(&self) -> &Installer<'static> {
-        // SAFETY: BACKREF — Installer owns tasks[] and outlives every Task.
-        unsafe { &*self.installer }
-    }
-
     /// Called from task thread
     // PERF(port): was comptime enum monomorphization — profile in Phase B
     fn next_step(&self, current_step: Step) -> Step {
@@ -750,7 +734,20 @@ impl Task {
             Step::Done | Step::Blocked => unreachable!("unexpected step"),
         };
 
-        self.installer().store.entries.items_step()[self.entry_id.get() as usize]
+        // SAFETY: `installer` is a BACKREF — the `Installer` owns `tasks[]` and
+        // outlives every `Task` it schedules; the pointer is never null.
+        //
+        // We deliberately do **not** materialize `&Installer` here: this runs on
+        // a thread-pool worker while the main thread may concurrently hold
+        // `&mut Installer` (e.g. `start_task` writing `tasks[i].result`, or
+        // `on_package_extracted`). A worker-side `&Installer` would alias that
+        // `&mut` under Stacked Borrows. Instead, raw-read the `store: &Store`
+        // field by value via `addr_of!` so no `&Installer` is formed — `Store`
+        // lives outside the `Installer` allocation and `items_step()` is atomic.
+        // This also avoids leaking the erased `'static` from
+        // `*mut Installer<'static>` into a whole-struct borrow.
+        let store: &Store = unsafe { *core::ptr::addr_of!((*self.installer).store) };
+        store.entries.items_step()[self.entry_id.get() as usize]
             .store(next_step as u32, Ordering::Release);
 
         next_step

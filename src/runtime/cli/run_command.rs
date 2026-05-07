@@ -671,44 +671,17 @@ impl RunCommand {
         Ok(root_dir_info)
     }
 
-    /// Best-effort default-loader lookup by file extension. Mirrors
-    /// `options.defaultLoaders.get(ext)` (the *file-extension*→Loader map at
-    /// options.zig:1041 — NOT `Loader::NAMES`, which is the *loader-name*
+    /// Best-effort default-loader lookup by file extension. Thin forwarder to
+    /// `bun_bundler::options::DEFAULT_LOADERS` (the *file-extension*→Loader map
+    /// at options.zig:1041 — NOT `Loader::NAMES`, which is the *loader-name*
     /// table and has different membership, e.g. `.sh` is unconditional there
-    /// but Windows-only in `defaultLoaders`). Routed through the lower-tier
-    /// `BundleEnums::Loader` so this file does not name `bun_bundler`'s
-    /// (duplicate, soon-to-collapse) `options::Loader`.
+    /// but Windows-only in `defaultLoaders`). Single source of truth so this
+    /// file cannot drift from options.zig.
     #[inline]
     fn default_loader_for(target: &[u8]) -> Option<Loader> {
-        let ext = paths::extension(target);
-        // Keyed with the leading dot, exactly as in options.zig `defaultLoaders`.
-        match ext {
-            b".jsx" => Some(Loader::Jsx),
-            b".json" => Some(Loader::Json),
-            b".js" => Some(Loader::Jsx),
-            b".mjs" => Some(Loader::Js),
-            b".cjs" => Some(Loader::Js),
-            b".css" => Some(Loader::Css),
-            b".ts" => Some(Loader::Ts),
-            b".tsx" => Some(Loader::Tsx),
-            b".mts" => Some(Loader::Ts),
-            b".cts" => Some(Loader::Ts),
-            b".toml" => Some(Loader::Toml),
-            b".yaml" => Some(Loader::Yaml),
-            b".yml" => Some(Loader::Yaml),
-            b".wasm" => Some(Loader::Wasm),
-            b".node" => Some(Loader::Napi),
-            b".txt" => Some(Loader::Text),
-            b".text" => Some(Loader::Text),
-            b".html" => Some(Loader::Html),
-            b".jsonc" => Some(Loader::Jsonc),
-            b".json5" => Some(Loader::Json5),
-            b".md" => Some(Loader::Md),
-            b".markdown" => Some(Loader::Md),
-            #[cfg(windows)]
-            b".sh" => Some(Loader::Bunsh),
-            _ => None,
-        }
+        bun_bundler::options::DEFAULT_LOADERS
+            .get(paths::extension(target))
+            .copied()
     }
 
     /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,

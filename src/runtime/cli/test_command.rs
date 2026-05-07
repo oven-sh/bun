@@ -2688,10 +2688,12 @@ impl TestCommand {
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
-            // and writes only `current_file` — disjoint fields. Raw-ptr split
-            // mirrors Zig's freely-aliasing `*CommandLineReporter`.
+            // and writes only `current_file` — disjoint fields. Fresh raw-ptr
+            // split (not the defer-captured `reporter_ptr`) mirrors Zig's
+            // freely-aliasing `*CommandLineReporter` without tripping borrowck.
             unsafe {
-                (*reporter_ptr).jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, &mut *reporter_ptr);
+                let rp: *mut CommandLineReporter = reporter;
+                (*rp).jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, &mut *rp);
             }
 
             bun_output::scoped_log!(bun_test, "loadEntryPointForTestRunner(\"{}\")", bstr::BStr::new(file_path));

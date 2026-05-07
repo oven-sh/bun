@@ -287,9 +287,8 @@ pub fn view(
         } else {
             Output::err_generic(
                 "No version of <b>{}<r> satisfying <b>{}<r> found",
-                format_args!("{} {}", bun_fmt::quote(name), bun_fmt::quote(version)),
+                (bun_fmt::quote(name), bun_fmt::quote(version)),
             );
-            // TODO(port): Output::err_generic format string interpolation — verify API shape
 
             let max_versions_to_display: usize = 5;
 

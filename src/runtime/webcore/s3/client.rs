@@ -1189,17 +1189,16 @@ pub fn readable_stream(
     let global_static: &'static JSGlobalObject =
         unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
 
-    let reader_box = crate::webcore::byte_stream::Source::new(
+    // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
+    // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
+    let reader: *mut crate::webcore::byte_stream::Source = crate::webcore::byte_stream::Source::new(
         crate::webcore::readable_stream::NewSource {
             context: ByteStream::default(),
             global_this: global_this as *const JSGlobalObject,
             ..Default::default()
         },
     );
-    // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
-    // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
-    let reader: *mut crate::webcore::byte_stream::Source = Box::into_raw(reader_box);
-    // SAFETY: freshly Box::into_raw'd; exclusive access until handed to JS below.
+    // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
     let reader_mut = unsafe { &mut *reader };
 
     reader_mut.context.setup();

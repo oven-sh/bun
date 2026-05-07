@@ -224,10 +224,19 @@ impl PackageManifestMap {
                 None
             }
             Entry::Vacant(vac) => {
-                if pm.options.enable.manifest_cache() {
+                // SAFETY: `options` is disjoint from `self` (= `pm.manifests`);
+                // both derive from `pm`'s provenance per the fn contract.
+                let options = unsafe { &(*pm).options };
+                if options.enable.manifest_cache() {
+                    // SAFETY: `get_cache_directory_raw` projects only
+                    // `cache_directory_*` / `options` / `env`, all disjoint
+                    // from `self`; see its safety doc.
+                    let cache_fd =
+                        unsafe { crate::package_manager::directories::get_cache_directory_raw(pm) }
+                            .fd();
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope,
-                        pm.get_cache_directory().fd(),
+                        cache_fd,
                         name_hash,
                     )
                     .ok()
@@ -245,9 +254,10 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        if pm.options.enable.manifest_cache_control()
-                            && manifest.pkg.public_max_age
-                                > pm.timestamp_for_manifest_cache_control
+                        // SAFETY: scalar read of a field disjoint from `self`.
+                        let timestamp = unsafe { (*pm).timestamp_for_manifest_cache_control };
+                        if options.enable.manifest_cache_control()
+                            && manifest.pkg.public_max_age > timestamp
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

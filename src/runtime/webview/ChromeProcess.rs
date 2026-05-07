@@ -113,7 +113,7 @@ pub extern "C" fn Bun__Chrome__ensure(
                 return -1;
             }
         };
-        fd.cast()
+        fd.native()
     }
 }
 

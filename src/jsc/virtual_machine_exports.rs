@@ -72,22 +72,8 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
     this.exit_on_uncaught_exception = true;
 }
 
-// Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
-// The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
-#[crate::host_fn(export = "Bun__Process__send")]
-pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    crate::mark_binding!();
-    // SAFETY: bun_vm_ptr() yields the live per-thread VM (Zig `bunVM()` is
-    // mutable); `get_ipc_instance` writes `self.ipc` on first call.
-    let vm = unsafe { &mut *global.bun_vm_ptr() };
-    // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
-    // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
-    // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
-    let ipc = vm
-        .get_ipc_instance()
-        .map(|i| unsafe { &mut (*i).data });
-    crate::ipc::do_send(ipc, global, frame, crate::ipc::FromEnum::Process)
-}
+// `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
+// `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {

@@ -570,9 +570,11 @@ impl Builtin {
                     }
                 };
 
+                let interp_ptr: *mut Interpreter = interp;
                 if redirect.stdin() {
-                    let me = Self::of_mut(interp, cmd);
-                    me.stdin = BuiltinInput::Fd(IOReader::init(redirfd, evtloop));
+                    let r = IOReader::init(redirfd, evtloop);
+                    r.set_interp(interp_ptr);
+                    Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
                 if !redirect.stdout() && !redirect.stderr() {
@@ -595,6 +597,7 @@ impl Builtin {
                     },
                     evtloop,
                 );
+                redirect_writer.set_interp(interp_ptr);
                 // `defer redirect_writer.deref()` — `redirect_writer: Arc` drops
                 // here; each assigned slot holds its own clone.
 

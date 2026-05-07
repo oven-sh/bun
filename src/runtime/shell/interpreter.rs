@@ -601,6 +601,12 @@ impl Interpreter {
             last_err: None,
             vm_args_utf8: Vec::new(),
         });
+        // Wire the interpreter backref into root stdin so async poll
+        // callbacks can drive `Yield::run`.
+        let interp_ptr: *mut Interpreter = &mut *interpreter;
+        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.stdin {
+            r.set_interp(interp_ptr);
+        }
         // PORT NOTE: Zig stores `command_ctx` on the struct; the Rust struct
         // doesn't have that field yet (no builtin reads it). Preserve the
         // pointer for when `which`/argv builtins land.
@@ -1108,6 +1114,7 @@ impl Interpreter {
             }
         };
 
+        let interp_ptr: *mut Interpreter = self;
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -1116,6 +1123,7 @@ impl Interpreter {
             },
             event_loop,
         );
+        stdout_writer.set_interp(interp_ptr);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1124,6 +1132,7 @@ impl Interpreter {
             },
             event_loop,
         );
+        stderr_writer.set_interp(interp_ptr);
 
         // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path

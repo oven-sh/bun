@@ -826,10 +826,6 @@ impl IOWriter {
     fn run_yield(&self, y: Yield) {
         let interp = self.state().interp;
         if interp.is_null() {
-            // TODO(port): IOWriter::set_interp must be called by whoever
-            // constructs the writer (interpreter.rs root_io setup). Until that
-            // wire-up lands, async chunk-completes are unreachable because the
-            // only enqueue path goes through builtins which run synchronously.
             debug_assert!(
                 matches!(y, Yield::Done),
                 "IOWriter async callback fired without interp backref"

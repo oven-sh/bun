@@ -179,32 +179,34 @@ impl Pipeline {
         // Build per-child IO: stdin from prev pipe read end (or parent
         // stdin for first), stdout to this pipe write end (or parent stdout
         // for last), stderr inherited. Spec: Pipeline.zig readPipe/writePipe.
+        let interp_ptr: *mut Interpreter = interp;
         let child_io = {
             let me = interp.as_pipeline(this);
             let pipes = me.pipes.as_ref().expect("pipes set above");
             let stdin = if cmd_count == 1 || cmd_idx == 0 {
                 me.io.stdin.clone()
             } else {
-                InKind::Fd(IOReader::init(pipes[cmd_idx - 1][0], evtloop))
+                let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
+                r.set_interp(interp_ptr);
+                InKind::Fd(r)
             };
             let stdout = if cmd_count == 1 || cmd_idx == cmd_count - 1 {
                 me.io.stdout.clone()
             } else {
-                OutKind::Fd(crate::shell::io::OutFd {
-                    writer: IOWriter::init(
-                        pipes[cmd_idx][1],
-                        // Spec (Pipeline.zig writePipe 320-324):
-                        // `.is_socket = bun.Environment.isPosix` — the POSIX
-                        // pipe is actually a socketpair end (see above).
-                        io_writer::Flags {
-                            pollable: true,
-                            is_socket: cfg!(unix),
-                            ..Default::default()
-                        },
-                        evtloop,
-                    ),
-                    captured: None,
-                })
+                // Spec (Pipeline.zig writePipe 320-324):
+                // `.is_socket = bun.Environment.isPosix` — the POSIX
+                // pipe is actually a socketpair end (see above).
+                let w = IOWriter::init(
+                    pipes[cmd_idx][1],
+                    io_writer::Flags {
+                        pollable: true,
+                        is_socket: cfg!(unix),
+                        ..Default::default()
+                    },
+                    evtloop,
+                );
+                w.set_interp(interp_ptr);
+                OutKind::Fd(crate::shell::io::OutFd { writer: w, captured: None })
             };
             IO { stdin, stdout, stderr: me.io.stderr.clone() }
         };

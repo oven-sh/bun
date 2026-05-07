@@ -27,15 +27,14 @@ bun_core::declare_scope!(TestReporterAgent, visible);
 bun_core::declare_scope!(LifecycleAgent, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
-// Forward-dep agent types. The real `HTTPServerAgent` lives in the gated
-// sibling `http_server_agent.rs`; `BunFrontendDevServerAgent` lives in
-// `bun_runtime`. Both are stored as raw handle pointers here so the `Debugger`
-// struct layout is stable without the forward dep. The high tier casts back.
+// Agent types. `HTTPServerAgent` is the real sibling definition (re-exported
+// so `Debugger.http_server_agent` carries `next_server_id` state — the
+// runtime-tier `notify_server_started` body increments it).
+// `BunFrontendDevServerAgent` lives in `bun_runtime`; stored as a raw handle
+// pointer here so the `Debugger` struct layout is stable without the forward
+// dep. The high tier casts back.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `jsc.Debugger.HTTPServerAgent` — re-export the real definition from the
-/// sibling module so `Debugger.http_server_agent` carries `next_server_id`
-/// state (the runtime-tier `notify_server_started` body increments it).
 pub use crate::http_server_agent::HTTPServerAgent;
 
 /// `bun_runtime::server::inspector_bun_frontend_dev_server_agent::BunFrontendDevServerAgent`

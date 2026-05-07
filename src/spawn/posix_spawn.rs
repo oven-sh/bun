@@ -87,13 +87,9 @@ mod posix_compat {
     }
 }
 
-// child module: src/runtime/api/bun/spawn/stdio.zig
-// TODO(b2-blocked): stdio.rs imports `crate::api::bun::subprocess::StdioKind`
-// (subprocess body gated) and `bun_sys::windows::libuv`; un-gate once those land.
-// NOTE: explicit #[path] required because the parent (`api.rs`) loads this file via
-// `#[path = "api/bun/spawn.rs"]`, which disables the implicit `spawn/` submodule dir.
-#[path = "spawn/stdio.rs"]
-pub mod stdio;
+// MOVE_DOWN: this file was `src/runtime/api/bun/spawn.rs`; the `stdio`
+// submodule (which depends on the JSC-tier `Subprocess`) stays in
+// `bun_runtime::api::bun_spawn` and is not declared here.
 
 pub mod bun_spawn {
     use super::*;
@@ -933,29 +929,19 @@ pub mod posix_spawn {
         }
     }
 
-    pub use crate::api::bun_process as process;
+    pub use crate::process as process;
     pub use process::{
         PosixSpawnResult, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
         WindowsSpawnOptions, WindowsSpawnResult,
     };
-    // TODO(b2-blocked): process::spawn_process / process::sync gated behind
-    // `spawn_process_body` in process.rs.
-    
     pub use process::{spawn_process, sync};
-
-    // TODO(b2-blocked): stdio mod gated above (subprocess dep).
-    
-    pub use super::stdio::Stdio;
 }
 
 // Re-export at file scope to mirror Zig's `pub const PosixSpawn` / `pub const BunSpawn`
 pub use bun_spawn as BunSpawn;
 pub use posix_spawn as PosixSpawn;
 
-// sibling module: src/runtime/api/bun/process.zig
-// PORT NOTE: `super` here is `crate::api` (this file is `#[path]`-mounted as
-// `crate::api::bun_spawn`, not under an `api/bun/` mod tree).
-use super::bun_process as process;
+use crate::process;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

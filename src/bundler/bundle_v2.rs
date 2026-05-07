@@ -3240,9 +3240,8 @@ impl<'a> BundleV2<'a> {
         let path_text: &'static [u8] = stored.path.text;
         // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
         // pass (arena lifetime); erase the borrow to `'static` to fit
-        // `ContentsOrFd::Contents`.
-        let contents: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(stored.contents()) };
+        // `ContentsOrFd::Contents`. See `interned_slice` contract.
+        let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
         // Compute borrow-heavy fields up front so the `&self` borrow taken by
         // `allocator()` doesn't overlap `&mut self` uses inside the literal.
         let jsx = if known_target == Target::BakeServerComponentsSsr

@@ -2264,7 +2264,7 @@ impl AnyServer {
 /// `bun_jsc::http_server_agent`; the bodies live here because they reach into
 /// `AnyServer`/`ServerConfig` (forward dep from `bun_jsc`'s point of view).
 pub mod http_server_agent {
-    use super::{any_server_dispatch, AnyRoute, AnyServer, AnyServerTag};
+    use super::{AnyRoute, AnyServer, AnyServerTag};
     use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
     use bun_jsc::debugger::DebuggerId;
     use bun_jsc::http_server_agent::{

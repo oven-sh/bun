@@ -403,8 +403,7 @@ impl OutdatedCommand {
             }
             let mut workspace_names: Vec<u8> = Vec::new();
 
-            // SAFETY: `is_catalog` ⇒ `value.catalog` active.
-            let cat_name = unsafe { dep.version.value.catalog }.slice(string_buf);
+            let cat_name = catalog_name;
             if !cat_name.is_empty() {
                 workspace_names.extend_from_slice(b"catalog:");
                 workspace_names.extend_from_slice(cat_name);

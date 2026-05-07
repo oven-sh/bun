@@ -715,14 +715,10 @@ impl<'a> PackageInstaller<'a> {
         let trees_len = self.trees.len();
         for i in 0..trees_len {
             // PORT NOTE: reshaped for borrowck — index instead of iter_mut.
-            // `can_install_package_for_tree` takes the tree slice by raw pointer
-            // to avoid overlapping `&mut self.lockfile` with `&self`.
-            let trees_ptr: *mut [Tree] = self.lockfile.buffers.trees.as_mut_slice();
             if FORCE
-                || self.can_install_package_for_tree(
-                    // SAFETY: `trees_ptr` borrows from `self.lockfile`; nothing
-                    // resizes `buffers.trees` during installation.
-                    unsafe { &mut *trees_ptr },
+                || Self::can_install_package_for_tree(
+                    &self.completed_trees,
+                    self.lockfile.buffers.trees.as_slice(),
                     u32::try_from(i).unwrap(),
                 )
             {
@@ -855,14 +851,17 @@ impl<'a> PackageInstaller<'a> {
 
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
+    // PORT NOTE: free fn (not `&self`) so callers can pass disjoint borrows
+    // (`&self.completed_trees` + `&self.lockfile.buffers.trees`) without
+    // tripping borrowck on the whole-`self` reborrow.
     pub fn can_install_package_for_tree(
-        &self,
-        trees: &mut [Tree],
+        completed_trees: &Bitset,
+        trees: &[Tree],
         package_tree_id: lockfile::tree::Id,
     ) -> bool {
         let mut curr_tree_id = trees[package_tree_id as usize].parent;
         while curr_tree_id != lockfile::tree::INVALID_ID {
-            if !self.completed_trees.is_set(curr_tree_id as usize) {
+            if !completed_trees.is_set(curr_tree_id as usize) {
                 return false;
             }
             curr_tree_id = trees[curr_tree_id as usize].parent;

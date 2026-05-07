@@ -2297,14 +2297,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Box::new(body),
                 method,
             );
-        } else if first_arg.is_object() && {
-            // TODO(port): blocked_on: webcore::request::Request: JsClass
-            // `JSValue::as_::<Request>()` requires the JsClass impl which is not yet generated.
-            false
-        } {
-            todo!("blocked_on: webcore::request::Request: JsClass");
-            #[allow(unreachable_code)]
-            { existing_request = Request::init2(BunString::empty(), None, Box::new(BodyValue::Null), Method::GET); }
+        } else if let Some(request_) = first_arg
+            .is_object()
+            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
+            .flatten()
+        {
+            // SAFETY: JsClass::from_js returns a live *mut Request.
+            unsafe { (*request_).clone_into(ctx, &mut existing_request)? };
         } else {
             // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
             // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
@@ -2824,14 +2823,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.inspector_server_id.get() != 0 {
             #[cold] fn cold() {}
             cold();
-            let has_debugger = self.vm_mut().debugger.is_some();
-            if has_debugger {
+            if let Some(debugger) = &self.vm_mut().debugger {
                 cold();
-                // TODO(port): HTTPServerAgent is a forward-decl stub in bun_jsc::Debugger;
-                // the real `notify_server_stopped` lives in the gated http_server_agent crate.
-                todo!("blocked_on: bun_jsc::debugger::HTTPServerAgent::notify_server_stopped");
-                #[allow(unreachable_code)]
-                { self.inspector_server_id = DebuggerId::new(0); }
+                // PORT NOTE (layering): the Zig `HTTPServerAgent.notifyServerStopped`
+                // takes `AnyServer` and unpacks `inspector_server_id` itself.
+                // The Rust `bun_jsc` tier can't name `AnyServer`, so the
+                // tier-hoisted free fn takes `(agent_ptr, server_id, timestamp)`
+                // directly — call it with the bits we have.
+                if let Some(agent) = debugger.http_server_agent.agent {
+                    // SAFETY: agent is a live C++ InspectorHTTPServerAgent while
+                    // the debugger is attached.
+                    unsafe {
+                        bun_jsc::http_server_agent::notify_server_stopped(
+                            agent.as_ptr(),
+                            self.inspector_server_id,
+                            bun_core::time::milli_timestamp() as f64,
+                        );
+                    }
+                }
+                self.inspector_server_id = DebuggerId::new(0);
             }
         }
     }

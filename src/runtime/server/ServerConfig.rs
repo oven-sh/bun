@@ -579,25 +579,20 @@ fn convert_file_system_router_type(
     src: crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
-    // SAFETY: returned slices borrow into `arena`, which is moved into
-    // `UserOptions` and outlives every reader (self-referential pattern; see
-    // `bake_body::arena_dupe_z`). `'static` is a lie that Phase B threads to
-    // `'bump`.
-    #[inline]
-    unsafe fn erase<'a, T: ?Sized>(r: &'a T) -> &'static T {
-        core::mem::transmute::<&'a T, &'static T>(r)
-    }
+    // PORT NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
+    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
+    // own `Framework::from_js` / `resolve` use it identically. Phase B threads
+    // a real `'bump` through `bb::Framework`/`bb::FileSystemRouterType` and
+    // removes this together with `arena_erase`.
     fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
-        // SAFETY: see `erase` doc above.
-        unsafe { erase(arena.alloc_slice_copy(bytes)) }
+        bb::arena_erase(arena.alloc_slice_copy(bytes))
     }
     fn dupe_slice_of(
         arena: &bun_alloc::Arena,
         v: &[std::borrow::Cow<'static, [u8]>],
     ) -> &'static [&'static [u8]] {
         let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
-        // SAFETY: see `erase` doc above.
-        unsafe { erase(arena.alloc_slice_copy(&inner)) }
+        bb::arena_erase(arena.alloc_slice_copy(&inner))
     }
 
     bb::FileSystemRouterType {
@@ -770,9 +765,10 @@ impl ServerConfig {
             )?;
             // iter drops at scope end
 
-            let mut init_ctx_ = super::server_body::ServerInitContext {
-                // TODO(port): Zig used std.heap.ArenaAllocator here; ServerInitContext
-                // dropped its `arena` field in the Rust port (bake owns it instead).
+            let mut init_ctx_ = ServerInitContext {
+                // PORT NOTE: Zig threaded a `std.heap.ArenaAllocator` here; the
+                // Rust `ServerInitContext` dropped that field — bake owns the
+                // arena instead (created below and moved into `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
                 js_string_allocations: crate::bake::StringRefList::EMPTY,
@@ -781,16 +777,9 @@ impl ServerConfig {
             };
             let init_ctx = &mut init_ctx_;
             // errdefer { init_ctx.arena.deinit(); init_ctx.framework_router_list.deinit(); }
-            // — arena/Vec are owned locals; drop on `?` automatically. Ownership transfers
-            // to args.bake on the success path via mem::take below.
-            // This list is not used in the success case
-            // (dedupe_html_bundle_map drops at scope end)
-
-            let mut framework_router_list: Vec<crate::bake::framework_router::Type> = Vec::new();
-            // errdefer framework_router_list.deinit() — Vec drops automatically
-            let _ = &mut framework_router_list;
-            // TODO(port): `framework_router_list` is declared but unused in Zig too (shadowed by
-            // init_ctx.framework_router_list). Kept for diff fidelity; remove in Phase B.
+            // — arena/Vec are owned locals; drop on `?` automatically. Ownership
+            // transfers to args.bake on the success path via mem::take below.
+            // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // errdefer { for static_routes |r| r.deinit(); clearAndFree() }
             // — Vec<StaticRouteEntry> drops elements (which deref route) automatically on error.

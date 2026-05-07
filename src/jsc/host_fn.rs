@@ -249,14 +249,19 @@ impl IntoHostSetterReturn for JsResult<()> {
     #[inline]
     fn into_host_setter_return(self) -> JsResult<()> { self }
 }
-// Some Zig setters return `bool` (e.g. `Comment.setText` in html_rewriter.zig)
-// where the bool is always `true` on success — semantically identical to `void`.
-// Accept it here so the same body satisfies both the `#[bun_jsc::host_fn(setter)]`
-// proc-macro shim (which threads `JsResult<bool>` to `host_fn_setter_result`) and
-// the `generated_classes.rs` thunk (which calls `host_setter_result` directly).
+// Some Zig setters return `bool` directly (e.g. `Image.setBackend`): the
+// generated Zig thunk passes the bool through to C++ with no exception-scope
+// wrap, so `false` is the ABI signal for "exception already thrown" (the
+// `catch return false` idiom). The Rust thunk *does* wrap in an
+// `ExceptionValidationScope` and re-derives the ABI bool from `JsResult`, so
+// `false` must round-trip to `Err(Thrown)` here — discarding it (as `Ok(())`)
+// makes `host_setter_result` return `true` and trips
+// `assert_exception_presence_matches(false)` while an exception is pending.
 impl IntoHostSetterReturn for bool {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { Ok(()) }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        if self { Ok(()) } else { Err(JsError::Thrown) }
+    }
 }
 impl IntoHostSetterReturn for JsResult<bool> {
     #[inline]

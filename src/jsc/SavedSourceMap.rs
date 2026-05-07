@@ -588,10 +588,11 @@ impl SavedSourceMap {
 
         let mapping = match parse.mapping {
             Some(m) => m,
-            None => map.find_mapping(
-                SourceMap::Ordinal::from_zero_based(line.zero_based()),
-                SourceMap::Ordinal::from_zero_based(column.zero_based()),
-            )?,
+            // Spec SavedSourceMap.zig:343 — pass `line`/`column` straight
+            // through. `SourceMap::Ordinal` is a re-export of `bun_core::Ordinal`;
+            // round-tripping via `from_zero_based(x.zero_based())` debug-asserts
+            // on the legitimate INVALID (-1) sentinel.
+            None => map.find_mapping(line, column)?,
         };
 
         // TODO(b2-blocked): `Lookup::source_map` is `Option<&'a ParsedSourceMap>`

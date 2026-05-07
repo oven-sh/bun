@@ -4812,10 +4812,11 @@ impl VirtualMachine {
                     frame.source_url.deref();
                     frame.source_url = source_url;
                 }
-                frame.position.line =
-                    bun_core::Ordinal::from_zero_based(lookup.mapping.original.lines.zero_based());
-                frame.position.column =
-                    bun_core::Ordinal::from_zero_based(lookup.mapping.original.columns.zero_based());
+                // Spec VirtualMachine.zig:3022 — direct copy; both sides are
+                // `bun_core::Ordinal`. A `from_zero_based` round-trip would
+                // debug-assert on the valid INVALID (-1) sentinel.
+                frame.position.line = lookup.mapping.original.lines;
+                frame.position.column = lookup.mapping.original.columns;
                 frame.remapped = true;
             } else {
                 frame.remapped = true;
@@ -5105,10 +5106,10 @@ impl VirtualMachine {
                 exception.collect_source_lines(error_instance, global);
             }
 
-            frames[top].position.line =
-                bun_core::Ordinal::from_zero_based(mapping.original.lines.zero_based());
-            frames[top].position.column =
-                bun_core::Ordinal::from_zero_based(mapping.original.columns.zero_based());
+            // Spec VirtualMachine.zig:3205 — direct copy; both sides are
+            // `bun_core::Ordinal`.
+            frames[top].position.line = mapping.original.lines;
+            frames[top].position.column = mapping.original.columns;
             exception.remapped = true;
             frames[top].remapped = true;
 
@@ -5173,10 +5174,9 @@ impl VirtualMachine {
                     }
                     let mapping = lookup.mapping;
                     frames[i].remapped = true;
-                    frames[i].position.line =
-                        bun_core::Ordinal::from_zero_based(mapping.original.lines.zero_based());
-                    frames[i].position.column =
-                        bun_core::Ordinal::from_zero_based(mapping.original.columns.zero_based());
+                    // Spec VirtualMachine.zig:3257 — direct copy.
+                    frames[i].position.line = mapping.original.lines;
+                    frames[i].position.column = mapping.original.columns;
                 }
             }
         }

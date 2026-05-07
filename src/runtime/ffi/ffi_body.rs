@@ -2079,11 +2079,14 @@ impl Function {
     }
 
     pub fn ffi_header() -> &'static [u8] {
-        // TODO(port): runtimeEmbedFile fallback when codegen_embed is off
-        if cfg!(feature = "codegen_embed") {
+        // Port of `Function.ffiHeader` (ffi.zig:1517).
+        // `Environment.codegen_embed` is a build-time const, not a Cargo feature —
+        // the previous `cfg!(feature = "codegen_embed")` was always-false and fell
+        // through to the panicking fn-form `runtime_embed_file`.
+        if bun_core::Environment::CODEGEN_EMBED {
             include_bytes!("./FFI.h")
         } else {
-            bun_core::runtime_embed_file(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h").as_bytes()
+            bun_core::runtime_embed_file!(bun_core::EmbedKind::Src, "runtime/ffi/FFI.h").as_bytes()
         }
     }
 

@@ -981,11 +981,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // Zig: `core::mem::take` on a Vec. We can't move out of `&mut Class`;
-        // shallow-read the list and replace with empty (arena owns the buffer).
-        // SAFETY: Vec is POD; arena owns buffer for 'a.
-        let class_decorators: ExprNodeList = unsafe { core::ptr::read(&raw const class.ts_decorators) };
-        unsafe { core::ptr::write(&raw mut class.ts_decorators, ExprNodeList::default()) };
+        // Zig: `const class_decorators = class.ts_decorators; class.ts_decorators = .{};`
+        // — a shallow `BabyList` copy. In Rust `ExprNodeList = Vec<Expr>` owns its
+        // buffer, so this MUST be a real ownership transfer; the previous
+        // `ptr::read` left a second owner in the local that dropped at function
+        // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
+        // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
+        let mut class_decorators: ExprNodeList = core::mem::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1013,8 +1015,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             dec_counter += 1;
             let cdr = p.new_sym(js_ast::symbol::Kind::Other, b"_dec");
             class_dec_ref = Some(cdr);
-            // SAFETY: shallow-reborrow the same arena buffer; never grown.
-            let items: ExprNodeList = unsafe { core::ptr::read(&raw const class_decorators) };
+            // Move ownership into the AST node — `class_decorators` is not read
+            // again on this branch (Phase-5's else-arm only runs when
+            // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
+            let items = core::mem::take(&mut class_decorators);
             let arr = p.new_expr(E::Array { items, ..Default::default() }, loc);
             if is_expr {
                 let binding = p.b(B::Identifier { r#ref: cdr }, loc);
@@ -1731,8 +1735,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             cls_dec_args.push(if let Some(cdr) = class_dec_ref {
                 p.use_ref(cdr, loc)
             } else {
-                // SAFETY: see Phase-2 array note.
-                let items: ExprNodeList = unsafe { core::ptr::read(&raw const class_decorators) };
+                // `class_dec_ref` is `None` ⇒ `class_decorators_len == 0`, so
+                // this is an empty list. Still `take` (not `ptr::read`) so the
+                // local can never own a second copy of a live buffer.
+                let items = core::mem::take(&mut class_decorators);
                 p.new_expr(E::Array { items, ..Default::default() }, loc)
             });
             cls_dec_args.push(if is_expr {

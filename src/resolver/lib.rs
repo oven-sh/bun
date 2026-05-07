@@ -3128,6 +3128,21 @@ use ::bun_install_types::resolver_hooks::{
 // `Transpiler::get_package_manager`'s return type without a direct
 // `bun_install_types` dep (LAYERING: pass-through, no new edge).
 pub use ::bun_install_types::resolver_hooks::AutoInstaller as PackageManagerTrait;
+
+// LAYERING: `PackageManager.initWithRuntime` (Zig resolver.zig:540) lives in
+// `bun_install`, which depends on this crate. The lazy-init body is defined
+// `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
+// (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
+// type-erased `?*Api.BunInstall` (`self.opts.install`); `env` is the
+// type-erased `*DotEnv.Loader` (lifetime-erased — the install crate stores it
+// as a raw `NonNull<Loader<'static>>`).
+unsafe extern "Rust" {
+    fn __bun_resolver_init_package_manager(
+        log: *mut logger::Log,
+        install: *const (),
+        env: *mut core::ffi::c_void,
+    ) -> NonNull<dyn AutoInstaller>;
+}
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use crate::cache::Set as CacheSet;
 
@@ -4624,21 +4639,43 @@ impl<'a> Resolver<'a> {
 
     /// Port of resolver.zig `getPackageManager`. The Zig spec lazily calls
     /// `PackageManager.initWithRuntime` here; in the Rust crate graph that
-    /// would be a `bun_resolver → bun_install` cycle, so the
-    /// runtime/bundler (the one place that flips `opts.global_cache` on) is
-    /// responsible for constructing the `PackageManager`, wiring its
-    /// `on_wake` handler, and assigning [`Self::package_manager`] BEFORE the
-    /// first resolve. This accessor only unwraps that field. Reached from the
-    /// auto-install path (`load_node_modules` global-cache block) when
+    /// would be a `bun_resolver → bun_install` cycle, so the lazy init is
+    /// dispatched through the link-time `extern "Rust"` factory
+    /// [`__bun_resolver_init_package_manager`] (defined `#[no_mangle]` in
+    /// `bun_install::auto_installer`). The factory performs
+    /// `HTTPThread.init` + `PackageManager.initWithRuntime` and returns the
+    /// process-static singleton as a `dyn AutoInstaller`. We then wire
+    /// `on_wake` and cache the pointer — exactly the Zig body. Reached from
+    /// the auto-install path (`load_node_modules` global-cache block) when
     /// [`use_package_manager`] is `true`.
     pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
-        self.package_manager
-            .expect(
-                "auto-install enabled (opts.global_cache) but Resolver.package_manager was not \
-                 set; the caller that enabled auto-install must construct PackageManager \
-                 (initWithRuntime) and assign it before resolving",
-            )
+        if let Some(pm) = self.package_manager {
+            return pm.as_ptr();
+        }
+        // Zig: `bun.HTTPThread.init(&.{}); const pm = PackageManager.initWithRuntime(
+        //     this.log, this.opts.install, bun.default_allocator, .{}, this.env_loader.?);`
+        let env = self
+            .env_loader
+            .expect("Resolver.env_loader must be set before auto-install")
             .as_ptr()
+            // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
+            // `init_with_runtime` only borrows it for the synchronous init
+            // (the static `PackageManager` retains a raw `NonNull<Loader>`,
+            // matching Zig's `*DotEnv.Loader` aliasing).
+            .cast::<core::ffi::c_void>();
+        // SAFETY: `__bun_resolver_init_package_manager` is defined
+        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
+        // final binary; `self.log` / `self.opts.install` / `env` point at
+        // process-lifetime storage (Transpiler-owned). The returned pointer
+        // names the `PackageManager` singleton (`'static`).
+        let pm: NonNull<dyn AutoInstaller> = unsafe {
+            __bun_resolver_init_package_manager(self.log, self.opts.install, env)
+        };
+        // Zig: `pm.onWake = this.onWakePackageManager;`
+        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
+        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager.clone()) };
+        self.package_manager = Some(pm);
+        pm.as_ptr()
     }
 
     #[inline]

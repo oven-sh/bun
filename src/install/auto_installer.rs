@@ -384,3 +384,56 @@ impl hooks::AutoInstaller for PackageManager {
         <dependency::Tag as dependency::TagExt>::infer(dep)
     }
 }
+
+// ─── Lazy factory (resolver → install link-time hook) ─────────────────────
+//
+// Port of resolver.zig:538 `getPackageManager`'s `orelse` arm:
+//
+//     bun.HTTPThread.init(&.{});
+//     const pm = PackageManager.initWithRuntime(
+//         this.log, this.opts.install, bun.default_allocator, .{}, this.env_loader.?);
+//
+// `bun_resolver` cannot name `PackageManager` (it would create a dep cycle),
+// so it declares this `extern "Rust"` and we provide the body here. The
+// returned pointer is the process-static `PackageManager` singleton (`get()`),
+// upcast to the `dyn AutoInstaller` trait object the resolver stores.
+//
+// SAFETY (callee contract):
+//   • `log` is the resolver's `*mut logger::Log` (Transpiler-owned,
+//     process-lifetime; `init_with_runtime` stores it raw).
+//   • `install` is the type-erased `Option<&Api::BunInstall>` projected from
+//     `BundleOptions.install` (`*const ()` — null ⇔ None). The pointee is the
+//     CLI-owned `Box<BunInstall>` (process-lifetime).
+//   • `env` is the type-erased `*mut DotEnv::Loader` (Transpiler-owned,
+//     process-lifetime). `init_with_runtime` stores it as
+//     `NonNull<Loader<'static>>`; the lifetime erasure matches Zig's raw
+//     `*DotEnv.Loader`.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_resolver_init_package_manager(
+    log: *mut bun_logger::Log,
+    install: *const (),
+    env: *mut core::ffi::c_void,
+) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
+    // Zig: `bun.HTTPThread.init(&.{})` — idempotent.
+    bun_http::http_thread::init(&Default::default());
+
+    // SAFETY: `install` is either null or points at a live `Api::BunInstall`
+    // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
+    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
+        unsafe { install.cast::<crate::bun_schema::api::BunInstall>().as_ref() };
+    // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
+    // pointers (resolver `.expect`s `env_loader` before calling).
+    let log_ref: &mut bun_logger::Log = unsafe { &mut *log };
+    let env_ref: &mut bun_dotenv::Loader<'static> =
+        unsafe { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
+
+    let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
+        log_ref,
+        bun_install,
+        crate::package_manager::CommandLineArguments::default(),
+        env_ref,
+    );
+    // SAFETY: `init_with_runtime` returns the non-null `holder::RAW_PTR`
+    // singleton; upcast to the trait object the resolver stores.
+    unsafe { core::ptr::NonNull::new_unchecked(pm as *mut dyn hooks::AutoInstaller) }
+}

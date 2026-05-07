@@ -18,7 +18,7 @@ use bun_jsc::AnyTask::{AnyTask, New as AnyTaskNew};
 use bun_jsc::event_loop::EventLoop;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP};
-use bun_ptr::{IntrusiveArc, RefCount, RefCounted};
+use bun_ptr::{IntrusiveArc, RefCount, RefCounted, ScopedRef};
 use bun_str::{self as strings, String as BunString};
 use bun_sys::Fd;
 use bun_threading::WorkPool;
@@ -725,11 +725,11 @@ impl<'a> JSBundleCompletionTask<'a> {
 
     pub fn on_complete(this: &mut Self) -> core::result::Result<(), jsc::JsTerminated> {
         let global_this = this.global_this;
-        // Zig: `defer this.deref();` — decrement intrusive refcount on scope exit.
-        let _deref_guard = scopeguard::guard((), |_| {
-            // TODO(port): IntrusiveArc::deref(this) — needs the Arc handle, not &mut Self.
-            // The AnyTask callback owns one ref; dropping it here matches Zig.
-        });
+        // Zig: `defer this.deref();` — the AnyTask callback owns one ref taken when the task was
+        // scheduled; adopt it into a ScopedRef so the intrusive refcount is decremented on every
+        // exit path (early returns included).
+        // SAFETY: `this` points to a live Self with one outstanding ref owned by this callback.
+        let _owned_ref = unsafe { ScopedRef::adopt(this as *mut Self) };
 
         this.poll_ref.unref(global_this.bun_vm());
         if this.cancelled {

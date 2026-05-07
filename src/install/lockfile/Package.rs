@@ -1798,8 +1798,8 @@ impl Package<u64> {
                             path.slice,
                             dependency::version::Tag::Workspace,
                             &path,
-                            Some(log),
-                            Some(pm),
+                            Some(&mut *log),
+                            Some(&mut *pm),
                         ) {
                             dependency_version.tag = dep.tag;
                             dependency_version.value = dep.value;

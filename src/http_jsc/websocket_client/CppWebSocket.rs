@@ -180,6 +180,34 @@ impl CppWebSocket {
     }
 }
 
+/// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
+///
+/// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
+/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
+/// pattern when the ref must outlive the constructing scope (e.g. stored on a
+/// queued task).
+pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
+
+impl CppWebSocketRef {
+    /// Take a pending-activity ref on `ws`.
+    ///
+    /// # Safety
+    /// `ws` must point to a live C++ `WebCore::WebSocket` that outlives the
+    /// returned guard.
+    pub unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
+        // SAFETY: caller contract — `ws` is live.
+        unsafe { ws.as_ref() }.r#ref();
+        Self(ws)
+    }
+}
+
+impl Drop for CppWebSocketRef {
+    fn drop(&mut self) {
+        // SAFETY: `new()` requires the pointee to outlive this guard.
+        unsafe { self.0.as_ref() }.unref();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http_jsc/websocket_client/CppWebSocket.zig (96 lines)

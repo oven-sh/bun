@@ -1459,7 +1459,7 @@ pub mod formatters {
             // here to keep the borrow valid until copied.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                let fragment_str = url.fragment_identifier();
+                let fragment_str = OwnedString::new(url.fragment_identifier());
                 fragment_utf8 = fragment_str.to_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
@@ -1516,7 +1516,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = url.fragment_identifier();
+            let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let fragment = fragment_utf8.slice();
             let committish: Option<&[u8]> =
@@ -1568,7 +1568,7 @@ pub mod formatters {
                 return Ok(None);
             }
 
-            let fragment_str = url.fragment_identifier();
+            let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
             let committish = fragment_utf8.slice();
 

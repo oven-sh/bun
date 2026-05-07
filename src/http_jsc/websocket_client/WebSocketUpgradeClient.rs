@@ -840,8 +840,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // Ref the tunnel to keep it alive during this call
                     // (in case the WebSocket client closes during processing)
                     // SAFETY: `p` holds a live ref on `tunnel`.
-                    unsafe { (*tp).ref_() };
-                    let _g = scopeguard::guard((), move |_| unsafe { WebSocketProxyTunnel::deref(tp) });
+                    let _g = unsafe { WebSocketProxyTunnel::ref_scope(tp) };
                     // SAFETY: ref guard above keeps the tunnel live.
                     unsafe { WebSocketProxyTunnel::receive(tp, data) };
                 }

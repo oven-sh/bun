@@ -135,7 +135,7 @@ type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 /// (Zig: `this.ref(); defer this.deref();`). Constructed via
 /// [`WebSocketProxyTunnel::ref_scope`]; releases the ref on Drop.
 #[must_use = "dropping immediately releases the scoped ref"]
-struct TunnelRefGuard(*mut WebSocketProxyTunnel);
+pub struct TunnelRefGuard(*mut WebSocketProxyTunnel);
 
 impl Drop for TunnelRefGuard {
     #[inline]
@@ -179,7 +179,7 @@ impl WebSocketProxyTunnel {
     /// must not outlive the allocation (the `ref()` it takes guarantees this
     /// as long as no other code over-releases).
     #[inline]
-    unsafe fn ref_scope(this: *mut Self) -> TunnelRefGuard {
+    pub unsafe fn ref_scope(this: *mut Self) -> TunnelRefGuard {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_() };
         // PORT NOTE: captures raw *mut (not &self) so the guard does not borrow

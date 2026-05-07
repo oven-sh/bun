@@ -28,21 +28,29 @@ pub struct PendingConnect {
     next: *mut PendingConnect,
 }
 
+impl Drop for PendingConnect {
+    fn drop(&mut self) {
+        // Invariant: a constructed PendingConnect holds exactly one ref on `session`
+        // (taken in `register`); release it here.
+        ClientSession::deref(self.session);
+    }
+}
+
 impl PendingConnect {
     pub fn register(
         session: *mut ClientSession,
         pc: *mut quic::PendingConnect,
         l: *mut uws::Loop,
     ) {
+        // SAFETY: caller passes a live intrusive-refcounted ClientSession; PendingConnect
+        // holds one ref from construction until Drop.
+        unsafe { (*session).ref_() };
         let self_ = Box::into_raw(Box::new(PendingConnect {
             session,
             pc,
             loop_ptr: l,
             next: ptr::null_mut(),
         }));
-        // SAFETY: caller passes a live intrusive-refcounted ClientSession; we hold one ref
-        // from here until on_dns_resolved runs.
-        unsafe { (*session).ref_() };
         // SAFETY: pc is a live quic::PendingConnect C handle; addrinfo() yields its addrinfo
         // request slot which the DNS layer fills. self_ is the Box we just leaked above and
         // is consumed by on_dns_resolved (via the global cache's notify path).

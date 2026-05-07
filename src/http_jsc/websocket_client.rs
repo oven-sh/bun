@@ -25,7 +25,7 @@ use bun_string::{self as bstr_mod, strings, ZigString};
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
-use self::cpp_websocket::CppWebSocket;
+use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
@@ -2237,7 +2237,9 @@ export_websocket_client!(
 
 pub struct InitialDataHandler<const SSL: bool> {
     pub adopted: Option<NonNull<WebSocket<SSL>>>,
-    pub ws: *mut CppWebSocket,
+    /// Pending-activity ref taken in `init()`/`init_with_tunnel()`; released
+    /// (via `Drop`) when [`handle_without_deinit`] consumes `adopted`.
+    pub ws: Option<CppWebSocketRef>,
     pub slice: Box<[u8]>,
 }
 
@@ -2257,12 +2259,11 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // SAFETY: `adopted` is a backref to a live WebSocket (Box::into_raw
         // provenance); raw field write of a `Copy`-sized `Option<NonNull<_>>`.
         unsafe { core::ptr::addr_of_mut!((*ws_ptr).initial_data_handler).write(None) };
-        let ws = self.ws;
-        // defer ws.unref() → scopeguard
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: ws is a valid CppWebSocket* (ref taken in init())
-            unsafe { (*ws).unref() };
-        });
+        // Zig: `defer ws.unref()` — RAII: take the owned ref so it drops at
+        // scope exit. Paired with the `adopted.take()` above so the ref is
+        // released exactly once even when this fn is later re-called with
+        // `adopted == None` (early return leaves `ws` already `None`).
+        let _ws_ref = self.ws.take();
 
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
         // SAFETY: `ws_ptr` is live (see above); brief shared borrows for

@@ -704,10 +704,8 @@ impl JSValkeyClient {
             0
         };
 
-        // TODO(port): bun_core::analytics::Features has no VALKEY counter yet
-        // (Zig: `bun.Analytics.Features.valkey += 1`). Add to the `feat!` bag
-        // in src/bun_core/Global.rs when that file is touched.
-        // bun_core::analytics::Features::valkey_inc(1);
+        bun_core::analytics::Features::VALKEY
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // SAFETY: _subscription_ctx is initialized later by `create()`.
         let subscription_ctx_uninit: SubscriptionCtx = unsafe { core::mem::zeroed() };
@@ -800,26 +798,17 @@ impl JSValkeyClient {
         let vm: &'static VirtualMachine =
             unsafe { &*(global_object.bun_vm() as *const VirtualMachine) };
 
-        // Make a copy of connection_strings to avoid double-free
+        // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
+        // into the single `connection_strings` allocation, so the spec dupes
+        // `connection_strings` once and `rebaseSlice`s the sub-slices into the copy.
+        // The Rust `ValkeyClient` (see valkey.rs:290-299) instead owns each field
+        // as an independent `Box<[u8]>`, so the rebase arithmetic would compute a
+        // garbage offset and read OOB. Clone each owned buffer directly.
         let connection_strings_copy: Box<[u8]> =
             Box::<[u8]>::from(&self.client.connection_strings[..]);
-
-        // Note that there is no need to copy username, password and address since the copies live
-        // within the connection_strings buffer.
-        let base_ptr = self.client.connection_strings.as_ptr();
-        let new_base = connection_strings_copy.as_ptr();
-        // SAFETY: username/password/hostname are slices into `connection_strings`;
-        // `connection_strings_copy` is a byte-identical copy with the same length.
-        let username: Box<[u8]> = Box::from(unsafe {
-            bun_alloc::memory::rebase_slice(&self.client.username, base_ptr, new_base)
-        });
-        let password: Box<[u8]> = Box::from(unsafe {
-            bun_alloc::memory::rebase_slice(&self.client.password, base_ptr, new_base)
-        });
-        let orig_hostname = self.client.address.hostname();
-        let hostname: Box<[u8]> = Box::from(unsafe {
-            bun_alloc::memory::rebase_slice(orig_hostname, base_ptr, new_base)
-        });
+        let username: Box<[u8]> = Box::<[u8]>::from(&self.client.username[..]);
+        let password: Box<[u8]> = Box::<[u8]>::from(&self.client.password[..]);
+        let hostname: Box<[u8]> = Box::<[u8]>::from(self.client.address.hostname());
         // TODO: we could ref count it instead of cloning it
         let tls: valkey::TLS = match &self.client.tls {
             valkey::TLS::None => valkey::TLS::None,
@@ -1897,9 +1886,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client.on_open(Self::_socket(socket))
     }
 
-    fn on_handshake_<S>(
+    pub fn on_handshake_(
         this: &mut JSValkeyClient,
-        _socket: S, // anytype — opaque, body never calls a method on it
+        _socket: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsTerminatedResult<()> {
@@ -2038,21 +2027,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     // `pub const onHandshake = if (ssl) onHandshake_ else null;`
-    // TODO(port): conditional associated const fn pointer; Phase B can specialize via
-    // `if SSL { Some(Self::on_handshake_) } else { None }` at registration site.
     pub const ON_HANDSHAKE: Option<
         fn(
             &mut JSValkeyClient,
-            (),
+            SocketType<SSL>,
             i32,
             uws::us_bun_verify_error_t,
         ) -> JsTerminatedResult<()>,
-    > = if SSL {
-        // TODO(port): cannot directly cast generic-anytype fn here; placeholder.
-        None
-    } else {
-        None
-    };
+    > = if SSL { Some(Self::on_handshake_) } else { None };
 
     pub fn on_close(
         this: &mut JSValkeyClient,

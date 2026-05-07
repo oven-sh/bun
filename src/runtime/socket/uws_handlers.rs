@@ -215,6 +215,41 @@ impl<const SSL: bool> NsSocketEvents<mysql::js_my_sql_connection::JSMySQLConnect
 impl<const SSL: bool> NsSocketEvents<js_valkey::JSValkeyClient, SSL>
     for js_valkey::SocketHandler<SSL>
 {
+    fn on_open(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Ok(Self::on_open(this, s)?)
+    }
+    fn on_data(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, data: &[u8]) -> bun_jsc::JsResult<()> {
+        Self::on_data(this, s, data);
+        Ok(())
+    }
+    fn on_writable(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_writable(this, s);
+        Ok(())
+    }
+    fn on_close(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, code: i32, reason: Option<*mut c_void>) -> bun_jsc::JsResult<()> {
+        Self::on_close(this, s, code, reason);
+        Ok(())
+    }
+    fn on_timeout(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_timeout(this, s);
+        Ok(())
+    }
+    fn on_end(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
+        Self::on_end(this, s);
+        Ok(())
+    }
+    fn on_connect_error(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, code: i32) -> bun_jsc::JsResult<()> {
+        Ok(Self::on_connect_error(this, s, code)?)
+    }
+    fn on_handshake(this: &mut js_valkey::JSValkeyClient, s: NewSocketHandler<SSL>, ok: i32, err: us_bun_verify_error_t) -> bun_jsc::JsResult<()> {
+        // Zig: `pub const onHandshake = if (ssl) onHandshake_ else null;` — the
+        // `null` arm meant "leave the slot unbound" so the dispatcher's no-op
+        // default fires for plain TCP.
+        match Self::ON_HANDSHAKE {
+            Some(f) => Ok(f(this, s, ok, to_uws_verify_err(err))?),
+            None => Ok(()),
+        }
+    }
 }
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────

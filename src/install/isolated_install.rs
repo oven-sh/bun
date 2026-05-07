@@ -1971,6 +1971,19 @@ pub fn install_isolated_packages(
             };
         }
 
+        // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside
+        // `appendStorePath` (worker threads, via `*const Installer`). Rust
+        // can't take `&mut PackageManager` from `&self` there, so ensure the
+        // global link dir once on the main thread before any `.symlink`
+        // resolution can be reached by a task. Guarded so installs without
+        // `link:` deps don't touch the global dir (matches Zig laziness).
+        if pkg_resolutions
+            .iter()
+            .any(|r| r.tag == ResolutionTag::Symlink)
+        {
+            let _ = crate::package_manager_real::directories::global_link_dir_path(manager);
+        }
+
         // add the pending task count upfront
         manager.increment_pending_tasks(u32::try_from(store.entries.len()).unwrap());
         for _entry_id in 0..store.entries.len() {

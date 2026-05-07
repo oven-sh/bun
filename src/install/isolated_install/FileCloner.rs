@@ -3,14 +3,17 @@ use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
-pub struct FileCloner {
+// PORT NOTE: reshaped — Zig owns `cache_dir_subpath: bun.AutoRelPath` by struct
+// copy; Rust borrows so the caller's path survives a clonefile→hardlink
+// fallback (`continue 'backend` in `Installer::Task::run`).
+pub struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: AutoRelPath,
+    pub cache_dir_subpath: &'a AutoRelPath,
     // TODO(port): bun.Path(.{ .sep = .auto, .unit = .os }) — const-generic options on bun_paths::Path
     pub dest_subpath: Path,
 }
 
-impl FileCloner {
+impl FileCloner<'_> {
     fn clonefileat(&mut self) -> sys::Result<()> {
         sys::clonefileat(
             self.cache_dir,

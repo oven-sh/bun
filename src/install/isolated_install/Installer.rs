@@ -677,7 +677,7 @@ impl From<Step> for &'static str {
             Step::SymlinkDependencyBinaries => "symlink_dependency_binaries",
             Step::RunPreinstall => "run_preinstall",
             Step::Binaries => "binaries",
-            Step::RunPostInstallAndPrePostPrepare => "run_postinstall_and_pre_post_prepare",
+            Step::RunPostInstallAndPrePostPrepare => "run (post)install and (pre/post)prepare",
             Step::Done => "done",
             Step::Blocked => "blocked",
         }
@@ -1127,7 +1127,7 @@ impl Task {
 
                                     let mut cloner = FileCloner {
                                         cache_dir,
-                                        cache_dir_subpath: pkg_cache_dir_subpath,
+                                        cache_dir_subpath: &pkg_cache_dir_subpath,
                                         dest_subpath,
                                     };
 
@@ -1153,7 +1153,7 @@ impl Task {
                                     }
 
                                     step = self.next_step(current_step);
-                                    continue;
+                                    continue 'step;
                                 }
                             }
 
@@ -1209,7 +1209,7 @@ impl Task {
                                 }
 
                                 step = self.next_step(current_step);
-                                continue;
+                                continue 'step;
                             }
 
                             // fallthrough copyfile
@@ -1261,7 +1261,7 @@ impl Task {
                                 }
 
                                 step = self.next_step(current_step);
-                                continue;
+                                continue 'step;
                             }
                         }
                     }
@@ -2534,11 +2534,17 @@ impl<'a> Installer<'a> {
                 buf.append(unsafe { pkg_res.value.workspace }.slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // PORT NOTE: Zig `globalLinkDirPath()` lazily initializes; this
-                // accessor takes `&mut PackageManager`, but `append_store_path`
-                // is called from `&self` contexts after the link dir has already
-                // been ensured (see `Installer::run`). Read the cached field.
+                // PORT NOTE: reshaped — Zig `globalLinkDirPath()` lazily ensures
+                // the dir and mutates `*PackageManager`. `append_store_path` is
+                // `&self` (matching Zig `*const Installer`) and may run on worker
+                // threads, so the lazy init is hoisted to the main-thread caller
+                // (`isolated_install::install_packages`, before any `start_task`).
+                // Reading the cached field here is then equivalent.
                 let symlink_dir_path: &[u8] = &self.manager.global_link_dir_path;
+                debug_assert!(
+                    !symlink_dir_path.is_empty(),
+                    "global_link_dir_path must be ensured before tasks start",
+                );
 
                 buf.clear();
                 buf.append(symlink_dir_path);

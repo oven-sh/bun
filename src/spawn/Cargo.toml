@@ -7,6 +7,7 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
+bstr.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 scopeguard.workspace = true

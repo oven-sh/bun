@@ -34,21 +34,10 @@ pub use bun_jsc::{
     StringJsc, ZigStringJsc, bun_string_jsc, host_fn,
 };
 
-/// `bun_jsc::IntegerRange` (src/jsc/JSGlobalObject.rs:1478) — comptime-range
-/// options for `validate_integer_range` / `validate_big_int_range`. Mirrored
-/// locally because `bun_jsc` doesn't re-export it at the crate root.
-#[derive(Clone, Copy)]
-pub struct IntegerRange {
-    pub min: i128,
-    pub max: i128,
-    pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
-}
-impl Default for IntegerRange {
-    fn default() -> Self {
-        Self { min: i128::MIN, max: i128::MAX, field_name: b"", always_allow_zero: false }
-    }
-}
+/// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
+/// inherent `JSGlobalObject::{validate_integer_range, validate_big_int_range}`
+/// take it directly, so the previous local mirror is gone.
+pub use bun_jsc::IntegerRange;
 
 /// Back-compat alias — earlier ports named this `ErrBuilder`.
 pub type ErrBuilder<'a> = bun_jsc::ErrorBuilder<'a>;

@@ -768,16 +768,13 @@ fn get_ast(
         Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
             let _trace = perf::trace("Bundler.ParseJS");
             // PORT NOTE: `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
-            // Zig (.zig:335-342) passes the *same* `opts` to the empty-AST fallback;
-            // since Rust moves `opts` into `.parse()`, capture every field
-            // `new_lazy_export_ast` reads (the `&'a mut` macro_context is not
-            // consulted on that path) and rebuild a faithful `ParserOptions` on
-            // the fallback branch.
+            // Zig (.zig:335-342) passes the *same* `opts` (bitwise copy) to the
+            // empty-AST fallback; since Rust moves `opts` into `.parse()`,
+            // snapshot a faithful field-by-field copy via
+            // `Options::clone_for_lazy_export` (co-located with the struct so
+            // field drift is a hard error) before the move.
+            let fallback_opts = opts.clone_for_lazy_export();
             let module_type = opts.module_type;
-            let output_format = opts.output_format;
-            let bundle = opts.bundle;
-            let tree_shaking = opts.tree_shaking;
-            let code_splitting = opts.code_splitting;
             return if let Some(res) = (crate::cache::JavaScript {}).parse(
                 bump, // TODO(port): zig passed transpiler.allocator
                 opts,
@@ -796,20 +793,10 @@ fn get_ast(
                         unreachable!("bundler parse never yields Cached/AlreadyBundled")
                     }
                 }
+            } else if module_type == options::ModuleType::Esm {
+                get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
             } else {
-                let fallback_opts = ParserOptions {
-                    module_type,
-                    output_format,
-                    bundle,
-                    tree_shaking,
-                    code_splitting,
-                    ..ParserOptions::default()
-                };
-                if module_type == options::ModuleType::Esm {
-                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
-                } else {
-                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
-                }
+                get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
             };
             // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
             // to monomorphize the RootType. Expanded to two calls.

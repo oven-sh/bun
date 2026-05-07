@@ -150,7 +150,7 @@ pub fn testing_impl(
 
     let mut import_records = BabyList::<ImportRecord>::default();
     match StyleSheet::<DefaultAtRule>::parse(
-        &arena,
+        alloc,
         source.slice(),
         parser_options,
         Some(&mut import_records),
@@ -160,7 +160,7 @@ pub fn testing_impl(
             let (mut stylesheet, extra) = ret;
             let mut minify_options = MinifyOptions::default();
             minify_options.targets.browsers = browsers;
-            match stylesheet.minify(&arena, &minify_options, &extra) {
+            match stylesheet.minify(alloc, &minify_options, &extra) {
                 Ok(_) => {}
                 Err(err) => {
                     return Err(
@@ -172,7 +172,7 @@ pub fn testing_impl(
             let symbols = bun_logger::symbol::Map::init_list(Default::default());
             let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
-                &arena,
+                alloc,
                 PrinterOptions {
                     minify: match test_kind {
                         TestKind::Minify => true,

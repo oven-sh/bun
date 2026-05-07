@@ -204,10 +204,6 @@ function ClientRequest(input, options, cb) {
 
   this.flushHeaders = function () {
     if (!fetching) {
-      this[kAbortController] ??= new AbortController();
-      this[kAbortController].signal.addEventListener("abort", onAbort, {
-        once: true,
-      });
       startFetch();
     }
   };
@@ -284,6 +280,16 @@ function ClientRequest(input, options, cb) {
     }
 
     fetching = true;
+
+    // Every entry point that dispatches the request (send(), flushHeaders(),
+    // and the write() → pushChunk paths) must have an AbortController wired
+    // up before the fetch starts so that req.abort()/req.destroy()/timeouts
+    // and options.signal can cancel the in-flight request. Centralise that
+    // here so new callers cannot forget it.
+    if (!this[kAbortController]) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     const method = this[kMethod];
 
@@ -441,7 +447,15 @@ function ClientRequest(input, options, cb) {
                   res._dump();
                 }
               } finally {
-                maybeEmitClose();
+                if (self.finished) {
+                  maybeEmitClose();
+                } else {
+                  // Request body is still streaming (duplex); emitting
+                  // 'prefinish'/'close' now would fire before 'finish' (or
+                  // with no 'finish' at all). Defer until req.end() runs
+                  // and send() schedules maybeEmitFinish().
+                  deferredRequestClose = true;
+                }
                 if (res.statusCode === 304) {
                   res.complete = true;
                   maybeEmitClose();
@@ -567,11 +581,13 @@ function ClientRequest(input, options, cb) {
 
   let onEnd = () => {};
   let handleResponse: (() => void) | undefined = () => {};
+  // Set once handleResponse()'s nextTick has run and found the writable side
+  // still open; send() uses this to emit 'close' in the correct order after
+  // 'finish' once req.end() is eventually called.
+  let deferredRequestClose = false;
 
   const send = () => {
     this.finished = true;
-    this[kAbortController] ??= new AbortController();
-    this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
@@ -584,7 +600,13 @@ function ClientRequest(input, options, cb) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
     } finally {
-      process.nextTick(maybeEmitFinish.bind(this));
+      process.nextTick(() => {
+        maybeEmitFinish();
+        if (deferredRequestClose) {
+          deferredRequestClose = false;
+          maybeEmitClose();
+        }
+      });
     }
   };
 

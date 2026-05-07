@@ -573,14 +573,10 @@ impl Builtin {
     }
 }
 
-// Remaining body (~700 lines: redirect handling, stdin/stdout/stderr open,
-// write_failing_error_fmt, OutputSrc) — depends on IOWriter::enqueue,
-// bun_sys open flags. The gated include was removed (file never materialised);
-// port the remainder inline as the upstream pieces land.
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/Builtin.zig (1015 lines)
-//   confidence: medium (NodeId dispatch; from_argv0 + init wired)
-//   blocked_on: redirect-file open (IOWriter::init), write_failing_error_fmt
+//   source:     src/shell/Builtin.zig
+//   confidence: medium (NodeId dispatch; enqueue/enqueue_fmt wired to IOWriter)
+//   blocked_on: redirect-file open in init() (ast::RedirectFlags + Blob/ArrayBuf
+//               output variants — tracked separately)
 // ──────────────────────────────────────────────────────────────────────────

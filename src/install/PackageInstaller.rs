@@ -1982,12 +1982,17 @@ impl<'a> PackageInstaller<'a> {
                     .unwrap_or_oom();
             }
 
+            // PORT NOTE: reshaped for borrowck — `LazyPackageDestinationDir` borrows
+            // `&self.node_modules`, but this else-branch never reads `destination_dir`
+            // (it only `close()`s it at the end, which is a no-op for `NodeModulesPath`).
+            // Detach via raw ptr so subsequent `&mut self` calls type-check.
+            // SAFETY: BACKREF — `self.node_modules` is not moved/dropped in this branch.
             let mut destination_dir = LazyPackageDestinationDir::NodeModulesPath {
-                node_modules: &self.node_modules,
+                node_modules: unsafe { &*node_modules_ptr },
                 root_node_modules_dir: self.root_node_modules_folder,
             };
 
-            // TODO(port): `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
+            // PORT NOTE: `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
             // No early returns in this branch, so manual calls at end are equivalent.
 
             let dep = &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];

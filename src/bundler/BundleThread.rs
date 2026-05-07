@@ -308,7 +308,9 @@ impl<C: CompletionStruct> BundleThread<C> {
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
             unsafe { &mut *transpiler_ptr },
             bump,
-            bun_threading::work_pool::WorkPool::get(),
+            // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
+            // the impl can hand it to `BundleV2::init` (which stores `*mut`).
+            bun_threading::work_pool::WorkPool::get() as *const _ as *mut _,
         );
 
         // PORT NOTE: Zig's overlapping `defer { ast_memory_allocator.pop();

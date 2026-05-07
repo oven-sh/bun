@@ -354,11 +354,8 @@ pub use bun_sql_jsc::postgres as Postgres;
 pub use bun_sql_jsc::mysql as MySQL;
 pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 
-// ─── gated re-exports (target modules not yet declared in lib.rs) ────────────
-mod _gated_reexports {
-    pub use crate::webview::host_process as WebViewHostProcess;
-    pub use crate::webview::chrome_process as ChromeProcess;
-}
+pub use crate::webview::host_process as WebViewHostProcess;
+pub use crate::webview::chrome_process as ChromeProcess;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

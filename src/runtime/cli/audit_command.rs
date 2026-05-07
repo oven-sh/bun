@@ -130,22 +130,13 @@ impl AuditCommand {
         ));
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which
-        // aliases `*PackageManager` with `*Lockfile`. Detach the
-        // `Box<Lockfile>` from `pm` so `load_from_cwd` can take
-        // `Option<&mut PackageManager>` without overlapping the `&mut self`
-        // lockfile borrow.
+        // PORT NOTE: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
+        // is a self-referential split borrow; encapsulated upstream as
+        // `PackageManager::load_lockfile_from_cwd`.
         {
-            // SAFETY: `ctx.log` is set by `Command::create` for every
-            // subcommand and is non-null for the command's lifetime; no other
-            // `&mut Log` is live here.
-            let log = unsafe { &mut *ctx.log };
-            let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
-            let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
-            PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, pm);
-            drop(load_lockfile);
-            pm.lockfile = lockfile_box;
+            let log_level = pm.options.log_level;
+            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
+            PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
         }
 
         let dependency_tree = build_dependency_tree(pm)?;

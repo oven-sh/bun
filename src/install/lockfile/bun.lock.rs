@@ -1793,7 +1793,7 @@ pub fn parse_into_binary_lockfile(
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
             &root_pkg_exr,
-            log,
+            &mut *log,
             source,
             &mut optional_peers_buf,
             None,

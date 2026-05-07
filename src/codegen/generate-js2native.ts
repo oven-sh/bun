@@ -260,7 +260,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 //
 // Each thunk calls the hand-ported Rust function directly at
 // `crate::<derived-from-zig-path>::<snake_case(symbol)>` — no trait, no
-// `unimplemented!()`. A missing function is a compile error.
+// runtime panic fallback. A missing function is a compile error.
 // ──────────────────────────────────────────────────────────────────────────
 export function getJS2NativeRust() {
   // Symbols already hand-exported in src/ (via `export_host_fn!` or

@@ -1557,7 +1557,7 @@ impl NodeHTTPResponse {
             if self.body_read_ref.has {
                 self.body_read_ref.unref(bun_vm_mut(global_object));
             }
-            return Ok(true);
+            return;
         }
 
         js::on_data_set_cached(

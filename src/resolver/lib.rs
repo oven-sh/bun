@@ -4461,13 +4461,10 @@ impl<'a> Resolver<'a> {
         if self.opts.mark_builtins_as_external {
             if import_path.starts_with(b"node:")
                 || import_path.starts_with(b"bun:")
-                // TYPE_ONLY(b0): HardcodedModule/AliasOptions relocated bun_jsc::module_loader → bun_options_types (T3)
-                || bun_options_types::module_loader::HardcodedModule::Alias::has(
+                || HardcodedAlias::has(
                     import_path,
                     self.opts.target,
-                    bun_options_types::module_loader::AliasOptions {
-                        rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
-                    },
+                    HardcodedAliasCfg { rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests },
                 )
             {
                 self.extension_order = original_order;
@@ -4609,11 +4606,16 @@ impl<'a> Resolver<'a> {
                         let joined = bun_paths::join_abs_string_buf(source_dir, buf, &[import_path], bun_paths::Platform::Loose);
 
                         // Support relative paths in the graph
-                        if let Some(file) = graph.find_assume_standalone_path(joined) {
+                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
+                            // Intern: trait borrows into the graph; `Path::init`
+                            // needs `'static` (DirnameStore-backed).
+                            let file_name = Fs::file_system::DirnameStore::instance()
+                                .append_slice(file_name)
+                                .expect("unreachable");
                             self.extension_order = original_order;
                             return ResultUnion::Success(Result {
                                 import_kind: kind,
-                                path_pair: PathPair { primary: Path::init(file.name()), secondary: None },
+                                path_pair: PathPair { primary: Path::init(file_name), secondary: None },
                                 module_type: options::ModuleType::Esm,
                                 flags: ResultFlags::IS_STANDALONE_MODULE,
                                 ..Default::default()
@@ -5153,10 +5155,10 @@ impl<'a> Resolver<'a> {
 
                 if had_node_prefix {
                     // Module resolution fails automatically for unknown node builtins
-                    if !bun_options_types::module_loader::HardcodedModule::Alias::has(
+                    if !HardcodedAlias::has(
                         import_path_without_node_prefix,
                         options::Target::Node,
-                        Default::default(),
+                        HardcodedAliasCfg::default(),
                     ) {
                         return ResultUnion::NotFound;
                     }
@@ -7634,9 +7636,9 @@ impl<'a> Resolver<'a> {
             //     }
             //
             if self.opts.mark_builtins_as_external || self.opts.target.is_bun() {
-                if let Some(alias) = bun_options_types::module_loader::HardcodedModule::Alias::get(&esm_resolution.path, self.opts.target, Default::default()) {
+                if let Some(alias) = HardcodedAlias::get(&esm_resolution.path, self.opts.target, HardcodedAliasCfg::default()) {
                     return MatchResultUnion::Success(MatchResult {
-                        path_pair: PathPair { primary: Fs::Path::init(alias.path), secondary: None },
+                        path_pair: PathPair { primary: Fs::Path::init(alias.path.as_bytes()), secondary: None },
                         is_external: true,
                         ..Default::default()
                     });

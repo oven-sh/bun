@@ -483,7 +483,7 @@ pub fn view(
     }
 
     if let Some(tags_obj) = json.get_object(b"dist-tags") {
-        Output::prettyln(format_args!("\n<b>dist-tags<r><d>:<r>"));
+        prettyln!("\n<b>dist-tags<r><d>:<r>");
         for prop in tags_obj.data.e_object().unwrap().properties.slice() {
             if prop.key.is_none() || prop.value.is_none() {
                 continue;
@@ -493,11 +493,11 @@ pub fn view(
             if let Some(tag) = tagname_expr.as_string(&bump) {
                 if let Some(val) = val_expr.as_string(&bump) {
                     if tag == b"latest" {
-                        Output::prettyln(format_args!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val)));
+                        prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
                     } else if tag == b"beta" {
-                        Output::prettyln(format_args!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val)));
+                        prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
                     } else {
-                        Output::prettyln(format_args!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val)));
+                        prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
                     }
                 }
             }

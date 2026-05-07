@@ -906,8 +906,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len as usize);
                     for item in arr.items.slice() {
                         let s = item.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
-                        map.insert(s, ());
-                        // PERF(port): was assume_capacity
+                        map.put_assume_capacity(s, ());
                     }
                     break 'deps Some(map);
                 }

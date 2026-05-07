@@ -728,6 +728,50 @@ pub fn transpileSourceCode(
                 return error.ParseError;
             }
 
+            // Register the wasm file with bun's watcher so `bun --watch` /
+            // hot reload notices edits, mirroring what the generic file loader
+            // does below for non-wasm imports. The watcher's fd is separate
+            // from the cache entry's read-fd; our defer still closes the
+            // cache entry's fd after `cloneLatin1`.
+            if (virtual_source == null) {
+                if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                    if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                        const input_fd: bun.FD = brk: {
+                            // kqueue watchers need a file descriptor to receive event notifications on it.
+                            if (bun.Watcher.requires_file_descriptors) {
+                                switch (bun.sys.open(
+                                    &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                    bun.Watcher.watch_open_flags,
+                                    0,
+                                )) {
+                                    .err => break :auto_watch,
+                                    .result => |fd| break :brk fd,
+                                }
+                            } else {
+                                break :brk .invalid;
+                            }
+                        };
+                        const hash = bun.Watcher.getHash(path.text);
+                        switch (jsc_vm.bun_watcher.addFile(
+                            input_fd,
+                            path.text,
+                            hash,
+                            .wasm,
+                            .invalid,
+                            null,
+                            true,
+                        )) {
+                            .err => {
+                                if (comptime Environment.isMac) {
+                                    if (input_fd.isValid()) input_fd.close();
+                                }
+                            },
+                            .result => {},
+                        }
+                    }
+                }
+            }
+
             // Use Latin-1 encoding so each byte maps to a single char and we
             // can extract the raw bytes unchanged on the C++ side.
             return ResolvedSource{

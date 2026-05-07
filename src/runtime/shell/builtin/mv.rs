@@ -464,8 +464,8 @@ pub struct ShellMvBatchedTask {
     /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
     /// directly via `@fieldParentPtr`).
     pub idx: usize,
-    pub sources: Vec<Vec<u8>>,
-    pub target: Vec<u8>,
+    pub sources: Vec<ZBox>,
+    pub target: ZBox,
     pub target_fd: Option<bun_sys::Fd>,
     pub cwd: bun_sys::Fd,
     /// Points at `MvState::Executing::error_signal`.
@@ -477,29 +477,98 @@ pub struct ShellMvBatchedTask {
 impl ShellMvBatchedTask {
     pub const BATCH_SIZE: usize = 5;
 
+    /// Spec: mv.zig `ShellMvBatchedTask.runFromThreadPool`.
     pub fn run_from_thread_pool(this: *mut ShellMvBatchedTask) {
-        // SAFETY: `this` is a live boxed task.
+        // SAFETY: `this` is a live boxed task held in `MvState::Executing`.
         let this = unsafe { &mut *this };
-        // TODO(b2-blocked): bun_sys::renameat + bun_paths::normalizeBuf/
-        // basename/joinZ. Spec mv.zig:
-        //   - 1 src, target_fd is None  → renameat(cwd, src, cwd, target)
-        //   - target_fd is Some(dir)    → for each src: renameat(cwd, src, dir, basename(src))
-        // On EXDEV, fall back to cp+rm (also TODO in Zig).
-        for src in &this.sources {
-            // SAFETY: error_signal points into MvState which outlives the
-            // task; null only before scheduling.
-            if !this.error_signal.is_null()
-                && unsafe { &*this.error_signal }.load(Ordering::SeqCst)
-            {
-                // Another batch hit an error — abort the move loop, but
-                // still post back to the main thread so `tasks_done`
-                // reaches `task_count` and `mv` doesn't hang.
-                break;
+        // Moving multiple entries into a directory.
+        if this.sources.len() > 1 {
+            return this.move_multiple_into_dir();
+        }
+        // Moving one entry into a directory.
+        if let Some(dir) = this.target_fd {
+            let mut buf = PathBuffer::uninit();
+            if let Err(e) = Self::move_in_dir(
+                this.cwd, dir, this.target.as_bytes(), &this.sources[0], &mut buf,
+            ) {
+                this.err = Some(e);
             }
-            let _ = (src, &this.target, this.target_fd, this.cwd);
+            return;
+        }
+        // Rename single entry to a new path (target was not a directory).
+        if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
+            this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
+                e.with_path(this.target.as_bytes())
+            } else {
+                e
+            });
         }
         // Bounce-back is posted by `shell_task_trampoline`.
     }
+
+    /// Spec: mv.zig `ShellMvBatchedTask.moveInDir` — `renameat(cwd, src,
+    /// target_fd, basename(src))`. Reshaped for borrowck: free fn over the
+    /// fields it touches so `src` can borrow `self.sources[_]` while `self.err`
+    /// is written by the caller.
+    fn move_in_dir(
+        cwd: bun_sys::Fd,
+        target_fd: bun_sys::Fd,
+        target: &[u8],
+        src: &ZStr,
+        buf: &mut PathBuffer,
+    ) -> Result<(), bun_sys::Error> {
+        let base = resolve_path::basename(src.as_bytes());
+        let len = resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
+        if len + 1 >= bun_paths::MAX_PATH_BYTES {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::rename,
+            ));
+        }
+        buf[len] = 0;
+        // SAFETY: `buf[len] == 0` written above.
+        let path_in_dir = unsafe { ZStr::from_raw(buf.as_ptr(), len) };
+        bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
+            // Spec mv.zig:122-128 — surface `target/basename(src)` as the
+            // failing path. `with_path` heap-clones, so the Zig
+            // `err_path_owned` bookkeeping is unnecessary here (`Drop` frees).
+            let joined =
+                resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
+            e.with_path(joined.as_bytes())
+        })
+    }
+
+    /// Spec: mv.zig `ShellMvBatchedTask.moveMultipleIntoDir`.
+    fn move_multiple_into_dir(&mut self) {
+        let mut buf = PathBuffer::uninit();
+        // `target_fd` is always Some when sources.len() > 1 — `next` rejected
+        // the multi-source-into-non-directory case before scheduling.
+        let dir = self.target_fd.expect("target_fd set for multi-source mv");
+        for i in 0..self.sources.len() {
+            // SAFETY: error_signal points into MvState which outlives the
+            // task; null only before scheduling.
+            if !self.error_signal.is_null()
+                && unsafe { &*self.error_signal }.load(Ordering::SeqCst)
+            {
+                // Another batch hit an error — abort the move loop, but still
+                // post back to the main thread so `tasks_done` reaches
+                // `task_count` and `mv` doesn't hang.
+                return;
+            }
+            if let Err(e) = Self::move_in_dir(
+                self.cwd, dir, self.target.as_bytes(), &self.sources[i], &mut buf,
+            ) {
+                self.err = Some(e);
+                return;
+            }
+        }
+    }
+
+    /// Spec: mv.zig `ShellMvBatchedTask.moveAcrossFilesystems` — `rename(2)`
+    /// fails with EXDEV across mounts; fall back to `cp -pRP` + `rm -rf`.
+    /// TODO(port): unimplemented in Zig too.
+    #[allow(dead_code)]
+    fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
 
     pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {
         // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.
@@ -557,13 +626,10 @@ impl Default for Opts {
     }
 }
 
-#[allow(dead_code)]
-fn _evtloop(_: EventLoopHandle) {}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/mv.zig (526 lines)
-//   confidence: medium (NodeId style; full state machine; renameat/openat stubbed)
-//   blocked_on: bun_sys::{renameat,openat}, bun_paths helpers, WorkPool,
-//               IOWriter::enqueue body
+//   confidence: high — full state machine; renameat/openat ported via
+//               shell_openat + bun_sys::renameat; err_path_owned dropped
+//               (bun_sys::Error::path is owned `Box<[u8]>`).
 // ──────────────────────────────────────────────────────────────────────────

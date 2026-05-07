@@ -700,7 +700,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
-    // as `*const DevServer` for later `concurrent_task.from(dev)`; not dereferenced
+    // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
     // during construction.
     unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
 

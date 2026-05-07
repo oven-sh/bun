@@ -5,7 +5,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, StrongOptional};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::AbortSignal;
 use bun_jsc::abort_signal::AbortListener;
@@ -15,10 +15,12 @@ use bun_jsc::StringJsc as _;
 use crate::webcore::{AutoFlusher, HasAutoFlusher};
 use crate::node::{Encoding, StringOrBuffer};
 use bun_str::{strings, String as BunString, ZigString};
-use bun_collections::{BabyList as ByteList, HashMap as BunHashMap, HiveArray};
+use bun_collections::{BabyList as ByteList, HashMap as BunHashMap, HiveArrayFallback};
+use bun_ptr::IntrusiveRc;
 use bun_string::MutableString;
 use bun_http::lshpack;
 use crate::api::socket::{TCPSocket, TLSSocket};
+use crate::socket::NativeCallbacks;
 use bstr::BStr;
 use phf::phf_map;
 
@@ -163,65 +165,6 @@ pub mod JSH2FrameParser {
         unsafe { __get_constructor(global.as_ptr()) }
     }
 }
-#[allow(non_snake_case)]
-pub mod JSTLSSocket {
-    use super::{JSValue, TLSSocket};
-
-    // `TLSSocket__fromJS` — emitted by generate-classes.ts
-    // (`symbolName(typeName, "fromJS")`). `jsc.conv` = sysv64 on win-x64,
-    // C otherwise.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "TLSSocket__fromJS"]
-        fn __from_js(value: JSValue) -> *mut TLSSocket;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "TLSSocket__fromJS"]
-        fn __from_js(value: JSValue) -> *mut TLSSocket;
-    }
-
-    /// Return the wrapped native `*mut TLSSocket` if `value` is a JS TLSSocket
-    /// wrapper; `None` on type mismatch (Zig: `jsc.Codegen.JSTLSSocket.fromJS`).
-    #[inline]
-    pub fn from_js(value: JSValue) -> Option<*mut TLSSocket> {
-        // SAFETY: `value` is a valid encoded JSValue; the C++ side type-checks
-        // and returns the `m_ctx` pointer or null. The returned pointer is
-        // borrowed from the JS wrapper and valid only while `value` is rooted.
-        let ptr = unsafe { __from_js(value) };
-        if ptr.is_null() { None } else { Some(ptr) }
-    }
-}
-#[allow(non_snake_case)]
-pub mod JSTCPSocket {
-    use super::{JSValue, TCPSocket};
-
-    // `TCPSocket__fromJS` — emitted by generate-classes.ts
-    // (`symbolName(typeName, "fromJS")`). `jsc.conv` = sysv64 on win-x64,
-    // C otherwise.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "TCPSocket__fromJS"]
-        fn __from_js(value: JSValue) -> *mut TCPSocket;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "TCPSocket__fromJS"]
-        fn __from_js(value: JSValue) -> *mut TCPSocket;
-    }
-
-    /// Return the wrapped native `*mut TCPSocket` if `value` is a JS TCPSocket
-    /// wrapper; `None` on type mismatch (Zig: `jsc.Codegen.JSTCPSocket.fromJS`).
-    #[inline]
-    pub fn from_js(value: JSValue) -> Option<*mut TCPSocket> {
-        // SAFETY: `value` is a valid encoded JSValue; the C++ side type-checks
-        // and returns the `m_ctx` pointer or null. The returned pointer is
-        // borrowed from the JS wrapper and valid only while `value` is rooted.
-        let ptr = unsafe { __from_js(value) };
-        if ptr.is_null() { None } else { Some(ptr) }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Constants
 // ──────────────────────────────────────────────────────────────────────────
@@ -296,46 +239,6 @@ impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
     fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
         H2ErrBuilder { global: self, code: JscErrorCode::INVALID_ARG_TYPE, msg }
-    }
-}
-
-// Local shim: `JSValue::to(u32)` / `JSValue::to(u64)` from Zig — coerce via the
-// double path (callers gate on `is_number()`).
-pub(crate) trait H2JSValueExt {
-    fn to_u32(self) -> u32;
-    fn to_u64(self) -> u64;
-}
-impl H2JSValueExt for JSValue {
-    #[inline]
-    fn to_u32(self) -> u32 {
-        // Matches Zig `value.to(u32)` semantics (truncating reinterpret of i32).
-        self.to_int32() as u32
-    }
-    #[inline]
-    fn to_u64(self) -> u64 {
-        // Matches Zig `value.to(u64)` semantics (truncate the double).
-        self.as_number() as u64
-    }
-}
-
-// Local shim: `bun_jsc::BinaryType` (lib.rs 3-variant) lacks `from_js_value`;
-// the richer impl lives in `array_buffer.rs` on a separate type. Map the three
-// strings the H2 layer accepts.
-pub(crate) trait H2BinaryTypeExt: Sized {
-    fn from_js_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>>;
-}
-impl H2BinaryTypeExt for BinaryType {
-    fn from_js_value(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
-        if !value.is_string() {
-            return Ok(None);
-        }
-        let s = value.to_slice(global)?;
-        Ok(match s.slice() {
-            b"arraybuffer" | b"ArrayBuffer" => Some(BinaryType::ArrayBuffer),
-            b"uint8array" | b"Uint8Array" | b"nodebuffer" => Some(BinaryType::Uint8Array),
-            b"buffer" | b"Buffer" => Some(BinaryType::Buffer),
-            _ => None,
-        })
     }
 }
 
@@ -1023,28 +926,6 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
     let _ = settings.write(&mut cursor);
     let binary_type = BinaryType::Buffer;
     binary_type.to_js(&buf, global_object)
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension shim — `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267)
-// is not yet on `bun_jsc::JSValue`; forward to the C++ symbol directly.
-// ──────────────────────────────────────────────────────────────────────────
-trait JsValueAsyncContextExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JsValueAsyncContextExt for JSValue {
-    #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        debug_assert!(self.is_cell());
-        // SAFETY: `global` is a live JSGlobalObject; `self` is a callable JSCell.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -324,6 +324,10 @@ pub struct Interpreter {
     /// Side-channel for `try_()`: lets init/setup paths use `?`-style cleanup
     /// while still surfacing the rich syscall error at the boundary.
     pub last_err: Option<bun_sys::Error>,
+
+    /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
+    /// when running under a Worker). See [`Interpreter::get_vm_args_utf8`].
+    pub vm_args_utf8: Vec<bun_str::ZigStringSlice>,
 }
 
 #[repr(transparent)]
@@ -579,6 +583,7 @@ impl Interpreter {
             cleanup_state: CleanupState::NeedsFullCleanup,
             estimated_size_for_gc: 0,
             last_err: None,
+            vm_args_utf8: Vec::new(),
         });
         // PORT NOTE: Zig stores `command_ctx` on the struct; the Rust struct
         // doesn't have that field yet (no builtin reads it). Preserve the
@@ -612,9 +617,11 @@ impl Interpreter {
         // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
         // default drops the refs (Zig: `root_io.deref()`).
         self.root_io = IO::default();
-        closefd(self.root_shell.cwd_fd);
-        // EnvMap / Vec / Bufio drop on box drop (Zig: `deinitImpl(false, true)`).
-        // `vm_args_utf8` not yet on the Rust struct.
+        // Spec: `root_shell.deinitImpl(false, true)` — free buffered IO, env
+        // maps, cwd fd; do NOT free the struct itself (it's embedded).
+        self.root_shell.deinit_embedded(true);
+        // `vm_args_utf8` slices Drop themselves (ZigStringSlice has a Drop
+        // impl that derefs the WTF backing); the Vec frees on box drop.
     }
 
     /// Spec: interpreter.zig `initAndRunFromSource`.
@@ -1016,9 +1023,10 @@ impl Interpreter {
         size += self.root_shell.memory_cost();
         size += self.root_io.memory_cost();
         size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
-        // PORT NOTE: Zig also walks `vm_args_utf8` (cached argv slices for the
-        // builtin `$@` expansion). The Rust struct does not carry that field
-        // yet — added when builtin argv expansion lands.
+        for arg in &self.vm_args_utf8 {
+            size += arg.slice().len();
+        }
+        size += self.vm_args_utf8.capacity() * core::mem::size_of::<bun_str::ZigStringSlice>();
         size
     }
 

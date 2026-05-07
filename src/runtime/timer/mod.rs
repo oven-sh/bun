@@ -41,7 +41,7 @@ pub mod timer;
 pub mod timeout_object;
 
 #[path = "ImmediateObject.rs"]
-mod immediate_object_draft;
+pub mod immediate_object;
 
 #[path = "TimerObjectInternals.rs"]
 mod timer_object_internals_draft;

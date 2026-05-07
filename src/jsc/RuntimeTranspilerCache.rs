@@ -1022,6 +1022,56 @@ impl RuntimeTranspilerCache {
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 
 // ──────────────────────────────────────────────────────────────────────────
+// VTable bridge for the canonical (lower-tier) `bun_js_parser::RuntimeTranspilerCache`.
+//
+// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the lower-tier
+// type so the parser crate names no `bun_jsc` types. `RuntimeTranspilerStore::run`
+// constructs that lower-tier cache with this vtable so the parser's
+// `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
+// On a hit the concrete `Entry` is boxed and stored type-erased in
+// `bun_js_parser::RuntimeTranspilerCache.entry`; the store casts it back via
+// `Box::from_raw(ptr.cast::<Entry>())`.
+// ──────────────────────────────────────────────────────────────────────────
+
+unsafe fn jsc_cache_vtable_get(
+    this: *mut bun_js_parser::RuntimeTranspilerCache,
+    source: *const Source,
+    parser_options: *const (),
+    used_jsx: bool,
+) -> bool {
+    // SAFETY: vtable contract (PORTING.md §Dispatch) — `this` is the live
+    // `&mut` the parser holds; `source` is `p.source`; `parser_options` is
+    // `&p.options as *const _ as *const ()`.
+    let this = unsafe { &mut *this };
+    let source = unsafe { &*source };
+    let parser_options = unsafe { &*parser_options.cast::<ParserOptions<'_>>() };
+
+    let mut jsc = RuntimeTranspilerCache {
+        input_hash: this.input_hash,
+        input_byte_length: this.input_byte_length,
+        features_hash: this.features_hash,
+        exports_kind: this.exports_kind,
+        output_code: None,
+        entry: None,
+    };
+    let hit = jsc.get(source, parser_options, used_jsx);
+    this.input_hash = jsc.input_hash;
+    this.input_byte_length = jsc.input_byte_length;
+    this.features_hash = jsc.features_hash;
+    this.exports_kind = jsc.exports_kind;
+    if let Some(entry) = jsc.entry {
+        this.entry = Some(Box::into_raw(Box::new(entry)).cast::<()>());
+    }
+    hit
+}
+
+pub static JSC_PARSER_CACHE_VTABLE: bun_js_parser::RuntimeTranspilerCacheVTable =
+    bun_js_parser::RuntimeTranspilerCacheVTable {
+        get: jsc_cache_vtable_get,
+        is_disabled: RuntimeTranspilerCache::is_disabled,
+    };
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/RuntimeTranspilerCache.zig (706 lines)
 //   confidence: medium

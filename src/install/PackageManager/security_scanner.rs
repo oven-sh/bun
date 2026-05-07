@@ -1181,12 +1181,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         );
 
         // SAFETY: all-zero is a valid uv.Pipe (matches Zig std.mem.zeroes).
-        let pipe = Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
+        let pipe_ptr: *mut uv::Pipe =
+            Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }));
         // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
         // close callback frees the heap allocation, so do NOT re-box on the
         // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds, matching the Zig errdefer scope.
-        let pipe = scopeguard::guard(pipe, |p| {
+        // succeeds, matching the Zig errdefer scope exactly: it must stay armed
+        // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
+        // window) so a registered-but-unowned uv handle is never leaked.
+        let pipe = scopeguard::guard(pipe_ptr, |p| {
             // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
             // schedules uv_close + frees the allocation.
             unsafe { (*p).close_and_destroy() };
@@ -1228,23 +1231,26 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
 
-        // Reconstitute the Box<uv::Pipe> from the raw pointer the errdefer guard
-        // holds and hand ownership to StaticPipeWriter via the StdioResult. The
-        // guard is disarmed immediately afterwards so the close_and_destroy path
-        // never runs once finish_spawn has taken the pipe.
-        // SAFETY: *pipe is the same allocation produced by Box::into_raw above
-        // and has not been freed; ownership transfers here exactly once.
-        let json_stdio = StdioResult::Buffer(unsafe { Box::from_raw(*pipe) });
-        // Ownership of the heap pipe is now in `json_stdio`; disarm the
-        // close_and_destroy errdefer before any further fallible call so we
-        // never double-free. (Zig's errdefer fires only if finish_spawn fails,
-        // but there the writer hasn't taken the pipe yet — Box semantics force
-        // the handoff up front, and finish_spawn's own error path drops the
-        // writer which closes the pipe.)
+        // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
+        // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
+        // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
+        // `finish_spawn` errors before that point (`ipc_reader.start()`), the
+        // closure drops as a no-op and the still-armed errdefer guard performs
+        // `close_and_destroy` — matching Zig, where `errdefer pipe.closeAndDestroy()`
+        // covers the entire `try finishSpawn(...)` call. After the writer takes
+        // the pipe, post-create errors leave the writer leaked at refcount >= 1
+        // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
+        // `close_and_destroy` remains the sole cleanup, again matching Zig.
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
+            // SAFETY: `pipe_ptr` is the same allocation produced by
+            // Box::into_raw above and has not been freed; ownership transfers
+            // here exactly once.
+            StdioResult::Buffer(unsafe { Box::from_raw(pipe_ptr) })
+        })?;
+
+        // Success: pipe ownership now lives in StaticPipeWriter; disarm the
+        // close_and_destroy errdefer.
         scopeguard::ScopeGuard::into_inner(pipe);
-
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], json_stdio)?;
-
         // fd slots are already None.
         scopeguard::ScopeGuard::into_inner(fds);
         Ok(())
@@ -1258,7 +1264,14 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SpawnResult; Rust uses the unified `spawn::SpawnResult`.
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
-        json_stdio_result: StdioResult,
+        // Deferred constructor: Zig passes `json_stdio_result` by value (a tagged
+        // union holding a raw `*uv.Pipe` on Windows — inert on drop). Rust's
+        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` would auto-free the
+        // allocation without `uv_close()` if `ipc_reader.start()` below failed,
+        // leaking a registered libuv handle. Taking a thunk and calling it only
+        // at the `StaticPipeWriter::create` site keeps the caller's
+        // `close_and_destroy` errdefer authoritative for the pre-writer window.
+        make_json_stdio: impl FnOnce() -> StdioResult,
     ) -> Result<(), Error> {
         // Allocate the blob copy before registering any event loop callbacks. If
         // this fails, nothing is registered yet and the caller's defer can safely
@@ -1307,7 +1320,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let writer = StaticPipeWriter::create(
             event_loop,
             parent.cast(),
-            json_stdio_result,
+            make_json_stdio(),
             json_source,
         );
         // Keep a duped ref locally so no borrow on `(*parent).json_writer` is

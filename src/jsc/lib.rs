@@ -1334,14 +1334,12 @@ pub struct ValidateObjectOpts {
     pub allow_function: bool,
 }
 
-/// Mirrors `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig).
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum BunPluginTarget {
-    Bun = 0,
-    Node = 1,
-    Browser = 2,
-}
+/// Mirrors `JSGlobalObject.BunPluginTarget` (JSGlobalObject.zig). Defined once
+/// in `js_global_object` (where `run_on_load_plugins` consumes it) and
+/// re-exported here so `crate::BunPluginTarget` and the method parameter share
+/// one type — the previous duplicate enum here was a distinct type and broke
+/// `ModuleLoader::run_on_load_plugins(crate::BunPluginTarget::Bun)`.
+pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — JSObject (un-gated; real module in JSObject.rs).

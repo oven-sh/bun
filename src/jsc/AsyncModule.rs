@@ -713,12 +713,13 @@ impl AsyncModule {
         }
     }
 
-    pub fn on_done(this: *mut AsyncModule<'a>) {
+    pub fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was Box::into_raw'd in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
+        let global_this = this.global_this();
         // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-        let jsc_vm = unsafe { &mut *this.global_this.bun_vm() };
+        let jsc_vm = unsafe { &mut *global_this.bun_vm() };
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
             jsc_vm.package_manager().end_progress_bar();
@@ -731,7 +732,7 @@ impl AsyncModule {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
             Err(err) if err == bun_core::err!("JSError") => ErrorableResolvedSource::err(
                 bun_core::err!("JSError"),
-                this.global_this.take_error(JsError::Thrown),
+                global_this.take_error(JsError::Thrown),
             ),
             Err(err) => {
                 // PORT NOTE: Zig declared `errorable = undefined` and relied on
@@ -740,7 +741,7 @@ impl AsyncModule {
                 // `process_fetch_log` overwrites `result.err.value`.
                 let mut errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
                 crate::virtual_machine::process_fetch_log(
-                    this.global_this,
+                    global_this,
                     BunString::init(ZigString::init(this.specifier())),
                     BunString::init(ZigString::init(this.referrer())),
                     &mut log,
@@ -753,17 +754,21 @@ impl AsyncModule {
         let mut errorable = errorable;
         // log dropped at scope exit (defer log.deinit()).
 
-        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()));
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()));
-        let _ = jsc::from_js_host_call_generic(this.global_this, || unsafe {
-            Bun__onFulfillAsyncModule(
-                this.global_this,
-                this.promise.get().unwrap(),
-                &mut errorable,
-                &mut spec,
-                &mut ref_,
-            )
-        });
+        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
+        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
+        let _ = jsc::from_js_host_call_generic(
+            global_this,
+            core::panic::Location::caller(),
+            || unsafe {
+                Bun__onFulfillAsyncModule(
+                    global_this,
+                    this.promise.get().unwrap(),
+                    &mut errorable,
+                    &mut spec,
+                    &mut ref_,
+                )
+            },
+        );
         // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
         drop(unsafe { Box::from_raw(this) });
     }
@@ -777,7 +782,7 @@ impl AsyncModule {
         import_record_id: u32,
         result: PackageResolveError<'_>,
     ) -> Result<(), bun_core::Error> {
-        let global_this = self.global_this;
+        let global_this = self.global_this();
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;

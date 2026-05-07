@@ -102,7 +102,8 @@ pub fn do_patch_commit(
     let argument: &'static [u8] = manager.options.positionals[1];
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
-    let not_in_workspace_root = manager.root_package_id.get(&lockfile, manager.workspace_name_hash) != 0;
+    let workspace_package_id = manager.root_package_id.get(&lockfile, manager.workspace_name_hash);
+    let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
@@ -110,7 +111,7 @@ pub fn do_patch_commit(
         && (!Platform::Posix.is_absolute(argument)
             || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
     {
-        if let Some(rel_path) = path_argument_relative_to_root_workspace_package(manager, &lockfile, argument) {
+        if let Some(rel_path) = path_argument_relative_to_root_workspace_package(&lockfile, workspace_package_id, argument) {
             argument_owned = Some(rel_path);
             argument_owned.as_deref().unwrap()
         } else {
@@ -199,9 +200,10 @@ pub fn do_patch_commit(
                 Some(PackageIndexEntry::Ids(ids)) => 'brk: {
                     for &id in ids.as_slice() {
                         let pkg = lockfile.packages.get(id as usize);
+                        let total = resolution_buf.len();
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
                         write!(&mut cursor, "{}", pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
-                        let written = resolution_buf.len() - cursor.len();
+                        let written = total - cursor.len();
                         let resolution_label = &resolution_buf[..written];
                         if resolution_label == version {
                             break 'brk pkg;
@@ -216,7 +218,7 @@ pub fn do_patch_commit(
             };
 
             let name = lockfile.str(&package.name).to_vec();
-            let resolution_clone = actual_package.resolution.clone();
+            let resolution_clone = actual_package.resolution;
             let cache_result = compute_cache_dir_and_subpath(
                 manager,
                 &name,
@@ -243,7 +245,7 @@ pub fn do_patch_commit(
             let pkg = lockfile.packages.get(pkg_id as usize);
 
             let pkg_name_slice = pkg.name.slice(lockfile.buffers.string_bytes.as_slice()).to_vec();
-            let resolution_clone = pkg.resolution.clone();
+            let resolution_clone = pkg.resolution;
             let cache_result = compute_cache_dir_and_subpath(
                 manager,
                 &pkg_name_slice,
@@ -265,9 +267,10 @@ pub fn do_patch_commit(
 
     let name = pkg.name.slice(lockfile.buffers.string_bytes.as_slice());
     let resolution_label_len = {
+        let total = resolution_buf.len();
         let mut cursor: &mut [u8] = &mut resolution_buf[..];
         write!(&mut cursor, "{}@{}", bstr::BStr::new(name), pkg.resolution.fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)).expect("unreachable");
-        resolution_buf.len() - cursor.len()
+        total - cursor.len()
     };
     let resolution_label = &resolution_buf[..resolution_label_len];
 
@@ -660,8 +663,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     let mut win_normalizer = PathBuffer::uninit();
 
     let workspace_name_hash = manager.workspace_name_hash;
-    let not_in_workspace_root =
-        manager.root_package_id.get(&manager.lockfile, workspace_name_hash) != 0;
+    let workspace_package_id = manager.root_package_id.get(&manager.lockfile, workspace_name_hash);
+    let not_in_workspace_root = workspace_package_id != 0;
     // PORT NOTE: reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
@@ -669,7 +672,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
         && (!Platform::Posix.is_absolute(argument)
             || (cfg!(windows) && !Platform::Windows.is_absolute(argument)))
     {
-        if let Some(rel_path) = path_argument_relative_to_root_workspace_package(manager, &manager.lockfile, argument) {
+        if let Some(rel_path) = path_argument_relative_to_root_workspace_package(&manager.lockfile, workspace_package_id, argument) {
             argument_owned = Some(rel_path);
             argument_owned.as_deref().unwrap()
         } else {
@@ -748,9 +751,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 Some(PackageIndexEntry::Ids(ids)) => 'id: {
                     for &id in ids.as_slice() {
                         let pkg = lockfile.packages.get(id as usize);
+                        let total = resolution_buf.len();
                         let mut cursor: &mut [u8] = &mut resolution_buf[..];
                         write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("unreachable");
-                        let written = resolution_buf.len() - cursor.len();
+                        let written = total - cursor.len();
                         let resolution_label = &resolution_buf[..written];
                         if resolution_label == version {
                             break 'id pkg;
@@ -1104,9 +1108,10 @@ fn pkg_info_for_name_and_version(
         let pkg = lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
             let written = {
+                let total = buf.len();
                 let mut cursor: &mut [u8] = &mut buf[..];
                 write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("Resolution name too long");
-                buf.len() - cursor.len()
+                total - cursor.len()
             };
             let label = &buf[..written];
             if label == v {
@@ -1236,19 +1241,21 @@ fn pkg_info_for_name_and_version(
     Global::crash();
 }
 
+// PORT NOTE: takes `workspace_package_id` directly instead of `&mut PackageManager` —
+// both callers already compute it via `root_package_id.get()` immediately before, and
+// passing `manager` here would alias `&manager.lockfile` in `prepare_patch`.
 fn path_argument_relative_to_root_workspace_package(
-    manager: &mut PackageManager,
     lockfile: &Lockfile,
+    workspace_package_id: PackageID,
     argument: &[u8],
 ) -> Option<Box<[u8]>> {
-    let workspace_name_hash = manager.workspace_name_hash;
-    let workspace_package_id = manager.root_package_id.get(lockfile, workspace_name_hash);
     if workspace_package_id == 0 {
         return None;
     }
     let workspace_res = &lockfile.packages.items_resolution()[workspace_package_id as usize];
     // SAFETY: workspace package resolution always has tag == Workspace.
-    let rel_path: &[u8] = unsafe { workspace_res.value.workspace }.slice(lockfile.buffers.string_bytes.as_slice());
+    let workspace_str = unsafe { workspace_res.value.workspace };
+    let rel_path: &[u8] = workspace_str.slice(lockfile.buffers.string_bytes.as_slice());
     Some(Box::<[u8]>::from(resolve_path::join::<platform::Posix>(&[rel_path, argument])))
 }
 

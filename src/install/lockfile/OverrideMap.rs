@@ -156,7 +156,7 @@ impl OverrideMap {
 
         self.map.ensure_unused_capacity(obj.properties.len as usize)?;
 
-        for prop in obj.properties.slice() {
+        'props: for prop in obj.properties.slice() {
             let key = prop.key.as_ref().unwrap();
             let k = key.as_utf8_string_literal().unwrap();
             if k.is_empty() {
@@ -180,15 +180,15 @@ impl OverrideMap {
                             break 'value dot.expr;
                         } else {
                             log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
-                            continue;
+                            continue 'props;
                         }
                     } else {
                         log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Bun currently does not support nested \"overrides\""))?;
-                        continue;
+                        continue 'props;
                     }
                 }
                 log.add_warning_fmt(Some(source), value_expr.loc, format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)))?;
-                continue;
+                continue 'props;
             };
 
             let version_str = value.as_utf8_string_literal().unwrap();

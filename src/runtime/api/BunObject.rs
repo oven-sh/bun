@@ -210,12 +210,8 @@ mod static_adapters {
         let a1 = if args.len >= 2 { args.ptr[1] } else { JSValue::UNDEFINED };
         // auto_protect = true: protect each arg across the call (Zig side
         // re-enters the VM for Blob materialization).
-        a0.protect();
-        a1.protect();
-        let _unprotect = scopeguard::guard((), |_| {
-            a0.unprotect();
-            a1.unprotect();
-        });
+        let _a0_guard = a0.protected();
+        let _a1_guard = a1.protected();
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
             return Err(g.throw_invalid_arguments(
                 "expected string, buffer, TypedArray, or Blob",
@@ -1349,10 +1345,10 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
     // this synchronous resolve call; lifetime is erased for the resolver slot.
     bun_vm.transpiler.resolver.custom_dir_paths =
         Some(unsafe { core::mem::transmute::<&[BunString], &'static [BunString]>(paths) });
-    let _reset = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         unsafe { (*global.bun_vm()).transpiler.resolver.custom_dir_paths = None };
-    });
+    }
 
     jsc::to_js_host_call(
         global,

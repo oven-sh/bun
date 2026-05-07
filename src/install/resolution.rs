@@ -78,6 +78,17 @@ impl<SemverInt: VersionInt> TaggedValue<SemverInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
+    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
+    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
+    /// Only the tag/padding are guaranteed zero — the union payload is the
+    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
+    /// reader may legally access.
+    pub const ZEROED: Self = Self {
+        tag: Tag::Uninitialized,
+        _padding: [0; 7],
+        value: Value { uninitialized: () },
+    };
+
     /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
     #[inline]
     pub fn init(value: TaggedValue<SemverInt>) -> Self {
@@ -340,8 +351,6 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    // TODO(port): Builder trait bound — Zig used `comptime Builder: type`; callers pass
-    // a string-builder with `.count(&[u8])` and `.append::<String>(&[u8]) -> String`.
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
         B: StringBuilderLike,
@@ -363,7 +372,10 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn clone<B>(&self, buf: &[u8], builder: &mut B) -> Self
+    /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
+    /// that `ResolutionType: Clone + Copy`. Mirrors Zig
+    /// `Resolution.clone(buf, Builder, builder)`.
+    pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
         B: StringBuilderLike,
     {
@@ -949,7 +961,7 @@ impl From<FromPnpmLockfileError> for bun_core::Error {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/resolution.zig (552 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      extern union kept as #[repr(C)] union (lockfile binary layout); Tag is a transparent u8 newtype (Zig enum is non-exhaustive — lockfile bytes may carry unknown values); Builder comptime param modeled as StringBuilderLike trait
+//   confidence: high
+//   todos:      0
+//   notes:      extern union kept as #[repr(C)] union (lockfile binary layout); Tag is a transparent u8 newtype (Zig enum is non-exhaustive — lockfile bytes may carry unknown values); Builder comptime param modeled as StringBuilderLike trait; clone(buf, builder) renamed clone_into to avoid shadowing Clone::clone
 // ──────────────────────────────────────────────────────────────────────────

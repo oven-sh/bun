@@ -1010,7 +1010,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: EventLoopHandle) {
+    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_aio::EventLoopCtx) {
         match self {
             PollerWindows::Uv(process) => {
                 process.ref_();
@@ -1019,7 +1019,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: EventLoopHandle) {
+    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_aio::EventLoopCtx) {
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called
         // This breaks a lot of stuff...
@@ -1382,13 +1382,16 @@ pub mod waiter_thread_posix {
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
                 // SAFETY: eventfd valid after init(); write(2) is async-signal-safe.
-                let _ = unsafe {
+                let n = unsafe {
                     libc::write(
                         (*instance()).eventfd.native(),
                         one.as_ptr().cast(),
                         8,
                     )
                 };
+                if n < 0 {
+                    panic!("Failed to write to eventfd");
+                }
             }
         }
 
@@ -1743,17 +1746,23 @@ pub enum WindowsStdio {
 }
 
 #[cfg(windows)]
-impl Drop for WindowsStdio {
-    fn drop(&mut self) {
-        // close_and_destroy consumes the pipe in Zig (frees the heap allocation).
-        // The raw pointer may already have been transferred to a
-        // `WindowsStdioResult`; callers that transfer ownership must replace the
-        // variant (e.g. with `Ignore`) or null the pointer first.
+impl WindowsStdio {
+    /// Explicit destructor — matches Zig `WindowsSpawnOptions.Stdio.deinit`.
+    ///
+    /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
+    /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
+    /// pipe into `WindowsStdioResult::Buffer` via `Box::from_raw`. An auto-Drop
+    /// here would then double-free the same `*mut uv::Pipe` when the borrowed
+    /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
+    /// scope. Zig has no auto-destructor on this union; callers invoke
+    /// `deinit()` only on the *error* path where ownership was never taken.
+    pub fn deinit(&mut self) {
         match self {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
                 if !pipe.is_null() {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
                     unsafe { (**pipe).close_and_destroy() };
+                    *pipe = core::ptr::null_mut();
                 }
             }
             _ => {}
@@ -1761,8 +1770,9 @@ impl Drop for WindowsStdio {
     }
 }
 
-// WindowsSpawnOptions: no explicit Drop — stdin/stdout/stderr/extra_fds are
-// `WindowsStdio` fields whose Drop above cascades.
+// WindowsSpawnOptions: no Drop. `WindowsStdio` holds FFI-owned `*mut uv::Pipe`
+// whose ownership is transferred to `WindowsStdioResult` on success; callers
+// must invoke `WindowsStdio::deinit` explicitly on the error path (Zig spec).
 
 pub struct PosixSpawnResult {
     pub pid: PidT,
@@ -1996,6 +2006,15 @@ impl Drop for AutoCloseFd {
 ///
 /// This exists so that bare `?` on `actions.*` propagates without leaking
 /// the parent-side socketpair ends pushed earlier in the loop.
+///
+/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
+/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
+/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
+/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
+/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
+/// cleanup to cover those value-error returns as well. The fds in
+/// `to_close_on_error` are parent-side ends never handed back to the caller on
+/// any error path, so closing them is the correct behavior.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
@@ -2677,9 +2696,11 @@ pub fn spawn_process_windows(
                 WindowsStdio::Buffer(_) => {
                     // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
                     // produced by `Box::into_raw` in create_zeroed_pipe and
-                    // stored in `options.{stdin,stdout,stderr}`. WindowsStdio
-                    // holds it as a raw pointer with no Drop, so reconstructing
-                    // the Box here is the *sole* ownership transfer.
+                    // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
+                    // has no `Drop` (deinit is explicit, Zig spec), so
+                    // reconstructing the Box here is the *sole* ownership
+                    // transfer — the borrowed `options` dropping later is a
+                    // no-op on the raw pointer.
                     *result_stdio = WindowsStdioResult::Buffer(unsafe {
                         Box::from_raw(stdio.data.stream as *mut uv::Pipe)
                     });
@@ -2696,7 +2717,7 @@ pub fn spawn_process_windows(
             WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
                 // PERF(port): was assume_capacity
                 // SAFETY: sole ownership transfer of the Box::into_raw'd
-                // uv::Pipe; WindowsStdio holds it as raw `*mut` with no Drop.
+                // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
                 result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
                     Box::from_raw(stdio_containers[3 + i].data.stream as *mut uv::Pipe)
                 }));
@@ -2851,6 +2872,10 @@ pub mod sync {
     #[cfg(windows)]
     pub struct SyncWindowsPipeReader {
         pub chunks: Vec<Box<[u8]>>,
+        /// Buffer handed to libuv by `on_alloc`; reclaimed (truncated) by
+        /// `on_read`. Prevents the per-read leak that copying `data` into a
+        /// fresh Box would cause (Zig pushes the *same* allocation).
+        pending_alloc: Option<Box<[u8]>>,
         pub pipe: Box<uv::Pipe>,
         pub err: bun_sys::E,
         pub context: *mut SyncWindowsProcess,
@@ -2865,15 +2890,30 @@ pub mod sync {
             Box::new(v)
         }
 
-        fn on_alloc(_this: &mut SyncWindowsPipeReader, suggested_size: usize) -> Box<[u8]> {
-            vec![0u8; suggested_size].into_boxed_slice()
+        fn on_alloc(this: &mut SyncWindowsPipeReader, suggested_size: usize) -> &mut [u8] {
+            // Stash the allocation so `on_read` can reclaim it without copying.
+            // If a previous alloc was never consumed (nread == 0 / EAGAIN),
+            // dropping the old Box here frees it — no leak.
+            let buf = this
+                .pending_alloc
+                .insert(vec![0u8; suggested_size].into_boxed_slice());
+            &mut buf[..]
         }
 
         fn on_read(this: &mut SyncWindowsPipeReader, data: &[u8]) {
-            // Zig: append @constCast(data) — the buffer was allocated by on_alloc
-            // TODO(port): ownership of `data` — uv hands back a slice of the alloc'd
-            // buffer. Phase B: store the Box returned from on_alloc, slice it here.
-            this.chunks.push(Box::<[u8]>::from(data));
+            // Zig: `chunks.append(@constCast(data))` — `data` *is* the buffer
+            // `on_alloc` returned, sliced to `nread`. Reclaim that allocation
+            // (debug-assert it's the same pointer), truncate to the read
+            // length, and push — no copy, no leak.
+            let buf = this
+                .pending_alloc
+                .take()
+                .expect("on_read without preceding on_alloc");
+            debug_assert_eq!(buf.as_ptr(), data.as_ptr());
+            debug_assert!(data.len() <= buf.len());
+            let mut v = Vec::from(buf);
+            v.truncate(data.len());
+            this.chunks.push(v.into_boxed_slice());
         }
 
         fn on_error(this: &mut SyncWindowsPipeReader, err: bun_sys::E) {
@@ -3123,6 +3163,7 @@ pub mod sync {
                     tag,
                     pipe,
                     chunks: Vec::new(),
+                    pending_alloc: None,
                     err: bun_sys::E::SUCCESS,
                     on_done_callback: SyncWindowsProcess::on_reader_done,
                 });

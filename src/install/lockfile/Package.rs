@@ -572,11 +572,7 @@ impl Package<u64> {
                 ),
                 name_hash: self.name_hash,
                 meta: Meta::clone_into(&self.meta, id, old_string_buf, &mut *builder),
-                resolution: ResolutionType::<u64>::clone(
-                    &self.resolution,
-                    old_string_buf,
-                    &mut *builder,
-                ),
+                resolution: self.resolution.clone_into(old_string_buf, &mut *builder),
                 scripts: self.scripts.clone_into(old_string_buf, &mut *builder),
                 dependencies: DependencySlice::new(prev_len, end - prev_len),
                 resolutions: PackageIDSlice::new(prev_len, end - prev_len),

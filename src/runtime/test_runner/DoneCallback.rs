@@ -2,7 +2,6 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsRe
 use bun_str::String as BunString;
 
 use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
-use crate::test_runner::debug;
 use crate::test_runner::expect::JSValueTestExt as _;
 
 #[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
@@ -14,8 +13,7 @@ pub struct DoneCallback {
 
 impl DoneCallback {
     pub fn finalize(this: *mut DoneCallback) {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         // SAFETY: `this` was `Box::into_raw`'d by `JsClass::to_js` in
         // `create_unbound`; finalize is called exactly once by JSC lazy sweep.
@@ -25,8 +23,7 @@ impl DoneCallback {
     }
 
     pub fn create_unbound(global: &JSGlobalObject) -> JSValue {
-        group_begin!();
-        let _g = scopeguard::guard((), |_| debug::group::end());
+        let _g = group_begin!();
 
         let done_callback = DoneCallback {
             r#ref: None,
@@ -67,5 +64,5 @@ unsafe extern "C" fn __jsc_host_bun_test_done_callback(
 //   source:     src/test_runner/DoneCallback.zig (46 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; groupLog begin/end mapped to group_begin!() + scopeguard end()
+//   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; groupLog begin/end mapped to group_begin!() RAII GroupGuard
 // ──────────────────────────────────────────────────────────────────────────

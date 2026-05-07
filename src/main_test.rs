@@ -51,9 +51,9 @@ pub fn main() {
     }
 
     Output::source::Stdio::init();
-    // PORT NOTE: `defer Output.flush()` — Global::exit is noreturn, so this guard only fires
-    // on unwind; kept for structural parity.
-    let _flush = scopeguard::guard((), |_| Output::flush());
+    // PORT NOTE: `defer Output.flush()` — Global::exit is noreturn, so this only fires on
+    // unwind; kept for structural parity.
+    scopeguard::defer! { Output::flush(); }
     bun_core::StackCheck::configure_thread();
     let exit_code = run_tests();
     Global::exit(exit_code);
@@ -119,13 +119,9 @@ fn run_tests() -> u8 {
         // TODO(port): std.testing.allocator_instance = .{} — Zig leak-checking allocator reset.
         // No Rust equivalent; leak detection would need a custom global allocator hook.
 
-        // TODO(port): stderr.lock(.exclusive) / stderr.unlock()
-        let did_lock = false;
-        let _unlock = scopeguard::guard((), |_| {
-            if did_lock {
-                // stderr.unlock();
-            }
-        });
+        // TODO(port): stderr.lock(.exclusive) / stderr.unlock() — when implemented, the lock
+        // call must return an RAII guard that unlocks on Drop (no manual unlock defer).
+        let _stderr_lock: () = ();
 
         let start = milli_timestamp();
         let result = recover::call_for_test(t.func);

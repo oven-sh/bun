@@ -19,6 +19,18 @@ thread_local! {
     static TOP_CTX: Cell<Option<*const Context>> = const { Cell::new(None) };
 }
 
+/// RAII guard that restores `TOP_CTX` to a saved previous value on drop.
+/// Replaces the Zig `defer top_ctx = prev_ctx;` in `call`/`call_for_test`.
+struct TopCtxRestore {
+    prev: Option<*const Context>,
+}
+
+impl Drop for TopCtxRestore {
+    fn drop(&mut self) {
+        TOP_CTX.with(|c| c.set(self.prev));
+    }
+}
+
 /// Returns if there was no recover call in current thread.
 /// Otherwise, does not return and execution continues from the current thread
 /// recover call.
@@ -52,7 +64,7 @@ pub fn call_for_test(
         return Err(bun_core::err!("Panic"));
     }
     TOP_CTX.with(|c| c.set(Some(&ctx as *const Context)));
-    let _guard = scopeguard::guard((), |_| TOP_CTX.with(|c| c.set(prev_ctx)));
+    let _guard = TopCtxRestore { prev: prev_ctx };
     test_func()
 }
 
@@ -77,7 +89,7 @@ pub fn call<T>(
         return Err(bun_core::err!("Panic"));
     }
     TOP_CTX.with(|c| c.set(Some(&ctx as *const Context)));
-    let _guard = scopeguard::guard((), |_| TOP_CTX.with(|c| c.set(prev_ctx)));
+    let _guard = TopCtxRestore { prev: prev_ctx };
     func()
 }
 

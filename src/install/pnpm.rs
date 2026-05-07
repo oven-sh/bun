@@ -649,12 +649,19 @@ pub fn migrate_pnpm_lockfile<'a>(
         for _pkg_id in 0..workspace_pkgs_end {
             let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
 
+            // PORT NOTE: own the bytes — the `'next_dep` loop body mutates
+            // `lockfile.buffers.string_bytes` (via `sbuf!`) and takes
+            // `&mut *lockfile` (`append_package_dedupe`), so a borrow that
+            // spans the loop would conflict.
+            let workspace_path_buf: Vec<u8>;
             let workspace_path: &[u8] = if pkg_id == 0 {
                 b"."
             } else {
                 let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
                 // SAFETY: tag == Workspace for ids in [1, workspace_pkgs_end).
-                unsafe { workspace_res.value.workspace }.slice(string_bytes!(lockfile))
+                let ws = unsafe { workspace_res.value.workspace };
+                workspace_path_buf = ws.slice(string_bytes!(lockfile)).to_vec();
+                &workspace_path_buf
             };
 
             let Some(importer_versions) = importer_dep_res_versions.get(workspace_path) else {
@@ -982,7 +989,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             // implicit workspace dependencies
             if dep.behavior.is_workspace() {
                 // SAFETY: tag == Workspace.
-                let workspace_path = unsafe { dep.version.value.workspace }.slice(string_buf);
+                let ws = unsafe { dep.version.value.workspace };
+                let workspace_path = ws.slice(string_buf);
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 path_buf.join(&[workspace_path]);
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
@@ -1043,7 +1051,8 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
         // SAFETY: tag == Workspace for ids in [workspace_pkgs_off, workspace_pkgs_end).
-        let workspace_path = unsafe { workspace_res.value.workspace }.slice(string_bytes!(lockfile));
+        let ws = unsafe { workspace_res.value.workspace };
+        let workspace_path = ws.slice(string_bytes!(lockfile));
 
         let Some(importer_versions) = importer_dep_res_versions.get(workspace_path) else {
             return Err(invalid_pnpm_lockfile());
@@ -1356,7 +1365,9 @@ fn parse_append_package_dependencies(
                                     }
 
                                     behavior.set_optional(
-                                        Expr::get_boolean(meta_obj, b"optional")
+                                        meta_obj
+                                            .get(b"optional")
+                                            .and_then(|e| e.as_bool())
                                             .unwrap_or(false),
                                     );
                                     break;

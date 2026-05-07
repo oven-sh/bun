@@ -10,7 +10,13 @@
 //! and the value types are the canonical on-disk shapes (re-exported by
 //! `bun_install`).
 
+use core::cmp::Ordering;
+use core::mem::ManuallyDrop;
+
 use bun_semver::String as SemverString;
+use bun_semver::version::VersionInt;
+use bun_semver::{self as semver, StringBuilder};
+use bun_string::strings;
 
 // ─── Identity / sentinel ──────────────────────────────────────────────────
 

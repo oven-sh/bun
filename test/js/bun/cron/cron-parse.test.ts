@@ -8,24 +8,28 @@ import { bunEnv, bunExe, isDebug } from "harness";
 const parse = (expr: string, from: string) => Bun.cron.parse(expr, new Date(from))!.toISOString();
 
 describe("Bun.cron.parse — UTC", () => {
-  test("0 9 * * * is 9am UTC regardless of process TZ", async () => {
-    // Parse is UTC; spawning under a non-UTC TZ should produce the same result.
-    for (const tz of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString())`,
-        ],
-        env: { ...bunEnv, TZ: tz },
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("2026-06-15T09:00:00.000Z");
-      expect(exitCode).toBe(0);
-    }
-    // Three sequential debug-build subprocesses (~1.7s startup each under
-    // ASAN) push this past the 5s default, so give it headroom there.
-  }, isDebug ? 30_000 : undefined);
+  test(
+    "0 9 * * * is 9am UTC regardless of process TZ",
+    async () => {
+      // Parse is UTC; spawning under a non-UTC TZ should produce the same result.
+      for (const tz of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.stdout.write(Bun.cron.parse("0 9 * * *", new Date("2026-06-15T00:00:00Z")).toISOString())`,
+          ],
+          env: { ...bunEnv, TZ: tz },
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("2026-06-15T09:00:00.000Z");
+        expect(exitCode).toBe(0);
+      }
+      // Three sequential debug-build subprocesses (~1.7s startup each under
+      // ASAN) push this past the 5s default, so give it headroom there.
+    },
+    isDebug ? 30_000 : undefined,
+  );
 
   test("weekday matching uses UTC day-of-week", () => {
     // 2026-06-15 is a Monday in UTC.

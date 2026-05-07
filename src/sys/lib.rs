@@ -5913,9 +5913,9 @@ pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
 pub fn stderr_writer() -> FileWriter { FileWriter(Fd::stderr()) }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `NodeFS::writeFileWithPathBuffer` — CYCLEBREAK MOVE_DOWN landing.
+// `NodeFS::writeFileWithPathBuffer` — JSC-free subset.
 //
-// Real impl lives in `bun_runtime::node::node_fs` (T6, takes JS encodings,
+// Full impl lives in `bun_runtime::node::node_fs` (T6, takes JS encodings,
 // JSArrayBuffer, etc). Bundler (T4) needs a sync write that doesn't pull JSC.
 // This is the minimal shape: `Buffer` data + `Path` target → openat+write+close.
 // ──────────────────────────────────────────────────────────────────────────

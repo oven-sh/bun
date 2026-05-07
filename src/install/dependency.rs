@@ -139,7 +139,7 @@ impl Dependency {
     /// "name" must be ASC so that later, when we rebuild the lockfile
     /// we insert it back in reverse order without an extra sorting pass
     pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(&rhs.behavior);
+        let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
             return behavior == Ordering::Less;
         }
@@ -153,7 +153,7 @@ impl Dependency {
     /// accepts a strict-weak `lessThan`; Rust's sort requires a full
     /// `Ordering`). Same key as `is_less_than`: behavior group, then name ASC.
     pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
-        let behavior = lhs.behavior.cmp(&rhs.behavior);
+        let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
             return behavior;
         }

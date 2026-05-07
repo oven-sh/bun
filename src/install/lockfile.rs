@@ -228,7 +228,7 @@ impl<'a> DepSorter<'a> {
         let l_dep = &deps_buf[l as usize];
         let r_dep = &deps_buf[r as usize];
 
-        match l_dep.behavior.cmp(&r_dep.behavior) {
+        match l_dep.behavior.cmp(r_dep.behavior) {
             Ordering::Less => true,
             Ordering::Greater => false,
             Ordering::Equal => {

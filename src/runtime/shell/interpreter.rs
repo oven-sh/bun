@@ -2176,37 +2176,29 @@ pub fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, mut jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    // PORT NOTE: `EventLoopHandle` is still the opaque-usize shim (see line
-    // ~1480); store the raw `*mut EventLoop` so the JS-tag dispatch works once
-    // the real `bun_event_loop::EventLoopHandle` replaces the shim.
-    let event_loop = EventLoopHandle(unsafe { (*global.bun_vm()).event_loop() } as usize);
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
+    // dereferencing for `event_loop()` is sound on the mutator thread.
+    let event_loop = EventLoopHandle::init(unsafe { (*global.bun_vm()).event_loop() } as *mut ());
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
         event_loop,
         shargs,
-        jsobjs.as_mut_slice() as *mut [JSValue],
+        jsobjs,
         export_env,
         cwd_slice.as_ref().map(|c| c.slice()),
-        None,
     ) {
         ShellResult::Ok(i) => i,
         ShellResult::Err(e) => {
-            // jsobjs / shargs drop on scope exit (export_env was consumed).
+            // shargs/jsobjs were consumed by `init` and dropped on its error
+            // path; export_env likewise (Zig: `defer shargs.deinit()` in caller).
             return Err(e.throw_js(global));
         }
     };
-    // jsobjs ownership now mirrored inside the interpreter; keep the Vec alive
-    // for the JS-value lifetimes by leaking into the interpreter's arena once
-    // `setup_io_before_run` lands. PORT NOTE: Zig kept `jsobjs.items` as a
-    // borrow into the arraylist; here `Interpreter::init` cloned the slice,
-    // so the local Vec drops naturally.
-    drop(jsobjs);
 
     if global.has_exception() {
         // export_env / shargs are owned by `interpreter` now and freed by Drop.

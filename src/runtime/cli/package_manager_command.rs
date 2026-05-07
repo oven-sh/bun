@@ -99,10 +99,9 @@ impl PackageManagerCommand {
         // single-threaded CLI dispatch guarantees exclusive access here.
         let pm: &mut PackageManager = unsafe { &mut *pm_ptr };
 
-        let read = file.read_to_end();
-        let bytes = match read.err {
-            None => read.bytes,
-            Some(err) => {
+        let bytes = match file.read_to_end() {
+            Ok(bytes) => bytes,
+            Err(err) => {
                 Output::err(bun_core::Error::from(err), "failed to read lockfile", ());
                 Global::crash();
             }
@@ -273,7 +272,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
-            ScanCommand::exec_with_manager(&&mut *ctx, pm, &cwd)?;
+            ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm)?;

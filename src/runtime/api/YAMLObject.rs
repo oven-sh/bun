@@ -12,7 +12,6 @@ use bun_logger as logger;
 use bun_logger::js_ast::{expr::Data as ExprData, E, Expr};
 use bun_str::{String as BunString, ZigString};
 
-use crate::node::types::SliceWithUnderlyingString;
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 // ──────────────────────────────────────────────────────────────────────────

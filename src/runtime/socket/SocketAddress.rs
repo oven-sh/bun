@@ -861,30 +861,26 @@ impl sockaddr {
 
     // I'd bet money endianness is going to screw us here.
     // Zig name: `@"127.0.0.1"`
-    pub const LOOPBACK_V4: sockaddr = {
-        // TODO(port): const-eval — sockaddr::v4 isn't const fn; inline manually if needed in Phase B
-        sockaddr {
-            sin: inet::sockaddr_in {
-                family: inet::AF_INET as inet::sa_family_t,
-                port: 0,
-                addr: u32::from_ne_bytes([127, 0, 0, 1]),
-                zero: [0; 8],
-            },
-        }
+    pub const LOOPBACK_V4: sockaddr = sockaddr {
+        sin: inet::sockaddr_in {
+            family: inet::AF_INET as inet::sa_family_t,
+            port: 0,
+            addr: u32::from_ne_bytes([127, 0, 0, 1]),
+            ..inet::sockaddr_in::ZEROED
+        },
     };
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
     // Zig name: `@"::"`
-    pub const ANY_V6: sockaddr = {
-        sockaddr {
-            sin6: inet::sockaddr_in6 {
-                family: inet::AF_INET6 as inet::sa_family_t,
-                port: 0,
-                flowinfo: 0,
-                scope_id: 0,
-                addr: inet::IN6ADDR_ANY_INIT,
-            },
-        }
+    pub const ANY_V6: sockaddr = sockaddr {
+        sin6: inet::sockaddr_in6 {
+            family: inet::AF_INET6 as inet::sa_family_t,
+            port: 0,
+            flowinfo: 0,
+            scope_id: 0,
+            addr: inet::IN6ADDR_ANY_INIT,
+            ..inet::sockaddr_in6::ZEROED
+        },
     };
 
     // pub const in = inet::sockaddr_in;

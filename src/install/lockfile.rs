@@ -1483,6 +1483,7 @@ impl Lockfile {
             return Ok(());
         }
 
+        let cache_ctx = manager.manifest_disk_cache_ctx();
         let pkgs = self.packages.slice();
         let len = pkgs.len();
 
@@ -1535,7 +1536,6 @@ impl Lockfile {
                     // `manifests` and `lockfile` are non-overlapping fields; nothing
                     // below resizes/relocates `manifests` while `manifest` is held.
                     let manager_ptr: *mut PackageManager = manager;
-                    let cache_ctx = unsafe { &mut *manager_ptr }.manifest_disk_cache_ctx();
                     let scope = unsafe { &(*manager_ptr).options }.scope_for_package_name(
                         pkg_name.slice(self.buffers.string_bytes.as_slice()),
                     );

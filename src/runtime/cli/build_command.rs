@@ -527,7 +527,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
+                    log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -557,10 +557,16 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
+            // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
+            // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
+            // this via `r#loop()` to drain parse tasks; passing `None` panics.
+            let event_loop: &'static mut bun_event_loop::AnyEventLoop<'static> =
+                arena.alloc(bun_event_loop::AnyEventLoop::init());
+
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                None, // EventLoop = Option<NonNull<()>>; CLI uses no JS loop
+                Some(core::ptr::NonNull::from(event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
@@ -570,9 +576,9 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
+                        log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
                     } else {
-                        let _ = write!(Output::error_writer(), "error: {}", err.name());
+                        write!(Output::error_writer(), "error: {}", err.name())?;
                     }
 
                     Output::flush();
@@ -1088,7 +1094,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
+        log_ref.print(Output::error_writer() as *mut bun_core::io::Writer)?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

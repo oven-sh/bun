@@ -402,6 +402,39 @@ impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 }
 
+/// Spec: mkdir.zig `MkdirVerboseVTable` — collects each created directory into
+/// `created_directories` (newline-separated) when `-v` is set. Passed by value
+/// to `NodeFS::mkdir_recursive_impl`; `on_create_dir` writes through the raw
+/// back-ref because the trait method takes `&self` (Zig: `*@This()`).
+struct MkdirVerboseVTable {
+    inner: *mut Vec<u8>,
+    active: bool,
+}
+
+impl MkdirCtx for MkdirVerboseVTable {
+    fn on_create_dir(&self, dirpath: &bun_paths::OSPathSliceZ) {
+        if !self.active {
+            return;
+        }
+        // SAFETY: `inner` points at `ShellMkdirTask::created_directories`; the
+        // worker thread is the sole accessor for the duration of
+        // `run_from_thread_pool`, and `mkdir_recursive_impl` does not alias it.
+        let out = unsafe { &mut *self.inner };
+        #[cfg(windows)]
+        {
+            let mut buf = bun_paths::PathBuffer::uninit();
+            let str = bun_string::strings::from_wpath(buf.as_mut(), dirpath.as_slice());
+            out.extend_from_slice(str.as_bytes());
+            out.push(b'\n');
+        }
+        #[cfg(not(windows))]
+        {
+            out.extend_from_slice(dirpath.as_bytes());
+            out.push(b'\n');
+        }
+    }
+}
+
 impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
@@ -454,12 +487,9 @@ impl FlagParser for Opts {
     }
 }
 
-#[allow(dead_code)]
-fn _assert_c_char(_: *const c_char) {}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/mkdir.zig (400 lines)
-//   confidence: medium (NodeId style; thread-pool body stubbed)
-//   blocked_on: NodeFS::mkdir_recursive_impl, WorkPool, IOWriter::enqueue body
+//   confidence: high (NodeId style; thread-pool body ported)
+//   blocked_on: IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

@@ -923,7 +923,11 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         bun_core::mark_binding!();
 
         if let Some(err) = this.get_pending_error() {
-            return global.vm().throw_error(global, err).unwrap_or(JSValue::ZERO);
+            // `throw_error` sets the pending JS exception and returns the
+            // `JsError` for `?`-propagation; this host fn returns bare
+            // `JSValue`, so report and return ZERO (caller checks exception).
+            let _ = global.vm().throw_error(global, err);
+            return JSValue::ZERO;
         }
 
         // TODO: properly propagate exception upwards

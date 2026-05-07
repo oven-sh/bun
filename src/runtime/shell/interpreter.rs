@@ -363,6 +363,16 @@ impl ShellArgs {
     pub fn arena(&self) -> &bun_alloc::Arena {
         &self.__arena
     }
+
+    /// Spec: interpreter.zig `ShellArgs.memoryCost`.
+    /// PORT NOTE: Zig walks `script_ast.memoryCost()`; the Rust port reports
+    /// the arena's `allocated_bytes()` instead (a superset — tokens + strpool
+    /// + AST nodes). This is for GC `estimatedSize` reporting only, where
+    /// over-approximation is preferable to a tree walk on a lifetime-erased
+    /// AST mirror.
+    pub fn memory_cost(&self) -> usize {
+        core::mem::size_of::<ShellArgs>() + self.__arena.allocated_bytes()
+    }
 }
 
 /// `shell.Result(T)` — Zig's `union(enum) { result: T, err: ShellErr }`.

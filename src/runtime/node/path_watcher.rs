@@ -32,7 +32,7 @@ use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_paths::{self as path, PathBuffer};
 use bun_str::{strings, ZStr};
-use bun_sys::{self as sys, Fd, Syscall};
+use bun_sys::{self as sys, Fd, FdExt, Tag as Syscall};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 

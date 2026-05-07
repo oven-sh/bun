@@ -20,7 +20,7 @@ use bun_sourcemap::{self as source_map, SourceMapState};
 use crate::bake::{self as bake, Side};
 use crate::bake::dev_server::{self, ChunkKind, DevServer};
 #[allow(unused_imports)]
-use crate::bake::dev_server_body::{DevAllocator, dump_bundle};
+use crate::bake::dev_server_body::dump_bundle;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use super::packed_map_body as packed_map;
 
@@ -114,8 +114,12 @@ impl SourceId {
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
+// PORT NOTE: Zig's `dev_allocator: DevAllocator` field is dropped — its sole
+// reader was `Entry.allocator()` which fed `paths`/`files` frees in `deinit`.
+// In Rust those are `Box`/`Vec` backed by the global mimalloc; the borrowed
+// `AllocationScope` handle would be dead state and would force a lifetime
+// parameter on `Entry` (and transitively on `SourceMapStore`/`DevServer`).
 pub struct Entry {
-    pub dev_allocator: DevAllocator,
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -136,9 +140,8 @@ pub struct Entry {
     pub overlapping_memory_cost: u32,
 }
 
-// `Entry` has no `Default` — `dev_allocator` is a borrowed `AllocationScope`
-// that must come from the owning `DevServer`; `put_or_increment_ref_count`
-// constructs it explicitly.
+// `Entry` has no `Default` — `put_or_increment_ref_count` constructs it
+// explicitly with caller-supplied `ref_count`.
 
 impl Entry {
     // PORT NOTE: Zig `sourceContents()` was dead code — it indexed `entry.source_contents` and
@@ -511,15 +514,10 @@ impl SourceMapStore {
         unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
     }
 
-    fn dev_allocator(&self) -> DevAllocator {
-        // SAFETY: same container_of invariant as `owner`; const-only access.
-        let dev_server: &DevServer = unsafe {
-            &*(self as *const Self as *const u8)
-                .sub(offset_of!(DevServer, source_maps))
-                .cast::<DevServer>()
-        };
-        dev_server.dev_allocator()
-    }
+    // PORT NOTE: Zig `allocator()`/`dev_allocator()` dropped — see `Entry`'s
+    // PORT NOTE above. The only call site was `put_or_increment_ref_count`,
+    // which no longer needs to thread a borrowed `AllocationScope` into the
+    // new entry.
 }
 
 pub enum PutOrIncrementRefCount<'a> {
@@ -536,13 +534,10 @@ impl SourceMapStore {
         script_id: Key,
         ref_count: u32,
     ) -> Result<PutOrIncrementRefCount<'_>, bun_alloc::AllocError> {
-        // PORT NOTE: reshaped for borrowck — capture dev_allocator before borrowing entries mutably.
-        let dev_allocator = self.dev_allocator();
         let gop = self.entries.get_or_put(script_id)?;
         if !gop.found_existing {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
-                dev_allocator,
                 ref_count,
                 // TODO(port): Zig left these `undefined`; caller fills them. Using zeroed/default placeholders.
                 overlapping_memory_cost: 0,

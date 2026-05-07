@@ -360,7 +360,7 @@ pub use shell_body::ShellErr;
 /// Spec: shell.zig `bun.shell.Result(T)`.
 pub type Result<T, E = ShellErr> = core::result::Result<T, E>;
 
-pub struct ParsedShellScript(());
+pub use parsed_shell_script::ParsedShellScript;
 pub struct Subprocess(());
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,8 +3,9 @@ use bstr::BStr;
 use bun_core::{err, Global, Output};
 use bun_logger as logger;
 use bun_paths::{AbsPath, PathBuffer};
+use bun_resolver::fs::FileSystem;
 use bun_string::strings;
-use bun_sys::{fs::FileSystem, Dir, Fd, FdDirExt};
+use bun_sys::{Dir, Fd, FdDirExt};
 
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{package::Package, Lockfile};

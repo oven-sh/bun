@@ -1073,8 +1073,8 @@ impl Diff {
             // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
             // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
             // so split the borrow at the field.
-            lockfile::OverrideMap::sort(&mut from_lockfile.overrides, &from_lockfile.buffers);
-            lockfile::OverrideMap::sort(&mut to_lockfile.overrides, &to_lockfile.buffers);
+            lockfile::OverrideMap::sort(&mut from_lockfile.overrides, from_lockfile.buffers.string_bytes.as_slice());
+            lockfile::OverrideMap::sort(&mut to_lockfile.overrides, to_lockfile.buffers.string_bytes.as_slice());
             debug_assert_eq!(
                 from_lockfile.overrides.map.keys().len(),
                 to_lockfile.overrides.map.keys().len()

@@ -228,9 +228,90 @@ impl Listener {
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
             let mut buf = PathBuffer::uninit();
-            if let Some(_pipe_name) = normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice()) {
-                let _ = (vm, global_static, ssl_enabled);
-                todo!("blocked_on: WindowsNamedPipeListeningContext::listen — Windows named-pipe listen path");
+            if let Some(pipe_name) =
+                normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
+            {
+                // PORT NOTE: reshaped — `pipe_name` borrows `buf`; copy to an owned
+                // buffer so the borrow ends before we move `socket_config` below.
+                let mut pipe_buf = PathBuffer::uninit();
+                let pipe_len = pipe_name.len();
+                pipe_buf[..pipe_len].copy_from_slice(pipe_name);
+
+                let connection = UnixOrHost::Unix(
+                    socket_config.hostname_or_unix.slice().to_vec().into_boxed_slice(),
+                );
+
+                // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
+                unsafe { (*vm.event_loop()).ensure_waker() };
+
+                // PORT NOTE: by-value move of Handlers — see the non-pipe arm below
+                // for rationale on `ptr::read` + `mem::forget`.
+                // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
+                let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
+                let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
+                let default_data = socket_config.default_data;
+                let ssl_cfg_taken = socket_config.ssl.take();
+                core::mem::forget(socket_config);
+
+                let this: *mut Listener = Box::into_raw(Box::new(Listener {
+                    handlers: handlers_moved,
+                    connection,
+                    ssl: ssl_enabled,
+                    listener: ListenerType::None,
+                    protos: protos_taken,
+                    poll_ref: KeepAlive::init(),
+                    group: uws::SocketGroup::default(),
+                    secure_ctx: None,
+                    strong_data: Strong::empty(),
+                    strong_self: Strong::empty(),
+                }));
+                // SAFETY: just allocated, non-null, exclusive
+                let this_ref = unsafe { &mut *this };
+                if !default_data.is_zero() {
+                    this_ref.strong_data = Strong::create(default_data, global);
+                }
+                // TODO: server_name is not supported on named pipes, I belive its , lets wait for
+                // someone to ask for it
+
+                // we need to add support for the backlog parameter on listen here we use the
+                // default value of nodejs
+                match WindowsNamedPipeListeningContext::listen(
+                    global_static,
+                    &pipe_buf[..pipe_len],
+                    511,
+                    ssl_cfg_taken.as_ref(),
+                    this,
+                ) {
+                    Ok(named_pipe) => {
+                        // SAFETY: `listen` returns a non-null heap pointer.
+                        this_ref.listener =
+                            ListenerType::NamedPipe(unsafe { NonNull::new_unchecked(named_pipe) });
+                    }
+                    Err(_) => {
+                        // On error, clean up everything `this` owns *except* `this.handlers`: the outer
+                        // `errdefer handlers.deinit()` already unprotects those JSValues, and `this.handlers`
+                        // is a by-value copy of the same struct, so calling `this.deinit()` here would
+                        // unprotect the same callbacks a second time.
+                        // PORT NOTE: in this port `handlers` was *moved* (not copied), so we
+                        // recover it from the box before freeing and let it drop here for the
+                        // same single-unprotect effect.
+                        this_ref.strong_data.deinit();
+                        // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
+                        // protos, and (the moved) handlers exactly once.
+                        drop(unsafe { Box::from_raw(this) });
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Failed to listen at {}",
+                            bstr::BStr::new(&pipe_buf[..pipe_len])
+                        )));
+                    }
+                }
+
+                // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
+                // transfers to the C++ wrapper.
+                let this_value = unsafe { Listener__create(global.as_mut_ptr(), this) };
+                this_ref.strong_self.set(global, this_value);
+                this_ref.poll_ref.ref_(vm_event_loop_ctx());
+                return Ok(this_value);
             }
         }
 

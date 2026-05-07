@@ -138,23 +138,25 @@ impl HTMLRewriter {
 
         let handler_ = ElementHandler::init(global, listener)?;
         let mut handler = Box::new(handler_);
-        let handler_ptr: *mut ElementHandler = &mut *handler;
+        // Take the address ONCE as a raw pointer; `NonNull` is `Copy`, so the
+        // same allocation can be passed to multiple handler slots without ever
+        // materializing aliased `&mut` (which would be UB under Stacked
+        // Borrows even if only address-taken).
+        let handler_ptr: NonNull<ElementHandler> = NonNull::from(&mut *handler);
 
         let has_element = handler.on_element_callback.is_some();
         let has_comment = handler.on_comment_callback.is_some();
         let has_text = handler.on_text_callback.is_some();
 
-        // SAFETY: builder is a valid lol-html builder; handler_ptr stays alive
-        // because we push it into self.context.element_handlers below. The
-        // `&mut *handler_ptr` borrows are address-taken only — the wrapper
-        // immediately erases them to `*mut c_void` userdata without
-        // dereferencing, so no aliasing access occurs.
+        // SAFETY: builder is a valid lol-html builder; `handler_ptr` stays
+        // alive because the Box is pushed into `self.context.element_handlers`
+        // below, outliving the rewriter.
         let res = unsafe {
             (*self.builder).add_element_content_handlers(
                 &mut **selector_guard,
-                if has_element { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
-                if has_comment { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
-                if has_text { Some(&mut *handler_ptr) } else { None::<&mut ElementHandler> },
+                has_element.then_some(handler_ptr),
+                has_comment.then_some(handler_ptr),
+                has_text.then_some(handler_ptr),
             )
         };
         if res.is_err() {
@@ -177,7 +179,8 @@ impl HTMLRewriter {
     ) -> JsResult<JSValue> {
         let handler_ = DocumentHandler::init(global, listener)?;
         let mut handler = Box::new(handler_);
-        let handler_ptr: *mut DocumentHandler = &mut *handler;
+        // See `on_` — single raw `NonNull`, copied per-slot, no aliased `&mut`.
+        let handler_ptr: NonNull<DocumentHandler> = NonNull::from(&mut *handler);
 
         let has_doc_type = handler.on_doc_type_callback.is_some();
         let has_comment = handler.on_comment_callback.is_some();
@@ -185,16 +188,14 @@ impl HTMLRewriter {
         let has_end = handler.on_end_callback.is_some();
 
         // If this fails, subsequent calls to write or end should throw
-        // SAFETY: builder is valid; handler_ptr lives in context.document_handlers.
-        // The `&mut *handler_ptr` borrows are address-taken only — the wrapper
-        // immediately erases them to `*mut c_void` userdata without
-        // dereferencing, so no aliasing access occurs.
+        // SAFETY: builder is valid; `handler_ptr` lives in
+        // `context.document_handlers`, outliving the rewriter.
         unsafe {
             (*self.builder).add_document_content_handlers(
-                if has_doc_type { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
-                if has_comment { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
-                if has_text { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
-                if has_end { Some(&mut *handler_ptr) } else { None::<&mut DocumentHandler> },
+                has_doc_type.then_some(handler_ptr),
+                has_comment.then_some(handler_ptr),
+                has_text.then_some(handler_ptr),
+                has_end.then_some(handler_ptr),
             );
         }
 

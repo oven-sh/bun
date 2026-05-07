@@ -655,7 +655,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     *body_value =
                         crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
                             task: Some(ctx as *mut c_void),
-                            global,
+                            global: global as *const _,
                             on_start_buffering: Some(
                                 ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,
                             ),

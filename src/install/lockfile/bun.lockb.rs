@@ -372,7 +372,7 @@ pub fn load(
     }
 
     let packages_load_result =
-        package::serializer::load::<u64>(stream, total_buffer_size as usize, migrate_from_v2)?;
+        package::serializer::load(stream, total_buffer_size as usize, migrate_from_v2)?;
 
     lockfile.packages = packages_load_result.list;
 

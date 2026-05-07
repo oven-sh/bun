@@ -3055,27 +3055,31 @@ pub mod serializer {
     // Unused by save/load (the live aligner uses `@TypeOf(list.bytes)`), so
     // it is intentionally not ported.
 
-    pub fn save<SemverIntType: VersionInt, S, W>(
+    pub fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
-        writer: &mut W,
     ) -> Result<(), bun_core::Error>
     where
-        S: PositionalStream,
-        W: bun_io::Write,
+        // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over
+        // the same buffer. Two `&mut` to one object is UB in Rust regardless of
+        // access order, so the port collapses both roles onto one type —
+        // `Serializer::StreamType` impls both `PositionalStream` and
+        // `bun_io::Write`.
+        S: PositionalStream + bun_io::Write,
     {
         // TODO(port): narrow error set
-        writer.write_int_le::<u64>(list.len() as u64)?;
+        stream.write_int_le::<u64>(list.len() as u64)?;
         // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs concrete type from MultiArrayList.
-        writer.write_int_le::<u64>(mem::align_of::<*mut u8>() as u64)?;
-        writer.write_int_le::<u64>(FIELD_COUNT as u64)?;
+        stream.write_int_le::<u64>(mem::align_of::<*mut u8>() as u64)?;
+        stream.write_int_le::<u64>(FIELD_COUNT as u64)?;
         let begin_at = stream.get_pos()?;
-        writer.write_int_le::<u64>(0)?;
+        stream.write_int_le::<u64>(0)?;
         let end_at = stream.get_pos()?;
-        writer.write_int_le::<u64>(0)?;
+        stream.write_int_le::<u64>(0)?;
 
         // TODO(port): Aligner.write needs the bytes-pointer alignment type.
-        let _ = Aligner::write::<*mut u8, _>(writer, stream.get_pos()? as u64)?;
+        let pos = stream.get_pos()? as u64;
+        let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
         let really_begin_at = stream.get_pos()?;
         let sliced = list.slice();

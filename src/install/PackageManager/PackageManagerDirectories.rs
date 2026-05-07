@@ -676,8 +676,8 @@ pub fn path_for_cached_npm_path<'a>(
             &[cache_path.as_bytes()],
             path::Platform::Windows,
         );
-        return match sys::readlink(joined, buf).unwrap() {
-            Ok(p) => Ok(p),
+        return match sys::readlink(joined, &mut buf.0[..]) {
+            Ok(n) => Ok(&mut buf.0[..n]),
             Err(err) => {
                 let _ = sys::unlink(joined);
                 Err(err.into())

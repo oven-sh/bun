@@ -3246,37 +3246,9 @@ where
         }
     }
 
-    /// `js.gc.routeList.set` — write the codegen'd `WriteBarrier<Unknown>`
-    /// slot on the per-type C++ wrapper so route JS objects stay GC-rooted.
-    pub fn js_gc_route_list_set(server_js: JSValue, global: &JSGlobalObject, route_list: JSValue) {
-        match (SSL, DEBUG) {
-            (false, false) => http_server_cached::route_list_set_cached(server_js, global, route_list),
-            (true, false) => https_server_cached::route_list_set_cached(server_js, global, route_list),
-            (false, true) => debug_http_server_cached::route_list_set_cached(server_js, global, route_list),
-            (true, true) => debug_https_server_cached::route_list_set_cached(server_js, global, route_list),
-        }
-    }
-
-    /// Wrap an already-heap-allocated server pointer in its JS object.
-    /// Ownership transfers to the C++ wrapper (freed via `finalize`).
-    pub fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        // PORT NOTE: routes through the `JsClass::to_js` impl below; that impl
-        // currently `Box::into_raw`s its by-value receiver. To avoid a
-        // move/double-own, call the codegen extern directly once it lands;
-        // until then, the by-value path takes a bitwise read of `*this` and
-        // hands it back to the same heap slot, so use the codegen `to_js`
-        // shim that accepts a raw pointer.
-        super::server_js_create(this.cast(), global, SSL, DEBUG)
-    }
+    // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
+    // `impl NewServer` in mod.rs; do not redefine them here.
 }
-
-// Per-type cached-accessor shims for the `routeList` `WriteBarrier` slot.
-// `codegen_cached_accessors!` emits `route_list_{get,set}_cached` wrapping
-// `${T}Prototype__routeList{Get,Set}CachedValue` (generate-classes.ts).
-mod http_server_cached { bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList); }
-mod https_server_cached { bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList); }
-mod debug_http_server_cached { bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList); }
-mod debug_https_server_cached { bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList); }
 
 // JsClass impls for the four server monomorphizations. The `#[bun_jsc::JsClass]`
 // proc-macro normally emits these (binding to `{Type}__fromJS`/`{Type}__create`

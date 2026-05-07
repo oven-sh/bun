@@ -374,20 +374,24 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
                             // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit is always `Borrowed(&'static)`. Coerce
-                            // through an owned leak so an `Owned` variant (if ever produced
-                            // by a future `mime_type_from_string`) does not dangle.
-                            let value: &'static [u8] = match entry.value {
-                                std::borrow::Cow::Borrowed(s) => s,
-                                std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()),
-                            };
-                            blob.content_type = value as *const [u8];
+                            // canonical-table hit (via `Compact::to_mime_type`) is always
+                            // `Borrowed(&'static)`. If a future table source ever yields
+                            // `Owned`, hand the buffer to the blob's allocated-content-type
+                            // path so `Blob::deinit` reclaims it.
+                            match entry.value {
+                                std::borrow::Cow::Borrowed(s) => {
+                                    blob.content_type = s as *const [u8];
+                                }
+                                std::borrow::Cow::Owned(v) => {
+                                    blob.content_type = Box::into_raw(v.into_boxed_slice());
+                                    blob.content_type_allocated = true;
+                                }
+                            }
                             break 'inner;
                         }
-                        let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
-                        // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
-                        blob.content_type =
-                            strings::copy_lowercase(slice, content_type_buf) as *const [u8];
+                        let mut content_type_buf = vec![0u8; slice.len()];
+                        strings::copy_lowercase(slice, &mut content_type_buf);
+                        blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }
@@ -434,20 +438,24 @@ pub fn construct_s3_file_with_s3_credentials(
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = unsafe { (*global.bun_vm()).mime_type(str.slice()) } {
                             // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
-                            // canonical-table hit is always `Borrowed(&'static)`. Coerce
-                            // through an owned leak so an `Owned` variant (if ever produced
-                            // by a future `mime_type_from_string`) does not dangle.
-                            let value: &'static [u8] = match entry.value {
-                                std::borrow::Cow::Borrowed(s) => s,
-                                std::borrow::Cow::Owned(v) => Box::leak(v.into_boxed_slice()),
-                            };
-                            blob.content_type = value as *const [u8];
+                            // canonical-table hit (via `Compact::to_mime_type`) is always
+                            // `Borrowed(&'static)`. If a future table source ever yields
+                            // `Owned`, hand the buffer to the blob's allocated-content-type
+                            // path so `Blob::deinit` reclaims it.
+                            match entry.value {
+                                std::borrow::Cow::Borrowed(s) => {
+                                    blob.content_type = s as *const [u8];
+                                }
+                                std::borrow::Cow::Owned(v) => {
+                                    blob.content_type = Box::into_raw(v.into_boxed_slice());
+                                    blob.content_type_allocated = true;
+                                }
+                            }
                             break 'inner;
                         }
-                        let content_type_buf = Box::leak(vec![0u8; slice.len()].into_boxed_slice());
-                        // TODO(port): blob.content_type ownership — Zig stores raw slice + allocated flag
-                        blob.content_type =
-                            strings::copy_lowercase(slice, content_type_buf) as *const [u8];
+                        let mut content_type_buf = vec![0u8; slice.len()];
+                        strings::copy_lowercase(slice, &mut content_type_buf);
+                        blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());
                         blob.content_type_allocated = true;
                     }
                 }

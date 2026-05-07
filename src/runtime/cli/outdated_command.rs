@@ -100,15 +100,28 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — capture `log_level` / `log` raw ptr
-        // before borrowing `&mut manager.lockfile` so the error arms can read
-        // them while the `LoadResult<'_>` borrow is live.
+        // PORT NOTE: reshaped for borrowck — Zig calls
+        // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
+        // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
+        // raw pointers from the singleton first; `load_from_cwd` only reads
+        // `manager.options` / migration helpers and never re-borrows
+        // `manager.lockfile` through the `pm` argument.
         let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let log_ptr: *mut bun_logger::Log =
-            manager.log.map_or(core::ptr::null_mut(), |p| p.as_ptr());
+        let log_ptr: *mut bun_logger::Log = manager.log;
 
-        match manager.lockfile.load_from_cwd(pm_ptr, log_ptr, true) {
+        // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
+        // no other live `&mut Lockfile` exists at this point.
+        let lockfile: &mut bun_install::lockfile::Lockfile =
+            unsafe { &mut *(*pm_ptr).lockfile };
+        // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
+        let log = unsafe { &mut *log_ptr };
+        match lockfile.load_from_cwd::<true>(
+            // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
+            // fields disjoint from `lockfile` (Zig invariant).
+            Some(unsafe { &mut *pm_ptr }),
+            log,
+        ) {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
@@ -137,7 +150,7 @@ impl OutdatedCommand {
                     }
                     // SAFETY: `ctx.log` is set by `Command::init` for every
                     // subcommand and is non-null for the command's lifetime.
-                    if unsafe { (*ctx.log).has_errors() } && !log_ptr.is_null() {
+                    if unsafe { (*ctx.log).has_errors() } {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no
                         // other `&mut Log` is live here.
@@ -148,10 +161,9 @@ impl OutdatedCommand {
             }
             LoadResult::Ok(_) => {
                 // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). The stub `PackageManager` holds the lockfile
-                // inline and `load_from_cwd(&mut self, ..)` populates it in
-                // place, so the `ok.lockfile: &mut Lockfile` reborrow is the
-                // same storage and no reassignment is needed.
+                // (pointer field). `load_from_cwd(&mut self, ..)` populates the
+                // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
+                // is the same storage and no reassignment is needed.
             }
         }
 
@@ -167,20 +179,24 @@ impl OutdatedCommand {
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
         if !manager.options.filter_patterns.is_empty() {
-            let workspace_pkg_ids = Self::find_matching_workspaces(
-                original_cwd,
+            let filters = manager.options.filter_patterns;
+            let workspace_pkg_ids =
+                Self::find_matching_workspaces(original_cwd, manager, filters);
+            populate_manifest_cache::populate_manifest_cache(
                 manager,
-                &manager.options.filter_patterns,
-            );
-            manager.populate_manifest_cache(ManifestCacheOptions::Ids(&workspace_pkg_ids))?;
+                populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
+            )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(
                 manager,
                 &workspace_pkg_ids,
                 true,
             )
-        } else if manager.options.do_.recursive {
+        } else if manager.options.do_.recursive() {
             let all_workspaces = Self::get_all_workspaces(manager);
-            manager.populate_manifest_cache(ManifestCacheOptions::Ids(&all_workspaces))?;
+            populate_manifest_cache::populate_manifest_cache(
+                manager,
+                populate_manifest_cache::Packages::Ids(&all_workspaces),
+            )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &all_workspaces, true)
         } else {
             let root_pkg_id = manager
@@ -190,7 +206,10 @@ impl OutdatedCommand {
                 return Ok(());
             }
             let ids = [root_pkg_id];
-            manager.populate_manifest_cache(ManifestCacheOptions::Ids(&ids))?;
+            populate_manifest_cache::populate_manifest_cache(
+                manager,
+                populate_manifest_cache::Packages::Ids(&ids),
+            )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
         }
     }
@@ -215,7 +234,7 @@ impl OutdatedCommand {
     fn find_matching_workspaces(
         original_cwd: &[u8],
         manager: &PackageManager,
-        filters: &[Box<[u8]>],
+        filters: &[&[u8]],
     ) -> Vec<PackageID> {
         let lockfile = &manager.lockfile;
         let packages = lockfile.packages.slice();

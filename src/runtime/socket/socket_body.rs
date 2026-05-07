@@ -3110,22 +3110,24 @@ macro_rules! impl_socket_js_class {
             // C++ codegen emits these with `JSC_CALLCONV` (= sysv64 on win-x64),
             // so the ABI must be cfg-selected to match — same scheme as the
             // `mod socket_js` extern block above.
-            macro_rules! __extern_block {
-                ($abi:literal) => {
-                    unsafe extern $abi {
-                        #[link_name = concat!(stringify!($name), "__fromJS")]
-                        fn __from_js(value: JSValue) -> *mut c_void;
-                        #[link_name = concat!(stringify!($name), "__fromJSDirect")]
-                        fn __from_js_direct(value: JSValue) -> *mut c_void;
-                        #[link_name = concat!(stringify!($name), "__create")]
-                        fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
-                    }
-                };
-            }
             #[cfg(all(windows, target_arch = "x86_64"))]
-            __extern_block!("sysv64");
+            unsafe extern "sysv64" {
+                #[link_name = concat!(stringify!($name), "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut c_void;
+                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut c_void;
+                #[link_name = concat!(stringify!($name), "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+            }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
-            __extern_block!("C");
+            unsafe extern "C" {
+                #[link_name = concat!(stringify!($name), "__fromJS")]
+                fn __from_js(value: JSValue) -> *mut c_void;
+                #[link_name = concat!(stringify!($name), "__fromJSDirect")]
+                fn __from_js_direct(value: JSValue) -> *mut c_void;
+                #[link_name = concat!(stringify!($name), "__create")]
+                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+            }
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: pure FFI downcast; null on type mismatch.

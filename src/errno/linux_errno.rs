@@ -233,13 +233,6 @@ impl SystemErrno {
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
     }
 
-    /// Zig: `@enumFromInt` — unchecked discriminant cast (debug-asserted in-range).
-    /// Mirrors the `@enumFromInt(this.errno * -1)` pattern in `SystemError.getErrno`.
-    #[inline]
-    pub const fn from_int(n: u16) -> SystemErrno {
-        Self::from_raw(n)
-    }
-
     // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
     // i64 covers every concrete call site (errno-range values); revisit if a
     // caller passes u64/usize directly.

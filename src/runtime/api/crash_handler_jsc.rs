@@ -154,19 +154,9 @@ pub mod js_bindings {
         obj.put(
             global,
             "generated_at",
-            JSValue::js_number_from_int64(milli_timestamp().max(0)),
+            JSValue::js_number_from_int64(bun_core::time::milli_timestamp().max(0)),
         );
         Ok(obj)
-    }
-
-    // PORT NOTE: `std.time.milliTimestamp()`. std::time is permitted (only
-    // std::{fs,net,process} are banned per docs/PORTING.md).
-    fn milli_timestamp() -> i64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(d) => i64::try_from(d.as_millis()).unwrap_or(i64::MAX),
-            Err(_) => 0,
-        }
     }
 }
 

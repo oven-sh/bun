@@ -3,8 +3,12 @@
 // as a runtime parameter and dispatches to a per-subcommand param table
 // for the streaming parser, so these tests verify that short-flag
 // resolution stays subcommand-specific.
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 // `CommandLineArguments.parse` used to be instantiated once per Subcommand
 // (16×) because `subcommand` was a comptime parameter and each variant fed a
@@ -48,7 +52,7 @@ async function run(cwd: string, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-describe("package manager CLI args", () => {
+describe.concurrent("package manager CLI args", () => {
   describe("--help shows only each subcommand's own flags", () => {
     test.each([
       // [subcommand, flag that SHOULD appear, flag that must NOT appear]
@@ -161,7 +165,7 @@ describe("package manager CLI args", () => {
     using dir = tempDir("pm-cli-pm-version", {
       "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
     });
-    const { stdout, stderr } = await run(String(dir), [
+    const { stdout, stderr, exitCode } = await run(String(dir), [
       "pm",
       "version",
       "--no-git-tag-version",
@@ -174,6 +178,7 @@ describe("package manager CLI args", () => {
     const combined = stdout + stderr;
     expect(combined).not.toContain("Invalid Argument");
     expect(combined).not.toContain("does not take a value");
+    expect(exitCode).toBe(0);
     const pkgJson = await Bun.file(`${dir}/package.json`).json();
     expect(pkgJson.version).toBe("1.0.1-beta.0");
   });

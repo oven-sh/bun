@@ -172,8 +172,11 @@ const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 const audit_full_params: []const ParamType = &(shared_params ++ audit_params[0..audit_params.len].*);
 
-/// Returns the clap parameter table for `subcommand` (the same table used by
-/// `printHelp`). `parse` uses `streamParamsFor` for the actual parsing subset.
+/// Returns the clap parameter table that `parse` accepts for `subcommand`.
+/// Mirrors the per-subcommand switch that used to live inline in `parse`
+/// (including `.audit` accepting `shared_params ++ audit_params` even though
+/// `printHelp(.audit)` only renders `audit_params`). Used both to build
+/// `all_params` and the per-subcommand `streamParamsFor` subsets.
 fn paramsFor(comptime subcommand: Subcommand) []const ParamType {
     return switch (subcommand) {
         .install => install_params,

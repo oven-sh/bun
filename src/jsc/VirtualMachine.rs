@@ -1287,6 +1287,12 @@ pub struct RuntimeHooks {
     /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
     /// (`bun_runtime::webcore`), so the high tier supplies the table.
     pub vm_loader_vtable: &'static bun_bundler::options::VmLoaderVTable,
+    /// `bun.api.node.process.exit(global, code)` — spec
+    /// `runtime/node/node_process.zig`. Main-thread is `noreturn`; in a worker
+    /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
+    /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
+    /// slot instead of the linker.
+    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
     /// `node_cluster_binding.handleInternalMessageChild(global, data)` — spec
     /// VirtualMachine.zig:3960 (IPCInstance.handleIPCMessage `.internal` arm).
     pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),

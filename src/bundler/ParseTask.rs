@@ -306,11 +306,11 @@ impl ParseTask {
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            // TODO(port): TYPE_ONLY divergence — `_resolver::Result.jsx` is
-            // `bun_resolver::options::jsx::Pragma`, distinct from
-            // `crate::options::jsx::Pragma`. Collapses to `.clone()` once the
-            // mirrors unify (see blocked_on note above).
-            jsx: Default::default(),
+            // CYCLEBREAK: `_resolver::Result.jsx` is the resolver-side TYPE_ONLY
+            // mirror; `From<_> for options::jsx::Pragma` bridges field-by-field
+            // (options.rs:jsx::From). Preserves jsxImportSource/runtime/etc.
+            // from tsconfig.json (.zig:122).
+            jsx: resolve_result.jsx.clone().into(),
             source_index,
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),

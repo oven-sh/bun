@@ -165,10 +165,13 @@ pub const USE_MIMALLOC: bool = true;
 //   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
 //   fallback                 → libc-malloc + zeroing wrapper (Zig std.heap.c_allocator)
 //   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
-//   allocation_scope         → leak tracker (debug builds)
-//   LinuxMemFdAllocator      → memfd-backed shared buffer for Blob (TODO(b2): move to bun_sys)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
+//
+//   allocation_scope, LinuxMemFdAllocator, MimallocArena (the vtable impl)
+//   import bun_core/sys/runtime/collections and so live in
+//   `bun_runtime::allocators` (CYCLEBREAK §bun_alloc); callers import from
+//   there directly.
 //
  #[path = "NullableAllocator.rs"]       pub mod nullable_allocator;
                                         pub mod maybe_owned;

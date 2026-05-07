@@ -232,19 +232,13 @@ pub fn generate_code_for_lazy_export(
                         debug_assert!(css_ref.tag().contains(CssRefTag::CLASS));
 
                         for compose in composes.composes.slice() {
-                            // it is imported
-                            if compose.from.is_some() {
-                                if matches!(
-                                    compose.from.as_ref().unwrap(),
-                                    CssSpecifier::ImportRecordIndex(_)
-                                ) {
-                                    let import_record_idx = match compose.from.as_ref().unwrap() {
-                                        CssSpecifier::ImportRecordIndex(i) => *i,
-                                        _ => unreachable!(),
-                                    };
+                            match &compose.from {
+                                // it is imported
+                                Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
                                     let import_records: &BabyList<ImportRecord> =
                                         &self.all_import_records[idx as usize];
-                                    let import_record = import_records.at(import_record_idx as usize);
+                                    let import_record =
+                                        import_records.at(*import_record_idx as usize);
                                     if import_record.source_index.is_valid() {
                                         // SAFETY: type-erased `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
                                         let Some(other_file) =
@@ -291,10 +285,8 @@ pub fn generate_code_for_lazy_export(
                                             }
                                         }
                                     }
-                                } else if matches!(
-                                    compose.from.as_ref().unwrap(),
-                                    CssSpecifier::Global
-                                ) {
+                                }
+                                Some(CssSpecifier::Global) => {
                                     // E.g.: `composes: foo from global`
                                     //
                                     // In this example `foo` is global and won't be rewritten to a locally scoped
@@ -314,9 +306,10 @@ pub fn generate_code_for_lazy_export(
                                         });
                                     }
                                 }
-                            } else {
-                                // it is from the current file
-                                for name in compose.names.slice() {
+                                Some(_) => {}
+                                None => {
+                                    // it is from the current file
+                                    for name in compose.names.slice() {
                                     // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
                                     let name_v = unsafe { &*name.v };
                                     let Some(name_entry) = ast.local_scope.get_adapted(name_v, SliceBoxAdapter) else {

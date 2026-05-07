@@ -986,10 +986,13 @@ impl WebWorker {
                 let log = unsafe { &mut *(*vm).log.unwrap().as_ptr() };
                 if log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
-                    bun_core::handle_oom(log.add_error(
+                    // PORT NOTE: `add_error` takes `&'static [u8]` (Zig duped
+                    // into the log's arena); `add_error_fmt` handles the
+                    // owned-text path here.
+                    bun_core::handle_oom(log.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
-                        bun_core::handle_oom(logger::Str::from_bytes(err.slice())),
+                        format_args!("{}", bstr::BStr::new(err.slice())),
                     ));
                 }
                 resolve_error.deref();
@@ -1246,7 +1249,6 @@ impl WebWorker {
         let str = bun_string::OwnedString::new(str);
         let dispatch = jsc::from_js_host_call_generic(
             global,
-            core::panic::Location::caller(),
             // SAFETY: cpp_worker / global valid; FFI signature matches C++.
             || unsafe { WebWorker__dispatchError(global, self.cpp_worker, str.get(), err) },
         );
@@ -1343,8 +1345,7 @@ fn resolve_entry_point_specifier(
     // SAFETY: `parent` is a valid live VM (caller guarantees).
     let parent_ref = unsafe { &mut *parent };
     if let Some(graph) = parent_ref.standalone_module_graph {
-        // SAFETY: hook contract — `graph` is a live `*StandaloneModuleGraph`.
-        if unsafe { (hooks.find_standalone_module)(graph, str) }.is_some() {
+        if graph.find(str).is_some() {
             // SAFETY: `str` is owned by the WebWorker / parent for the
             // worker's lifetime; lifetime erased to `'static` per fn doc.
             return Some(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(str) });
@@ -1370,7 +1371,7 @@ fn resolve_entry_point_specifier(
                 let base_len = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::resolve_path::platform::Loose,
                 >(
-                    hooks.standalone_base_public_path,
+                    graph.base_public_path_with_default_suffix(),
                     pathbuf.as_mut_slice(),
                     &[str],
                 )
@@ -1380,11 +1381,11 @@ fn resolve_entry_point_specifier(
                 // ./foo -> ./foo.js
                 if extname_len == 0 {
                     pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    // SAFETY: hook contract.
-                    if let Some(name) =
-                        unsafe { (hooks.find_standalone_module)(graph, &pathbuf[..base_len + 3]) }
-                    {
-                        return Some(name);
+                    if let Some(name) = graph.find(&pathbuf[..base_len + 3]) {
+                        // SAFETY: graph-owned name; `'static` per fn doc.
+                        return Some(unsafe {
+                            core::mem::transmute::<&[u8], &'static [u8]>(name)
+                        });
                     }
                     break 'try_from_extension;
                 }
@@ -1392,11 +1393,11 @@ fn resolve_entry_point_specifier(
                 // ./foo.ts -> ./foo.js
                 if &pathbuf[base_len - extname_len..base_len] == b".ts" {
                     pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    // SAFETY: hook contract.
-                    if let Some(name) =
-                        unsafe { (hooks.find_standalone_module)(graph, &pathbuf[..base_len]) }
-                    {
-                        return Some(name);
+                    if let Some(name) = graph.find(&pathbuf[..base_len]) {
+                        // SAFETY: graph-owned name; `'static` per fn doc.
+                        return Some(unsafe {
+                            core::mem::transmute::<&[u8], &'static [u8]>(name)
+                        });
                     }
                     break 'try_from_extension;
                 }
@@ -1410,11 +1411,11 @@ fn resolve_entry_point_specifier(
                             pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
                                 .copy_from_slice(b".js");
                             let as_js = &pathbuf[..base_len - ext.len() + js_len];
-                            // SAFETY: hook contract.
-                            if let Some(name) =
-                                unsafe { (hooks.find_standalone_module)(graph, as_js) }
-                            {
-                                return Some(name);
+                            if let Some(name) = graph.find(as_js) {
+                                // SAFETY: graph-owned name; `'static` per fn doc.
+                                return Some(unsafe {
+                                    core::mem::transmute::<&[u8], &'static [u8]>(name)
+                                });
                             }
                             break 'try_from_extension;
                         }

@@ -181,9 +181,12 @@ impl FFI {
         let name_slice = name_str.to_slice();
         let name: &[u8] = name_slice.slice();
 
-        if object_value.is_empty_or_undefined_or_null() || !object_value.is_object() {
+        if object_value.is_empty_or_undefined_or_null() {
             return invalid_options_arg(global);
         }
+        let Some(object) = object_value.get_object() else {
+            return invalid_options_arg(global);
+        };
 
         // TODO(b2): `ModuleLoader::resolve_embedded_file` — once its body is
         // real, resolve `name` against the standalone-module graph here
@@ -194,7 +197,7 @@ impl FFI {
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();
-        match generate_symbols(global, &mut symbols, object_value) {
+        match generate_symbols(global, &mut symbols, object) {
             Ok(None) => {}
             Ok(Some(val)) => return val,
             Err(_) => return JSValue::ZERO,
@@ -494,7 +497,7 @@ pub fn generate_symbol_for_function(
 pub fn generate_symbols(
     global: &JSGlobalObject,
     symbols: &mut StringArrayHashMap<Function>,
-    object: JSValue,
+    object: impl jsc::IntoIterObject,
 ) -> JsResult<Option<JSValue>> {
     jsc::mark_binding!();
 

@@ -3251,7 +3251,14 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 
 // ─── exports ────────────────────────────────────────────────────────────────
 
-pub use FFI as Bun__FFI__cc_owner; // TODO(port): Zig re-exported FFI.Bun__FFI__cc at module level
+/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`. Zig declared
+/// `pub const Bun__FFI__cc = FFI.Bun__FFI__cc;` at file scope so the
+/// `js2native` codegen could resolve it as `crate::ffi::ffi::bun__ffi__cc`.
+#[allow(non_snake_case)]
+#[inline]
+pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    FFI::bun_ffi_cc(global, callframe)
+}
 
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,

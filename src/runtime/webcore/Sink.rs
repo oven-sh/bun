@@ -76,21 +76,12 @@ impl JSSink<ArrayBufferSink> {
     /// instantiation. Unprotects the controller cell stashed in `signal.ptr`
     /// and tells C++ to drop its back-pointer. Called from
     /// `Body::ValueBufferer` Drop / reject paths.
-    pub fn detach(&mut self, global: &JSGlobalObject) {
-        let signal = &mut self.sink.signal;
-        if signal.is_dead() {
-            return;
-        }
-        // SAFETY: `SinkSignal::init` stored the controller `JSValue` bits as the
-        // `Signal.ptr` payload (never dereferenced as a Rust pointer).
-        let ptr = signal.ptr.map(|p| p.as_ptr() as usize).unwrap_or(0);
-        signal.clear();
-        let value = JSValue::from_encoded(ptr);
-        value.unprotect();
-        // TODO: properly propagate exception upwards (matches Zig comment).
-        let _ = global;
-        // SAFETY: codegen-emitted C++ glue; `value` is the JS sink controller cell.
-        unsafe { array_buffer_sink_abi::ArrayBufferSink__detachPtr(value) };
+    // PORT NOTE: renamed from `detach` to avoid colliding with the generic
+    // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
+    // forbids same-name items across impl blocks for the same type even with
+    // different signatures (E0592).
+    pub fn detach_self(&mut self, global: &JSGlobalObject) {
+        JSSink::<ArrayBufferSink>::detach(&mut self.sink.signal, global);
     }
 }
 

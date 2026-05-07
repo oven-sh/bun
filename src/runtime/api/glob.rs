@@ -47,7 +47,6 @@ impl ScanOpts {
 
         let cwd_str: Box<[u8]> = 'cwd_str: {
             let cwd_utf8 = cwd_string.to_utf8_without_ref();
-            // TODO(port): `to_utf8_without_ref` took an allocator (arena) in Zig; bun_str API TBD.
 
             // If its absolute return as is
             if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
@@ -352,7 +351,6 @@ impl Glob {
         }
 
         let pat_str: Box<[u8]> = pat_arg.to_slice_clone(global_this)?.into_vec().into_boxed_slice();
-        // TODO(port): `to_slice_clone` returned a ZigString.Slice in Zig; verify bun_jsc API shape.
 
         Ok(Box::new(Glob {
             pattern: pat_str,

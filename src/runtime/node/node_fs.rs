@@ -741,10 +741,9 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, unsafe { (*req).result }.int());
-        if let Maybe::Err(err) = &mut this.result {
-            *err = err.clone();
-            core::hint::black_box(&node_fs);
-        }
+        // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
+        // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
+        // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         unsafe { &*this.global_object }.bun_vm().event_loop().enqueue_task(Task::init(this));
     }
@@ -758,10 +757,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
         let mut node_fs = NodeFS::default();
         // SAFETY: req is the live libuv request passed to this callback
         this.result = NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, unsafe { &mut *req }, unsafe { (*req).result }.int());
-        if let Maybe::Err(err) = &mut this.result {
-            *err = err.clone();
-            core::hint::black_box(&node_fs);
-        }
+        // No `err.clone()` needed — see `uv_callback` above.
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         unsafe { &*this.global_object }.bun_vm().event_loop().enqueue_task(Task::init(this));
     }
@@ -1040,11 +1036,9 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
 
         let mut node_fs = NodeFS::default();
         this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
-
-        if let Maybe::Err(err) = &mut this.result {
-            *err = err.clone();
-            core::hint::black_box(&node_fs);
-        }
+        // Zig clones `err` here so its `.path` outlives the stack `node_fs.sync_error_buf`
+        // it borrowed from. In Rust `sys::Error::path` is `Box<[u8]>` boxed at the
+        // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
@@ -1360,12 +1354,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         }
         // SAFETY: the CAS above guarantees exactly one thread reaches this write;
         // `result` is `UnsafeCell` so writing through `&self` is sound.
-        unsafe {
-            *self.result.get() = result;
-            if let Maybe::Err(err) = &mut *self.result.get() {
-                *err = err.clone();
-            }
-        }
+        // (Zig clones `err.path` here to outlive the caller's stack buffer; in
+        // Rust `sys::Error::path` is already `Box<[u8]>`, so move-assign suffices.)
+        unsafe { *self.result.get() = result; }
     }
 
     /// Called exactly once by the main directory-scan task and once by each
@@ -1631,12 +1622,14 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
                 unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
                 sys::Tag::clonefile,
-                src,
+                src.as_bytes(),
             ) {
                 match err.get_errno() {
                     E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
-                        nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        this_ref.finish_concurrently(Maybe::Err(err.err.with_path(&nodefs.sync_error_buf[..src.len()])));
+                        // Zig copies `src` into `sync_error_buf` and `.withPath()`s it so
+                        // the borrowed slice outlives the stack frame. `errno_sys_p`
+                        // already boxed `src.as_bytes()` into `err.path`, so just forward.
+                        this_ref.finish_concurrently(err);
                         return false;
                     }
                     // Other errors may be due to clonefile() not being supported
@@ -3046,7 +3039,12 @@ pub mod args {
                 return Err(ctx.throw_invalid_argument_type_value("buffer", "string or TypedArray", bv));
             }
             let encoding = if matches!(buffer, StringOrBuffer::Buffer(_)) { Encoding::Buffer } else { Encoding::Utf8 };
-            let mut args = Write { fd, buffer, encoding, ..Default::default() };
+            // `errdefer args.deinit()` — guard so any `?`-propagated JsError below
+            // releases `buffer` (matches node_fs.zig:2491).
+            let mut args = scopeguard::guard(
+                Write { fd, buffer, encoding, ..Default::default() },
+                |a| a.deinit(),
+            );
             arguments.eat();
             'parse: {
                 let Some(mut current) = arguments.next() else { break 'parse };
@@ -3072,14 +3070,14 @@ pub mod args {
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
-                        let position = current.to_int64();
+                        let position = i52::from_js(current);
                         if position >= 0 { args.position = Some(position); }
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
                         if current.is_number() {
-                            args.position = Some(current.to_int64());
+                            args.position = Some(i52::from_js(current));
                             arguments.eat();
                             let Some(next) = arguments.next() else { break 'parse }; current = next;
                         }
@@ -3090,7 +3088,7 @@ pub mod args {
                     }
                 }
             }
-            Ok(args)
+            Ok(scopeguard::ScopeGuard::into_inner(args))
         }
     }
 
@@ -6322,8 +6320,10 @@ impl NodeFS {
                         if matches!(err.get_errno(), E::EACCES | E::EPERM) && args.flags.force {
                             break 'try_with_clonefile;
                         }
-                        self.sync_error_buf[..sd].copy_from_slice(src.as_bytes());
-                        return Maybe::Err(err.err.with_path(&self.sync_error_buf[..sd]));
+                        // Zig copies `src` into `sync_error_buf` and `.withPath()`s it so
+                        // the borrowed slice outlives `src_buf`. `errno_sys_p` already boxed
+                        // `src.as_bytes()` into the inner `Error::path`, so just propagate.
+                        return err;
                     }
                     // Other errors may be due to clonefile() not being supported
                     // We'll fall back to other implementations
@@ -7075,18 +7075,15 @@ pub trait ReaddirEntry: Sized {
     /// UTF-16 `DirIterator` arm on Windows (`readdir_with_entries` only).
     const IS_U16: bool;
     fn destroy_entry(&mut self);
-    /// Windows-only: append from a UTF-16 directory entry name.
-    /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch
-    /// for `strings::from_w_path` when `encoding != utf8`.
-    #[cfg_attr(not(windows), allow(unused_variables))]
+    /// Windows-only: append from a UTF-16 directory entry name (node_fs.zig:4644-4660).
+    /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
+    /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
+    /// `IS_U16` is true — `Buffer`'s impl is a `@compileError`-equivalent
+    /// `unreachable!()`.
     fn append_entry_w(
         entries: &mut Vec<Self>, utf16_name: &[u16], dirent_path: &BunString,
         kind: sys::FileKind, encoding: Encoding, re_encoding_buffer: Option<&mut PathBuffer>,
-    ) {
-        let _ = (entries, utf16_name, dirent_path, kind, encoding, re_encoding_buffer);
-        // Zig: `@compileError("unreachable")` — Buffer never takes the u16 path.
-        unreachable!("ReaddirEntry::append_entry_w on a u8-only entry type");
-    }
+    );
     fn into_readdir(v: Vec<Self>) -> ret::Readdir;
     /// Non-recursive readdir: append one entry given the bare entry name.
     /// `dirent_path` is the basename's directory (encoded once per dir).
@@ -7176,6 +7173,12 @@ impl ReaddirEntry for Buffer {
     fn into_readdir(v: Vec<Self>) -> ret::Readdir { ret::Readdir::Buffers(v.into_boxed_slice()) }
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding) {
         entries.push(Buffer::from_string(utf8_name).expect("oom"));
+    }
+    fn append_entry_w(_: &mut Vec<Self>, _: &[u16], _: &BunString, _: sys::FileKind, _: Encoding, _: Option<&mut PathBuffer>) {
+        // node_fs.zig:4660 `else => @compileError("unreachable")` — Buffer never
+        // takes the u16 iterator (`IS_U16 = false`); the call site is gated on
+        // `T::IS_U16` so this arm is statically dead.
+        unreachable!()
     }
     fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding, _apply_encoding: bool) {
         entries.push(Buffer::from_string(without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
@@ -7721,11 +7724,19 @@ impl NodeFSFunctionEnum {
     }
 }
 
-/// `i52` — Zig's odd-width integer used for `ReadPosition` coercion bounds.
-/// Only `MIN` is referenced (in `args::FTruncate::from_js`).
+/// `i52` — Zig's odd-width integer used for `ReadPosition` coercion bounds and
+/// `JSValue.to(i52)` (JSValue.zig:199).
 #[allow(non_camel_case_types)]
 struct i52;
-impl i52 { const MIN: i64 = -(1i64 << 51); }
+impl i52 {
+    const MIN: i64 = -(1i64 << 51);
+    #[allow(dead_code)]
+    const MAX: i64 = (1i64 << 51) - 1;
+    /// `JSValue.to(i52)` — `@truncate(@intCast(toInt64()))`. Truncate to the low
+    /// 52 bits and sign-extend bit 51 (matches Zig `@truncate` semantics).
+    #[inline]
+    fn from_js(v: JSValue) -> i64 { (v.to_int64() << 12) >> 12 }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

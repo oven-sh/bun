@@ -834,7 +834,7 @@ impl Linux {
 
                 let name: &[u8] = if ev.name_len > 0 {
                     // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
-                    let name_ptr = unsafe { buf.as_ptr().add(i - ev.name_len as usize) };
+                    let name_ptr = unsafe { buf.0.as_ptr().add(i - ev.name_len as usize) };
                     // SAFETY: kernel NUL-pads name within name_len bytes.
                     unsafe { core::ffi::CStr::from_ptr(name_ptr as *const _).to_bytes() }
                 } else {
@@ -886,10 +886,9 @@ impl Linux {
                     } else if name.is_empty() {
                         owner_subpath
                     } else {
-                        path::join_string_buf(
-                            &mut path_buf,
+                        join_string_buf::<platform::Posix>(
+                            path_buf.as_mut_slice(),
                             &[owner_subpath, name],
-                            path::Style::Posix,
                         )
                     };
 
@@ -900,7 +899,7 @@ impl Linux {
                             && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
                                 && !watcher.is_file),
                     );
-                    let _ = touched.get_or_put(owner_watcher);
+                    handle_oom(touched.put(owner_watcher, ()));
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.
@@ -911,11 +910,10 @@ impl Linux {
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()
                     {
-                        let mut abs_buf = bun_paths::path_buffer_pool().get();
-                        let child_abs = path::join_z_buf(
-                            &mut *abs_buf,
+                        let mut abs_buf = path_buffer_pool::get();
+                        let child_abs = join_z_buf::<platform::Posix>(
+                            abs_buf.as_mut_slice(),
                             &[watcher.path.as_bytes(), owner_subpath, name],
-                            path::Style::Posix,
                         );
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         let _ = Linux::add_one(manager, watcher, child_abs, rel);
@@ -939,7 +937,6 @@ impl Linux {
 /// field naming there is `watch_descriptor` / `name_len`.
 #[cfg(target_os = "linux")]
 use bun_watcher::inotify_watcher::Event as InotifyEvent;
-// TODO(port): exact crate path for src/watcher/INotifyWatcher.zig::Event
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin
@@ -989,11 +986,10 @@ impl Darwin {
             }
             Err(e) => Err(sys::Error {
                 errno: match e {
-                    // TODO(port): match exact fsevents error variant name
-                    fsevents::Error::FailedToCreateCoreFoudationSourceLoop => sys::E::INVAL as _,
-                    _ => sys::E::NOMEM as _,
+                    fsevents::Error::FailedToCreateCoreFoudationSourceLoop => sys::E::EINVAL as _,
+                    _ => sys::E::ENOMEM as _,
                 },
-                syscall: Syscall::Watch,
+                syscall: Tag::watch,
                 ..Default::default()
             }),
         }
@@ -1103,27 +1099,27 @@ pub struct KqueueWatch {
 #[cfg(target_os = "freebsd")]
 impl Kqueue {
     fn init(manager: &mut PathWatcherManager) -> sys::Result<()> {
-        let rc = sys::syscall::kqueue();
-        if let Some(err) = sys::errno_sys(rc, Syscall::Kqueue) {
-            return Err(err);
+        // SAFETY: FFI call.
+        let rc = unsafe { libc::kqueue() };
+        if rc < 0 {
+            return Err(sys::Error::from_code_int(sys::last_errno(), Tag::kqueue));
         }
         manager.platform.get_mut().kq = Fd::from_native(rc);
         // Daemon reader — the manager is process-global and never torn down.
         let mgr_ptr = manager as *mut PathWatcherManager as usize;
-        match bun_threading::spawn(move || {
+        let spawn_result = std::thread::Builder::new().spawn(move || {
             // SAFETY: manager is process-global (&'static), never freed.
             Kqueue::thread_main(unsafe { &*(mgr_ptr as *const PathWatcherManager) })
-        }) {
-            Ok(thread) => thread.detach(),
-            Err(_) => {
-                manager.platform.get_mut().kq.close();
-                return Err(sys::Error {
-                    errno: sys::E::NOMEM as _,
-                    syscall: Syscall::Watch,
-                    ..Default::default()
-                });
-            }
+        });
+        if spawn_result.is_err() {
+            manager.platform.get_mut().kq.close();
+            return Err(sys::Error {
+                errno: sys::E::ENOMEM as _,
+                syscall: Tag::watch,
+                ..Default::default()
+            });
         }
+        // JoinHandle dropped → thread detached.
         Ok(())
     }
 

@@ -3156,9 +3156,10 @@ mod stdio_stores {
         slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<StoreRef>>>,
         uv_fd: i32,
         is_atty: bool,
-        feature: fn(),
+        feature: &'static core::sync::atomic::AtomicUsize,
     ) -> JSValue {
-        feature();
+        // Zig: `bun.analytics.Features.@"Bun.std…" += 1` (rare_data.zig).
+        feature.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let store = slot.with(|cell| {
             let mut s = cell.borrow_mut();
             if s.is_none() {
@@ -3174,21 +3175,21 @@ mod stdio_stores {
 
     pub fn stdin(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
-        make_blob(global_this, &STDIN, 0, is_atty, bun_core::analytics::Features::bun_stdin_inc)
+        make_blob(global_this, &STDIN, 0, is_atty, &bun_core::analytics::Features::BUN_STDIN)
     }
     pub fn stdout(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = matches!(
             bun_core::output::stdout_descriptor_type(),
             bun_core::output::OutputStreamDescriptor::Terminal
         );
-        make_blob(global_this, &STDOUT, 1, is_atty, bun_core::analytics::Features::bun_stdout_inc)
+        make_blob(global_this, &STDOUT, 1, is_atty, &bun_core::analytics::Features::BUN_STDOUT)
     }
     pub fn stderr(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = matches!(
             bun_core::output::stderr_descriptor_type(),
             bun_core::output::OutputStreamDescriptor::Terminal
         );
-        make_blob(global_this, &STDERR, 2, is_atty, bun_core::analytics::Features::bun_stderr_inc)
+        make_blob(global_this, &STDERR, 2, is_atty, &bun_core::analytics::Features::BUN_STDERR)
     }
 }
 

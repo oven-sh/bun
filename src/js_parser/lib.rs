@@ -252,6 +252,7 @@ pub use crate::ast::s as S;
 pub use crate::ast::scope::Scope;
 pub use crate::ast::server_component_boundary::ServerComponentBoundary;
 pub use crate::ast::stmt::Stmt;
+pub use crate::ast::stmt::Data as StmtData;
 pub type StmtNodeIndex = Stmt;
 pub use crate::ast::symbol::Symbol;
 pub use crate::ast::b::B;

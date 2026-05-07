@@ -596,7 +596,7 @@ impl ReadFile {
 
         if let Some(store) = &self.store {
             if let Data::File(file) = store.data_mut() {
-                let mtime = bun_sys::stat_mtime(&stat);
+                let mtime = bun_sys::PosixStat::init(&stat).mtime();
                 file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
             }
         }

@@ -1518,7 +1518,8 @@ fn console_print_runtime_object_inner<const C: bool>(
 ) -> JsResult<bool> {
     use core::fmt::Write as _;
     use bun_jsc::{ConsoleFormatter as _, JsClass as _};
-    use crate::api::{Archive, BuildArtifact};
+    use crate::api::archive::Archive;
+    use crate::api::BuildArtifact;
     use crate::webcore::{Blob, Request, Response, S3Client};
 
     macro_rules! pf {
@@ -2815,7 +2816,7 @@ fn transpile_source_code_inner(
                     if path.text.len() >= buf.len() {
                         break 'auto_watch;
                     }
-                    let z = bun_paths::z(path.text, &mut buf);
+                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
                     match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
                         Ok(fd) => fd,
                         Err(_) => break 'auto_watch,

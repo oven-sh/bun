@@ -159,16 +159,16 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // SAFETY: mixin is an in-bounds field of *wrap.
             let mut body = unsafe { mem::take(&mut (*mixin).body) };
             resp.clear_on_data();
-            // SAFETY: wrap is live; the &mut to mixin.body has ended, so this
-            // `&mut Wrap` is the sole live mutable reference into the allocation.
-            let wrap_ref = unsafe { &mut *wrap };
+            // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
+            // mixin.body has ended, so on_body receives sole ownership of the
+            // allocation and may Box::from_raw it on success.
             if !body.is_empty() {
                 // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
                 // Consider try_reserve in Phase B if graceful 500 on OOM is required.
                 body.extend_from_slice(chunk);
-                wrap_ref.on_body(body.as_slice(), resp)?;
+                unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
             } else {
-                wrap_ref.on_body(chunk, resp)?;
+                unsafe { Wrap::on_body(wrap, chunk, resp)? };
             }
             // `body` drops here (was `defer body.deinit()` in Zig)
             Ok(())
@@ -192,8 +192,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"500 Internal Server Error");
         r.end_without_body(false);
 
-        // SAFETY: wrap is live; the &mut to mixin.body above has ended.
-        unsafe { (*wrap).on_error() };
+        // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
+        // mixin.body above has ended; on_error may Box::from_raw it.
+        unsafe { Wrap::on_error(wrap) };
     }
 
     fn on_invalid(wrap: *mut Wrap, r: AnyResponse) {
@@ -209,8 +210,9 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.write_status(b"400 Bad Request");
         r.end_without_body(false);
 
-        // SAFETY: wrap is live; the &mut to mixin.body above has ended.
-        unsafe { (*wrap).on_error() };
+        // SAFETY: wrap is the original Box::into_raw'd pointer; the &mut to
+        // mixin.body above has ended; on_error may Box::from_raw it.
+        unsafe { Wrap::on_error(wrap) };
     }
 }
 

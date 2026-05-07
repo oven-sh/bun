@@ -1158,93 +1158,21 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
         },
     };
 
-
-        #[cfg(not(feature = "bake_debugging_features"))]
-
-        // PORT NOTE: Zig used `inline for` over a `[2]bake.Side` tuple -- written
-        // out as a small macro to avoid duplicating ~20 lines per side while
-        // still monomorphizing on the const-generic graph type.
-        macro_rules! emit_files {
-            ($side:expr, $g:expr) => {{
-                let g = $g;
-                payload.extend_from_slice(&u32::try_from(g.bundled_files.count()).unwrap().to_le_bytes());
-                for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let normalized_key = self.relative_path(&mut *buf, k);
-                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
-                    if k.is_empty() { continue; }
-                    payload.extend_from_slice(normalized_key);
-                    payload.push((g.stale_files.is_set(i) || v.failed) as u8);
-                    payload.push(($side == Side::Server && v.is_rsc) as u8);
-                    payload.push(($side == Side::Server && v.is_ssr) as u8);
-                    payload.push(match $side {
-                        Side::Server => v.is_route,
-                        Side::Client => v.html_route_bundle_index.is_some(),
-                    } as u8);
-                    payload.push(($side == Side::Client && v.is_special_framework_file) as u8);
-                    payload.push(match $side {
-                        Side::Server => v.is_client_component_boundary,
-                        Side::Client => v.is_hmr_root,
-                    } as u8);
-                }
-            }};
-        }
-        emit_files!(Side::Client, &self.client_graph);
-        emit_files!(Side::Server, &self.server_graph);
-
-        // TODO(port): edge serialization -- `incremental_graph::IncrementalGraph`
-        // does not yet expose `edges_free_list`/iterable `edges` on the keystone
-        // shape. Emit zero-length edge sections so the wire shape stays valid.
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        payload.extend_from_slice(&0u32.to_le_bytes());
-        Ok(())
-    }
-}
-
-// ─── Shims added for incremental_graph_body (Phase-D) ────────────────────────
-impl EntryPointList {
-    /// `EntryPointList.appendJs` — DevServer.zig.
-    pub fn append_js(&mut self, abs_path: &[u8], side: Graph) -> Result<(), bun_core::Error> {
-        let flag = match side {
-            Graph::Client => entry_point_list::Flags::CLIENT,
-            Graph::Server => entry_point_list::Flags::SERVER,
-            Graph::Ssr => entry_point_list::Flags::SSR,
-        };
-        let gop = bun_core::handle_oom(self.set.get_or_put(abs_path));
-        if gop.found_existing { *gop.value_ptr |= flag; } else { *gop.value_ptr = flag; }
-        Ok(())
-    }
-}
 impl DevServer {
-    /// `DevServer.relativePath` — DevServer.zig:4225.
-    pub fn relative_path<'a>(
-        &self,
-        relative_path_buf: &'a mut bun_paths::PathBuffer,
-        path: &'a [u8],
-    ) -> &'a [u8] {
-        if !bun_paths::is_absolute(path) {
-            return path;
-        }
+    /// Length of `configuration_hash_key` — Zig: `[16]u8`.
+    pub const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
-        if path.len() >= self.root.len() + 1
-            && path[self.root.len()] == b'/'
-            && path.starts_with(&*self.root)
-        {
-            return &path[self.root.len() + 1..];
+    /// Construct the erased handle the bundler stores in
+    /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
+    #[inline]
+    pub fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
+        bun_bundler::dispatch::DevServerHandle {
+            owner: self as *mut Self as *mut (),
+            vtable: &DEV_SERVER_VTABLE,
         }
-
-        let rel = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
-            true,
-        >(&mut relative_path_buf[..], &self.root, path);
-        // SAFETY: `rel` borrows `relative_path_buf`, which is exclusively owned
-        // by the caller; in-place mutation only flips path separators.
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
-        });
-        rel
     }
 }
+
 /// `DirectoryWatchStore.insert` error set — DirectoryWatchStore.zig:101.
 #[derive(thiserror::Error, Debug)]
 enum DirectoryWatchInsertError {

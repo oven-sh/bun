@@ -615,7 +615,6 @@ impl<'a> PackageInstaller<'a> {
         let mut link_target_buf = PathBuffer::uninit();
         let mut link_dest_buf = PathBuffer::uninit();
         let mut link_rel_buf = PathBuffer::uninit();
-        let lockfile = &*self.lockfile;
 
         let trees_len = self.trees.len();
         for tree_id in 0..trees_len {
@@ -628,9 +627,9 @@ impl<'a> PackageInstaller<'a> {
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
                 >(
-                    lockfile.buffers.trees.as_slice(),
-                    lockfile.buffers.dependencies.as_slice(),
-                    lockfile.buffers.string_bytes.as_slice(),
+                    self.lockfile.buffers.trees.as_slice(),
+                    self.lockfile.buffers.dependencies.as_slice(),
+                    self.lockfile.buffers.string_bytes.as_slice(),
                     u32::try_from(tree_id).unwrap(),
                     &mut node_modules_rel_path_buf,
                     &mut depth_buf,
@@ -773,7 +772,7 @@ impl<'a> PackageInstaller<'a> {
         // PORT NOTE: reshaped for borrowck — drain by index since loop body needs &mut self.manager.
         for idx in 0..self.pending_lifecycle_scripts.len() {
             let entry = &self.pending_lifecycle_scripts[idx];
-            let package_name = entry.list.package_name;
+            let package_name: Box<[u8]> = entry.list.package_name.clone();
             // .monotonic is okay because this value isn't modified from any other thread.
             // (Scripts are spawned on this thread.)
             while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)

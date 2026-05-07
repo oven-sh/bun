@@ -272,16 +272,14 @@ impl CatalogMap {
         string_buf: &mut StringBuf,
     ) -> Result<(), FromPnpmLockfileError> {
         for prop in catalogs_obj.properties.slice() {
-            let Some(group_name_str) = prop.key.unwrap().as_utf8_string_literal() else {
+            let key = prop.key.as_ref().unwrap();
+            let value = prop.value.as_ref().unwrap();
+            let Some(group_name_str) = key.as_utf8_string_literal() else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
 
-            if !prop.value.unwrap().is_object() {
+            let ExprData::EObject(entries_obj) = &value.data else {
                 continue;
-            }
-
-            let ExprData::EObject(entries_obj) = &prop.value.unwrap().data else {
-                unreachable!()
             };
 
             // PORT NOTE: reshaped for borrowck — the Zig version threads
@@ -377,8 +375,8 @@ impl CatalogMap {
             new_catalog.default.put_assume_capacity_context(
                 builder.append::<String>(entry.key_ptr.slice(old_buf)),
                 entry.value_ptr.clone_in(pm, old_buf, builder)?,
-                |k| new_ctx.hash(k),
-                |a, b, i| new_ctx.eql(a, b, i),
+                |k| ArrayHashAdapter::hash(&new_ctx, k),
+                |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
             );
         }
 
@@ -405,8 +403,8 @@ impl CatalogMap {
             new_catalog.groups.put_assume_capacity_context(
                 builder.append::<String>(catalog_name.slice(old_buf)),
                 new_group,
-                |k| new_ctx.hash(k),
-                |a, b, i| new_ctx.eql(a, b, i),
+                |k| ArrayHashAdapter::hash(&new_ctx, k),
+                |a, b, i| ArrayHashAdapter::eql(&new_ctx, a, b, i),
             );
         }
 
@@ -444,13 +442,15 @@ fn put_entries_from_pnpm_lockfile(
     string_buf: &mut StringBuf,
 ) -> Result<(), FromPnpmLockfileError> {
     for entry_prop in entries_obj.properties.slice() {
-        let Some(dep_name_str) = entry_prop.key.unwrap().as_utf8_string_literal() else {
+        let key = entry_prop.key.as_ref().unwrap();
+        let value = entry_prop.value.as_ref().unwrap();
+        let Some(dep_name_str) = key.as_utf8_string_literal() else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
         let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
         let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
 
-        let Some(specifier) = entry_prop.value.unwrap().get(b"specifier") else {
+        let Some(specifier) = value.get(b"specifier") else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
         let Some(version_str) = specifier.as_utf8_string_literal() else {
@@ -465,7 +465,7 @@ fn put_entries_from_pnpm_lockfile(
             dep_name_hash,
             version_sliced.slice,
             &version_sliced,
-            Some(log),
+            Some(&mut *log),
             None,
         ) else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);

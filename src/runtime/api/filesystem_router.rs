@@ -516,11 +516,6 @@ impl FileSystemRouter {
             }
         }
 
-        if log.errors + log.warnings > 0 {
-            let err_value = log.to_js(global_this, "loading routes");
-            return Err(global_this.throw_value(err_value?));
-        }
-
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
         // PORT NOTE: order matters — old router borrows slices from old arena, so it must drop
         // first (matches Zig teardown order).
@@ -693,10 +688,15 @@ pub struct MatchedRoute {
     // PORT NOTE: `Match<'a>` borrows arena/request bytes that outlive this object via
     // intentional leaks (see `r#match`); `'static` matches the Zig raw-slice semantics.
     pub route: *const RouterMatch<'static>,
-    pub route_holder: RouterMatch<'static>,
+    // PORT NOTE: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
+    // `route` (above) and `route_holder.params` hold raw self-referential pointers into
+    // them. Without `UnsafeCell`, taking `&mut MatchedRoute` (as `get_params`/`get_query`
+    // do) would assert unique access to these fields under Stacked Borrows and invalidate
+    // the stored pointers — UB on next deref.
+    pub route_holder: UnsafeCell<RouterMatch<'static>>,
     pub query_string_map: Option<QueryStringMap>,
     pub param_map: Option<QueryStringMap>,
-    pub params_list_holder: route_param::List<'static>,
+    pub params_list_holder: UnsafeCell<route_param::List<'static>>,
     pub origin: Option<*mut RefString>,
     pub asset_prefix: Option<*mut RefString>,
     pub needs_deinit: bool,
@@ -709,9 +709,17 @@ impl MatchedRoute {
 
     #[inline]
     fn route(&self) -> &RouterMatch<'static> {
-        // SAFETY: `self.route` always points at `self.route_holder` (set in `init`); the Box
-        // is never moved after construction (heap-stable).
+        // SAFETY: `self.route` always points at `self.route_holder` (UnsafeCell, set in
+        // `init`); the Box is never moved after construction (heap-stable), and no `&mut`
+        // to `route_holder`'s contents is live concurrently with this read.
         unsafe { &*self.route }
+    }
+
+    #[inline]
+    fn params(&self) -> &route_param::List<'static> {
+        // SAFETY: `route().params` always points at `self.params_list_holder` (UnsafeCell,
+        // set in `init`); heap-stable Box, no concurrent `&mut` to its contents.
+        unsafe { &*self.route().params }
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -3637,7 +3637,14 @@ macro_rules! request_ctx_exports {
             let (g, f) = unsafe { (&*g, &*f) };
             bun_jsc::to_js_host_fn_result(g, RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream(g, f))
         }
-        impl RequestContextHostFns for RequestContext<$srv, $ssl, $dbg, $h3> {
+        // PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY
+        // server type with matching (SSL, DBG, H3) routes to the same C-ABI
+        // host-fn exports. The export name depends only on the transport
+        // tuple (Zig: `export_prefix` is built from ssl/debug/h3), and the
+        // shim body re-derives `ctx` from the callframe arg, so `$srv` only
+        // affected which monomorphization the body called into — the bodies
+        // are field-layout-identical across `ThisServer`.
+        impl<ThisServer> RequestContextHostFns for RequestContext<ThisServer, $ssl, $dbg, $h3> {
             const ON_RESOLVE: bun_jsc::JSHostFn = $on_resolve;
             const ON_REJECT: bun_jsc::JSHostFn = $on_reject;
             const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = $on_resolve_stream;

@@ -50,7 +50,7 @@ struct ProcessInfo {
 // Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: *const State<'a>,
+    state: *mut State<'a>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -71,7 +71,7 @@ pub struct ProcessHandle<'a> {
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), bun_core::Error> {
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
-        let state = unsafe { &mut *(self.state as *mut State<'a>) };
+        let state = unsafe { &mut *self.state };
         state.remaining_scripts += 1;
         let handle = self;
 
@@ -169,7 +169,7 @@ impl<'a> ProcessHandle<'a> {
     pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { &mut *(self.state as *mut State<'a>) };
+        let state = unsafe { &mut *self.state };
         let _ = state.read_chunk(self, chunk);
         true
     }
@@ -209,7 +209,7 @@ impl<'a> ProcessHandle<'a> {
         // We just leak the process because we're going to exit anyway after all processes are done
         let _ = proc;
         // SAFETY: state backref valid (see start()).
-        let state = unsafe { &mut *(self.state as *mut State<'a>) };
+        let state = unsafe { &mut *self.state };
         let _ = state.process_exit(self);
     }
 
@@ -821,11 +821,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&leaked[0..len_command_only]),
                 combined,
-                // TODO(port): blocked_on: bun_resolver::DependencyMap: Clone —
-                // Zig copied by value (shallow `[]const u8` map). The Rust
-                // `ArrayHashMap` isn't `Clone`; workspace-dep ordering is lost
-                // until DependencyMap gains a clone/shallow-copy.
-                deps: DependencyMap::default(),
+                deps: pkgjson.dependencies.clone(),
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
             });
@@ -902,12 +898,15 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     };
 
     // initialize the handles
-    // TODO(port): self-referential init — `state.handles[i].state = &state` and `map` stores
-    // `*mut ProcessHandle` into state.handles. Phase B must pin `state` or restructure.
+    // PORT NOTE: self-referential — each `state.handles[i].state` points back at
+    // `state`, and `map` stores `*mut ProcessHandle` into `state.handles`. Derive
+    // the backref with mutable provenance (`addr_of_mut!`) so writes through it
+    // in `ProcessHandle::start` / `State::process_exit` are sound under Stacked
+    // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
-    let state_ptr: *const State = &state;
+    let state_ptr: *mut State = core::ptr::addr_of_mut!(state);
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
-    for (i, script) in scripts.iter().enumerate() {
+    for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,
             config: script,
@@ -945,7 +944,6 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             visited: false,
             visiting: false,
         });
-        let _ = i;
     }
     state.handles = handles_vec.into_boxed_slice();
     for (i, script) in scripts.iter().enumerate() {

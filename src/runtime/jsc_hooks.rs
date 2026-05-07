@@ -221,7 +221,6 @@ unsafe fn init_runtime_state(
         }
     }
 
-    // TODO(b2-cycle): `webcore::Body::Value::HiveAllocator::init()` — gated.
     // TODO(b2-cycle): `ParentDeathWatchdog::install_on_event_loop` — spec
     // VirtualMachine.zig:1316 `if (opts.is_main_thread)
     // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.

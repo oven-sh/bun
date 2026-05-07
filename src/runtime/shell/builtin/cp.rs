@@ -406,14 +406,12 @@ impl ShellCpTask {
     /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
     /// buffer (printed to stdout once the cp finishes).
     fn on_copy_impl(&mut self, src: &[u8], dest: &[u8]) {
-        use core::fmt::Write as _;
         // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
-        let _ = write!(
-            bun_string::ByteWriter::new(&mut self.verbose_output),
-            "{} -> {}\n",
-            bun_string::BStr::new(src),
-            bun_string::BStr::new(dest),
-        );
+        self.verbose_output.reserve(src.len() + dest.len() + 5);
+        self.verbose_output.extend_from_slice(src);
+        self.verbose_output.extend_from_slice(b" -> ");
+        self.verbose_output.extend_from_slice(dest);
+        self.verbose_output.push(b'\n');
     }
 
     /// Spec: cp.zig `cpOnCopy`. Called from the node:fs `NewAsyncCpTask<true>`

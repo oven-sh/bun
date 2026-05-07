@@ -201,24 +201,30 @@ impl Blob {
         }
     }
 
-    /// `Blob.dupe()` (Blob.zig:3684) — new view onto the same store, +1 ref.
-    /// Does **not** clone `content_type` (heap-allocated content types become
-    /// borrowed in the duplicate, matching `dupeWithContentType(false)`).
+    /// `Blob.dupe()` / `dupeWithContentType` (Blob.zig:3684) — new view onto
+    /// the same store, +1 ref. When `content_type_allocated`, the duplicate
+    /// gets its **own** heap copy so dropping either side never dangles the
+    /// other (Zig changed both `dupe` paths to deep-copy here to fix FormData
+    /// multipart-boundary loss).
     pub fn dupe(&self) -> Blob {
         if let Some(store) = self.store {
             // SAFETY: `self` proves `store` is live.
             unsafe { store.as_ref() }.ref_();
         }
+        let (content_type, content_type_allocated) = if self.content_type_allocated {
+            // Zig: `duped.content_type = allocator.dupe(this.content_type)`.
+            (bun_alloc::default_dupe(self.content_type), true)
+        } else {
+            // Borrowed (`&'static`) — copy the slice ref as-is.
+            (self.content_type, false)
+        };
         Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
             offset: self.offset,
             store: self.store,
-            content_type: self.content_type,
-            // Duplicate borrows the original's content_type allocation; the
-            // original retains ownership (`content_type_allocated` stays
-            // `false` here so `Drop` doesn't double-free).
-            content_type_allocated: false,
+            content_type,
+            content_type_allocated,
             content_type_was_set: self.content_type_was_set,
             charset: self.charset,
             is_jsdom_file: self.is_jsdom_file,
@@ -588,12 +594,16 @@ pub mod store {
                     }
                 }
                 Data::S3(s3) => {
-                    // `s3.deinit(allocator)` releases the credentials ref and
-                    // frees the pathlike — both live in `bun_runtime`'s S3
-                    // extension impl. The data-only fields (`pathlike`,
-                    // `options`) drop normally; `credentials` is released by
-                    // the extension `deinit` because `S3Credentials` is
-                    // intrusively ref-counted at the higher tier.
+                    // `S3.deinit` (Store.zig:458): free the heap-duped path
+                    // string then deref credentials. `PathLike::Drop` is a
+                    // no-op for `String(_)` so it must be freed here, same as
+                    // the `File` arm.
+                    if let PathLike::String(s) = &mut s3.pathlike {
+                        // SAFETY: duped via mimalloc by the constructing call
+                        // site; `deinit_owned` no-ops on empty.
+                        unsafe { s.deinit_owned() };
+                    }
+                    // Other `PathLike` variants drop themselves.
                     if let Some(creds) = s3.credentials.take() {
                         // SAFETY: `credentials` is a +1 ref this S3 owned.
                         unsafe {

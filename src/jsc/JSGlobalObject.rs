@@ -1575,13 +1575,7 @@ unsafe extern "C" {
     ) -> JSValue;
     fn ZigGlobalObject__readableStreamToBlob(this: *const JSGlobalObject, value: JSValue) -> JSValue;
 
-    fn ZigGlobalObject__makeNapiEnvForFFI(this: *const JSGlobalObject) -> *mut NapiEnv;
-
-    fn JSC__Wasm__StreamingCompiler__addBytes(
-        streaming_compiler: *mut c_void,
-        bytes_ptr: *const u8,
-        bytes_len: usize,
-    );
+    fn ZigGlobalObject__makeNapiEnvForFFI(this: *const JSGlobalObject) -> *mut c_void;
 
     fn JSC__JSGlobalObject__bunVM(this: *const JSGlobalObject) -> *mut c_void;
     fn JSC__JSGlobalObject__vm(this: *const JSGlobalObject) -> *mut VM;

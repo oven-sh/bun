@@ -677,7 +677,8 @@ pub mod StringImplAllocator {
             // we don't actually allocate, we just reference count
             return core::ptr::null_mut();
         }
-        WTFStringImplStruct::ref_(this);
+        // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
+        unsafe { WTFStringImplStruct::ref_(this) };
         // we should never actually allocate
         // SAFETY: m_ptr.latin1 valid for byte_length bytes.
         unsafe { (*this).m_ptr.latin1 as *mut u8 }
@@ -688,7 +689,8 @@ pub mod StringImplAllocator {
         // SAFETY: see `alloc`.
         debug_assert!(unsafe { (*this).m_ptr.latin1 } == buf.as_ptr());
         debug_assert!(unsafe { (*this).m_length as usize } == buf.len());
-        WTFStringImplStruct::deref(this);
+        // SAFETY: vtable contract — `this` is a live WTFStringImpl with refcount ≥ 1.
+        unsafe { WTFStringImplStruct::deref(this) };
     }
 
     pub static VTABLE: AllocatorVTable = AllocatorVTable {

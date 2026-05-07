@@ -782,10 +782,10 @@ impl Linker {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler/linker.zig (421 lines)
-//   confidence: medium
-//   todos:      1
+//   confidence: high
+//   todos:      0
 //   notes:      ImportPathFormat const-generic demoted to runtime arg
-//               (no `adt_const_params` in this crate); PluginRunner is a
-//               FORWARD_DECL stub until the `bundler_jsc::plugin_runner` dep
-//               lands.
+//               (no `adt_const_params` in this crate); PluginRunner.on_resolve
+//               JSC dispatch lives in `bundler_jsc::plugin_runner` (cycle
+//               break via type-erased `global_object`).
 // ──────────────────────────────────────────────────────────────────────────

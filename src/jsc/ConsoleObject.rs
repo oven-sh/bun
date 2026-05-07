@@ -3461,7 +3461,7 @@ pub mod formatter {
                     // the call's duration. `JSGlobalObject` is an opaque handle with
                     // `UnsafeCell` interior, so `.as_ptr()` yields a `*mut` with write
                     // provenance — the C++ callee may mutate VM state through it.
-                    let result = crate::from_js_host_call(self.global_this, core::panic::Location::caller(), || unsafe {
+                    let result = crate::from_js_host_call(self.global_this, || unsafe {
                         JSC__JSValue__callCustomInspectFunction(
                             self.global_this.as_ptr(),
                             self.custom_formatted_object.function,

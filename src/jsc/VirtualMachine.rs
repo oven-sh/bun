@@ -473,7 +473,7 @@ impl ExitHandler {
         let exit_code = unsafe { (*vm).exit_handler.exit_code };
         // SAFETY: per fn contract; vm.global valid for VM lifetime.
         let global = unsafe { &*(*vm).global };
-        let _ = jsc::from_js_host_call_generic(global, core::panic::Location::caller(), || unsafe {
+        let _ = jsc::from_js_host_call_generic(global, || unsafe {
             Process__dispatchOnBeforeExit((*vm).global, exit_code)
         });
     }
@@ -1341,7 +1341,7 @@ pub struct RuntimeHooks {
     /// honours `--no-addons`.
     pub parse_worker_exec_argv: unsafe fn(
         exec_argv: &[bun_string::WTFStringImpl],
-        transform_options: &mut bun_api::TransformOptions,
+        transform_options: &mut bun_options_types::schema::api::TransformOptions,
     ),
     /// `StandaloneModuleGraph.find(path)` — spec web_worker.zig:865. Returns
     /// the graph-owned module name (BORROWED, `'static` for the process) if
@@ -1360,7 +1360,7 @@ pub struct RuntimeHooks {
 /// Subset of [`InitOptions`] passed to [`RuntimeHooks::init_worker_vm`].
 /// Mirrors VirtualMachine.zig `Options` for the `initWorker` path.
 pub struct WorkerInitOptions {
-    pub args: bun_api::TransformOptions,
+    pub args: bun_options_types::schema::api::TransformOptions,
     pub env_loader: NonNull<bun_dotenv::Loader<'static>>,
     pub store_fd: bool,
     pub graph: Option<NonNull<c_void>>,
@@ -2372,7 +2372,7 @@ impl VirtualMachine {
         let global = self.global;
         // SAFETY: `global` is valid for VM lifetime.
         let global_ref = unsafe { &*global };
-        let jsvalue = jsc::from_js_host_call(global_ref, core::panic::Location::caller(), || unsafe {
+        let jsvalue = jsc::from_js_host_call(global_ref, || unsafe {
             Bake__getAsyncLocalStorage(global)
         })?;
         if jsvalue.is_empty_or_undefined_or_null() {
@@ -5074,7 +5074,7 @@ impl VirtualMachine {
 use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
-    jsc::from_js_host_call_generic(global_object, core::panic::Location::caller(), || unsafe {
+    jsc::from_js_host_call_generic(global_object, || unsafe {
         Bun__promises__isErrorLike(global_object.as_ptr(), reason)
     })
 }

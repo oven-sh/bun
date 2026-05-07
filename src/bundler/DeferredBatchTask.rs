@@ -6,7 +6,6 @@
 
 use core::mem::offset_of;
 
-use crate::bundle_v2::JSBundlerPlugin;
 use crate::BundleV2;
 // CYCLEBREAK hot-dispatch: Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
@@ -20,18 +19,6 @@ pub use bun_js_parser::Index;
 /// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
 /// `bundle_v2::dispatch` alongside the other §Dispatch vtables.
 pub use crate::bundle_v2::dispatch::CompletionDispatch;
-
-// ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK FORWARD_DECL bridge: `JSBundlerPlugin` is an extern C++ type;
-// `drainDeferred` has a real C++ entry point so we go straight to FFI.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    // src/jsc/bindings/JSBundlerPlugin.cpp: `JSBundlerPlugin__drainDeferred`.
-    // Zig wraps this in `fromJSHostCallGeneric` for exception-scope tracking;
-    // the only caller (`runOnJSThread` below) is `catch return`, so the void
-    // FFI call is the observable behaviour.
-    fn JSBundlerPlugin__drainDeferred(this: *mut JSBundlerPlugin, rejected: bool);
-}
 
 #[derive(Default)]
 pub struct DeferredBatchTask {
@@ -92,10 +79,11 @@ impl DeferredBatchTask {
                 .unwrap_or(false);
             // Zig: `bv2.plugins.?.drainDeferred(rejected) catch return;`
             let plugins = bv2.plugins.expect("plugins");
-            // SAFETY: `plugins` is a live opaque C++ BunPlugin; FFI signature
-            // matches `JSBundlerPlugin__drainDeferred`. `catch return` collapses
-            // to discarding the void result.
-            unsafe { JSBundlerPlugin__drainDeferred(plugins.as_ptr(), rejected) };
+            // SAFETY: `plugins` is a live opaque C++ BunPlugin (BACKREF held
+            // by the completion task / bake DevServer). `catch return`
+            // collapses to discarding the void result — see
+            // `Plugin::drain_deferred` for the exception-scope note.
+            unsafe { (*plugins.as_ptr()).drain_deferred(rejected) };
         }
         self.deinit();
     }

@@ -1853,15 +1853,16 @@ impl ExpectStatic {
         Ok(value)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_not(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    // PORT NOTE: codegen passes `(&mut *this, this_value, global)` for `this: true` getters
+    // (jest.classes.ts); the `#[host_fn(getter)]` proc-macro emits a 2-arg shim, so we drop
+    // it here and match the generated signature directly. `this_value` is unused (Zig ignores it).
+    pub fn get_not(this: &Self, _this_value: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         flags.set_not(!this.flags.not());
         Self::create(global_this, flags)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_resolves_to(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_resolves_to(this: &Self, _this_value: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         if flags.promise() != Promise::None {
             return Err(Self::async_chaining_error(global_this, flags, b"resolvesTo"));
@@ -1870,8 +1871,7 @@ impl ExpectStatic {
         Self::create(global_this, flags)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_rejects_to(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_rejects_to(this: &Self, _this_value: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         if flags.promise() != Promise::None {
             return Err(Self::async_chaining_error(global_this, flags, b"rejectsTo"));

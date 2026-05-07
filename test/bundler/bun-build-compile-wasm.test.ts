@@ -3,6 +3,9 @@ import { bunEnv, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile with wasm", () => {
+  // Bun.build({ compile }) runs the full bundler + self-embedding pipeline,
+  // which takes ~15s under ASAN debug builds (0.3s release). The default
+  // 5s timeout is fine for release CI lanes but trips the sanitizer lane.
   test("compile with wasm module imports", async () => {
     // This test ensures that embedded wasm modules compile and run correctly
     // The regression was that the module prefix wasn't being set correctly
@@ -127,5 +130,5 @@ describe("Bun.build compile with wasm", () => {
     expect(stdout).toContain("WASM result: 5");
     expect(stdout).toContain("WASM module loaded successfully");
     expect(stderr).toBe("");
-  });
+  }, 60_000);
 });

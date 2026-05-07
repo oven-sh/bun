@@ -21,9 +21,7 @@ test.skipIf(isWindows || !isDebug)(
     // debug binary is large, so filter inside the pipeline rather than pulling
     // the whole symbol table into JS.
     const needle = "install.PackageManager.CommandLineArguments.parse__";
-    const { stdout, exitCode } = await Bun.$`nm --defined-only ${bunExe()} | grep -F ${needle}`
-      .nothrow()
-      .quiet();
+    const { stdout, exitCode } = await Bun.$`nm --defined-only ${bunExe()} | grep -F ${needle}`.nothrow().quiet();
     const text = stdout.toString("utf8");
     const matches = text.split("\n").filter(line => line.includes(needle));
     // If the toolchain ever stops emitting this symbol name the test becomes a

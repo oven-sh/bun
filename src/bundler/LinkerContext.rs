@@ -340,15 +340,15 @@ type DeclaredSymbolList = js_ast::DeclaredSymbolList;
 // above are real; this impl block un-gates with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
-    pub fn allocator(&self) -> &Bump {
+    pub fn arena(&self) -> &Bump {
         // TODO(port): bundler is an AST crate; LinkerGraph owns the arena
-        self.graph.allocator()
+        self.graph.arena()
     }
 
     pub fn path_with_pretty_initialized(&mut self, path: Logger::fs::Path) -> Result<Logger::fs::Path, BunError> {
         // SAFETY: `resolver.fs` is a `*mut Fs::FileSystem` backref into the singleton FS.
         let top_level_dir = unsafe { (*self.resolver().fs).top_level_dir };
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.allocator())
+        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
     }
 
     pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -885,9 +885,9 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        // PERF(port): Zig threaded `worker.allocator` through StringJoiner /
+        // PERF(port): Zig threaded `worker.arena` through StringJoiner /
         // MutableString; the Rust ports use the global mimalloc, so the joiner
-        // is allocator-free here. Revisit when arena threading lands.
+        // is arena-free here. Revisit when arena threading lands.
         let mut j = StringJoiner::default();
 
         let sources = self.parse_graph().input_files.items_source();
@@ -1194,8 +1194,8 @@ impl SourceMapDataTask {
             ctx.cast::<u8>().sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        // SAFETY: `worker.allocator` points at `worker.heap` (init by `Worker::create`).
-        SourceMapData::compute_line_offsets(ctx, unsafe { &*worker.allocator }, task.source_index);
+        // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
+        SourceMapData::compute_line_offsets(ctx, unsafe { &*worker.arena }, task.source_index);
         worker.unget();
     }
 
@@ -1222,19 +1222,19 @@ impl SourceMapDataTask {
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
-        // Use the default allocator when using DevServer and the file
+        // Use the default arena when using DevServer and the file
         // was generated. This will be preserved so that remapping
         // stack traces can show the source code, even after incremental
         // rebuilds occur.
         //
         // PORT NOTE: Zig branched on `worker.ctx.transpiler.options.dev_server`
-        // to pick `dev.allocator()` vs `worker.allocator`, but
-        // `computeQuotedSourceContents` discards the allocator parameter
+        // to pick `dev.arena()` vs `worker.arena`, but
+        // `computeQuotedSourceContents` discards the arena parameter
         // (`_: std.mem.Allocator`) — it always allocates via
         // `bun.default_allocator` internally. The branch is a no-op, so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (CYCLEBREAK §Dispatch).
-        let alloc: *const Bump = worker.allocator;
+        let alloc: *const Bump = worker.arena;
 
         // SAFETY: `alloc` is the thread-local worker arena (initialized by
         // `Worker::create`); `compute_quoted_source_contents` ignores it.
@@ -1776,10 +1776,10 @@ impl<'a> LinkerContext<'a> {
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
-        // PORT NOTE: `Options.allocator` / `source_map_allocator` were removed in
+        // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
-        // argument to `print_with_writer`). The dev-server source-map-allocator
-        // selection is folded into TODO(b3) until allocator threading lands.
+        // argument to `print_with_writer`). The dev-server source-map-arena
+        // selection is folded into TODO(b3) until arena threading lands.
         let _ = self.dev_server.is_some()
             && parse_graph.input_files.items_loader()[source_index.get() as usize].is_javascript_like();
 
@@ -1994,7 +1994,7 @@ impl<'a> LinkerContext<'a> {
                         let mut final_generated_name = Vec::<u8>::new();
                         use std::io::Write;
                         write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(path_hash)).expect("infallible: in-memory write");
-                        // TODO(port): allocator() is arena; mangled_props key/value lifetime
+                        // TODO(port): arena() is arena; mangled_props key/value lifetime
                         self.mangled_props.put(r#ref, final_generated_name.into_boxed_slice()).expect("OOM");
                     }
                 }
@@ -3522,7 +3522,7 @@ impl<'a> LinkerContext<'a> {
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
         // errdefer pieces.deinit() — Drop handles it
         // PERF(port): Zig used `j.done(alloc)` (worker arena); the Rust
-        // StringJoiner port uses global mimalloc, no allocator param.
+        // StringJoiner port uses global mimalloc, no arena param.
         let complete_output = j.done()?;
         let mut output: &[u8] = &complete_output;
 
@@ -3635,8 +3635,8 @@ impl PartialEq for MatchImport {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct StmtList {
-    // TODO(port): allocator field dropped — Vec uses global mimalloc; bundler is AST crate but
-    // these are temporary scratch buffers, not arena-backed in the original (uses generic allocator param)
+    // TODO(port): arena field dropped — Vec uses global mimalloc; bundler is AST crate but
+    // these are temporary scratch buffers, not arena-backed in the original (uses generic arena param)
     pub inside_wrapper_prefix: InsideWrapperPrefix,
     pub outside_wrapper_prefix: Vec<Stmt>,
     pub inside_wrapper_suffix: Vec<Stmt>,
@@ -3791,5 +3791,5 @@ pub enum StmtListWhich {
 //   source:     src/bundler/LinkerContext.zig (2782 lines)
 //   confidence: low
 //   todos:      17
-//   notes:      Heavy borrowck reshaping around recursive tree-shaking & MultiArrayList column slices; raw *mut backrefs (parse_graph/resolver) per LIFETIMES.tsv; many container_of! patterns for BundleV2.linker; allocator threading (arena vs global) needs Phase B audit; MatchImport.alias is arena-owned raw `*const [u8]`.
+//   notes:      Heavy borrowck reshaping around recursive tree-shaking & MultiArrayList column slices; raw *mut backrefs (parse_graph/resolver) per LIFETIMES.tsv; many container_of! patterns for BundleV2.linker; arena threading (arena vs global) needs Phase B audit; MatchImport.alias is arena-owned raw `*const [u8]`.
 // ──────────────────────────────────────────────────────────────────────────

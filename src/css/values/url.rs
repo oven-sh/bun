@@ -76,7 +76,7 @@ impl Url {
             // list so `filename()` (shared borrow) can run; result is `&'a _`.
             let import_records = dest.get_import_records()?;
             Some(UrlDependency::new(
-                dest.allocator,
+                dest.arena,
                 self,
                 dest.filename(),
                 import_records,
@@ -97,7 +97,7 @@ impl Url {
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
-                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global allocator
+                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global arena
                 dependencies.push(crate::Dependency::Url(d));
             }
 
@@ -115,7 +115,7 @@ impl Url {
         let url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.allocator — using Vec<u8>; profile in Phase B
+            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // PORT NOTE: inlined `Token::to_css_generic(UnquotedUrl(url))` —

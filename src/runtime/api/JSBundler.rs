@@ -1794,7 +1794,7 @@ pub mod js_bundler {
             0 => {
                 let resolve = unsafe { &mut *ctx.cast::<Resolve>() };
                 // SAFETY: bv2 backref is valid for the duration of the bundle.
-                let arena = unsafe { (*resolve.bv2).allocator() };
+                let arena = unsafe { (*resolve.bv2).arena() };
                 let msg =
                     plugin_msg_from_js(plugin, arena, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
@@ -1804,7 +1804,7 @@ pub mod js_bundler {
             1 => {
                 let load = unsafe { &mut *ctx.cast::<Load>() };
                 // SAFETY: bv2 backref is valid for the duration of the bundle.
-                let arena = unsafe { (*load.bv2).allocator() };
+                let arena = unsafe { (*load.bv2).arena() };
                 let msg = plugin_msg_from_js(plugin, arena, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 // SAFETY: bv2 backref is valid

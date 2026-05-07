@@ -70,8 +70,8 @@ impl Default for Array {
 // arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates (round-E unblock).
 impl Array {
-    /// Zig: `pub fn push(this: *Array, allocator, item) !void`.
-    /// Phase A `Vec::append` uses the global allocator; `_bump` is kept
+    /// Zig: `pub fn push(this: *Array, arena, item) !void`.
+    /// Phase A `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
         VecExt::append(&mut self.items, item)
@@ -90,7 +90,7 @@ impl Array {
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; Phase-A Vec uses global allocator.
+        // PERF(port): Zig allocated in arena; Phase-A Vec uses global arena.
         let mut out: Vec<Expr> =
             Vec::init_capacity(estimated_count + self.items.len_u32() as usize)?;
         out.expand_to_capacity();
@@ -629,7 +629,7 @@ impl Number {
                 }));
             }
 
-            // std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
+            // std.fmt.allocPrint(arena, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
             // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
             struct StackWriter {
                 buf: [u8; 16],
@@ -1311,7 +1311,7 @@ impl EString {
         self.slice8()
     }
 
-    /// Zig: `slice(allocator)` — flatten any rope and return UTF-8 bytes.
+    /// Zig: `slice(arena)` — flatten any rope and return UTF-8 bytes.
     /// Resolves the rope into the bump arena, then transcodes if UTF-16.
     pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
         self.resolve_rope_if_needed(bump);
@@ -1370,9 +1370,9 @@ impl EString {
         self.next = None;
     }
 
-    /// Zig `string(allocator)` — return UTF-8 bytes, transcoding if UTF-16.
-    /// Phase A: transcode allocates via global allocator then copies into
-    /// `bump` (Zig used the passed allocator directly).
+    /// Zig `string(arena)` — return UTF-8 bytes, transcoding if UTF-16.
+    /// Phase A: transcode allocates via global arena then copies into
+    /// `bump` (Zig used the passed arena directly).
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
             // `self.data` is arena-owned with the same lifetime as `bump`

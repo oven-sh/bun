@@ -84,7 +84,7 @@ pub fn write_output_files_to_disk(
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between
     // iterations. Phase B should verify bun_alloc::MaxHeapAllocator semantics
-    // match (init/reset/deinit). DynAlloc is currently `()` so the allocator
+    // match (init/reset/deinit). DynAlloc is currently `()` so the arena
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
     let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
@@ -136,7 +136,7 @@ pub fn write_output_files_to_disk(
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
         // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the allocator, so when Phase B
+        // guard that resets on drop and derefs to the arena, so when Phase B
         // wires up `code_allocator` it can borrow through `_code_allocator`.
         let _code_allocator = max_heap_allocator.scope();
 
@@ -256,7 +256,7 @@ pub fn write_output_files_to_disk(
                         + b.len()
                         + b"\n".len();
                     // PERF(port): Zig used Chunk.IntermediateOutput.allocatorForSize(total_len)
-                    // to pick a size-appropriate allocator. Using Vec (global mimalloc) here.
+                    // to pick a size-appropriate arena. Using Vec (global mimalloc) here.
                     let mut buf: Vec<u8> = Vec::with_capacity(total_len);
                     // PERF(port): was appendSliceAssumeCapacity
                     buf.extend_from_slice(&code_result.buffer);
@@ -596,7 +596,7 @@ pub fn write_output_files_to_disk(
             } else {
                 Box::default()
             };
-            // `defer src.value.buffer.allocator.free(bytes)` — `bytes` is now an
+            // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
             // owned Box that drops at end of scope.
 
             let rel_parent =

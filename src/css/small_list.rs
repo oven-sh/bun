@@ -57,7 +57,7 @@ unsafe impl<T: Sync, const N: usize> Sync for SmallList<T, N> {}
 
 impl<T> HeapData<T> {
     pub fn init_capacity(capacity: u32) -> HeapData<T> {
-        // PERF(port): was arena allocator.alloc — now global mimalloc
+        // PERF(port): was arena arena.alloc — now global mimalloc
         let mut v: Vec<T> = Vec::with_capacity(capacity as usize);
         let ptr = v.as_mut_ptr();
         core::mem::forget(v);
@@ -81,7 +81,7 @@ impl<T, const N: usize> Default for SmallList<T, N> {
 // become `bump: &'bump Bump` and ArrayListUnmanaged → `bun_alloc::ArenaVec<'bump, T>`.
 // Dropped here because the heap path needs realloc/free (incompatible with bumpalo's bump-pointer
 // model). Phase B must reconcile: either thread `&'bump Bump` and leak-on-reset for the heap path,
-// or confirm SmallList callers in css always use the global allocator (not the parser arena).
+// or confirm SmallList callers in css always use the global arena (not the parser arena).
 impl<T, const N: usize> SmallList<T, N> {
     pub fn init_inlined(values: &[T]) -> Self
     where
@@ -317,7 +317,7 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn to_owned_slice(self) -> Box<[T]> {
         // TODO(port): Zig signature was &self returning aliased heap slice; reshaped to consume self.
         if self.spilled() {
-            // SAFETY: spilled => heap.ptr was allocated with capacity == self.capacity via global allocator
+            // SAFETY: spilled => heap.ptr was allocated with capacity == self.capacity via global arena
             let v = unsafe {
                 Vec::from_raw_parts(self.data.heap.ptr, self.data.heap.len as usize, self.capacity as usize)
             };
@@ -732,8 +732,8 @@ impl<T, const N: usize> SmallList<T, N> {
                 unsafe { ptr::copy_nonoverlapping(ptr_, new_ptr, length as usize) };
                 new_ptr
             } else {
-                // SAFETY: ptr_ is heap ptr allocated with capacity `cap` via global allocator
-                // PERF(port): was allocator.realloc — using Vec reserve_exact
+                // SAFETY: ptr_ is heap ptr allocated with capacity `cap` via global arena
+                // PERF(port): was arena.realloc — using Vec reserve_exact
                 unsafe {
                     let mut v = Vec::from_raw_parts(ptr_, length as usize, cap as usize);
                     v.reserve_exact((new_cap - length) as usize);
@@ -877,8 +877,8 @@ pub trait GetFallbacks<const N: usize>: Sized {
 /// `properties::background::Background`.
 pub trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
-    fn with_image(&self, allocator: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
-    fn get_fallback(&self, allocator: &bun_alloc::Arena, kind: crate::values::color::ColorFallbackKind) -> Self;
+    fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
+    fn get_fallback(&self, arena: &bun_alloc::Arena, kind: crate::values::color::ColorFallbackKind) -> Self;
     fn get_necessary_fallbacks(
         &self,
         targets: crate::targets::Targets,
@@ -894,10 +894,10 @@ impl<T: ImageFallback> SmallList<T, 1> {
     #[inline]
     pub fn get_fallbacks(
         &mut self,
-        allocator: &bun_alloc::Arena,
+        arena: &bun_alloc::Arena,
         targets: crate::targets::Targets,
     ) -> Vec<SmallList<T, 1>> {
-        fallbacks_gated::get_fallbacks_image(self, allocator, targets)
+        fallbacks_gated::get_fallbacks_image(self, arena, targets)
     }
 }
 
@@ -915,7 +915,7 @@ use crate::properties::text::TextShadow;
 // TODO(port): trait bound placeholder — any T with getImage()/withImage()/getFallback()/getNecessaryFallbacks()
 pub fn get_fallbacks_image<T>(
     this: &mut SmallList<T, 1>,
-    allocator: &bun_alloc::Arena,
+    arena: &bun_alloc::Arena,
     targets: css::targets::Targets,
 ) -> Vec<SmallList<T, 1>>
 where
@@ -939,7 +939,7 @@ where
         // PORT NOTE: reshaped for borrowck — index instead of zip over two &mut self slices
         for i in 0..len {
             let in_ = this.r#mut(i);
-            let out_val = in_.get_fallback(allocator, ColorFallbackKind::RGB);
+            let out_val = in_.get_fallback(arena, ColorFallbackKind::RGB);
             // SAFETY: i < len; slot uninitialized after set_len
             unsafe { ptr::write(shallow_clone.as_ptr().add(i as usize), out_val) };
         }
@@ -959,8 +959,8 @@ where
         let images = 'images: {
             let mut images = SmallList::<T, 1>::default();
             for item in prefix_images.slice() {
-                if let Some(img) = item.get_image().get_legacy_webkit(allocator) {
-                    images.append(item.with_image(allocator, img));
+                if let Some(img) = item.get_image().get_legacy_webkit(arena) {
+                    images.append(item.with_image(arena, img));
                 }
             }
             break 'images images;
@@ -992,9 +992,9 @@ where
         }
     }
 
-    prefix_helper("webkit", &prefixes, prefix_images, &mut res, allocator);
-    prefix_helper("moz", &prefixes, prefix_images, &mut res, allocator);
-    prefix_helper("o", &prefixes, prefix_images, &mut res, allocator);
+    prefix_helper("webkit", &prefixes, prefix_images, &mut res, arena);
+    prefix_helper("moz", &prefixes, prefix_images, &mut res, arena);
+    prefix_helper("o", &prefixes, prefix_images, &mut res, arena);
 
     if prefixes.contains(css::VendorPrefix::NONE) {
         if let Some(r) = rgb {
@@ -1007,7 +1007,7 @@ where
             p3_images.set_len(len);
             for i in 0..len {
                 let in_ = this.r#mut(i);
-                let out_val = in_.get_fallback(allocator, ColorFallbackKind::P3);
+                let out_val = in_.get_fallback(arena, ColorFallbackKind::P3);
                 // SAFETY: i < len; slot uninitialized after set_len
                 unsafe { ptr::write(p3_images.as_ptr().add(i as usize), out_val) };
             }
@@ -1017,7 +1017,7 @@ where
         // Convert to lab if needed (e.g. if oklab is not supported but lab is).
         if fallbacks.contains(ColorFallbackKind::LAB) {
             for item in this.slice_mut() {
-                let new = item.get_fallback(allocator, ColorFallbackKind::LAB);
+                let new = item.get_fallback(arena, ColorFallbackKind::LAB);
                 let old = core::mem::replace(item, new);
                 drop(old);
             }
@@ -1034,7 +1034,7 @@ where
 
 pub fn get_fallbacks_text_shadow(
     this: &mut SmallList<TextShadow, 1>,
-    allocator: &bun_alloc::Arena,
+    arena: &bun_alloc::Arena,
     targets: css::targets::Targets,
 ) -> SmallList<SmallList<TextShadow, 1>, 2> {
     let mut fallbacks = css::ColorFallbackKind::default();
@@ -1049,7 +1049,7 @@ pub fn get_fallbacks_text_shadow(
             let mut new_shadow = shadow.clone();
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
-            new_shadow = new_shadow.deep_clone(allocator);
+            new_shadow = new_shadow.deep_clone(arena);
             new_shadow.color = shadow.color.to_rgb().unwrap();
             rgb.append_assume_capacity(new_shadow);
         }
@@ -1062,7 +1062,7 @@ pub fn get_fallbacks_text_shadow(
             let mut new_shadow = shadow.clone();
             // dummy non-alloced color to avoid deep cloning the real one since we will replace it
             new_shadow.color = css::css_values::color::CssColor::CurrentColor;
-            new_shadow = new_shadow.deep_clone(allocator);
+            new_shadow = new_shadow.deep_clone(arena);
             new_shadow.color = shadow.color.to_p3().unwrap();
             p3.append_assume_capacity(new_shadow);
         }

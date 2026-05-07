@@ -402,7 +402,7 @@ pub fn generate(
     }
 
     // Break output into pieces and resolve chunk references to final paths
-    let alloc = c.allocator();
+    let alloc = c.arena();
     let mut intermediate =
         c.break_output_into_pieces(alloc, &mut j, u32::try_from(chunks.len()).expect("int cast"))?;
 

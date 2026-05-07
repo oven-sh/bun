@@ -539,12 +539,12 @@ impl TranspilerJob {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST.
         let arena = Arena::new();
         // SAFETY: `Transpiler<'static>` (the `vm.transpiler` value-copy below)
-        // requires `&'static Arena` for `set_allocator`. The arena outlives
+        // requires `&'static Arena` for `set_arena`. The arena outlives
         // every use of `transpiler` (it's the first local, so drops last; the
         // `ManuallyDrop` copy never drops; every `parse_result`/`printer`
         // borrowing it is consumed before fn return). Erase the lifetime via
         // raw pointer round-trip — Stacked-Borrows-safe (Shared tag).
-        let allocator: &'static Arena = unsafe { &*(&raw const arena) };
+        let arena_ref: &'static Arena = unsafe { &*(&raw const arena) };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -574,7 +574,7 @@ impl TranspilerJob {
 
         let ast_store_ptr = AST_MEMORY_STORE.with(|cell| {
             if cell.get().is_none() {
-                let boxed = Box::new(ASTMemoryAllocator::new(allocator));
+                let boxed = Box::new(ASTMemoryAllocator::new(arena_ref));
                 // SAFETY: Box::into_raw never null
                 cell.set(Some(unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) }));
             }
@@ -634,17 +634,17 @@ impl TranspilerJob {
         });
         // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
         // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_allocator(&arena)`. The bytewise
+        // immediately overwrite below via `set_arena(&arena)`. The bytewise
         // copy is never dropped (ManuallyDrop), so no borrow tied to the
         // shortened `'a` outlives `arena`.
         let transpiler: &mut Transpiler<'_> = unsafe {
             &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>()
         };
-        transpiler.set_allocator(allocator);
+        transpiler.set_arena(arena_ref);
         transpiler.set_log(&raw mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
         // (BundleOptions value copy). The Rust resolver already shares opts with the parent
-        // Transpiler via raw pointer; set_allocator/set_log keep them in sync.
+        // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
         // Zig: `transpiler.linker.resolver = &transpiler.resolver` — the bytewise copy left
         // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
@@ -740,7 +740,7 @@ impl TranspilerJob {
         };
 
         let mut parse_options = ParseOptions {
-            allocator,
+            arena: arena_ref,
             path: path.clone(),
             loader,
             dirname_fd: Fd::INVALID,
@@ -901,7 +901,6 @@ impl TranspilerJob {
             };
 
             self.resolved_source = ResolvedSource {
-                allocator: ptr::null_mut(),
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
                     OutputCode::Utf8(utf8) => {
@@ -922,7 +921,6 @@ impl TranspilerJob {
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let bytecode_slice = parse_result.already_bundled.bytecode_slice();
             self.resolved_source = ResolvedSource {
-                allocator: ptr::null_mut(),
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
@@ -1095,7 +1093,6 @@ impl TranspilerJob {
             break 'brk result;
         };
         self.resolved_source = ResolvedSource {
-            allocator: ptr::null_mut(),
             source_code,
             is_commonjs_module,
             module_info: module_info

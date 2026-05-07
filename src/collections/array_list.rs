@@ -57,7 +57,7 @@ pub type ArrayListAlignedDefault<T> = ArrayListAlignedIn<T>;
 pub struct ArrayListAlignedIn<T> {
     /// Zig: `#unmanaged: Unmanaged = .empty`
     unmanaged: Unmanaged<T>,
-    // Zig: `#allocator: Allocator` — dropped (global mimalloc).
+    // Zig: `#std.mem.Allocator param` — dropped (global mimalloc).
 }
 
 /// Zig: `Unmanaged = std.ArrayListAlignedUnmanaged(T, alignment)`
@@ -132,13 +132,6 @@ impl<T> ArrayListAlignedIn<T> {
     // meaningful writer. Expose only on `ArrayListAlignedIn<u8>` in Phase B.
     pub fn writer(&mut self) -> &mut Vec<T> {
         &mut self.unmanaged
-    }
-
-    /// Returns a borrowed version of the allocator.
-    // PORT NOTE: allocator dropped; this is a no-op kept for API shape. Callers should be
-    // updated in Phase B to stop calling it.
-    pub fn allocator(&self) {
-        // Zig: `bun.allocators.borrow(self.#allocator)`
     }
 
     /// This method empties `self`.

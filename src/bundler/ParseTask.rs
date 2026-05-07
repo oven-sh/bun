@@ -770,7 +770,7 @@ fn get_ast(
             let fallback_opts = opts.clone_for_lazy_export();
             let module_type = opts.module_type;
             return if let Some(res) = (crate::cache::JavaScript {}).parse(
-                bump, // TODO(port): zig passed transpiler.allocator
+                bump, // TODO(port): zig passed transpiler.arena
                 opts,
                 &topts.define,
                 log,
@@ -1292,7 +1292,7 @@ fn get_code_for_parse_task_without_plugins(
     file_path: &mut Fs::Path,
     loader: Loader,
 ) -> core::result::Result<CacheEntry, AnyError> {
-    let _ = bump; // TODO(port): allocator routing for read_file_with_allocator
+    let _ = bump; // TODO(port): arena routing for read_file_with_allocator
     match &task.contents_or_fd {
         ContentsOrFd::Fd { dir, file } => 'brk: {
             let contents_dir = *dir;
@@ -1352,7 +1352,7 @@ fn get_code_for_parse_task_without_plugins(
                 }
             }
 
-            // TODO: this allocator may be wrong for native plugins
+            // TODO: this arena may be wrong for native plugins
             // TODO(port): bun.default_allocator vs bump distinction — Zig passed
             // `bun.default_allocator` for copy-for-bundling and the worker arena
             // otherwise; the Rust `read_file_with_allocator` always allocates
@@ -1389,7 +1389,7 @@ fn get_code_for_parse_task_without_plugins(
                 }
                 Err(e) => {
                     let source = Source::init_empty_file(
-                        // TODO(port): zig duped via log.msgs.allocator
+                        // TODO(port): zig duped via log.msgs.arena
                         leak_static(file_path.text),
                     );
                     if e == err!("ENOENT") || e == err!("FileNotFound") {
@@ -1621,7 +1621,7 @@ impl BunLogOptions {
 
     pub fn append(&self, log: &mut Log, namespace: &'static [u8]) {
         // Zig (ParseTask.zig:874-884) passes `this.path()` through and dupes
-        // `source_line_text` via `log.msgs.allocator`. `Location.{file,line_text}`
+        // `source_line_text` via `log.msgs.arena`. `Location.{file,line_text}`
         // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
         // (freed when the Log drops) and returns a lifetime-erased borrow —
         // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
@@ -1778,7 +1778,7 @@ pub extern "C" fn fetch_source_code(
             }
         };
         // PORT NOTE: in Zig (`.zig:953-975`) `entry.contents` is a slice into
-        // the worker arena (`this.allocator`) with no destructor, so storing
+        // the worker arena (`this.arena`) with no destructor, so storing
         // `entry.contents.ptr` and letting `entry` go out of scope is sound.
         // In Rust `Contents::Owned(Vec<u8>)` (the file-read path — see
         // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
@@ -2036,16 +2036,16 @@ impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
 
 // blocked_on: `crate::ThreadPool::Worker` (lib.rs ` pub mod
 // ThreadPool` — the bundler worker module, distinct from `bun_threading`).
-// `Worker.{allocator, data.transpiler}` field shape comes from there.
+// `Worker.{arena, data.transpiler}` field shape comes from there.
 
 fn get_source_code(
     task: &mut ParseTask,
     this: &mut crate::Worker,
     log: &mut Log,
 ) -> core::result::Result<CacheEntry, AnyError> {
-    // SAFETY: `Worker.allocator` points at `Worker.heap` once `has_created` (see
+    // SAFETY: `Worker.arena` points at `Worker.heap` once `has_created` (see
     // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
-    let bump: &Bump = unsafe { &*this.allocator };
+    let bump: &Bump = unsafe { &*this.arena };
 
     // SAFETY: `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
     let data = unsafe { this.data.assume_init_mut() };
@@ -2090,7 +2090,7 @@ fn get_source_code(
 // ───────────────────────────────────────────────────────────────────────────
 
 // blocked_on: `crate::ThreadPool::Worker` (gated module) for
-// `this.{allocator, transpiler_for_target, ctx}`; `bake_types::Framework`
+// `this.{arena, transpiler_for_target, ctx}`; `bake_types::Framework`
 // missing `server_components` field; `ParserOptions` field-type mismatches
 // (`allow_unresolved`, `framework`, `unwrap_commonjs_packages`,
 // `server_components` — bundler's `BundleOptions` types diverge from the
@@ -2122,15 +2122,15 @@ fn run_with_source_code(
     let worker_raw: *mut crate::Worker = this;
     // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
     // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
-    // arena outlives all reads through the returned ASTs. `allocator` is a
+    // arena outlives all reads through the returned ASTs. `arena` is a
     // `*const Bump` field; the deref points outside `*worker_raw`.
-    let bump: &'static Bump = unsafe { &*(*worker_raw).allocator };
+    let bump: &'static Bump = unsafe { &*(*worker_raw).arena };
 
     // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
     let mut transpiler: *mut Transpiler<'static> =
         std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
     // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
-    // `if (.fd) entry.deinit(allocator)` .zig:1148) are reshaped into the
+    // `if (.fd) entry.deinit(arena)` .zig:1148) are reshaped into the
     // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
     // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
     // follow. There are no other fallible `?` between here and that match.
@@ -2157,7 +2157,7 @@ fn run_with_source_code(
     //
     // Changing from `.contents` to `.fd` will cause a double free.
     // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
-    // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(allocator)` below).
+    // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(arena)` below).
     #[cfg(debug_assertions)]
     let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
 

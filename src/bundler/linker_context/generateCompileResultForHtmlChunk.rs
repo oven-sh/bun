@@ -313,7 +313,7 @@ impl<'a> HTMLLoader<'a> {
     }
 
     fn get_head_tags(&self) -> BoundedArray<Vec<u8>, 2> {
-        // PERF(port): was stack-fallback allocator; now heap Vec<u8>
+        // PERF(port): was stack-fallback arena; now heap Vec<u8>
         let mut array: BoundedArray<Vec<u8>, 2> = BoundedArray::default();
         // SAFETY: chunk/chunks raw pointers valid for the duration of the link step.
         let chunk = unsafe { &*self.chunk };
@@ -442,7 +442,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    // TODO(port): Zig used `dev.allocator()` vs `worker.allocator` to control output ownership.
+    // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
     // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
 
     // SAFETY: `c.log` is `&mut Log` behind `&LinkerContext`; read its pointer
@@ -553,5 +553,5 @@ pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 //   source:     src/bundler/linker_context/generateCompileResultForHtmlChunk.zig (344 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      lol-html bindings are raw-pointer associated fns; chunk/chunks held as raw ptrs to satisfy borrowck across C callbacks; dev_server allocator ownership semantics need Phase B review.
+//   notes:      lol-html bindings are raw-pointer associated fns; chunk/chunks held as raw ptrs to satisfy borrowck across C callbacks; dev_server arena ownership semantics need Phase B review.
 // ──────────────────────────────────────────────────────────────────────────

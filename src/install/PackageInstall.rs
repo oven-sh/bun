@@ -34,7 +34,7 @@ pub struct PackageInstall<'a> {
     pub destination_dir_subpath: &'a ZStr,
     pub destination_dir_subpath_buf: &'a mut [u8],
 
-    // allocator: std.mem.Allocator — deleted (global mimalloc)
+    // std.mem.Allocator param — deleted (global mimalloc)
     pub progress: Option<&'a mut Progress>,
 
     pub package_name: SemverString,

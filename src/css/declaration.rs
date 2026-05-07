@@ -53,13 +53,13 @@ unsafe impl<'bump> Sync for DeclarationBlock<'bump> {}
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
-// blocked_on: Printer::new signature (Zig passes allocator + Managed(u8) +
+// blocked_on: Printer::new signature (Zig passes arena + Managed(u8) +
 // writer + options + null + null + &symbols; the Rust ctor shape is unsettled).
 
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // PORT NOTE: debug formatter — uses a throwaway local arena for the
-        // printer's scratch buffers (Zig threaded the parser allocator).
+        // printer's scratch buffers (Zig threaded the parser arena).
         let bump = Bump::new();
         let mut arraylist: Vec<u8> = Vec::new();
         let symbols = bun_logger::symbol::Map::init_list(Default::default());
@@ -115,7 +115,7 @@ impl<'bump> DeclarationBlock<'bump> {
         important_handler: &mut DeclarationHandler<'bump>,
         context: &mut css::PropertyHandlerContext,
     ) {
-        // PORT NOTE: Zig threaded `context.allocator` through every append; the
+        // PORT NOTE: Zig threaded `context.arena` through every append; the
         // Rust `PropertyHandlerContext` dropped that field, so we recover the
         // arena from the handler's own bump-backed accumulator instead.
         let bump: &'bump Bump = handler.decls.bump();
@@ -240,10 +240,10 @@ impl<'bump> DeclarationBlock<'bump> {
 
 impl DeclarationBlock<'static> {
     pub fn parse(input: &mut css::Parser, options: &css::ParserOptions) -> Result<DeclarationBlock<'static>> {
-        // SAFETY: `Tokenizer<'a>` owns `allocator: &'a Bump`; the arena outlives
+        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
         // every `DeclarationBlock` produced from this parser. `'static` here is
         // the crate-wide erasure (see note above), not a real static borrow.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.allocator()) };
+        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.arena()) };
         let mut important_declarations = DeclarationList::new_in(bump);
         let mut declarations = DeclarationList::new_in(bump);
         let mut decl_parser = PropertyDeclarationParser {
@@ -535,7 +535,7 @@ impl<'bump> DeclarationHandler<'bump> {
         }
         // if (this.unicode_bidi) |unicode_bidi| {
         //     this.unicode_bidi = null;
-        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
+        //     this.decls.append(context.arena, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
         // }
 
         self.background.finalize(&mut self.decls, context);

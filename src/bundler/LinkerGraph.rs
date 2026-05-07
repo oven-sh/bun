@@ -81,8 +81,8 @@ unsafe impl Sync for LinkerGraph {}
 impl LinkerGraph {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
-    pub fn allocator(&self) -> &Arena {
-        // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for
+    pub fn arena(&self) -> &Arena {
+        // SAFETY: `bump` is a backref into `BundleV2.graph.arena`, valid for
         // the lifetime of the link step that constructed this LinkerGraph.
         unsafe { &*self.bump }
     }
@@ -579,7 +579,7 @@ impl LinkerGraph {
             // bytes; here we fill with `Index::INVALID` whose bytes are all
             // 0xFF (`#[repr(transparent)]` over `u32::MAX`).
             let stable_source_indices = self
-                .allocator()
+                .arena()
                 .alloc_slice_fill_copy(sources.len() + 1, Index::INVALID);
 
             for (i, source_index) in self.reachable_files.slice().iter().enumerate() {
@@ -633,7 +633,7 @@ impl LinkerGraph {
         //     }
         //
         //     if (count > 0) {
-        //         try const_values.ensureTotalCapacity(this.allocator, count);
+        //         try const_values.ensureTotalCapacity(this.arena, count);
         //         for (this.ast.items(.const_values)) |const_value| {
         //             for (const_value.keys(), const_value.values()) |key, value| {
         //                 const_values.putAssumeCapacityNoClobber(key, value);

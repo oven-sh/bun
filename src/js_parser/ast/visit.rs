@@ -57,8 +57,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        // p.temp_refs_to_declare.deinit(p.allocator); + reset to empty
-        self.temp_refs_to_declare = BumpVec::new_in(self.allocator);
+        // p.temp_refs_to_declare.deinit(p.arena); + reset to empty
+        self.temp_refs_to_declare = BumpVec::new_in(self.arena);
         self.temp_ref_count = 0;
 
         self.visit_stmts(stmts, opts.kind)?;
@@ -143,7 +143,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
             .expect("unreachable");
         // PERF(port): was arena-backed ListManaged.fromOwnedSlice — Stmt is Copy.
-        let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.allocator);
+        let mut stmts = BumpVec::with_capacity_in(body_stmts.len(), self.arena);
         stmts.extend_from_slice(body_stmts);
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
@@ -467,7 +467,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
                         let mut end: u32 = 0;
                         for property in bound_object.properties() {
-                            if let Some(name) = property.key.as_string_literal(self.allocator) {
+                            if let Some(name) = property.key.as_string_literal(self.arena) {
                                 if let Some(query) = object.as_property(name) {
                                     match query.expr.data {
                                         ExprData::EObject(_) | ExprData::EArray(_) => {
@@ -774,7 +774,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             StmtData::SBlock(b) => unsafe { &*b.stmts },
             _ => unreachable!(),
         };
-        let mut stmts = BumpVec::with_capacity_in(block_stmts.len(), self.allocator);
+        let mut stmts = BumpVec::with_capacity_in(block_stmts.len(), self.arena);
         stmts.extend_from_slice(block_stmts);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
         self.pop_scope();
@@ -807,7 +807,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .expect("unreachable");
         }
 
-        let mut stmts = BumpVec::with_capacity_in(1, self.allocator);
+        let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
 
@@ -849,7 +849,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // moment we hand it to `fn_only_data_visit.class_name_ref`; all other reads/writes
         // go through the raw pointer so two `&mut Ref` to the same allocation never
         // coexist (the field's `&mut` is restored/overwritten before any read here).
-        let shadow_ref_ptr: *mut Ref = std::ptr::from_mut::<Ref>(self.allocator.alloc(Ref::NONE));
+        let shadow_ref_ptr: *mut Ref = std::ptr::from_mut::<Ref>(self.arena.alloc(Ref::NONE));
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -930,7 +930,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                     // PERF(port): was Vec::move_to_list_managed; Stmt is Copy.
                     let csb_stmts = csb.stmts.slice();
-                    let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.allocator);
+                    let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody).expect("unreachable");
                     // SAFETY: bump-arena slice; Vec marked Borrowed (no growth, no free).
@@ -991,7 +991,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 {
                     if let Some(key) = property.key {
                         if let ExprData::EString(e_str) = key.data {
-                            name_to_keep = Some(e_str.string(self.allocator).expect("oom"));
+                            name_to_keep = Some(e_str.string(self.arena).expect("oom"));
                         }
                     }
                 } else if property.flags.contains(flags::Property::IsMethod) {
@@ -1117,7 +1117,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let old_body: &[Stmt] = unsafe { &*(*constructor).func.body.stmts };
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + to_add,
-                            self.allocator,
+                            self.arena,
                         );
                         stmts.extend_from_slice(old_body);
 
@@ -1126,7 +1126,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let old_props_len = unsafe { &*old_props }.len();
                         let mut class_body = BumpVec::<G::Property>::with_capacity_in(
                             old_props_len + to_add,
-                            self.allocator,
+                            self.arena,
                         );
                         // PORT NOTE: Zig `fromOwnedSlice` adopts the existing buffer in-place.
                         // Rust BumpVec can't adopt a foreign `*mut [T]`, so move each element
@@ -1277,8 +1277,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
 
-            let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
-            let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
+            let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
+            let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
 
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
@@ -1289,7 +1289,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
             let mut preprocessed_enums: ListManaged<'a, &'a [Stmt]> =
-                ListManaged::new_in(p.allocator);
+                ListManaged::new_in(p.arena);
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
                     if matches!(stmt.data, StmtData::SEnum(_)) {
@@ -1307,7 +1307,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             scopes_for_enum_at(&p.scopes_in_order_for_enum, stmt.loc)
                         };
 
-                        let mut temp = ListManaged::new_in(p.allocator);
+                        let mut temp = ListManaged::new_in(p.arena);
                         let res = p.visit_and_append_stmt(&mut temp, stmt);
                         // SAFETY: `old_ptr/old_len` describe the same arena slice we
                         // saved above; `defer p.scope_order_to_visit = old_scopes_in_order`.
@@ -1330,7 +1330,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
-                ListManaged::with_capacity_in(stmts.len(), p.allocator);
+                ListManaged::with_capacity_in(stmts.len(), p.arena);
 
             let prev_nearest_stmt_list = p.nearest_stmt_list;
             // PORT NOTE: BACKREF — `before` outlives this block; raw NonNull avoids
@@ -1390,9 +1390,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             // Transform block-level function declarations into variable declarations
             if before.len() > 0 {
-                let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.allocator);
-                let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.allocator);
-                let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.allocator);
+                let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
+                let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
+                let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
                 let mut fn_stmts: HashMap<Ref, u32> = HashMap::default();
 
                 for stmt in before.iter().copied() {
@@ -1509,7 +1509,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.allocator) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
                         continue;
                     }
 
@@ -1545,9 +1545,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // (reclaimed on arena reset) before installing the new list —
             // dropping the old `Vec<_, &MimallocArena>` would `mi_free` it
             // and leave the S.Try body dangling.
-            let allocator = p.allocator;
+            let arena = p.arena;
             let raw =
-                core::mem::replace(stmts, ListManaged::new_in(allocator)).into_bump_slice_mut();
+                core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
             *stmts = ctx.finalize(p, raw, parent_is_none);
@@ -1633,13 +1633,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut is_control_flow_dead = false;
 
         let mut output: ListManaged<'a, Stmt> =
-            ListManaged::with_capacity_in(stmts.len(), p.allocator);
+            ListManaged::with_capacity_in(stmts.len(), p.arena);
 
         let dead_code_elimination = p.options.features.dead_code_elimination;
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.allocator)
+                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;

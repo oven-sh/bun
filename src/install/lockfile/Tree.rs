@@ -383,7 +383,7 @@ pub enum BuilderMethod {
 // types; using Option<_>/empty defaults instead. Phase B may split into two structs or use a
 // trait-associated type if the size matters.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
-    // PORT NOTE: Zig `allocator: Allocator` field dropped. Sole construction site is
+    // PORT NOTE: Zig `std.mem.Allocator` param field dropped. Sole construction site is
     // `Lockfile.hoist()` (src/install/lockfile.zig) which passes `lockfile.allocator` — the
     // lockfile's persistent allocator (bun.default_allocator via PackageManager/CLI ctx), not an
     // arena. Global mimalloc is correct here; no `&'bump Bump` threading needed.

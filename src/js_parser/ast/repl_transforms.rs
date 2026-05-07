@@ -49,7 +49,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         }
 
         // Collect all statements into a single array
-        // PERF(port): was bun.handleOom(allocator.alloc(Stmt, n)) — bump alloc + index fill
+        // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump alloc + index fill
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         for part in parts.iter() {
             // SAFETY: arena-owned slice valid for 'a.
@@ -436,7 +436,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
         // Final output: hoisted declarations + IIFE call
         let final_stmts_count = hoisted_stmts.len() + 1;
-        // PERF(port): was bun.handleOom(allocator.alloc(Stmt, n)) — bump Vec + into_bump_slice
+        // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump Vec + into_bump_slice
         let mut final_stmts = BumpVec::with_capacity_in(final_stmts_count, bump);
         for stmt in hoisted_stmts.iter() {
             final_stmts.push(*stmt);
@@ -598,7 +598,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
-        // PERF(port): was bun.handleOom(allocator.alloc(G.Property, 2)).
+        // PERF(port): was bun.handleOom(arena.alloc(G.Property, 2)).
         // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object
@@ -687,7 +687,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 // SAFETY: arena-owned `*mut Array` valid for 'a.
                 let arr = unsafe { &*arr };
                 let arr_items = arr.items();
-                // PERF(port): was bun.handleOom(allocator.alloc(Expr, n))
+                // PERF(port): was bun.handleOom(arena.alloc(Expr, n))
                 let mut items = BumpVec::with_capacity_in(arr_items.len(), bump);
                 for (i, item) in arr_items.iter().enumerate() {
                     let expr = self.repl_convert_binding_to_expr(item.binding, bump);
@@ -723,7 +723,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 // SAFETY: arena-owned `*mut Object` valid for 'a.
                 let obj = unsafe { &*obj };
                 let obj_props = obj.properties();
-                // PERF(port): was bun.handleOom(allocator.alloc(G.Property, n))
+                // PERF(port): was bun.handleOom(arena.alloc(G.Property, n))
                 let mut properties = BumpVec::with_capacity_in(obj_props.len(), bump);
                 for prop in obj_props.iter() {
                     properties.push(G::Property {
@@ -757,7 +757,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
     }
 }
 
-/// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(allocator.dupe(...))`).
+/// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(arena.dupe(...))`).
 #[inline]
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] =

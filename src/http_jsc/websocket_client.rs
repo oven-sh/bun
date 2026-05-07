@@ -1115,7 +1115,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if should_compress {
             // For compressed messages, we need to compress the content first
             let mut temp_buffer: Option<Vec<u8>> = None;
-            // PORT NOTE: Zig used deflate.rare_data.allocator(); in Rust we use global mimalloc.
+            // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
             // PERF(port): was rare_data arena allocator — profile in Phase B
             let content_to_compress: &[u8] = match bytes {
                 Copy::Utf16(utf16) => 'brk: {

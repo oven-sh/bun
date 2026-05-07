@@ -121,9 +121,9 @@ pub mod options {
                 self.development = !is_production;
             }
 
-            pub fn set_import_source<A>(&mut self, _allocator: A) {
+            pub fn set_import_source<A>(&mut self, _arena: A) {
                 // Zig: strings.concatIfNeeded — re-derive {dev,prod} from package_name.
-                // The `allocator` arg is kept for call-site shape parity with Zig;
+                // The `arena` arg is kept for call-site shape parity with Zig;
                 // owned `Box<[u8]>` makes it unused here.
                 if &*self.package_name == b"react" {
                     self.import_source = ImportSource::default();
@@ -143,7 +143,7 @@ pub mod options {
             // ...unless new is "React.createElement" and original is ["React", "createElement"]
             // saves an allocation for the majority case
             pub fn member_list_to_components_if_different<A>(
-                _allocator: A,
+                _arena: A,
                 original: Box<[Box<[u8]>]>,
                 new: &[u8],
             ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
@@ -490,7 +490,7 @@ pub mod Runtime {
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
         pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
-            // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`, and
+            // Zig returns `*const bun.StringSet` heap-allocated via `arena.create`, and
             // the caller frees it on `BundleOptions` teardown. Empty path returns `None`
             // (≡ static empty). Owned `Box` per PORTING.md §Forbidden — never `Box::leak`.
             if feature_flags.is_empty() {
@@ -1386,7 +1386,7 @@ impl<'a> JSXTag<'a> {
                 return Err(bun_core::err!("SyntaxError"));
             }
 
-            // Zig: p.allocator.alloc(u8, name.len + 1 + member.len)
+            // Zig: p.arena.alloc(u8, name.len + 1 + member.len)
             let new_name: &'a mut [u8] =
                 p.bump().alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
             new_name[..name.len()].copy_from_slice(name);

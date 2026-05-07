@@ -338,7 +338,7 @@ impl PasswordObject {
                 let mut outbuf = [0u8; 4096];
                 let hash_options = pwhash::argon2::HashOptions {
                     params: argon.to_params(),
-                    // allocator: dropped — global mimalloc
+                    // allocator dropped — global mimalloc
                     mode: match algorithm {
                         AlgorithmValue::Argon2i(_) => pwhash::argon2::Mode::Argon2i,
                         AlgorithmValue::Argon2d(_) => pwhash::argon2::Mode::Argon2d,
@@ -380,7 +380,7 @@ impl PasswordObject {
                         rounds_log: cost,
                         silently_truncate_password: true,
                     },
-                    // allocator: dropped
+                    // allocator dropped
                     encoding: pwhash::Encoding::Crypt,
                 };
                 let out_bytes =

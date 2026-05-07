@@ -74,7 +74,7 @@ pub trait ParserLike<'a> {
 impl<'a, const TS: bool, J: JsxT, const SCAN: bool> ParserLike<'a> for P<'a, TS, J, SCAN> {
     #[inline] fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> { &mut self.lexer }
     #[inline] fn log(&self) -> &mut logger::Log { P::log(self) }
-    #[inline] fn bump(&self) -> &'a Bump { self.allocator }
+    #[inline] fn bump(&self) -> &'a Bump { self.arena }
     #[inline] fn source(&self) -> &'a logger::Source { self.source }
     #[inline] fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: logger::Loc) -> Expr {
         P::new_expr(self, t, loc)
@@ -146,8 +146,8 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, allocator: &'a Bump) -> Vec<ImportRecord> {
-        match core::mem::replace(self, Self::Owned(BumpVec::new_in(allocator))) {
+    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> Vec<ImportRecord> {
+        match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => {
                 let leaked: &'a mut [ImportRecord] = v.into_bump_slice_mut();
                 Vec::from_bump_slice(leaked)
@@ -232,7 +232,7 @@ pub enum ReactRefreshExportKind {
 pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     _jsx: core::marker::PhantomData<J>,
     pub macro_: MacroState<'a>,
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     pub options: ParserOptions<'a>,
     /// Raw pointer alias of `lexer.log`. Zig held two `*Log` (`p.log` and
     /// `lexer.log`); Rust cannot store two `&'a mut Log` to one allocation
@@ -679,7 +679,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
 // Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
 // PORT NOTE: `Binding.ToExpr(P, fn)` is a comptime type-generator returning a
-// struct that holds `*P` + allocator and dispatches `wrapIdentifier` to the
+// struct that holds `*P` + arena and dispatches `wrapIdentifier` to the
 // captured fn. The Rust port type-erases `*P` (which is generic over
 // `<'a, TYPESCRIPT, J, SCAN_ONLY>`) into `binding::ToExprWrapper` - same shim
 // pattern as `ImportTransposer` above. Wired in `prepare_for_visit_pass`.
@@ -780,7 +780,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             let _ = self.add_import_record(
                                 ImportKind::Require,
                                 loc,
-                                s.string(self.allocator).expect("unreachable"),
+                                s.string(self.arena).expect("unreachable"),
                             );
                         }
                     }
@@ -802,7 +802,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         use js_ast::base::RefTag;
         match r#ref.tag() {
             // SAFETY: original_name is an arena-owned slice valid for 'a (Symbol is created
-            // from p.allocator / source.contents in this same parse).
+            // from p.arena / source.contents in this same parse).
             RefTag::Symbol => unsafe { &*self.symbols[r#ref.inner_index() as usize].original_name },
             RefTag::SourceContentsSlice => {
                 let start = r#ref.source_index() as usize;
@@ -848,7 +848,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             match &tmpl.head {
                 js_ast::e::TemplateContents::Cooked(head) => {
-                    buf.extend_from_slice(head.string(self.allocator)?);
+                    buf.extend_from_slice(head.string(self.arena)?);
                 }
                 js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
             }
@@ -856,7 +856,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 buf.push(0); // \x00 placeholder per interpolation
                 match &part.tail {
                     js_ast::e::TemplateContents::Cooked(tail) => {
-                        buf.extend_from_slice(tail.string(self.allocator)?);
+                        buf.extend_from_slice(tail.string(self.arena)?);
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
                 }
@@ -890,7 +890,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // lands; `extract_dynamic_specifier_shape` is gated for the same reason.
          // blocked_on: extract_dynamic_specifier_shape; options::AllowUnresolved::{All, allows}
         {
-            let mut shape_buf = BumpVec::new_in(self.allocator);
+            let mut shape_buf = BumpVec::new_in(self.arena);
             let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
             // TODO(b2-blocked): `options::AllowUnresolved` is a unit-stub today; the
             // real type's `allows()` lives in bun_options. Until it exists, treat
@@ -900,7 +900,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let r = js_lexer::range_of_identifier(self.source, loc);
                 if !shape.is_empty() {
                     // Print a human-readable shape: replace \x00 with *
-                    let display = self.allocator.alloc_slice_copy(shape);
+                    let display = self.arena.alloc_slice_copy(shape);
                     for c in display.iter_mut() {
                         if *c == 0 {
                             *c = b'*';
@@ -1024,7 +1024,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 return self.new_expr(E::Null {}, arg.loc);
             }
 
-            let import_record_index = self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.allocator));
+            let import_record_index = self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.arena));
 
             if let Some(tag) = state.import_record_tag {
                 self.import_records.items_mut()[import_record_index as usize].tag = tag;
@@ -1095,7 +1095,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        // Zig: `allocator.alloc(Expr, 1); args[0] = arg; ExprNodeList.fromOwnedSlice(args)`.
+        // Zig: `arena.alloc(Expr, 1); args[0] = arg; ExprNodeList.fromOwnedSlice(args)`.
         // PORT NOTE: Vec::from_owned_slice wants Box<[T]>; init_one is the
         // single-element equivalent (matches transpose_require below).
         self.new_expr(
@@ -1122,7 +1122,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_record_index = self.add_import_record(
             ImportKind::RequireResolve,
             arg.loc,
-            arg.data.e_string().expect("infallible: variant checked").string(self.allocator).expect("unreachable"),
+            arg.data.e_string().expect("infallible: variant checked").string(self.arena).expect("unreachable"),
         );
         self.import_records.items_mut()[import_record_index as usize].flags.set(
             bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
@@ -1160,8 +1160,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     return Expr { data: null_expr_data(), loc: arg.loc };
                 }
 
-                str_.resolve_rope_if_needed(self.allocator);
-                let pathname = str_.string(self.allocator).expect("unreachable");
+                str_.resolve_rope_if_needed(self.arena);
+                let pathname = str_.string(self.arena).expect("unreachable");
                 let path = fs::Path::init(pathname);
 
                 let handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
@@ -1188,11 +1188,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     // Note that this symbol may be completely removed later.
                     let path_name = fs::PathName::init(pathname);
-                    // Zig: `path_name.nonUniqueNameString(allocator)` — render the
+                    // Zig: `path_name.nonUniqueNameString(arena)` — render the
                     // sanitized-identifier formatter into the bump arena.
                     let name: &'a [u8] = {
                         use core::fmt::Write as _;
-                        let mut buf = bun_alloc::ArenaString::new_in(self.allocator);
+                        let mut buf = bun_alloc::ArenaString::new_in(self.arena);
                         write!(
                             &mut buf,
                             "{}",
@@ -1455,7 +1455,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             if first_none_part < parts_.len() {
                 let stmts_list = self
-                    .allocator
+                    .arena
                     .alloc_slice_fill_with::<Stmt, _>(stmts_count, |_| Stmt::empty());
                 let mut stmts_remain = &mut stmts_list[..];
 
@@ -1556,7 +1556,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     where
         T: js_ast::binding::BindingAlloc,
     {
-        Binding::alloc(self.allocator, t, loc)
+        Binding::alloc(self.arena, t, loc)
     }
 
     pub fn record_exported_binding(&mut self, binding: Binding) {
@@ -1671,7 +1671,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn key_name_for_error(&mut self, key: &js_ast::Expr) -> &'a [u8] {
         match &key.data {
-            js_ast::ExprData::EString(s) => s.string(self.allocator).expect("unreachable"),
+            js_ast::ExprData::EString(s) => s.string(self.arena).expect("unreachable"),
             js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.ref_),
             _ => b"property",
         }
@@ -1842,7 +1842,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     ) -> Result<(), bun_core::Error> {
         debug_assert!(!self.response_ref.is_empty());
         debug_assert!(!self.bun_app_namespace_ref.is_empty());
-        let allocator = self.allocator;
+        let arena = self.arena;
 
         let import_path: &'static [u8] = b"bun:app";
 
@@ -1857,7 +1857,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         VecExt::append(&mut self.module_scope_mut().generated, bun_app_ns_ref)?;
 
         let response_ref = self.response_ref;
-        let clause_items = allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
+        let clause_items = arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
             alias: std::ptr::from_ref::<[u8]>(b"Response"),
             original_name: std::ptr::from_ref::<[u8]>(b"Response"),
             alias_loc: logger::Loc::default(),
@@ -1898,7 +1898,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             logger::Loc::default(),
         );
-        let stmts = allocator.alloc_slice_fill_with::<Stmt, _>(1, |_| import_stmt);
+        let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| import_stmt);
 
         // This import is placed in a part before the main code, however
         // the bundler ends up re-ordering this to be after... The order
@@ -1929,7 +1929,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     {
         // TODO(port): `imports: anytype` + `symbols: anytype` — modeled via a helper trait;
         // Phase B should verify shapes match the two call sites (RuntimeImports vs map).
-        let allocator = self.allocator;
+        let arena = self.arena;
         let imports = imports.as_ref();
         let import_record_i = self.add_import_record_by_range(ImportKind::Stmt, logger::Range::NONE, import_path);
         {
@@ -1950,18 +1950,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 .path
                 .name
                 .non_unique_name_string_base();
-            let mut buf = bun_alloc::ArenaString::new_in(allocator);
+            let mut buf = bun_alloc::ArenaString::new_in(arena);
             write!(&mut buf, "{}", bun_core::fmt::fmt_identifier(base)).expect("unreachable");
             buf.into_bump_str().as_bytes()
         };
         let mut namespace_identifier =
-            BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), allocator);
+            BumpVec::with_capacity_in(import_path_identifier.len() + prefix.len(), arena);
         namespace_identifier.extend_from_slice(prefix);
         namespace_identifier.extend_from_slice(import_path_identifier);
         let namespace_identifier = namespace_identifier.into_bump_slice();
 
         let clause_items =
-            allocator.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| js_ast::ClauseItem {
+            arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(imports.len(), |_| js_ast::ClauseItem {
                 alias: std::ptr::from_ref::<[u8]>(b""),
                 original_name: std::ptr::from_ref::<[u8]>(b""),
                 alias_loc: logger::Loc::default(),
@@ -2025,7 +2025,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             logger::Loc::default(),
         );
         let stmts =
-            allocator.alloc_slice_fill_with::<Stmt, _>(1 + usize::from(additional_stmt.is_some()), |_| import_stmt);
+            arena.alloc_slice_fill_with::<Stmt, _>(1 + usize::from(additional_stmt.is_some()), |_| import_stmt);
         if let Some(add) = additional_stmt {
             stmts[1] = add;
         }
@@ -2070,7 +2070,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // require is fine in HMR bundling because `react-refresh` itself is
         // already a CommonJS module, and it will actually be more efficient
         // at runtime this way.
-        let allocator = self.allocator;
+        let arena = self.arena;
         let import_record_index =
             self.add_import_record_by_range(ImportKind::Stmt, logger::Range::NONE, import_path);
 
@@ -2082,9 +2082,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             + usize::from(self.react_refresh.register_used)
             + usize::from(self.react_refresh.signature_used);
         let mut items_hmr =
-            BumpVec::<B::Property>::with_capacity_in(if HOT_MODULE_RELOADING { len } else { 0 }, allocator);
+            BumpVec::<B::Property>::with_capacity_in(if HOT_MODULE_RELOADING { len } else { 0 }, arena);
         let mut items_import =
-            BumpVec::<js_ast::ClauseItem>::with_capacity_in(if HOT_MODULE_RELOADING { 0 } else { len }, allocator);
+            BumpVec::<js_ast::ClauseItem>::with_capacity_in(if HOT_MODULE_RELOADING { 0 } else { len }, arena);
 
         let mut declared_symbols = crate::DeclaredSymbolList::default();
         declared_symbols.ensure_total_capacity(len)?;
@@ -2164,7 +2164,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 logger::Loc::EMPTY,
             )
         };
-        let stmts = allocator.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
+        let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| stmt);
 
         parts.push(js_ast::Part {
             stmts,
@@ -2665,14 +2665,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
             // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)`.
-            // The wrapper stores only the allocator and a non-capturing
+            // The wrapper stores only the arena and a non-capturing
             // fn-pointer trampoline; the `*mut P` context is supplied *at call
             // time* (see `Binding::to_expr`) so the raw pointer's provenance is
             // a child of the live `&mut P` at the call site rather than a stale
             // tag captured here. The transposer shims need no wiring at all —
             // call sites invoke `P::maybe_transpose_if_*` etc. directly.
             self.to_expr_wrapper_namespace = crate::ast::binding::ToExprWrapper::new(
-                self.allocator,
+                self.arena,
                 |ctx, loc, ref_| {
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
@@ -2682,7 +2682,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 },
             );
             self.to_expr_wrapper_hoisted = crate::ast::binding::ToExprWrapper::new(
-                self.allocator,
+                self.arena,
                 |ctx, loc, ref_| {
                     // SAFETY: same as above.
                     let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, J, SCAN_ONLY>>() };
@@ -2694,7 +2694,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         {
             // Compact `scopes_in_order` (parse pass leaves None holes from
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
-            let mut buf = BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.allocator);
+            let mut buf = BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.arena);
             for item in self.scopes_in_order.iter() {
                 if let Some(item_) = item {
                     buf.push(*item_);
@@ -2702,7 +2702,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             // `into_bump_slice_mut()` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation — keeps
-            // mutable provenance intact (Zig: `p.allocator.alloc(ScopeOrder, n)`).
+            // mutable provenance intact (Zig: `p.arena.alloc(ScopeOrder, n)`).
             self.scope_order_to_visit = buf.into_bump_slice_mut();
         }
 
@@ -2722,7 +2722,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: Span.text is `ArenaStr` (`*const [u8]`) into lexer-owned source; valid for 'a.
             let text = unsafe { &*factory.text };
             self.options.jsx.factory = options::JSX::Pragma::member_list_to_components_if_different(
-                self.allocator,
+                self.arena,
                 core::mem::take(&mut self.options.jsx.factory),
                 text,
             )
@@ -2733,7 +2733,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // SAFETY: Span.text is `ArenaStr` valid for 'a.
             let text = unsafe { &*fragment.text };
             self.options.jsx.fragment = options::JSX::Pragma::member_list_to_components_if_different(
-                self.allocator,
+                self.arena,
                 core::mem::take(&mut self.options.jsx.fragment),
                 text,
             )
@@ -2745,7 +2745,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let text = unsafe { &*import_source.text };
             self.options.jsx.classic_import_source = Box::from(text);
             self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
-            self.options.jsx.set_import_source(self.allocator);
+            self.options.jsx.set_import_source(self.arena);
         }
 
         if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
@@ -2882,7 +2882,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Runtime equivalent of `generated_symbol_name!("__require")`:
         let hash = bun_wyhash::hash(b"__require");
         let hashed: &'a [u8] = bun_alloc::arena_format!(
-            in self.allocator,
+            in self.arena,
             "{}_{}",
             bstr::BStr::new(b"__require".as_slice()),
             bun_core::fmt::truncated_hash32(hash)
@@ -2911,7 +2911,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // SAFETY: scope is arena-owned and valid for the parser 'a lifetime; the
         // visit pass is single-threaded so no aliasing &mut is outstanding.
         if !unsafe { &*scope }.kind_stops_hoisting() {
-            let allocator = self.allocator;
+            let arena = self.arena;
             // PORT NOTE: Zig captured `var symbols = p.symbols.items;` and asserted it
             // wasn't resized; we re-borrow `self.symbols` after each `new_symbol` call.
 
@@ -2925,7 +2925,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let member_snapshot: BumpVec<'a, (*const [u8], js_ast::scope::Member)> = {
                     // SAFETY: see above.
                     let members = &unsafe { &*scope }.members;
-                    let mut v = BumpVec::with_capacity_in(members.count(), allocator);
+                    let mut v = BumpVec::with_capacity_in(members.count(), arena);
                     for (k, m) in members.iter() {
                         v.push((std::ptr::from_ref::<[u8]>(k.as_ref()), *m));
                     }
@@ -3167,8 +3167,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         loc: logger::Loc,
     ) -> Result<usize, bun_core::Error> {
         let parent: *mut Scope = self.current_scope;
-        let allocator = self.allocator;
-        let scope: *mut Scope = allocator.alloc(Scope {
+        let arena = self.arena;
+        let scope: *mut Scope = arena.alloc(Scope {
             kind: KIND,
             label_ref: None,
             // SAFETY: parent is the live current_scope (arena-owned, non-null after init()).
@@ -3267,7 +3267,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
 
                 // p.markSyntaxFeature(Destructing)
-                let mut items = BumpVec::with_capacity_in(ex.items.len_u32() as usize, self.allocator);
+                let mut items = BumpVec::with_capacity_in(ex.items.len_u32() as usize, self.arena);
                 let mut is_spread = false;
                 for i in 0..ex.items.len_u32() as usize {
                     let mut item = ex.items.slice()[i];
@@ -3306,7 +3306,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 }
                 // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
-                let mut properties = BumpVec::with_capacity_in(ex.properties.len_u32() as usize, self.allocator);
+                let mut properties = BumpVec::with_capacity_in(ex.properties.len_u32() as usize, self.arena);
                 for item in ex.properties.slice_mut() {
                     if item.flags.contains(Flags::Property::IsMethod)
                         || item.kind == js_ast::g::PropertyKind::Get
@@ -3559,7 +3559,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         } else {
             let path_name = fs::PathName::init(path.text);
             let name: &'a [u8] = bun_alloc::arena_format!(
-                in self.allocator,
+                in self.arena,
                 "import_{}",
                 bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
             )
@@ -3772,13 +3772,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn create_default_name(&mut self, loc: logger::Loc) -> Result<js_ast::LocRef, bun_core::Error> {
-        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(allocator)` allocates the
+        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(arena)` allocates the
         // sanitized identifier, then `allocPrint` formats `{s}_default`. logger::fs::PathName
         // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
         // and copy into the bump arena.
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name.fmt_identifier());
-            self.allocator.alloc_slice_copy(s.as_bytes())
+            self.arena.alloc_slice_copy(s.as_bytes())
         };
 
         let name = js_ast::LocRef { loc, ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
@@ -3883,7 +3883,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     name,
                     js_ast::TSNamespaceMember { loc: binding.loc, data: js_ast::ts::Data::Property },
                 )?;
-                // ref_to_ts_namespace_member derefs to std HashMap; Zig `put(allocator, k, v)` → insert.
+                // ref_to_ts_namespace_member derefs to std HashMap; Zig `put(arena, k, v)` → insert.
                 self.ref_to_ts_namespace_member.insert(id.r#ref, js_ast::ts::Data::Property);
             }
             js_ast::b::B::BObject(obj) => {
@@ -4021,7 +4021,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         };
 
         if let Some(existing) = map {
-            return std::ptr::from_mut(self.allocator.alloc(js_ast::TSNamespaceScope {
+            return std::ptr::from_mut(self.arena.alloc(js_ast::TSNamespaceScope {
                 exported_members: existing,
                 is_enum_scope,
                 arg_ref: Ref::NONE,
@@ -4036,7 +4036,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             scope: js_ast::TSNamespaceScope,
         }
 
-        let pair = self.allocator.alloc(Pair {
+        let pair = self.arena.alloc(Pair {
             map: Default::default(),
             scope: js_ast::TSNamespaceScope {
                 exported_members: core::ptr::null_mut(), // patched below
@@ -4064,14 +4064,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
-                in self.allocator,
+                in self.arena,
                 "Declarations with the name \"{}\"",
                 bstr::BStr::new(detail)
             )
             .into_bump_str()
             .as_bytes(),
             StrictModeFeature::ReservedWord => bun_alloc::arena_format!(
-                in self.allocator,
+                in self.arena,
                 "\"{}\" is a reserved word and",
                 bstr::BStr::new(detail)
             )
@@ -4098,7 +4098,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             if why.is_empty() {
                 why = bun_alloc::arena_format!(
-                    in self.allocator,
+                    in self.arena,
                     "This file is implicitly in strict mode because of the \"{}\" keyword here",
                     bstr::BStr::new(self.source.text_for_range(where_))
                 )
@@ -4209,7 +4209,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Runtime equivalent of `generated_symbol_name!` (Zig comptime concat).
         // Same bytes as the macro produces; arena-owned for symbol lifetime.
         let hash = bun_wyhash::hash(name);
-        let hashed: &'a [u8] = bun_alloc::arena_format!(in self.allocator, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+        let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
         self.declare_symbol_maybe_generated::<true>(kind, logger::Loc::EMPTY, hashed)
     }
 
@@ -4517,7 +4517,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // PORT NOTE: Zig used a fixed `std.Io.Writer` over a 32 KiB stack buffer.
         // Rust's `Log::print` takes `IntoLogWrite` (`fmt::Write`), so write into a
         // bump-backed `String` instead — same single contiguous text output.
-        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.allocator);
+        let mut panic_stream = bun_alloc::ArenaString::with_capacity_in(32 * 1024, self.arena);
 
         // panic during visit pass leaves the lexer at the end, which
         // would make this location absolutely useless.
@@ -4619,9 +4619,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         self.had_commonjs_named_exports_this_visit = false;
 
-        let allocator = self.allocator;
+        let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
-        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), allocator);
+        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
         // PORT NOTE: Zig used ListManaged.fromOwnedSlice; we copy into a bump vec.
 
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
@@ -4677,12 +4677,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 import_record_indices: {
                     let v = core::mem::replace(
                         &mut self.import_records_for_current_part,
-                        BumpVec::new_in(self.allocator),
+                        BumpVec::new_in(self.arena),
                     );
                     v.as_slice().to_vec()
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
-                scopes: std::ptr::from_mut::<[*mut js_ast::Scope]>(core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.allocator))
+                scopes: std::ptr::from_mut::<[*mut js_ast::Scope]>(core::mem::replace(&mut self.scopes_for_current_part, BumpVec::new_in(self.arena))
                     .into_bump_slice_mut()),
                 can_be_removed_if_unused,
                 tag: if self.had_commonjs_named_exports_this_visit {
@@ -5504,7 +5504,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // PORT NOTE: Zig kept `with.name` as an arena slice; the Rust
                 // `ReplaceableExport::Inject` boxes it, so copy into the bump
                 // arena to satisfy `declare_symbol`'s `&'a [u8]`.
-                let name: &'a [u8] = self.allocator.alloc_slice_copy(name);
+                let name: &'a [u8] = self.arena.alloc_slice_copy(name);
                 let inject_ref =
                     self.declare_symbol(js_ast::symbol::Kind::Other, loc, name).expect("unreachable");
                 let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
@@ -5539,7 +5539,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let val_loc = decl.value.map(|v| v.loc).unwrap_or(bind_loc);
                 // declare_symbol stores the name in the symbol table for the parser lifetime;
                 // arena-copy the boxed `name` so it lives for `'a`.
-                let name: &'a [u8] = self.allocator.alloc_slice_copy(name);
+                let name: &'a [u8] = self.arena.alloc_slice_copy(name);
                 let r#ref = self
                     .declare_symbol(js_ast::symbol::Kind::Other, bind_loc, name)
                     .expect("unreachable");
@@ -5580,7 +5580,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
 
         if statement_cares_about_scope(&body) {
-            let block_stmts = self.allocator.alloc_slice_copy(&[body]);
+            let block_stmts = self.arena.alloc_slice_copy(&[body]);
             stmts.push(self.s(
                 S::Block { stmts: block_stmts, close_brace_loc: logger::Loc::EMPTY },
                 body.loc,
@@ -5598,7 +5598,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::b::B::BIdentifier(ident) => {
                 // SAFETY: arena-owned `*mut Identifier` valid for parser 'a; no aliasing &mut.
                 let ident = unsafe { &*ident };
-                // RefRefMap derefs to std::collections::HashMap; Zig `put(allocator, k, v)` → insert.
+                // RefRefMap derefs to std::collections::HashMap; Zig `put(arena, k, v)` → insert.
                 self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
             }
             js_ast::b::B::BArray(array) => {
@@ -5641,7 +5641,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         let symbol_kind = symbol.kind;
         let _ = symbol;
-        let allocator = self.allocator;
+        let arena = self.arena;
 
         // Make sure to only emit a variable once for a given namespace, since there
         // can be multiple namespace blocks for the same namespace
@@ -5655,7 +5655,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 value: None,
             }])
             .expect("oom");
-            let _ = allocator;
+            let _ = arena;
 
             if self.enclosing_namespace_arg_ref.is_none() {
                 // Top-level namespace: "var"
@@ -5723,7 +5723,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // PORT NOTE: `G::Arg` is not `Copy` (contains `Vec<Decorator>`); use
         // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
         let func_args = crate::StoreSlice::new_mut(
-            allocator.alloc_slice_fill_iter([G::Arg {
+            arena.alloc_slice_fill_iter([G::Arg {
                 binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
                 ..Default::default()
             }]),
@@ -5744,7 +5744,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             break 'target self.new_expr(
                 E::Arrow {
                     args: func_args,
-                    body: G::FnBody { loc: stmt_loc, stmts: allocator.alloc_slice_copy(stmts_inside_closure) },
+                    body: G::FnBody { loc: stmt_loc, stmts: arena.alloc_slice_copy(stmts_inside_closure) },
                     prefer_expr: true,
                     ..Default::default()
                 },
@@ -5899,7 +5899,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 return false;
                             }
                             let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.allocator));
+                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match && self.is_dot_define_match(index.target, &parts[..last]);
                         }
                     }
@@ -5994,14 +5994,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // PORT NOTE: Zig `lowerStandardDecoratorsStmt` returns `[]Stmt`; the
                     // round-E Rust stub takes an out-param Vec instead. Wrap to keep
                     // this function's `[]Stmt` contract.
-                    let mut out = BumpVec::<Stmt>::new_in(self.allocator);
+                    let mut out = BumpVec::<Stmt>::new_in(self.arena);
                     self.lower_standard_decorators_stmt(stmt, &mut out);
                     return out.into_bump_slice_mut();
                 }
 
                 if !TYPESCRIPT {
                     if !unsafe { &*s_class_ptr }.class.has_decorators {
-                        return self.allocator.alloc_slice_copy(&[stmt]);
+                        return self.arena.alloc_slice_copy(&[stmt]);
                     }
                 }
                 // SAFETY: arena-owned StoreRef; parser holds exclusive access during visit.
@@ -6010,11 +6010,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let class: *mut G::Class = unsafe { &raw mut (*s_class_ptr).class };
                 let mut constructor_function: Option<*mut E::Function> = None;
 
-                let mut static_decorators = BumpVec::<Stmt>::new_in(self.allocator);
-                let mut instance_decorators = BumpVec::<Stmt>::new_in(self.allocator);
-                let mut instance_members = BumpVec::<Stmt>::new_in(self.allocator);
-                let mut static_members = BumpVec::<Stmt>::new_in(self.allocator);
-                let mut class_properties = BumpVec::<G::Property>::new_in(self.allocator);
+                let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
+                let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
+                let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
+                let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
+                let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 // SAFETY: `class.properties` is an arena-owned slice valid for 'a.
                 for prop in unsafe { (*(*class).properties).iter_mut() } {
@@ -6033,7 +6033,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     for (i, arg) in unsafe { &*func.func.args }.iter().enumerate() {
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(E::Number { value: i as f64 }, arg_decorator.loc);
-                                            let args = self.allocator.alloc_slice_copy(&[arg0, *arg_decorator]);
+                                            let args = self.arena.alloc_slice_copy(&[arg0, *arg_decorator]);
                                             // SAFETY: arena-owned slice; never grown after wrapping.
                                             let args = unsafe { ExprNodeList::from_bump_slice(args) };
                                             let call = self.call_runtime(arg_decorator.loc, b"__legacyDecorateParamTS", args);
@@ -6081,7 +6081,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             );
                         }
 
-                        let mut array = BumpVec::<Expr>::new_in(self.allocator);
+                        let mut array = BumpVec::<Expr>::new_in(self.arena);
 
                         if self.options.features.emit_decorator_metadata {
                             // TODO(port): full design:type / design:paramtypes / design:returntype
@@ -6092,14 +6092,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // PORT NOTE: reshaped — Zig insertSlice(0, ...) prepends; we prepend then push args.
                         let mut full = BumpVec::<Expr>::with_capacity_in(
                             prop.ts_decorators.len_u32() as usize + array.len(),
-                            self.allocator,
+                            self.arena,
                         );
                         full.extend_from_slice(prop.ts_decorators.slice());
                         full.extend_from_slice(&array);
                         // SAFETY: arena slice handed to a non-growing list.
                         let full_items = unsafe { ExprNodeList::from_bump_slice(full.into_bump_slice_mut()) };
                         let array_expr = self.new_expr(E::Array { items: full_items, ..Default::default() }, loc);
-                        let args_slice = self.allocator.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
+                        let args_slice = self.arena.alloc_slice_copy(&[array_expr, target, descriptor_key, descriptor_kind]);
                         // SAFETY: arena slice; never grown.
                         let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
@@ -6177,8 +6177,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         let old_props: *mut [G::Property] = unsafe { (*class).properties };
                         // SAFETY: arena-owned slice valid for 'a; explicit reborrow to avoid implicit autoref.
                         let old_len = unsafe { &*old_props }.len();
-                        let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.allocator);
-                        let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.allocator);
+                        let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.arena);
+                        let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.arena);
 
                         if unsafe { (*class).extends }.is_some() {
                             let target = self.new_expr(E::Super {}, stmt.loc);
@@ -6230,7 +6230,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // SAFETY: `body.stmts` is an arena-owned `*mut [Stmt]`.
                         let old_stmts: &[Stmt] = unsafe { &*cf.func.body.stmts };
                         let mut constructor_stmts =
-                            BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + instance_members.len(), self.allocator);
+                            BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + instance_members.len(), self.arena);
                         constructor_stmts.extend_from_slice(old_stmts);
                         // statements coming from class body inserted after super call or beginning of constructor.
                         let mut super_index: Option<usize> = None;
@@ -6261,7 +6261,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if unsafe { (*class).ts_decorators.len_u32() } > 0 {
                     stmts_count += 1;
                 }
-                let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.allocator);
+                let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
                 stmts.push(stmt); // PERF(port): was assume_capacity
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
@@ -6275,7 +6275,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             // SAFETY: arena-owned E.Function node valid for 'a.
                             let constructor_args: &[G::Arg] = unsafe { &*(*cf).func.args };
                             let args1 = if !constructor_args.is_empty() {
-                                let param_array = self.allocator.alloc_slice_fill_default::<Expr>(constructor_args.len());
+                                let param_array = self.arena.alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self.serialize_metadata(ca.ts_metadata.clone()).expect("unreachable");
                                 }
@@ -6286,7 +6286,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY)
                             };
                             let label = self.new_expr(E::EString::from_static(b"design:paramtypes"), logger::Loc::EMPTY);
-                            let args_slice = self.allocator.alloc_slice_copy(&[label, args1]);
+                            let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
                             // SAFETY: arena slice; never grown.
                             let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
                             array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
@@ -6299,7 +6299,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                    let args_slice = self.allocator.alloc_slice_copy(&[array_expr, class_ident]);
+                    let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
                     // SAFETY: arena slice; never grown.
                     let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
@@ -6313,7 +6313,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 stmts.into_bump_slice_mut()
             }
             js_ast::StmtOrExpr::Expr(expr) => {
-                self.allocator.alloc_slice_copy(&[self.s(S::SExpr { value: expr, ..Default::default() }, expr.loc)])
+                self.arena.alloc_slice_copy(&[self.s(S::SExpr { value: expr, ..Default::default() }, expr.loc)])
             }
         }
     }
@@ -6335,7 +6335,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             ($label:expr, $value:expr) => {{
                 let label = self.new_expr(E::EString::from_static($label), logger::Loc::EMPTY);
                 let value = $value;
-                let args = self.allocator.alloc_slice_copy(&[label, value]);
+                let args = self.arena.alloc_slice_copy(&[label, value]);
                 // SAFETY: arena slice; never grown.
                 let args = unsafe { ExprNodeList::from_bump_slice(args) };
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
@@ -6356,7 +6356,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
-                            let args_array = self.allocator.alloc_slice_fill_default::<Expr>(method_args.len());
+                            let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
@@ -6398,7 +6398,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
-                            let args_array = self.allocator.alloc_slice_fill_default::<Expr>(method_args.len());
+                            let args_array = self.arena.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
@@ -6456,7 +6456,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             }
             M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.allocator) — arena-backed; nothing to free in Rust)
+                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
                     ($r:expr) => {
@@ -6638,7 +6638,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             .expect("unreachable");
 
         // Allocate an "unbound" symbol
-        let r#ref = self.new_symbol(js_ast::symbol::Kind::Unbound, self.allocator.alloc_slice_copy(name)).expect("unreachable");
+        let r#ref = self.new_symbol(js_ast::symbol::Kind::Unbound, self.arena.alloc_slice_copy(name)).expect("unreachable");
 
         // Track how many times we've referenced this symbol
         self.record_usage(r#ref);
@@ -6746,7 +6746,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             default_name.unwrap()
         } else {
             self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.allocator, "__bun_temp_ref_{:x}$", self.temp_ref_count)
+            bun_alloc::arena_format!(in self.arena, "__bun_temp_ref_{:x}$", self.temp_ref_count)
                 .into_bump_str()
                 .as_bytes()
         };
@@ -6833,7 +6833,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
      // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
     fn rewrite_import_meta_hot_accept_string(&mut self, str_: &mut E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
-        let _ = str_.to_utf8(self.allocator);
+        let _ = str_.to_utf8(self.arena);
         let specifier = str_.data;
 
         let import_record_index = 'found: {
@@ -6882,7 +6882,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path currently
         // has only `text` (Phase-A stub). Swap to `.pretty` once bun_paths' full
         // Path lands.
-        let label: &'a [u8] = self.allocator.alloc_slice_copy(&strings::concat(&[
+        let label: &'a [u8] = self.arena.alloc_slice_copy(&strings::concat(&[
             self.source.path.text,
             b":",
             match export_kind {
@@ -7049,7 +7049,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // re-allocated entirely to fit. Only one slot of new capacity
             // is used since we know this statement list is not going to be
             // appended to afterwards; This function is a post-visit handler.
-            let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.allocator);
+            let mut new_stmts = BumpVec::with_capacity_in(stmts.len() + 1, self.arena);
             new_stmts.push(Stmt::empty()); // placeholder, overwritten below
             new_stmts.extend_from_slice(stmts.as_slice());
             *stmts = new_stmts;
@@ -7095,7 +7095,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let final_ = ctx.hasher.final_();
         let hash_data = self
-            .allocator
+            .arena
             .alloc_slice_fill_default::<u8>(bun_base64::encode_len_from_size(core::mem::size_of_val(&final_)));
         // Zig: `&std.mem.toBytes(final)`
         let _written = bun_base64::encode(hash_data, &final_.to_ne_bytes());
@@ -7105,7 +7105,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let have_force_arg = have_custom_hooks || self.react_refresh.force_reset;
 
         let n_args = 2 + usize::from(have_force_arg) + usize::from(have_custom_hooks);
-        let mut args = BumpVec::with_capacity_in(n_args, self.allocator);
+        let mut args = BumpVec::with_capacity_in(n_args, self.arena);
 
         args.push(function_with_hook_calls);
         args.push(self.new_expr(E::String::init(hash_data), loc));
@@ -7126,7 +7126,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let ret = self.s(S::Return { value: Some(array) }, loc);
             args.push(self.new_expr(
                 E::Arrow {
-                    body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(self.allocator.alloc_slice_copy(&[ret])), loc },
+                    body: G::FnBody { stmts: std::ptr::from_mut::<[Stmt]>(self.arena.alloc_slice_copy(&[ret])), loc },
                     prefer_expr: true,
                     ..Default::default()
                 },
@@ -7167,7 +7167,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         use crate::ast::import_scanner::ImportScanner;
         use crate::ast::convert_esm_exports_for_hmr::ConvertESMExportsForHmr;
 
-        let allocator = self.allocator;
+        let arena = self.arena;
 
         // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
         //     p.treeShake(&parts, false);
@@ -7323,7 +7323,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 &mut part.import_record_indices,
                                 unsafe {
                                     Vec::from_bump_slice(
-                                        allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                        arena.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
                                     )
                                 },
                             ));
@@ -7386,7 +7386,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             //   })
             //
             //  which is then called in `evaluateCommonJSModuleOnce`
-            let args = allocator.alloc_slice_fill_default::<Arg>(5 + usize::from(self.has_import_meta));
+            let args = arena.alloc_slice_fill_default::<Arg>(5 + usize::from(self.has_import_meta));
             args[0] = Arg { binding: self.b(B::Identifier { r#ref: self.exports_ref }, logger::Loc::EMPTY), ..Default::default() };
             args[1] = Arg { binding: self.b(B::Identifier { r#ref: self.require_ref }, logger::Loc::EMPTY), ..Default::default() };
             args[2] = Arg { binding: self.b(B::Identifier { r#ref: self.module_ref }, logger::Loc::EMPTY), ..Default::default() };
@@ -7413,7 +7413,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             total_stmts_count += usize::from(preserve_strict_mode);
 
             // PORT NOTE: Stmt is not Default; fill with `Stmt::empty()`.
-            let stmts_to_copy = allocator.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
+            let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 if preserve_strict_mode {
@@ -7447,7 +7447,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             );
 
             let top_level_stmts =
-                allocator.alloc_slice_copy(&[self.s(S::SExpr { value: wrapper, ..Default::default() }, logger::Loc::EMPTY)]);
+                arena.alloc_slice_copy(&[self.s(S::SExpr { value: wrapper, ..Default::default() }, logger::Loc::EMPTY)]);
 
             // PORT NOTE: reshaped — Zig wrote `parts.items.len = 1` directly.
             // BumpVec has no `set_len`-on-grow path; ensure at least one slot then truncate.
@@ -7462,7 +7462,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if self.options.repl_mode {
             // PORT NOTE: Zig `ReplTransforms(@This()).apply` → inherent `apply_repl_transforms`
             // (declared in ast::repl_transforms as an `impl P` mixin).
-            self.apply_repl_transforms(parts, allocator)?;
+            self.apply_repl_transforms(parts, arena)?;
         }
 
         let mut top_level_symbols_to_parts = js_ast::ast::TopLevelSymbolToParts::default();
@@ -7525,7 +7525,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice())) {
                 use core::fmt::Write as _;
-                let mut buf = bun_alloc::ArenaString::new_in(allocator);
+                let mut buf = bun_alloc::ArenaString::new_in(arena);
                 let _ = write!(&mut buf, "require_{}", self.source.fmt_identifier());
                 break 'brk self
                     .new_symbol(js_ast::symbol::Kind::Other, buf.into_bump_str().as_bytes())
@@ -7544,7 +7544,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let nested_scope_slot_counts = if self.options.features.minify_identifiers {
             // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
             renamer::assign_nested_scope_slots(
-                allocator,
+                arena,
                 unsafe { &mut *self.module_scope },
                 self.symbols.as_mut_slice(),
             )
@@ -7552,7 +7552,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             js_ast::SlotCounts::default()
         };
 
-        let ts_enums = self.compute_ts_enums_map(allocator)?;
+        let ts_enums = self.compute_ts_enums_map(arena)?;
 
         // Spec P.zig:6658: `.char_freq = p.computeCharacterFrequency()`.
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
@@ -7580,7 +7580,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
-        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-allocator Vec;
+        // PORT NOTE: BumpVec<'a, T> can't be moved into a global-arena Vec;
         // wrap the bump-backed storage as a Borrowed Vec (Drop is no-op).
         // Spec P.zig:6695-6696 uses `moveFromList`, which transfers storage and
         // *zeroes the source*. Mirror that move-and-zero with
@@ -7591,12 +7591,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // `as_mut_slice()` shape) double-dropped them once the parser fell out
         // of scope. Same fix `ImportRecordList::move_to_baby_list` applies.
         let symbols_slice: &'a mut [js_ast::Symbol] =
-            core::mem::replace(&mut self.symbols, BumpVec::new_in(allocator)).into_bump_slice_mut();
+            core::mem::replace(&mut self.symbols, BumpVec::new_in(arena)).into_bump_slice_mut();
         // SAFETY: bump-arena storage lives for 'a, which outlives the Ast;
         // Borrowed origin → Vec::drop is a no-op.
         let symbols = js_ast::symbol::List::from_bump_slice(symbols_slice);
         let parts_slice: &'a mut [js_ast::Part] =
-            core::mem::replace(parts, BumpVec::new_in(allocator)).into_bump_slice_mut();
+            core::mem::replace(parts, BumpVec::new_in(arena)).into_bump_slice_mut();
         // SAFETY: same — `parts` was a BumpVec<'a, Part>; now leaked into the arena.
         let parts_list = Vec::<js_ast::Part>::from_bump_slice(parts_slice);
         // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
@@ -7605,7 +7605,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // arena rather than dropped — downstream (printer, linker) resolves
         // every `S.Import`/`E.RequireString`/`E.Import` by index against this.
         let import_records: Vec<ImportRecord> =
-            self.import_records.move_to_baby_list(allocator);
+            self.import_records.move_to_baby_list(arena);
 
         Ok(js_ast::Ast {
             // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
@@ -7666,7 +7666,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     pub fn compute_ts_enums_map(
         &self,
-        _allocator: &'a Bump,
+        _arena: &'a Bump,
     ) -> Result<js_ast::ast::TsEnumsMap, bun_core::Error> {
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
@@ -7779,7 +7779,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {
     pub fn init(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         log: core::ptr::NonNull<logger::Log>,
         source: &'a logger::Source,
         define: &'a Define,
@@ -7787,8 +7787,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         opts: ParserOptions<'a>,
     ) -> Result<Self, bun_core::Error> {
         // PORT NOTE: out-param constructor reshaped to return Self.
-        let mut scope_order = ScopeOrderList::with_capacity_in(1, allocator);
-        let scope: *mut Scope = allocator.alloc(Scope {
+        let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
+        let scope: *mut Scope = arena.alloc(Scope {
             members: Default::default(),
             children: Default::default(),
             generated: Default::default(),
@@ -7806,7 +7806,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if opts.bundle { opts.output_format == options::Format::Cjs } else { true };
 
         let mut this = Self {
-            legacy_cjs_import_stmts: BumpVec::new_in(allocator),
+            legacy_cjs_import_stmts: BumpVec::new_in(arena),
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
@@ -7816,12 +7816,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,
-            import_records: ImportRecordList::Owned(BumpVec::new_in(allocator)), // overwritten below for !SCAN_ONLY
+            import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
             named_imports: NamedImportsType::Owned(Default::default()), // overwritten below for !SCAN_ONLY
             named_exports: Default::default(),
             log,
             stack_check: bun_core::StackCheck::init(),
-            allocator,
+            arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),
                 has_multiple_args: false,
@@ -7839,11 +7839,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             require_transposer: RequireTransposer::dangling(),
             require_resolve_transposer: RequireResolveTransposer::dangling(),
             source,
-            // Zig: `MacroState.init(allocator)` leaves `prepend_stmts = undefined`;
+            // Zig: `MacroState.init(arena)` leaves `prepend_stmts = undefined`;
             // Rust cannot leave a `&'a mut Vec<Stmt>` uninitialized, so allocate
             // an empty placeholder in the arena (real list is wired by the visit
             // pass before any macro expansion runs).
-            macro_: MacroState::init(allocator.alloc(Vec::new())),
+            macro_: MacroState::init(arena.alloc(Vec::new())),
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,
@@ -7862,12 +7862,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             fn_or_arrow_data_parse: FnOrArrowDataParse::default(),
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),
-            allocated_names: BumpVec::new_in(allocator),
+            allocated_names: BumpVec::new_in(arena),
             latest_arrow_arg_loc: logger::Loc::EMPTY,
             forbid_suffix_after_as_loc: logger::Loc::EMPTY,
-            scopes_for_current_part: BumpVec::new_in(allocator),
-            symbols: BumpVec::new_in(allocator),
-            ts_use_counts: BumpVec::new_in(allocator),
+            scopes_for_current_part: BumpVec::new_in(arena),
+            symbols: BumpVec::new_in(arena),
+            ts_use_counts: BumpVec::new_in(arena),
             exports_ref: Ref::NONE,
             require_ref: Ref::NONE,
             module_ref: Ref::NONE,
@@ -7888,12 +7888,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             has_with_scope: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
-            injected_define_symbols: BumpVec::new_in(allocator),
+            injected_define_symbols: BumpVec::new_in(arena),
             symbol_uses: Default::default(),
             declared_symbols: Default::default(),
             declared_symbols_for_reuse: Default::default(),
             runtime_imports: RuntimeImports::default(),
-            imports_to_convert_from_require: BumpVec::new_in(allocator),
+            imports_to_convert_from_require: BumpVec::new_in(arena),
             unwrap_all_requires: false,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
@@ -7914,8 +7914,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             react_refresh: ReactRefresh::default(),
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
-            import_records_for_current_part: BumpVec::new_in(allocator),
-            export_star_import_records: BumpVec::new_in(allocator),
+            import_records_for_current_part: BumpVec::new_in(arena),
+            export_star_import_records: BumpVec::new_in(arena),
             import_symbol_property_uses: Default::default(),
             esm_import_keyword: logger::Range::NONE,
             esm_export_keyword: logger::Range::NONE,
@@ -7923,23 +7923,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             import_namespace_cc_map: Default::default(),
-            scope_order_to_visit: allocator.alloc_slice_copy(&[]),
+            scope_order_to_visit: arena.alloc_slice_copy(&[]),
             module_scope_directive_loc: logger::Loc::default(),
             is_control_flow_dead: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
-            temp_refs_to_declare: BumpVec::new_in(allocator),
+            temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
-            relocated_top_level_vars: BumpVec::new_in(allocator),
+            relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: logger::Loc::EMPTY,
             const_values: Default::default(),
-            binary_expression_stack: BumpVec::new_in(allocator),
-            binary_expression_simplify_stack: BumpVec::new_in(allocator),
+            binary_expression_stack: BumpVec::new_in(arena),
+            binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),
             ts_namespace: RecentlyVisitedTSNamespace { expr: null_expr_data(), map: None },
-            top_level_enums: BumpVec::new_in(allocator),
+            top_level_enums: BumpVec::new_in(arena),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
@@ -7979,10 +7979,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             false
         };
 
-        this.symbols = BumpVec::new_in(allocator);
+        this.symbols = BumpVec::new_in(arena);
 
         if !SCAN_ONLY {
-            this.import_records = ImportRecordList::Owned(BumpVec::new_in(allocator));
+            this.import_records = ImportRecordList::Owned(BumpVec::new_in(arena));
             this.named_imports = NamedImportsType::Owned(Default::default());
         }
         // For SCAN_ONLY, the caller (Parser) assigns the borrowed variants after construction.
@@ -7991,7 +7991,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // the recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`), and `Binding2ExprWrapper`
         // receives its `*mut P` per-call from the live `&mut P` at the call
-        // site — `prepare_for_visit_pass` only wires the allocator/trampoline.
+        // site — `prepare_for_visit_pass` only wires the arena/trampoline.
 
         if this.options.features.top_level_await || SCAN_ONLY {
             this.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
@@ -8018,7 +8018,7 @@ pub struct LowerUsingDeclarationsContext {
 // so the only blockers were API-shape divergences. Reshaped:
 //   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
 //   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
-//   • `DeclaredSymbolList`/`Vec` API has no allocator param in this port
+//   • `DeclaredSymbolList`/`Vec` API has no arena param in this port
 //   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
 // reconciler-6 re-gate removed: those API divergences are fixed inline below;
 // `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
@@ -8060,7 +8060,7 @@ impl LowerUsingDeclarationsContext {
                 if let Some(decl_value) = &mut decl.value {
                     let value_loc = decl_value.loc;
                     p.record_usage(self.stack_ref);
-                    let args = p.allocator.alloc_slice_copy(&[
+                    let args = p.arena.alloc_slice_copy(&[
                         p.new_expr(E::Identifier { ref_: self.stack_ref, ..Default::default() }, stmt_loc),
                         *decl_value,
                         // 1. always pass this param for hopefully better jit performance
@@ -8092,8 +8092,8 @@ impl LowerUsingDeclarationsContext {
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {
-        let mut result = BumpVec::new_in(p.allocator);
-        let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.allocator);
+        let mut result = BumpVec::new_in(p.arena);
+        let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
             let stmt = stmts[i];
@@ -8205,7 +8205,7 @@ impl LowerUsingDeclarationsContext {
             p.record_usage(self.stack_ref);
             p.record_usage(err_ref);
             p.record_usage(has_err_ref);
-            let args = p.allocator.alloc_slice_copy(&[
+            let args = p.arena.alloc_slice_copy(&[
                 p.new_expr(E::Identifier { ref_: self.stack_ref, ..Default::default() }, loc),
                 p.new_expr(E::Identifier { ref_: err_ref, ..Default::default() }, loc),
                 p.new_expr(E::Identifier { ref_: has_err_ref, ..Default::default() }, loc),
@@ -8248,10 +8248,10 @@ impl LowerUsingDeclarationsContext {
             );
             let stmt1 = p.s(S::SExpr { value: cond_await, ..Default::default() }, loc);
 
-            p.allocator.alloc_slice_copy(&[stmt0, stmt1])
+            p.arena.alloc_slice_copy(&[stmt0, stmt1])
         } else {
             let call_dispose_loc = call_dispose.loc;
-            p.allocator.alloc_slice_copy(&[p.s(S::SExpr { value: call_dispose, ..Default::default() }, call_dispose_loc)])
+            p.arena.alloc_slice_copy(&[p.s(S::SExpr { value: call_dispose, ..Default::default() }, call_dispose_loc)])
         };
 
         // Wrap everything in a try/catch/finally block
@@ -8278,7 +8278,7 @@ impl LowerUsingDeclarationsContext {
             VecExt::append(&mut decls, Decl { binding: err_binding, value: Some(err_value) }).expect("oom");
             VecExt::append(&mut decls, Decl { binding: has_err_binding, value: Some(has_err_value) }).expect("oom");
             let stmt0 = p.s(S::Local { decls, ..Default::default() }, loc);
-            std::ptr::from_mut::<[Stmt]>(p.allocator.alloc_slice_copy(&[stmt0]))
+            std::ptr::from_mut::<[Stmt]>(p.arena.alloc_slice_copy(&[stmt0]))
         };
         result.push(p.s(
             S::Try {

@@ -28,7 +28,7 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
 // once options are actually added.
 #[derive(Default)]
 pub struct EnvPath {
-    // Zig: `allocator: std.mem.Allocator` — dropped (non-AST crate, global mimalloc).
+    // Zig: `std.mem.Allocator param` — dropped (non-AST crate, global mimalloc).
     buf: Vec<u8>,
 }
 

@@ -344,7 +344,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
-                        // TODO(port): allocator param dropped from Zig signature.
+                        // TODO(port): arena param dropped from Zig signature.
                         p.log().add_range_error_fmt_with_note(
                             Some(p.source),
                             end_tag.range,

@@ -380,9 +380,9 @@ impl FontFamily {
 
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.allocator()) };
+            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
-        // AST crate: ArrayListUnmanaged fed input.allocator() (arena) → bumpalo Vec
+        // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s))) {
             if string.is_none() {
@@ -419,14 +419,14 @@ impl FontFamily {
 
                 if !val.is_empty()
                     && !css::parse_utility::parse_string::<GenericFontFamily>(
-                        dest.allocator,
+                        dest.arena,
                         val,
                         GenericFontFamily::parse,
                     )
                     .is_ok()
                 {
-                    // AST crate: std.Io.Writer.Allocating on dest.allocator (arena) → bumpalo Vec
-                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.allocator);
+                    // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
+                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
                     let mut first = true;
                     for slice in val.split(|b| *b == b' ') {
                         if first {
@@ -963,7 +963,7 @@ pub struct FontHandler {
 
 impl FontHandler {
     // blocked_on: generics::is_compatible/eql/deepClone blankets,
-    // PropertyHandlerContext::allocator(), DeclarationList::push,
+    // PropertyHandlerContext::arena(), DeclarationList::push,
     // Property::Font*/Unparsed payloads, FontFamilyHashMap.
     pub fn handle_property(
         &mut self,
@@ -972,9 +972,9 @@ impl FontHandler {
         context: &mut crate::PropertyHandlerContext<'_>,
     ) -> bool {
         use crate::properties::Property;
-        // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         // TODO(port): Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper / push.
         // No Rust equivalent for field-name reflection — expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
@@ -993,7 +993,7 @@ impl FontHandler {
         macro_rules! property_helper {
             ($this:expr, $field:ident, $val:expr) => {{
                 flush_helper!($this, $field, $val);
-                $this.$field = Some(crate::generic::deep_clone($val, allocator));
+                $this.$field = Some(crate::generic::deep_clone($val, arena));
                 $this.has_any = true;
             }};
         }
@@ -1015,7 +1015,7 @@ impl FontHandler {
                 flush_helper!(self, line_height, &val.line_height);
                 flush_helper!(self, variant_caps, &val.variant_caps);
 
-                self.family = Some(crate::generic::deep_clone(&val.family, allocator));
+                self.family = Some(crate::generic::deep_clone(&val.family, arena));
                 self.size = Some(val.size.clone());
                 self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
@@ -1031,8 +1031,8 @@ impl FontHandler {
                     self.flushed_properties.insert(
                         FontProperty::try_from_property_id(val.property_id.tag()).unwrap(),
                     );
-                    // PERF(port): was dest.append(context.allocator, property.*) on arena
-                    dest.push(property.deep_clone(allocator));
+                    // PERF(port): was dest.append(context.arena, property.*) on arena
+                    dest.push(property.deep_clone(arena));
                 } else {
                     return false;
                 }
@@ -1054,7 +1054,7 @@ impl FontHandler {
     }
 
     
-    // blocked_on: FontFamilyHashMap, PropertyHandlerContext::allocator(),
+    // blocked_on: FontFamilyHashMap, PropertyHandlerContext::arena(),
     // Vec::ordered_remove/insert/at, generics::is_compatible.
     fn flush(
         &mut self,
@@ -1065,7 +1065,7 @@ impl FontHandler {
 
         macro_rules! push_prop {
             (Font, $val:expr) => {{
-                // PERF(port): was dest.append(ctx.allocator, ..) on arena-backed list
+                // PERF(port): was dest.append(ctx.arena, ..) on arena-backed list
                 decls.push(Property::Font($val));
                 self.flushed_properties.insert(FontProperty::FONT);
             }};
@@ -1204,7 +1204,7 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
 ];
 
 
-// blocked_on: Vec::insert allocator threading + arena Bump param.
+// blocked_on: Vec::insert arena threading + arena Bump param.
 #[inline]
 fn compatible_font_family(
     _family: Option<Vec<FontFamily>>,
@@ -1224,7 +1224,7 @@ fn compatible_font_family(
         // perform the inserts using the captured index.
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                // TODO(port): families.insert(allocator, idx, val) — Vec::insert with arena
+                // TODO(port): families.insert(arena, idx, val) — Vec::insert with arena
                 families.insert(i + j + 1, FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)));
             }
         }
@@ -1258,7 +1258,7 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
 //               flush bodies internally gated on DeriveParse/DeriveToCss proc-
 //               macros + EnumProperty from_ascii_case_insensitive impls +
 //               generics::IsCompatible blanket + parse_utility::parse_string +
-//               Vec parse/insert allocator threading. FontFamily.FamilyName
+//               Vec parse/insert arena threading. FontFamily.FamilyName
 //               is arena-owned *const [u8] (thread 'bump in Phase B; manual
 //               PartialEq/Clone compare/copy by content/pointer-shallow);
 //               FontHandler @field helpers expanded via macro_rules!.

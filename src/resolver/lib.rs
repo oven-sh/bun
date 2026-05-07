@@ -1246,14 +1246,11 @@ pub mod fs {
 
         /// Port of `DirEntry.addEntry` in `fs.zig`.
         // PORT NOTE: Zig signature was `(prev_map, *entry, allocator, comptime Iterator, iterator)`.
-        // The `allocator` param is dropped (everything routes through the global stores) but
-        // call-site shape is preserved as `_allocator: ()` so existing ported call sites
-        // (`dir_info_cached_maybe_log` / `dir_info_for_resolution`) keep their 4-arg form.
+        // The Zig `allocator` param is dropped (everything routes through the global stores).
         pub fn add_entry<I: DirEntryIterator>(
             &mut self,
             prev_map: Option<&mut dir_entry::EntryMap>,
             entry: &bun_sys::dir_iterator::IteratorResult,
-            _allocator: (),
             iterator: I,
         ) -> core::result::Result<(), bun_core::Error> {
             use bun_sys::FileKind as DK;
@@ -1694,7 +1691,7 @@ pub mod fs {
 
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
-                dir.add_entry(prev_map.as_deref_mut(), &entry_, (), &iterator)?;
+                dir.add_entry(prev_map.as_deref_mut(), &entry_, &iterator)?;
             }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
@@ -4359,7 +4356,7 @@ pub struct Resolver<'a> {
     // `fs()` / `log()` accessors below.
     pub fs: *mut Fs::FileSystem,
     pub log: *mut logger::Log,
-    // allocator: dropped — global mimalloc
+    // allocator dropped — global mimalloc
     /// PORT NOTE: Zig stores `[]const []const u8` aliasing into `r.opts.extension_order`
     /// (resolver.zig saves/restores it across nested resolves). Stored as a raw
     /// fat pointer (`Copy`) because it self-references `self.opts`; the heap
@@ -6845,7 +6842,6 @@ impl<'a> Resolver<'a> {
                         in_place.map(|existing| unsafe { &mut (*existing).data }),
                         &_value,
                         (),
-                        (),
                     )
                     .expect("unreachable");
             }
@@ -7774,7 +7770,6 @@ impl<'a> Resolver<'a> {
                             // SAFETY: see block-wide note above.
                             in_place.map(|existing| unsafe { &mut (*existing).data }),
                             &_value,
-                            (),
                             (),
                         )
                         .expect("unreachable");

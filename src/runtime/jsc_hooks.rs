@@ -63,7 +63,7 @@ use crate::webcore::blob::BlobExt as _;
 ///
 /// PORT NOTE: in Zig these are value fields of `VirtualMachine`
 /// (`vm.timer: api.Timer.All`, `vm.entry_point: ServerEntryPoint`,
-/// `vm.body_value_hive_allocator`). The low-tier `VirtualMachine` carries `()`
+/// `vm.body_value_pool`). The low-tier `VirtualMachine` carries `()`
 /// placeholders for them (see `// TODO(b2-cycle)` markers in
 /// `VirtualMachine.rs`); until those slots widen to `*mut c_void`, the
 /// thread-local is the recovery path.
@@ -88,11 +88,11 @@ pub struct RuntimeState {
     /// `Box::leak`'d per-VM (PORTING.md §Forbidden: `Box::leak` only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
     pub transpiler_arena: Box<bun_alloc::Arena>,
-    /// `vm.body_value_hive_allocator` — pooled storage for `Body.Value`
+    /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads). Spec VirtualMachine.zig:45 value field.
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
-    pub body_value_hive_allocator: Box<crate::webcore::body::HiveAllocator>,
+    pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
 }
 
 thread_local! {
@@ -220,7 +220,7 @@ unsafe fn init_runtime_state(
         editor_context: Default::default(),
         entry_point: ServerEntryPoint::default(),
         transpiler_arena: Box::new(bun_alloc::Arena::new()),
-        body_value_hive_allocator: Box::new(crate::webcore::body::HiveAllocator::init()),
+        body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -261,7 +261,7 @@ unsafe fn init_runtime_state(
         // inner `Box<Arena>` payload is heap-stable and outlives the
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
-        let allocator: &'static bun_alloc::Arena =
+        let arena: &'static bun_alloc::Arena =
             unsafe { &*(&raw const *(*state).transpiler_arena) };
         // TODO(b2): `env_loader_` — spec VirtualMachine.zig:1244 passes
         // `opts.env_loader` so a worker VM inherits its parent's
@@ -269,7 +269,7 @@ unsafe fn init_runtime_state(
         // `InitOptions` stub (VirtualMachine.rs:78) has no `env_loader` field
         // yet; passing `None` silently falls back to `dot_env::instance()`.
         // Thread `_opts.env_loader` here once the stub widens.
-        match bun_bundler::Transpiler::init(allocator, log, args, None) {
+        match bun_bundler::Transpiler::init(arena, log, args, None) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).
@@ -970,7 +970,7 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     .cast::<c_void>()
 }
 
-/// `Body.Value.HiveRef.init(body, &vm.body_value_hive_allocator)` — Spec
+/// `Body.Value.HiveRef.init(body, &vm.body_value_pool)` — Spec
 /// VirtualMachine.zig:255. `body` is moved by value into the pooled slot.
 ///
 /// # Safety
@@ -986,14 +986,14 @@ unsafe fn init_request_body_value(_vm: *mut VirtualMachine, body: *mut c_void) -
     );
     // SAFETY: per fn contract — `body` points at an initialised `Body::Value`
     // the caller hands over by move; `state` is the live per-thread box and
-    // its `body_value_hive_allocator` `Box` payload is heap-stable for the
+    // its `body_value_pool` `Box` payload is heap-stable for the
     // VM's lifetime (BACKREF contract on `HiveRef::allocator`).
     let value = unsafe { core::ptr::read(body.cast::<Value>()) };
-    let allocator: *mut crate::webcore::body::HiveAllocator =
-        unsafe { &raw mut *(*state).body_value_hive_allocator };
+    let pool: *mut crate::webcore::body::HiveAllocator =
+        unsafe { &raw mut *(*state).body_value_pool };
     // Spec returns `!*HiveRef` with the only `try` site being the pool
     // allocation; `bun.handleOom`-style crash matches Zig.
-    bun_core::handle_oom(unsafe { HiveRef::init(value, allocator) }).cast::<c_void>()
+    bun_core::handle_oom(unsafe { HiveRef::init(value, pool) }).cast::<c_void>()
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])` —
@@ -1908,7 +1908,7 @@ fn transpile_source_code_inner(
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.
-            // PORT NOTE: Zig threaded `output_code_allocator = arena.allocator()`,
+            // PORT NOTE: Zig threaded `output_code_allocator = arena.arena()`,
             // `sourcemap_allocator = default_allocator`, `esm_record_allocator =
             // default_allocator`. The bundler-side `cache::RuntimeTranspilerCache`
             // dropped those fields per PORTING.md §Allocators (cache buffers use
@@ -2127,7 +2127,7 @@ fn transpile_source_code_inner(
                     }
                 };
                 let parse_options = ParseOptions {
-                    allocator: &arena_guard.1,
+                    arena: &arena_guard.1,
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
@@ -3027,7 +3027,6 @@ export default db;
 fn js_synthetic_module(name: &'static [u8], specifier: &bun_string::String) -> ResolvedSource {
     use bun_jsc::resolved_source::Tag;
     ResolvedSource {
-        allocator: core::ptr::null_mut(),
         source_code: bun_string::String::empty(),
         specifier: *specifier,
         source_url: bun_string::String::static_(name),
@@ -3068,7 +3067,6 @@ fn get_hardcoded_module(
             }
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                allocator: core::ptr::null_mut(),
                 source_code: bun_string::String::clone_utf8(&ep.contents),
                 specifier: *specifier,
                 source_url: *specifier,
@@ -3096,7 +3094,6 @@ fn get_hardcoded_module(
             // is a stub re-export until `runtime.rs` un-gates there.
             {
                 return Some(ResolvedSource {
-                    allocator: core::ptr::null_mut(),
                     source_code: bun_string::String::init(
                         bun_js_parser::runtime_full::Runtime::source_code(),
                     ),
@@ -3172,7 +3169,6 @@ unsafe fn fetch_builtin_module(
             // alive for the VM lifetime.
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
-                    allocator: core::ptr::null_mut(),
                     source_code: bun_string::String::clone_utf8(&(*entry).source.contents),
                     specifier: *specifier,
                     source_url: specifier.dupe_ref(),
@@ -3219,7 +3215,6 @@ export default db;
                 // SAFETY: per fn contract — `out` is a valid out-param.
                 unsafe {
                     *out = ErrorableResolvedSource::ok(ResolvedSource {
-                        allocator: core::ptr::null_mut(),
                         source_code: bun_string::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                         specifier: *specifier,
                         source_url: specifier.dupe_ref(),
@@ -3238,7 +3233,6 @@ export default db;
             // copies out of it before returning.
             unsafe {
                 *out = ErrorableResolvedSource::ok(ResolvedSource {
-                    allocator: core::ptr::null_mut(),
                     source_code: file.to_wtf_string(),
                     specifier: *specifier,
                     source_url: specifier.dupe_ref(),
@@ -3668,7 +3662,6 @@ unsafe fn transpile_file(
                     // SAFETY: `ret` is a valid out-param per fn contract.
                     unsafe {
                         *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                            allocator: ptr::null_mut(),
                             source_code: bun_string::String::empty(),
                             specifier: bun_string::String::empty(),
                             source_url: bun_string::String::empty(),
@@ -3794,7 +3787,6 @@ unsafe fn transpile_file(
                                 // contract.
                                 unsafe {
                                     *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                                        allocator: ptr::null_mut(),
                                         source_code: bun_string::String::empty(),
                                         specifier: bun_string::String::empty(),
                                         source_url: bun_string::String::empty(),

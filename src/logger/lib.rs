@@ -2127,7 +2127,7 @@ impl Log {
         }
     }
 
-    /// Zig: `pub fn init(allocator: std.mem.Allocator) Log` — Rust callers spell
+    /// Zig: `pub fn init(std.mem.Allocator param) Log` — Rust callers spell
     /// this `Log::new()`; the allocator parameter is dropped (global allocator).
     #[inline]
     pub fn new() -> Log {

@@ -95,7 +95,7 @@ impl DashedIdentReference {
             // SAFETY: arena-owned slice; see `DashedIdent::v`.
             let ident_v = unsafe { &*self.ident.v };
             let source_index = dest.loc.source_index;
-            let bump = dest.allocator;
+            let bump = dest.arena;
             // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
             // `dest.importRecord()` internally. Rust borrowck forbids handing
             // `dest` to a method on `dest.css_module`, so resolve the path
@@ -353,7 +353,7 @@ impl IdentOrRef {
         #[cfg(debug_assertions)]
         {
             let (slice, bump) = debug_ident;
-            // bun.handleOom(allocator.create(...)) → arena alloc; OOM aborts
+            // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);

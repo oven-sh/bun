@@ -119,7 +119,7 @@ pub struct FileSystemRouter {
     // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). Phase B: confirm bumpalo vs ArenaAllocator.
     pub arena: Box<ArenaAllocator>,
-    // PORT NOTE: dropped `allocator: std.mem.Allocator` field — it was always `arena.allocator()`.
+    // PORT NOTE: dropped `std.mem.Allocator param` field — it was always `arena.arena()`.
     pub asset_prefix: Option<*mut RefString>,
 }
 

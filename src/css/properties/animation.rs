@@ -175,7 +175,7 @@ impl Animation {
 
             if self.direction != AnimationDirection::default()
                 || css::parse_utility::parse_string::<AnimationDirection>(
-                    dest.allocator,
+                    dest.arena,
                     name_str,
                     AnimationDirection::parse,
                 )
@@ -188,7 +188,7 @@ impl Animation {
             if self.fill_mode != AnimationFillMode::default()
                 || (!strings::eql_case_insensitive_ascii(name_str, b"none", true)
                     && css::parse_utility::parse_string::<AnimationFillMode>(
-                        dest.allocator,
+                        dest.arena,
                         name_str,
                         AnimationFillMode::parse,
                     )
@@ -200,7 +200,7 @@ impl Animation {
 
             if self.play_state != AnimationPlayState::default()
                 || css::parse_utility::parse_string::<AnimationPlayState>(
-                    dest.allocator,
+                    dest.arena,
                     name_str,
                     AnimationPlayState::parse,
                 )
@@ -310,12 +310,12 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { &*s.v };
                 if css_module_animation_enabled {
-                    // PORT NOTE: reshaped for borrowck — capture allocator/source_index
+                    // PORT NOTE: reshaped for borrowck — capture arena/source_index
                     // before borrowing dest.css_module mutably.
-                    let allocator = dest.allocator;
+                    let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(allocator, name, source_index);
+                        css_module.get_reference(arena, name, source_index);
                     }
                 }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
@@ -325,10 +325,10 @@ impl AnimationName {
                 let name: &[u8] = unsafe { &**s };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck
-                    let allocator = dest.allocator;
+                    let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(allocator, name, source_index);
+                        css_module.get_reference(arena, name, source_index);
                     }
                 }
 

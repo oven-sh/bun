@@ -156,7 +156,7 @@ pub trait Writer {
 
 /// Concrete buffer-backed reader — direct port of Zig's `pub const Reader = struct`.
 ///
-/// PORT NOTE: the Zig struct also carries `allocator: std.mem.Allocator` for
+/// PORT NOTE: the Zig struct also carries `std.mem.Allocator param` for
 /// `readArray`'s nested-slice case; per PORTING.md §Allocators (non-AST crate)
 /// the allocator param is dropped — callers that need owned sub-arrays
 /// allocate at the call site.

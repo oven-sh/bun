@@ -205,7 +205,7 @@ pub struct ReceiveChunkSourceMap {
 
 pub enum ReceiveChunkContent {
     Js {
-        /// Allocated by `dev.allocator()`; ownership transferred to the graph
+        /// Allocated by `dev.arena()`; ownership transferred to the graph
         /// (client) or to `current_chunk_code` (server).
         code: Box<[u8]>,
         source_map: Option<ReceiveChunkSourceMap>,

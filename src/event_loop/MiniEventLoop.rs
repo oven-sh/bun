@@ -100,7 +100,7 @@ pub struct MiniEventLoop<'a> {
     // PORT NOTE: Zig `*uws.Loop` — raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
     pub loop_: *mut UwsLoop,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — non-AST crate uses global mimalloc.
+    // PORT NOTE: `std.mem.Allocator param` field dropped — non-AST crate uses global mimalloc.
     pub file_polls_: Option<Box<FilePollStore>>,
     /// Zig: `env: ?*bun.DotEnv.Loader` — mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`

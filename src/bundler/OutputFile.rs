@@ -181,8 +181,8 @@ pub enum Value {
     Copy(FileOperation),
     Noop,
     Buffer {
-        // Zig carried `allocator: std.mem.Allocator` alongside `bytes`; in Rust the
-        // global mimalloc allocator backs `Box<[u8]>`, so the field is dropped.
+        // Zig carried `arena: std.mem.Allocator` alongside `bytes`; in Rust the
+        // global mimalloc arena backs `Box<[u8]>`, so the field is dropped.
         bytes: Box<[u8]>,
     },
     // PORT NOTE: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
@@ -228,11 +228,11 @@ impl Value {
                     return BunString::EMPTY;
                 }
                 // Use ExternalStringImpl to avoid cloning the string, at
-                // the cost of allocating space to remember the allocator.
+                // the cost of allocating space to remember the arena.
                 //
-                // Zig boxed a `FreeContext { allocator }` and passed an `extern "C"`
-                // callback that frees the slice via that allocator then destroys the
-                // context. With the global allocator, the context collapses to the
+                // Zig boxed a `FreeContext { arena }` and passed an `extern "C"`
+                // callback that frees the slice via that arena then destroys the
+                // context. With the global arena, the context collapses to the
                 // (ptr, len) pair already passed to the callback.
                 extern "C" fn on_free(_ctx: *mut c_void, buffer: *mut c_void, len: u32) {
                     // SAFETY: `buffer`/`len` were produced by `Box::into_raw` on a
@@ -356,7 +356,7 @@ impl OutputFile {
 
 pub enum OptionsData {
     Buffer {
-        // allocator dropped — global mimalloc.
+        // arena dropped — global mimalloc.
         data: Box<[u8]>,
     },
     File {

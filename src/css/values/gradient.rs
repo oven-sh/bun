@@ -15,7 +15,7 @@ use bun_alloc::Arena;
 // ─── B-2 round 6 notes ────────────────────────────────────────────────────
 // Un-gated. `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
 // `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
-// `Parser<'bump,'_>` two-lifetime arity lands and `allocator()` returns
+// `Parser<'bump,'_>` two-lifetime arity lands and `arena()` returns
 // `&'bump Bump`. The generic `D` bound (`LengthPercentage` / `AnglePercentage`)
 // is expressed via the local `GradientPosition` trait below — replaces the
 // gated `crate::generic::{Parse,ToCss,DeepClone}` set so the monomorphized
@@ -1715,5 +1715,5 @@ pub fn convert_stops_to_webkit(
 //   source:     src/css/values/gradient.zig (1657 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      Arena-backed (BumpVec) per §Allocators; bump threaded through deep_clone/get_fallback/get_prefixed/from_standard/from_position. parse_items/to_css obtain arena via input.allocator()/dest.allocator(). serialize_items needs trait for generic .percentage check. EndingShape parse/to_css use placeholder derive helpers. ComptimeEnumMap getAnyCase → if-chain.
+//   notes:      Arena-backed (BumpVec) per §Allocators; bump threaded through deep_clone/get_fallback/get_prefixed/from_standard/from_position. parse_items/to_css obtain arena via input.arena()/dest.arena(). serialize_items needs trait for generic .percentage check. EndingShape parse/to_css use placeholder derive helpers. ComptimeEnumMap getAnyCase → if-chain.
 // ──────────────────────────────────────────────────────────────────────────

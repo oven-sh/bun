@@ -221,8 +221,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        // PERF(port): Zig used ArrayListUnmanaged backed by p.allocator (arena).
-        let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.allocator);
+        // PERF(port): Zig used ArrayListUnmanaged backed by p.arena (arena).
+        let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
@@ -588,9 +588,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // PERF(port): Zig used `p.allocator.alloc(Stmt, 1)` (arena bulk-free).
+        // PERF(port): Zig used `p.arena.alloc(Stmt, 1)` (arena bulk-free).
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
-        let stmts: &'a mut [Stmt] = p.allocator.alloc_slice_copy(&[ret_stmt]);
+        let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
         Ok(E::Arrow {

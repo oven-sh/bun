@@ -643,7 +643,7 @@ pub fn run_as_worker(
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
     vm_ref.arena = Some(NonNull::from(&mut arena));
-    // vm.allocator = arena.allocator(); — allocator params dropped in Rust
+    // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &*vm_ref.transpiler.env };

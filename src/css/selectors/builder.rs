@@ -34,7 +34,7 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-// PORT NOTE: Zig threaded `allocator: Allocator` and built `components` into
+// PORT NOTE: Zig threaded `arena: Allocator` and built `components` into
 // an arena `ArrayList`. Phase A: `GenericSelector.components` is a std `Vec`
 // (see parser.rs `// PERF(port): was arena ArrayList`), so the builder uses
 // std `Vec` for the result and drops the `&'bump Arena` field. Phase B
@@ -88,8 +88,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// by the given combinator.
     #[inline]
     pub fn push_combinator(&mut self, combinator: Combinator) {
-        // PORT NOTE: `SmallList::append/insert` no longer take an allocator —
-        // it owns its spill buffer (global allocator). The `bump` field is
+        // PORT NOTE: `SmallList::append/insert` no longer take an arena —
+        // it owns its spill buffer (global arena). The `bump` field is
         // retained for `BuildResult.components` (BumpVec) only.
         self.combinators.append((combinator, self.current_len));
         self.current_len = 0;

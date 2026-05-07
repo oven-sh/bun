@@ -315,8 +315,8 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.allocator() — profile in Phase B
-                        conditions.push(in_parens.deep_clone(input.allocator()));
+                        // PERF(port): was arena alloc via input.arena() — profile in Phase B
+                        conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
                             let value = decl.value;

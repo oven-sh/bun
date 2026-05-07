@@ -79,7 +79,7 @@ pub struct Ast {
     // TODO(port): `[]u32` not freed in Zig `deinit` — likely arena-owned. Using Box<[u32]> for now.
     pub export_star_import_records: Box<[u32]>,
 
-    // allocator: std.mem.Allocator,
+    // arena: std.mem.Allocator,
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
     pub commonjs_named_exports: CommonJSNamedExports,

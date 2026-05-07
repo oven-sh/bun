@@ -84,7 +84,7 @@ pub fn find_imported_css_files_in_js_order(
         }
 
         if is_css && source_index.is_valid() {
-            // bun.handleOom(o.append(temp, source_index)) — Rust Vec uses global allocator.
+            // bun.handleOom(o.append(temp, source_index)) — Rust Vec uses global arena.
             o.push(source_index);
         }
     }

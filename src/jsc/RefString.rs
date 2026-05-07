@@ -28,7 +28,7 @@ pub struct RefString {
     // `impl` is a Rust keyword — renamed to `impl_`.
     pub impl_: WTFStringImpl,
 
-    // Zig field `allocator: std.mem.Allocator` dropped — non-AST crate uses the
+    // Zig field `std.mem.Allocator param` dropped — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
     // frees via `Box::from_raw`.
     pub ctx: Option<NonNull<c_void>>,

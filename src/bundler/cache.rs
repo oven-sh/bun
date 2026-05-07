@@ -208,11 +208,11 @@ pub struct Set {
 }
 
 impl Set {
-    /// Port of `Set.init` (cache.zig:6). PORT NOTE: `allocator` is unused —
+    /// Port of `Set.init` (cache.zig:6). PORT NOTE: `arena` is unused —
     /// `MutableString::init`/`JavaScript::init` source from the global heap in
     /// the Rust port; param kept so callers match the Zig signature
     /// (`crate::cache::Set::init(alloc)`).
-    pub fn init(_allocator: &Bump) -> Set {
+    pub fn init(_arena: &Bump) -> Set {
         Set {
             js: JavaScript::init(),
             fs: Fs {
@@ -375,7 +375,7 @@ impl Fs {
     /// resolver's CYCLEBREAK `FsCache` forward-decl already pinned this shape.
     /// PERF(port): re-monomorphize once both callers stabilize.
     ///
-    /// PORT NOTE: `allocator` is dropped — Zig forwarded it to
+    /// PORT NOTE: `arena` is dropped — Zig forwarded it to
     /// `readFileWithHandleAndAllocator`; the only effect was choosing which
     /// heap owns the non-shared-buffer read. The Rust path always allocates
     /// from the global heap (via `Box::leak`); arena callers can pass through
@@ -670,7 +670,7 @@ pub struct Json {
     /// (cache.zig:296-313) and the comment at the call site (package_json.zig
     /// "DirInfo cache is reused globally / So we cannot free these") makes the
     /// lifetime explicitly process-long. The vtable signature drops the
-    /// allocator arg (CYCLEBREAK §Dispatch), so the bundler-side `Json` owns
+    /// arena arg (CYCLEBREAK §Dispatch), so the bundler-side `Json` owns
     /// the arena instead and the thunks below borrow it via `*mut ()`.
     bump: Bump,
 }
@@ -763,7 +763,7 @@ use bun_resolver::tsconfig_json::{
 };
 
 /// Shared body for all three vtable slots — port of `Json::parse`
-/// (cache.zig:283) with the allocator arg sourced from `(*cache).bump`.
+/// (cache.zig:283) with the arena arg sourced from `(*cache).bump`.
 #[inline]
 unsafe fn json_vtable_parse(
     cache: *mut (),

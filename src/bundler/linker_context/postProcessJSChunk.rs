@@ -89,8 +89,8 @@ pub fn post_process_js_chunk(
         None
     };
 
-    // SAFETY: worker.allocator is set in Worker::init() before any task runs.
-    let worker_allocator: &Arena = unsafe { &*worker.allocator };
+    // SAFETY: worker.arena is set in Worker::init() before any task runs.
+    let worker_arena: &Arena = unsafe { &*worker.arena };
 
     {
         // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
@@ -157,7 +157,7 @@ pub fn post_process_js_chunk(
             std::ptr::from_mut::<[Stmt]>(chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut());
 
         cross_chunk_prefix = js_printer::print::<false>(
-            worker_allocator,
+            worker_arena,
             target,
             &ast_view,
             source,
@@ -173,7 +173,7 @@ pub fn post_process_js_chunk(
             chunk.renamer.as_renamer(),
         );
         cross_chunk_suffix = js_printer::print::<false>(
-            worker_allocator,
+            worker_arena,
             target,
             &ast_view,
             source,
@@ -367,7 +367,7 @@ pub fn post_process_js_chunk(
                 to_common_js_ref,
                 to_esm_ref,
                 chunk.entry_point.source_index(),
-                worker_allocator,
+                worker_arena,
                 &arena,
                 chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
@@ -711,10 +711,10 @@ pub fn post_process_js_chunk(
                 let input =
                     &c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path;
                 let mut buf = MutableString::init_empty();
-                // PERF(port): worker.allocator is an arena in Zig
+                // PERF(port): worker.arena is an arena in Zig
                 let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
                 // bun.handleOom dropped — Rust aborts on OOM
-                let str = buf.slice(); // worker.allocator is an arena
+                let str = buf.slice(); // worker.arena is an arena
                 j.push_static(str);
                 line_offset.advance(str);
             }
@@ -753,7 +753,7 @@ pub fn post_process_js_chunk(
     }
 
     chunk.intermediate_output = c
-        .break_output_into_pieces(worker_allocator, &mut j, ctx.chunks.len() as u32)
+        .break_output_into_pieces(worker_arena, &mut j, ctx.chunks.len() as u32)
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));
 
     // TODO: meta contents
@@ -824,9 +824,9 @@ pub fn generate_entry_point_tail_js<'a>(
     to_esm_ref: Ref,
     source_index: IndexInt,
     // bundler is an AST crate: std.mem.Allocator param → &'bump Bump (Arena)
-    // TODO(port): thread &'bump Bump from worker.allocator end-to-end in Phase B
-    allocator: &'a Arena,
-    temp_allocator: &Arena,
+    // TODO(port): thread &'bump Bump from worker.arena end-to-end in Phase B
+    arena: &'a Arena,
+    temp_arena: &Arena,
     mut r: js_printer::renamer::Renamer<'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
@@ -997,7 +997,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                         decls: G::DeclList::from_slice(
                                             &[G::Decl {
                                                 binding: Binding::alloc(
-                                                    temp_allocator,
+                                                    temp_arena,
                                                     B::Identifier { r#ref: temp_ref },
                                                     Logger::Loc::EMPTY,
                                                 ),
@@ -1078,8 +1078,8 @@ pub fn generate_entry_point_tail_js<'a>(
                                 G::PropertyList::init_capacity(items.len()).expect("OOM");
                             // PERF(port): was initCapacity catch unreachable
                             let getter_fn_body: &mut [Stmt] =
-                                allocator.alloc_slice_fill_default(items.len());
-                            // TODO(port): allocator.alloc(Stmt, n) — needs arena slice alloc API
+                                arena.alloc_slice_fill_default(items.len());
+                            // TODO(port): arena.alloc(Stmt, n) — needs arena slice alloc API
                             let mut remain_getter_fn_body = &mut getter_fn_body[..];
                             for export_item in items.iter() {
                                 let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
@@ -1268,7 +1268,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(
-            allocator,
+            arena,
             c.resolver().opts.target,
             &ast_view,
             c.get_source(source_index),
@@ -1290,5 +1290,5 @@ pub fn generate_entry_point_tail_js<'a>(
 //   source:     src/bundler/linker_context/postProcessJSChunk.zig (1125 lines)
 //   confidence: medium
 //   todos:      13
-//   notes:      MultiArrayList .items(.field) → .items_<field>() accessors; worker.allocator pass-throughs need &'bump Bump threading in Phase B; AST node constructor shapes (Stmt::alloc/Expr::init/S::*/E::*) and CompileResult variant layout need Phase-B verification.
+//   notes:      MultiArrayList .items(.field) → .items_<field>() accessors; worker.arena pass-throughs need &'bump Bump threading in Phase B; AST node constructor shapes (Stmt::alloc/Expr::init/S::*/E::*) and CompileResult variant layout need Phase-B verification.
 // ──────────────────────────────────────────────────────────────────────────

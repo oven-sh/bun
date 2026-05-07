@@ -452,7 +452,7 @@ pub struct Run<'a> {
     pub function_name: &'a [u8],
     pub macro_: &'a Macro,
     pub global: &'a JSGlobalObject,
-    // PORT NOTE: Zig carried `allocator: std.mem.Allocator` (always
+    // PORT NOTE: Zig carried `std.mem.Allocator param` (always
     // `default_allocator`, mimalloc, process-lifetime — slices backing
     // `E.String` data / property keys are never freed). The Rust AST uses
     // arena-owned slices (`EString::init` lifetime-erases its borrow), so

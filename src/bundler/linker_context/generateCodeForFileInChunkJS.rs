@@ -38,8 +38,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
     stmts: &mut StmtList,
-    allocator: &Bump,
-    temp_allocator: &Bump,
+    arena: &Bump,
+    temp_arena: &Bump,
     decl_collector: Option<&mut DeclCollector>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
@@ -88,7 +88,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = unsafe { &*part.stmts };
                 if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, allocator, &mut ast)
+                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
                 {
                     return PrintResult::Err(err.into());
                 }
@@ -117,7 +117,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
                 binding: Binding::alloc(
-                    temp_allocator,
+                    temp_arena,
                     B::Identifier { r#ref: hmr_api_ref },
                     logger::Loc::EMPTY,
                 ),
@@ -127,7 +127,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
-                        temp_allocator,
+                        temp_arena,
                         B::Identifier { r#ref: ast.module_ref },
                         logger::Loc::EMPTY,
                     ),
@@ -135,7 +135,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 });
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
-                        temp_allocator,
+                        temp_arena,
                         B::Identifier { r#ref: ast.exports_ref },
                         logger::Loc::EMPTY,
                     ),
@@ -143,11 +143,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 });
             }
 
-            // PERF(port): was temp_allocator.dupe — `G::Arg` is not Copy in Rust
+            // PERF(port): was temp_arena.dupe — `G::Arg` is not Copy in Rust
             let dup_args: &mut [G::Arg] = {
                 let mut v = bun_alloc::ArenaVec::with_capacity_in(
                     clousure_args.const_slice().len(),
-                    temp_allocator,
+                    temp_arena,
                 );
                 for a in clousure_args.slice().iter_mut() {
                     v.push(core::mem::take(a));
@@ -157,7 +157,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // PERF(port): was appendAssumeCapacity
             stmts.all_stmts.push(Stmt::allocate_expr(
-                temp_allocator,
+                temp_arena,
                 Expr::init(
                     E::Function {
                         func: G::Fn {
@@ -195,7 +195,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         source_ref.path.clone(),
                         c.options.target,
                         top_level_dir,
-                        allocator,
+                        arena,
                     ));
                     source_storage = logger::Source {
                         path: new_path,
@@ -217,7 +217,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             return c.print_code_for_file_in_chunk_js(
                 r,
-                allocator,
+                arena,
                 writer,
                 &mut stmts.all_stmts[main_stmts_len..],
                 &ast,
@@ -284,7 +284,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             stmts,
             ns_part_stmts,
             chunk,
-            temp_allocator,
+            temp_arena,
             flags.wrap,
             &ast,
         ) {
@@ -386,7 +386,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // PORT NOTE: Zig `properties.clone(temp_allocator)` is a memcpy into the
+                // PORT NOTE: Zig `properties.clone(temp_arena)` is a memcpy into the
                 // temp arena. `G::Property` is not `Clone` (it embeds a `Vec`), so
                 // mirror the Zig bitwise copy directly. JSON object properties carry no
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
@@ -418,7 +418,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         continue;
                     }
                     let name = match &mut prop.key.as_mut().unwrap().data {
-                        ExprData::EString(s) => s.slice(temp_allocator),
+                        ExprData::EString(s) => s.slice(temp_arena),
                         _ => unreachable!(),
                     };
                     if name == b"default"
@@ -449,7 +449,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 default_expr = Expr::allocate(
-                    temp_allocator,
+                    temp_arena,
                     E::Object {
                         properties: Vec::move_from_list(new_properties),
                         ..Default::default()
@@ -459,7 +459,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             }
 
             single_stmts_list[0] = Stmt::allocate(
-                temp_allocator,
+                temp_arena,
                 S::ExportDefault {
                     default_name: default_export.default_name,
                     value: js_ast::StmtOrExpr::Expr(default_expr),
@@ -475,7 +475,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             stmts,
             part_stmts,
             chunk,
-            temp_allocator,
+            temp_arena,
             flags.wrap,
             &ast,
         ) {
@@ -503,7 +503,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.inside_wrapper_suffix.clear();
 
     if c.options.minify_syntax {
-        merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_allocator);
+        merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
     let mut out_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
@@ -520,14 +520,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         } else {
                             0
                         },
-                        temp_allocator,
+                        temp_arena,
                     );
 
                 if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                     // PERF(port): was appendAssumeCapacity
                     args.push(G::Arg {
                         binding: Binding::alloc(
-                            temp_allocator,
+                            temp_arena,
                             B::Identifier { r#ref: ast.exports_ref },
                             logger::Loc::EMPTY,
                         ),
@@ -538,7 +538,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         // PERF(port): was appendAssumeCapacity
                         args.push(G::Arg {
                             binding: Binding::alloc(
-                                temp_allocator,
+                                temp_arena,
                                 B::Identifier { r#ref: ast.module_ref },
                                 logger::Loc::EMPTY,
                             ),
@@ -580,7 +580,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 {
                     let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
-                            temp_allocator,
+                            temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
@@ -610,13 +610,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 struct ExportHoist {
                     decls: Vec<G::Decl>,
-                    allocator: *const Bump,
+                    arena: *const Bump,
                 }
 
                 impl ExportHoist {
                     fn wrap_identifier(&mut self, loc: logger::Loc, ref_: Ref) -> Expr {
-                        // SAFETY: `allocator` was set from a live &Bump that outlives this struct.
-                        let bump = unsafe { &*self.allocator };
+                        // SAFETY: `arena` was set from a live &Bump that outlives this struct.
+                        let bump = unsafe { &*self.arena };
                         self.decls.push(G::Decl {
                             binding: Binding::alloc(
                                 bump,
@@ -639,9 +639,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                 let mut hoist = ExportHoist {
                     decls: Vec::new(),
-                    allocator: std::ptr::from_ref::<Bump>(temp_allocator),
+                    arena: std::ptr::from_ref::<Bump>(temp_arena),
                 };
-                let hoist_wrapper = ToExprWrapper::new(temp_allocator, ExportHoist::wrap_trampoline);
+                let hoist_wrapper = ToExprWrapper::new(temp_arena, ExportHoist::wrap_trampoline);
 
                 let mut inner_stmts: *mut [Stmt] = std::ptr::from_mut::<[Stmt]>(stmts.all_stmts.as_mut_slice());
 
@@ -699,7 +699,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     continue 'hoist;
                                 }
 
-                                break 'stmt Stmt::allocate_expr(temp_allocator, value);
+                                break 'stmt Stmt::allocate_expr(temp_arena, value);
                             }
                             StmtData::SFunction(_) => {
                                 bun_core::handle_oom(
@@ -725,7 +725,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 let class_ref: StoreRef<E::Class> =
                                     StoreRef::from_bump(&mut class.class);
                                 break 'stmt Stmt::allocate_expr(
-                                    temp_allocator,
+                                    temp_arena,
                                     Expr::assign(
                                         lhs,
                                         Expr {
@@ -797,7 +797,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
                     let decls = bun_core::handle_oom(G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
-                            temp_allocator,
+                            temp_arena,
                             B::Identifier { r#ref: ast.wrapper_ref },
                             logger::Loc::EMPTY,
                         ),
@@ -852,7 +852,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     decls: bun_core::handle_oom(G::DeclList::from_slice(&[
                                         G::Decl {
                                             binding: Binding::alloc(
-                                                temp_allocator,
+                                                temp_arena,
                                                 B::Identifier { r#ref: ast.wrapper_ref },
                                                 logger::Loc::EMPTY,
                                             ),
@@ -899,7 +899,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let source: *const _ = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(
         r,
-        allocator,
+        arena,
         writer,
         out_stmts,
         &ast,
@@ -915,12 +915,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
 pub struct DeclCollector {
     pub decls: Vec<DeclInfo>,
-    pub allocator: *const Bump,
+    pub arena: *const Bump,
 }
 
 impl Default for DeclCollector {
     fn default() -> Self {
-        Self { decls: Vec::new(), allocator: core::ptr::null() }
+        Self { decls: Vec::new(), arena: core::ptr::null() }
     }
 }
 
@@ -1024,7 +1024,7 @@ impl DeclCollector {
     }
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
+fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
     if stmts.is_empty() {
         return;
     }
@@ -1063,7 +1063,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _allocator: &Bump) {
                         // https://github.com/oven-sh/bun/issues/2942
                         let prev_loc = stmts[end - 1].loc;
                         stmts[end - 1] = Stmt::allocate(
-                            _allocator,
+                            _arena,
                             S::Local {
                                 decls: Vec::move_from_list(clone),
                                 is_export: before.is_export,

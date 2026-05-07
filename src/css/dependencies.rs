@@ -66,7 +66,7 @@ impl ImportDependency {
         local_names: Option<&crate::LocalsResultsMap>,
         symbols: &bun_logger::symbol::Map,
     ) -> ImportDependency {
-        // PORT NOTE: Zig routed through `css.to_css.string(allocator, T, ...)`;
+        // PORT NOTE: Zig routed through `css.to_css.string(arena, T, ...)`;
         // that free function is still ``-gated on the
         // `Printer::new` arena reshape, so its body (sub-printer +
         // `T::to_css` + buffer) is inlined here. Swap back to

@@ -26,9 +26,9 @@ impl Overflow {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // PORT NOTE: css.implementDeepClone is comptime field reflection → #[derive(Clone)]
-        let _ = allocator;
+        let _ = arena;
         *self
     }
 

@@ -506,7 +506,7 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // PORT NOTE: Zig dispatched via `worker_pool.doPtr(allocator, this,
+        // PORT NOTE: Zig dispatched via `worker_pool.doPtr(arena, this,
         // do_step5, reachable)` (parallel fan-out, blocks until done).
         // `bun_threading::ThreadPool::each` requires `Ctx: Sync` and
         // `F: Fn(&Ctx, V, usize)`; `do_step5` takes `&mut LinkerContext` and the
@@ -522,7 +522,7 @@ pub fn scan_imports_and_exports(
         }
 
         // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
-        // to the graph allocator.
+        // to the graph arena.
         this.graph.take_ast_ownership();
     }
 
@@ -586,15 +586,15 @@ pub fn scan_imports_and_exports(
             };
 
             // Allocate the identifier-name buffer from the linker arena so it is
-            // reclaimed when the link pass ends (Zig: `this.allocator().alloc(u8, ...)`).
+            // reclaimed when the link pass ends (Zig: `this.arena().alloc(u8, ...)`).
             // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
             // which is arena-lifetime by construction.
             let string_buffer: &mut [u8] = this
                 .graph
-                .allocator()
+                .arena()
                 .alloc_slice_fill_default::<u8>(string_buffer_len);
             // PORT NOTE: `StringBuilder::drop` reconstructs a `Box<[u8]>` from
-            // `ptr`/`cap` and frees it via the global allocator. Here the
+            // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
             // the arena reclaims the storage on reset, matching Zig's implicit
@@ -1700,7 +1700,7 @@ mod __css_validation {
             }
         }
 
-        // PERF(port): was stack-fallback allocator (1024 bytes) — profile.
+        // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step.
         let parse_graph = unsafe { &*this.parse_graph };
         let input = parse_graph.input_files.slice();

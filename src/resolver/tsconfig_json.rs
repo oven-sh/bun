@@ -153,7 +153,7 @@ pub struct JsonCache {
 
 thread_local! {
     /// Backing arena for the default (`unwired`) vtable. Zig's `Json{}` is an
-    /// empty struct whose methods take `allocator: std.mem.Allocator` — the
+    /// empty struct whose methods take `std.mem.Allocator param` — the
     /// resolver passes `bun.default_allocator`, which never frees. The Rust
     /// `bun_interchange::json` parser arena-allocates AST nodes into a `&Bump`;
     /// this thread-local is the `default_allocator` equivalent (never reset, so

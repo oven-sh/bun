@@ -461,7 +461,7 @@ pub struct SizeHandler {
 }
 
 // PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
-// UnparsedProperty surface are real now. `context.allocator` was dropped from
+// UnparsedProperty surface are real now. `context.arena` was dropped from
 // PropertyHandlerContext; the arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
@@ -499,7 +499,7 @@ macro_rules! logical_unparsed_helper {
             $this.flushed_properties.insert(
                 SizeProperty::try_from_property_id_tag($unparsed.property_id.tag()).unwrap(),
             );
-            // PORT NOTE: Zig pushed `property.deepClone(allocator)`; the matched
+            // PORT NOTE: Zig pushed `property.deepClone(arena)`; the matched
             // payload is `Unparsed`, so reconstruct directly.
             $dest.push(Property::Unparsed($unparsed.deep_clone(bump)));
         } else {

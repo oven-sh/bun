@@ -258,7 +258,7 @@ pub struct Router<'a> {
     pub dir: Fd,
     pub routes: Routes,
     pub loaded_routes: bool,
-    // allocator: dropped — global mimalloc
+    // allocator dropped — global mimalloc
     pub fs: &'a FileSystem,
     pub config: RouteConfig,
 }
@@ -459,7 +459,7 @@ pub struct Routes {
     pub index: Option<NonNull<Route>>,
     pub index_id: Option<usize>,
 
-    // allocator: dropped — global mimalloc
+    // allocator dropped — global mimalloc
     pub config: RouteConfig,
 
     // This is passed here and propagated through Match
@@ -621,7 +621,7 @@ impl Routes {
 }
 
 struct RouteLoader<'a> {
-    // allocator: dropped — global mimalloc
+    // allocator dropped — global mimalloc
     fs: &'static FileSystem,
     config: RouteConfig,
     route_dirname_len: u16,

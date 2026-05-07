@@ -844,7 +844,7 @@ pub type BundlerAtRule = DefaultAtRule;
 // TODO(port): when ENABLE_TAILWIND_PARSING == true, this is `TailwindAtRule`.
 
 pub struct BundlerAtRuleParser<'a> {
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     /// Raw pointer aliasing the same `Vec` that `Parser.import_records`
     /// points to (Zig passes one `*Vec` to both — see `parseBundler`,
     /// css_parser.zig:3245). Both views are raw pointers sharing a single
@@ -937,7 +937,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
                 cloned.v.append_slice(layer.v.slice());
                 this.layer_names.append_assume_capacity(cloned);
             } else {
-                this.layer_names.append_assume_capacity(layer.deep_clone(this.allocator));
+                this.layer_names.append_assume_capacity(layer.deep_clone(this.arena));
             }
         }
     }
@@ -1064,11 +1064,11 @@ pub enum TopLevelState {
 }
 
 pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
-    // PORT NOTE: Zig threaded `input.allocator()` at every call site; the Rust
+    // PORT NOTE: Zig threaded `input.arena()` at every call site; the Rust
     // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
     // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
     // already uses crate-wide).
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     pub options: &'a ParserOptions<'a>,
     pub state: TopLevelState,
     pub at_rule_parser: &'a mut AtRuleParserT,
@@ -1081,7 +1081,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT> {
     pub fn new(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
         rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
@@ -1089,7 +1089,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         local_properties: &'a mut LocalPropertyUsage,
     ) -> Self {
         Self {
-            allocator,
+            arena,
             options,
             state: TopLevelState::Start,
             at_rule_parser,
@@ -1103,9 +1103,9 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
         // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.allocator) };
+        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.arena) };
         NestedRuleParser {
-            allocator: self.allocator,
+            arena: self.arena,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
             declarations: DeclarationList::new_in(bump),
@@ -1145,7 +1145,7 @@ impl ComposesCtx for NoComposesCtx {
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     pub options: &'a ParserOptions<'a>,
     pub at_rule_parser: &'a mut T,
     // todo_stuff.think_mem_mgmt
@@ -1272,7 +1272,7 @@ use crate::selectors::parser as selector_parser;
 // into a small adaptor that implements the `ComposesCtx` dispatch trait.
 struct NestedComposesCtx<'a> {
     state: ComposesState,
-    allocator: &'a Bump,
+    arena: &'a Bump,
     composes: &'a mut ComposesMap,
     composes_refs: &'a mut SmallList<ast::Ref, 2>,
 }
@@ -1282,7 +1282,7 @@ impl<'a> ComposesCtx for NestedComposesCtx<'a> {
     fn record_composes(&mut self, composes: &mut Composes) {
         for ref_ in self.composes_refs.slice() {
             let entry = self.composes.entry(*ref_).or_insert_with(ComposesEntry::default);
-            entry.composes.push(composes.deep_clone(self.allocator));
+            entry.composes.push(composes.deep_clone(self.arena));
         }
     }
 }
@@ -1523,9 +1523,9 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
         };
         // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
         // parser arena.
-        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.allocator) };
+        let bump: &'static Bump = unsafe { &*std::ptr::from_ref::<Bump>(self.arena) };
         let mut nested_parser = NestedRuleParser::<T> {
-            allocator: self.allocator,
+            arena: self.arena,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
             declarations: DeclarationList::new_in(bump),
@@ -1929,7 +1929,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     // `LayerName` has no `Clone` impl yet; `deep_clone` is the
                     // arena-threaded shallow copy (segments are arena-borrowed
                     // `&[u8]`, so this is the same field-walk Zig's `*` did).
-                    Some(layer.at(0).deep_clone(this.allocator))
+                    Some(layer.at(0).deep_clone(this.arena))
                 } else {
                     return Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid));
                 };
@@ -2203,13 +2203,13 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
 
     fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
         // PORT NOTE: split-borrow — see `NestedComposesCtx` above.
-        // SAFETY: `input.allocator()` re-borrows the parser arena through `&self`;
+        // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
         // detach that borrow so `input` can be re-borrowed mutably below. The
         // arena outlives the parser (it owns all parsed allocations).
-        let allocator: &Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.allocator()) };
+        let arena: &Bump = unsafe { &*std::ptr::from_ref::<Bump>(input.arena()) };
         let mut ctx = NestedComposesCtx {
             state: this.composes_state,
-            allocator,
+            arena,
             composes: &mut *this.composes,
             composes_refs: &mut *this.composes_refs,
         };
@@ -2467,7 +2467,7 @@ pub struct StyleSheet<AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<AtRule>,
     // PERF(port): was arena bulk-free — profile in Phase B (sources /
-    // source_map_urls / license_comments were ArrayList fed input.allocator()).
+    // source_map_urls / license_comments were ArrayList fed input.arena()).
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
@@ -2512,21 +2512,21 @@ mod stylesheet_impl { use super::*;
 impl<AtRule> StyleSheet<AtRule> {
     /// Minify and transform the style sheet for the provided browser targets.
     ///
-    /// PORT NOTE: `allocator` is the arena that owns this stylesheet's AST
-    /// (Zig: `allocator: Allocator`). It is threaded into `MinifyContext` so
+    /// PORT NOTE: `arena` is the arena that owns this stylesheet's AST
+    /// (Zig: `arena: Allocator`). It is threaded into `MinifyContext` so
     /// downstream `deep_clone` calls allocate alongside the existing tree.
     pub fn minify(
         &mut self,
-        allocator: &Bump,
+        arena: &Bump,
         options: &MinifyOptions,
         extra: &StylesheetExtra,
     ) -> Maybe<(), Err<MinifyErrorKind>>
     where
         AtRule: for<'b> generic::DeepClone<'b>,
     {
-        let ctx = PropertyHandlerContext::new(allocator, options.targets, &options.unused_symbols);
-        let mut handler = DeclarationHandler::new(allocator);
-        let mut important_handler = DeclarationHandler::new(allocator);
+        let ctx = PropertyHandlerContext::new(arena, options.targets, &options.unused_symbols);
+        let mut handler = DeclarationHandler::new(arena);
+        let mut important_handler = DeclarationHandler::new(arena);
 
         // @custom-media rules may be defined after they are referenced, but
         // may only be defined at the top level of a stylesheet. Do a pre-scan
@@ -2539,7 +2539,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 for rule in self.rules.v.iter() {
                     if let CssRule::CustomMedia(cm) = rule {
                         let key: Box<[u8]> = cm.name.v().into();
-                        custom_media.insert(key, cm.deep_clone(allocator));
+                        custom_media.insert(key, cm.deep_clone(arena));
                     }
                 }
                 Some(custom_media)
@@ -2548,7 +2548,7 @@ impl<AtRule> StyleSheet<AtRule> {
             };
 
         let mut minify_ctx = MinifyContext {
-            allocator,
+            arena,
             targets: &options.targets,
             handler: &mut handler,
             important_handler: &mut important_handler,
@@ -2569,7 +2569,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
     pub fn to_css_with_writer<'a>(
         &'a self,
-        allocator: &'a Bump,
+        arena: &'a Bump,
         writer: &'a mut dyn bun_io::Write,
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
@@ -2580,8 +2580,8 @@ impl<AtRule> StyleSheet<AtRule> {
         // the lone field we re-read after moving `options` into Printer::new.
         let project_root = options.project_root;
         let mut printer = Printer::new(
-            allocator,
-            bun_alloc::ArenaVec::new_in(allocator),
+            arena,
+            bun_alloc::ArenaVec::new_in(arena),
             writer,
             options,
             import_info,
@@ -2625,7 +2625,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 &mut *(&raw mut references)
             };
             printer.css_module = Some(CssModule::new(
-                printer.allocator,
+                printer.arena,
                 config,
                 &self.sources,
                 project_root,
@@ -2670,7 +2670,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
     pub fn to_css<'a>(
         &'a self,
-        allocator: &'a Bump,
+        arena: &'a Bump,
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a LocalsResultsMap>,
@@ -2682,7 +2682,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // route through bun_io::Write over Vec<u8> until 'bump dest threads.
         // blocked_on: bun_io::Write impl for Vec<u8> / dest ownership reshape.
         let mut dest: Vec<u8> = Vec::with_capacity(1);
-        let result = self.to_css_with_writer(allocator, &mut dest, options, import_info, local_names, symbols)?;
+        let result = self.to_css_with_writer(arena, &mut dest, options, import_info, local_names, symbols)?;
         return Ok(ToCssResult {
             code: dest,
             dependencies: result.dependencies,
@@ -2692,7 +2692,7 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 
     pub fn parse(
-        allocator: &'static Bump,
+        arena: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
         import_records: Option<&mut Vec<ImportRecord>>,
@@ -2704,7 +2704,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // need a custom at-rule call `parse_with` directly.
         let mut default_at_rule_parser = DefaultAtRuleParser;
         StyleSheet::<DefaultAtRule>::parse_with(
-            allocator,
+            arena,
             code,
             options,
             &mut default_at_rule_parser,
@@ -2718,7 +2718,7 @@ impl<AtRule> StyleSheet<AtRule> {
     // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
     // the crate.
     pub fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
-        allocator: &'static Bump,
+        arena: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
         at_rule_parser: &mut P,
@@ -2728,10 +2728,10 @@ impl<AtRule> StyleSheet<AtRule> {
         // TODO(port): 'bump lifetime threading — every arena-backed slice the
         // parser hands back is currently detached to `'static` (matching the
         // crate-wide erasure on `DeclarationBlock<'static>`/`Token` payloads).
-        // The caller owns the arena (matching Zig's `allocator: Allocator`
+        // The caller owns the arena (matching Zig's `arena: Allocator`
         // parameter) so the storage outlives the returned `StyleSheet`; Phase B
         // re-threads the lifetime through `CssRuleList<'bump, R>` and drops the
-        // `'static` bound on `allocator`.
+        // `'static` bound on `arena`.
         let mut composes = ComposesMap::default();
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
@@ -2740,7 +2740,7 @@ impl<AtRule> StyleSheet<AtRule> {
         };
         let mut local_properties = LocalPropertyUsage::default();
 
-        let mut input = ParserInput::new(code, allocator);
+        let mut input = ParserInput::new(code, arena);
         let mut parser = Parser::new(
             &mut input,
             import_records,
@@ -2768,7 +2768,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
         let mut rules = CssRuleList::<AtRule>::default();
         let mut rule_parser = TopLevelRuleParser::new(
-            allocator,
+            arena,
             &options,
             at_rule_parser,
             &mut rules,
@@ -2962,21 +2962,21 @@ impl<AtRule> StyleSheet<AtRule> {
 
 impl StyleAttribute {
     pub fn parse(
-        allocator: &'static Bump,
+        arena: &'static Bump,
         code: &[u8],
         options: ParserOptions,
         import_records: &mut Vec<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<StyleAttribute, Err<ParserError>> {
         // TODO(port): 'bump lifetime threading — `DeclarationBlock<'static>` in
-        // `StyleAttribute` vs `Parser<'a>` here; `allocator: &'static Bump`
+        // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
         // matches the crate-wide erasure (see `parse_with`).
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
             symbols: SymbolList::default(),
             source_index,
         };
-        let mut input = ParserInput::new(code, allocator);
+        let mut input = ParserInput::new(code, arena);
         let mut parser = Parser::new(
             &mut input,
             Some(core::ptr::NonNull::from(import_records)),
@@ -2997,7 +2997,7 @@ impl StyleAttribute {
 
     pub fn to_css<'a>(
         &'a self,
-        allocator: &'a Bump,
+        arena: &'a Bump,
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
     ) -> Result<ToCssResult, PrintErr> {
@@ -3012,8 +3012,8 @@ impl StyleAttribute {
         // through bun_io::Write over Vec<u8> until 'bump dest threads.
         let mut dest: Vec<u8> = Vec::new();
         let mut printer = Printer::new(
-            allocator,
-            bun_alloc::ArenaVec::new_in(allocator),
+            arena,
+            bun_alloc::ArenaVec::new_in(arena),
             &mut dest,
             options,
             import_info,
@@ -3037,7 +3037,7 @@ impl StyleAttribute {
 
 impl StyleSheet<BundlerAtRule> {
     pub fn parse_bundler(
-        allocator: &'static Bump,
+        arena: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
         import_records: &mut Vec<ImportRecord>,
@@ -3063,7 +3063,7 @@ impl StyleSheet<BundlerAtRule> {
         let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
         let import_records_ptr = core::ptr::NonNull::from(import_records);
         let mut at_rule_parser = BundlerAtRuleParser {
-            allocator,
+            arena,
             import_records: import_records_ptr.as_ptr(),
             options: &options,
             layer_names: Vec::new(),
@@ -3071,7 +3071,7 @@ impl StyleSheet<BundlerAtRule> {
             enclosing_layer: LayerName::default(),
         };
         Self::parse_with(
-            allocator,
+            arena,
             code,
             options_for_parse,
             &mut at_rule_parser,
@@ -3451,8 +3451,8 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub fn allocator(&self) -> &Bump {
-        self.input.tokenizer.allocator
+    pub fn arena(&self) -> &Bump {
+        self.input.tokenizer.arena
     }
 
     /// Create a new Parser.
@@ -4090,9 +4090,9 @@ impl<'a> ParserInput<'a> {
     /// PORTING.md §Forbidden: do not fabricate `&'a Bump` from a boxed field
     /// via raw-pointer cast; the previous self-referential `owned_arena` hack
     /// was removed. Callers now pass `&'a Bump` explicitly.
-    pub fn new(code: &'a [u8], allocator: &'a Bump) -> ParserInput<'a> {
+    pub fn new(code: &'a [u8], arena: &'a Bump) -> ParserInput<'a> {
         ParserInput {
-            tokenizer: Tokenizer::init_with_allocator(code, allocator),
+            tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
         }
     }
@@ -4328,7 +4328,7 @@ pub struct Tokenizer<'a> {
     pub current_line_number: u32,
     // TODO(port): AST crate — keep arena. Zig threaded `Allocator`; in Rust
     // this is `&'a Bump`.
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     var_or_env_functions: SeenStatus,
     pub current: Token,
     pub previous: Token,
@@ -4362,7 +4362,7 @@ const MAX_THREE_B: u32 = 0x10000;
 // "src_str / Tokenizer::slice_from / CopyOnWriteStr::to_slice".
 // SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
 // (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
-// backing storage lives in `self.allocator: &'a Bump`. The returned reference
+// backing storage lives in `self.arena: &'a Bump`. The returned reference
 // is only ever stored in a `Token` reachable through that same `Parser<'a>`.
 #[inline(always)]
 pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
@@ -4370,14 +4370,14 @@ pub unsafe fn src_str(s: &[u8]) -> &'static [u8] {
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn init_with_allocator(src: &'a [u8], allocator: &'a Bump) -> Tokenizer<'a> {
+    pub fn init_with_arena(src: &'a [u8], arena: &'a Bump) -> Tokenizer<'a> {
         Tokenizer {
             src,
             position: 0,
             source_map_url: None,
             current_line_start_position: 0,
             current_line_number: 0,
-            allocator,
+            arena,
             var_or_env_functions: SeenStatus::DontCare,
             current: Token::Whitespace(b""),
             previous: Token::Whitespace(b""),
@@ -4857,7 +4857,7 @@ impl<'a> Tokenizer<'a> {
             match b {
                 b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-' => {
                     self.advance(1);
-                    value_bytes.append(self.allocator, &[b]);
+                    value_bytes.append(self.arena, &[b]);
                 }
                 b'\\' => {
                     if self.has_newline_at(1) {
@@ -4868,19 +4868,19 @@ impl<'a> Tokenizer<'a> {
                 }
                 0 => {
                     self.advance(1);
-                    value_bytes.append(self.allocator, &REPLACEMENT_CHAR_UNICODE);
+                    value_bytes.append(self.arena, &REPLACEMENT_CHAR_UNICODE);
                 }
                 0x80..=0xBF => {
                     self.consume_continuation_byte();
-                    value_bytes.append(self.allocator, &[b]);
+                    value_bytes.append(self.arena, &[b]);
                 }
                 0xC0..=0xEF => {
                     self.advance(1);
-                    value_bytes.append(self.allocator, &[b]);
+                    value_bytes.append(self.arena, &[b]);
                 }
                 0xF0..=0xFF => {
                     self.consume_4byte_intro();
-                    value_bytes.append(self.allocator, &[b]);
+                    value_bytes.append(self.arena, &[b]);
                 }
                 _ => {
                     // ASCII
@@ -4966,7 +4966,7 @@ impl<'a> Tokenizer<'a> {
                 }
                 0 => {
                     self.advance(1);
-                    string_bytes.append(self.allocator, &REPLACEMENT_CHAR_UNICODE);
+                    string_bytes.append(self.arena, &REPLACEMENT_CHAR_UNICODE);
                     continue;
                 }
                 0x80..=0xBF => self.consume_continuation_byte(),
@@ -4976,7 +4976,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
 
-            string_bytes.append(self.allocator, &[b]);
+            string_bytes.append(self.arena, &[b]);
         }
 
         (string_bytes.to_slice(), false)
@@ -5102,19 +5102,19 @@ impl<'a> Tokenizer<'a> {
                 }
                 0 => {
                     self.advance(1);
-                    string_bytes.append(self.allocator, &REPLACEMENT_CHAR_UNICODE);
+                    string_bytes.append(self.arena, &REPLACEMENT_CHAR_UNICODE);
                 }
                 0x80..=0xBF => {
                     self.consume_continuation_byte();
-                    string_bytes.append(self.allocator, &[b]);
+                    string_bytes.append(self.arena, &[b]);
                 }
                 0xF0..=0xFF => {
                     self.consume_4byte_intro();
-                    string_bytes.append(self.allocator, &[b]);
+                    string_bytes.append(self.arena, &[b]);
                 }
                 _ => {
                     self.advance(1);
-                    string_bytes.append(self.allocator, &[b]);
+                    string_bytes.append(self.arena, &[b]);
                 }
             }
         }
@@ -5173,7 +5173,7 @@ impl<'a> Tokenizer<'a> {
         // UTF-8 encoder (val is guaranteed a valid scalar by consume_escape).
         let c = char::from_u32(val).unwrap_or('\u{FFFD}');
         let len = c.encode_utf8(&mut utf8bytes).len();
-        bytes.append(self.allocator, &utf8bytes[..len]);
+        bytes.append(self.arena, &utf8bytes[..len]);
     }
 
     pub fn consume_escape(&mut self) -> u32 {
@@ -5843,11 +5843,11 @@ pub enum CopyOnWriteStr<'a> {
 }
 
 impl<'a> CopyOnWriteStr<'a> {
-    pub fn append(&mut self, allocator: &'a Bump, slice: &[u8]) {
+    pub fn append(&mut self, arena: &'a Bump, slice: &[u8]) {
         match self {
             CopyOnWriteStr::Borrowed(b) => {
                 let mut list =
-                    bun_alloc::ArenaVec::with_capacity_in(b.len() + slice.len(), allocator);
+                    bun_alloc::ArenaVec::with_capacity_in(b.len() + slice.len(), arena);
                 list.extend_from_slice(b);
                 list.extend_from_slice(slice);
                 // PERF(port): was appendSliceAssumeCapacity
@@ -6383,13 +6383,13 @@ pub mod parse_utility {
     /// NOTE: `input` should live as long as the returned value. Otherwise,
     /// strings in the returned parsed value will point to undefined memory.
     pub fn parse_string<T>(
-        allocator: &Bump,
+        arena: &Bump,
         input: &[u8],
         parse_one: fn(&mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
         // I hope this is okay
         let mut import_records = Vec::<ImportRecord>::default();
-        let mut i = ParserInput::new(input, allocator);
+        let mut i = ParserInput::new(input, arena);
         let mut parser = Parser::new(
             &mut i,
             Some(core::ptr::NonNull::from(&mut import_records)),
@@ -6409,7 +6409,7 @@ pub mod to_css {
     ///
     /// (This is a convenience wrapper for `to_css` and probably should not be overridden.)
     pub fn string<'a, T: generic::ToCss>(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         this: &T,
         options: PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
@@ -6419,8 +6419,8 @@ pub mod to_css {
         let mut s: Vec<u8> = Vec::new();
         // PERF: think about how cheap this is to create
         let mut printer = Printer::new(
-            allocator,
-            bun_alloc::ArenaVec::new_in(allocator),
+            arena,
+            bun_alloc::ArenaVec::new_in(arena),
             &mut s,
             options,
             import_info,

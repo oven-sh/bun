@@ -121,7 +121,7 @@ impl ImportConditions {
     
     pub fn clone_with_import_records(
         &self,
-        allocator: &Arena,
+        arena: &Arena,
         import_records: &mut Vec<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
@@ -129,13 +129,13 @@ impl ImportConditions {
                 v: layer
                     .v
                     .as_ref()
-                    .map(|l| l.clone_with_import_records(allocator, import_records)),
+                    .map(|l| l.clone_with_import_records(arena, import_records)),
             }),
             supports: self
                 .supports
                 .as_ref()
-                .map(|supp| supp.clone_with_import_records(allocator, import_records)),
-            media: self.media.clone_with_import_records(allocator, import_records),
+                .map(|supp| supp.clone_with_import_records(arena, import_records)),
+            media: self.media.clone_with_import_records(arena, import_records),
         }
     }
 
@@ -241,7 +241,7 @@ impl ImportRule {
     
     pub fn conditions_with_import_records(
         &self,
-        allocator: &Arena,
+        arena: &Arena,
         import_records: &mut Vec<ImportRecord>,
     ) -> ImportConditions {
         ImportConditions {
@@ -249,13 +249,13 @@ impl ImportRule {
                 v: layer
                     .v
                     .as_ref()
-                    .map(|l| l.clone_with_import_records(allocator, import_records)),
+                    .map(|l| l.clone_with_import_records(arena, import_records)),
             }),
             supports: self
                 .supports
                 .as_ref()
-                .map(|supp| supp.clone_with_import_records(allocator, import_records)),
-            media: self.media.clone_with_import_records(allocator, import_records),
+                .map(|supp| supp.clone_with_import_records(arena, import_records)),
+            media: self.media.clone_with_import_records(arena, import_records),
         }
     }
 
@@ -281,7 +281,7 @@ impl ImportRule {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
             Some(css::dependencies::ImportDependency::new(
-                dest.allocator,
+                dest.arena,
                 self,
                 dest.filename(),
                 dest.local_names,

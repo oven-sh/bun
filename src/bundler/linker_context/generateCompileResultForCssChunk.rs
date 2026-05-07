@@ -122,9 +122,9 @@ fn generate_compile_result_for_css_chunk_impl(
         // SAFETY: temporary_arena is initialized in Worker::create before any task runs.
         unsafe { arena.assume_init_mut() }.reset();
     });
-    // SAFETY: worker.allocator is set to &worker.heap in Worker::create.
-    let allocator = unsafe { &*worker.allocator };
-    // TODO(port): worker.allocator threading — css crate is an AST crate and may want &'bump Bump
+    // SAFETY: worker.arena is set to &worker.heap in Worker::create.
+    let arena = unsafe { &*worker.arena };
+    // TODO(port): worker.arena threading — css crate is an AST crate and may want &'bump Bump
     let mut allocating_writer: Vec<u8> = Vec::new();
 
     let Content::Css(css_content) = &chunk.content else {
@@ -167,7 +167,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 ..Default::default()
             };
             match css.to_css_with_writer(
-                allocator,
+                arena,
                 &mut allocating_writer,
                 printer_options,
                 Some(ImportInfo {
@@ -210,7 +210,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 ..Default::default()
             };
             match css.to_css_with_writer(
-                allocator,
+                arena,
                 &mut allocating_writer,
                 printer_options,
                 Some(ImportInfo {
@@ -247,7 +247,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 ..Default::default()
             };
             match css.to_css_with_writer(
-                allocator,
+                arena,
                 &mut allocating_writer,
                 printer_options,
                 Some(ImportInfo {

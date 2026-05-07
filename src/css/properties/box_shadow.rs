@@ -147,12 +147,12 @@ impl BoxShadow {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &Arena) -> Self {
+    pub fn deep_clone(&self, arena: &Arena) -> Self {
         // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
         // explicitly here — keep in sync with the BoxShadow field list. `Length`
         // has no `DeepClone` trait impl yet but is `Clone` (Box<Calc> deep-clones).
         BoxShadow {
-            color: self.color.deep_clone(allocator),
+            color: self.color.deep_clone(arena),
             x_offset: self.x_offset.clone(),
             y_offset: self.y_offset.clone(),
             blur: self.blur.clone(),
@@ -194,7 +194,7 @@ impl BoxShadowHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        let allocator = dest.bump();
+        let arena = dest.bump();
         match property {
             Property::BoxShadow(b) => {
                 let box_shadows: &SmallList<BoxShadow, 1> = &b.0;
@@ -217,24 +217,24 @@ impl BoxShadowHandler {
                 if let Some(bxs) = &mut self.box_shadows {
                     if needs_flush {
                         self.flush(dest, context);
-                        self.box_shadows = Some((box_shadows.deep_clone(allocator), prefix));
+                        self.box_shadows = Some((box_shadows.deep_clone(arena), prefix));
                     } else {
-                        bxs.0 = box_shadows.deep_clone(allocator);
+                        bxs.0 = box_shadows.deep_clone(arena);
                         bxs.1.insert(prefix);
                     }
                 } else {
-                    self.box_shadows = Some((box_shadows.deep_clone(allocator), prefix));
+                    self.box_shadows = Some((box_shadows.deep_clone(arena), prefix));
                 }
             }
             Property::Unparsed(unp) => {
                 if unp.property_id.tag() == css::css_properties::PropertyIdTag::BoxShadow {
                     self.flush(dest, context);
 
-                    let mut unparsed = unp.deep_clone(allocator);
+                    let mut unparsed = unp.deep_clone(arena);
                     // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
                     // un-gates (blocked on `SupportsCondition::eql` in context.rs).
                     
-                    context.add_unparsed_fallbacks(allocator, &mut unparsed);
+                    context.add_unparsed_fallbacks(arena, &mut unparsed);
                     let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));
                     self.flushed = true;
@@ -265,7 +265,7 @@ impl BoxShadowHandler {
         if self.box_shadows.is_none() {
             return;
         }
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         let Some((box_shadows, prefixes2)) = self.box_shadows.take() else {
             self.flushed = true;
@@ -291,7 +291,7 @@ impl BoxShadowHandler {
                             color: input
                                 .color
                                 .$conv()
-                                .unwrap_or_else(|| input.color.deep_clone(allocator)),
+                                .unwrap_or_else(|| input.color.deep_clone(arena)),
                             x_offset: input.x_offset.clone(),
                             y_offset: input.y_offset.clone(),
                             blur: input.blur.clone(),

@@ -21,7 +21,7 @@ use bun_core::Error;
 pub struct Node<T> {
     // INTRUSIVE: pool.zig:7 — next link in singly-linked free list
     pub next: *mut Node<T>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here so `destroyNode`
+    // PORT NOTE: Zig stored `std.mem.Allocator param` here so `destroyNode`
     // could free via the originating allocator. In Rust the global mimalloc
     // allocator owns every `Box<Node<T>>`, so the field is dropped and
     // `destroy_node` uses `Box::from_raw`.

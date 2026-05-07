@@ -98,7 +98,7 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
-    // PORT NOTE: Zig signature took `allocator: std.mem.Allocator`; the Rust AST
+    // PORT NOTE: Zig signature took `std.mem.Allocator param`; the Rust AST
     // accessors (`EString::slice` / `Expr::as_string_cloned`) need a `&Bump` for
     // UTF-16→UTF-8 conversion / rope flattening, so the param surfaces as `bump`.
     pub fn from_expr(

@@ -264,11 +264,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name).expect("unreachable");
-            // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator.
+            // PORT NOTE: reshaped for borrowck — build binding before borrowing arena.
             // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p
-                .allocator
+                .arena
                 .alloc_slice_fill_iter([Arg { binding, ..Default::default() }]);
 
             let _ = p
@@ -612,7 +612,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
         // normally — no `mem::forget` / `from_raw_parts` lifetime laundering (forbidden per
         // PORTING.md §Forbidden patterns; would leak heap when origin is `Owned`).
-        let ts_decorators_slice: &'a [Expr] = p.allocator.alloc_slice_copy(ts_decorators.slice());
+        let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
 
         let class = p.parse_class(
             class_keyword,
@@ -686,7 +686,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut is_single_line = !p.lexer.has_newline_before;
         // PERF(port): was arena-backed ArrayList — profile in Phase B
         let mut items: bun_alloc::ArenaVec<'_, Expr> =
-            bun_alloc::ArenaVec::new_in(p.allocator);
+            bun_alloc::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = logger::Loc::default();
 
@@ -763,7 +763,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self_errors.merge_into(errors.unwrap());
         }
         // PORT NOTE: BumpVec → Vec. `into_bump_slice()` leaks into the arena (freed at
-        // arena reset, matching Zig's ListManaged on `p.allocator`).
+        // arena reset, matching Zig's ListManaged on `p.arena`).
         // SAFETY: arena slice; no growth methods will be called on the resulting list.
         let items_list = unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
         Ok(p.new_expr(
@@ -784,7 +784,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut is_single_line = !p.lexer.has_newline_before;
         // PERF(port): was arena-backed ArrayList — profile in Phase B
         let mut properties: bun_alloc::ArenaVec<'_, G::Property> =
-            bun_alloc::ArenaVec::new_in(p.allocator);
+            bun_alloc::ArenaVec::new_in(p.arena);
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread: logger::Loc = logger::Loc::default();
 

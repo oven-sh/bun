@@ -40,7 +40,7 @@ pub struct Scope {
     pub is_after_const_local_prefix: bool,
 
     // This will be non-null if this is a TypeScript "namespace" or "enum"
-    // ARENA: allocated from p.allocator, never freed per-field.
+    // ARENA: allocated from p.arena, never freed per-field.
     pub ts_namespace: Option<NonNull<TSNamespaceScope>>,
 }
 

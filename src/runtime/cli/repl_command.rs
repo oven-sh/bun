@@ -98,7 +98,7 @@ impl ReplCommand {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
         }
-        // TODO(port): vm.allocator = vm.arena.allocator(); — allocator threading dropped in Rust
+        // TODO(port): vm.allocator = vm.arena.arena(); — allocator threading dropped in Rust
         // (vm.arena assignment moved below ReplRunner construction to avoid move-after-borrow)
 
         // Configure bundler options

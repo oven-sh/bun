@@ -52,7 +52,7 @@ pub struct NetworkTask {
     // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership in Phase B.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
-    // Zig: `allocator: std.mem.Allocator` — dropped (global mimalloc); see §Allocators.
+    // Zig: `std.mem.Allocator param` — dropped (global mimalloc); see §Allocators.
     pub request_buffer: MutableString,
     pub response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.

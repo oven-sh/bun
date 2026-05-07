@@ -164,7 +164,7 @@ pub enum StyleQuery {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
+        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
         // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<StyleQuery>,
     },
@@ -191,7 +191,7 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // PORT NOTE: Zig threaded `(input.allocator(), null)` here; Phase B
+        // PORT NOTE: Zig threaded `(input.arena(), null)` here; Phase B
         // re-threads `&Bump` once `ParserOptions` carries the arena.
         let opts = css::ParserOptions::default(None);
         let feature = StyleQuery::Feature(Property::parse(property_id, input, &opts)?);
@@ -243,7 +243,7 @@ pub enum ContainerCondition {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.allocator() (parser arena);
+        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
         // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
         conditions: Vec<ContainerCondition>,
     },

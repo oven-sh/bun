@@ -129,7 +129,7 @@ struct Wildcard {
 /// "\"
 ///     Used to escape any of the special characters above.
 // TODO: consider just taking arena and resetting to initial state,
-// all usages of this function pass in Arena.allocator()
+// all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     let mut state = State::default();
 

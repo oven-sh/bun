@@ -19,7 +19,7 @@ pub struct SupportsEntry {
     pub important_declarations: Vec<css::Property>,
 }
 
-// PORT NOTE: `deinit(this, allocator)` deleted — all fields own their storage and drop
+// PORT NOTE: `deinit(this, arena)` deleted — all fields own their storage and drop
 // automatically. `css.deepDeinit` over the Vecs is handled by `Vec<Property>`'s Drop.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -31,9 +31,9 @@ pub enum DeclarationContext {
 }
 
 pub struct PropertyHandlerContext<'a> {
-    // PORT NOTE: `allocator` is the parser arena that owns the AST being
+    // PORT NOTE: `arena` is the parser arena that owns the AST being
     // minified; bound to `'a` alongside the other borrowed inputs.
-    pub allocator: &'a Bump,
+    pub arena: &'a Bump,
     pub targets: css::targets::Targets,
     pub is_important: bool,
     pub supports: Vec<SupportsEntry>,
@@ -46,12 +46,12 @@ pub struct PropertyHandlerContext<'a> {
 
 impl<'a> PropertyHandlerContext<'a> {
     pub fn new(
-        allocator: &'a Bump,
+        arena: &'a Bump,
         targets: css::targets::Targets,
         unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
     ) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
-            allocator,
+            arena,
             targets,
             is_important: false,
             supports: Vec::new(),
@@ -65,7 +65,7 @@ impl<'a> PropertyHandlerContext<'a> {
 
     pub fn child(&self, context: DeclarationContext) -> PropertyHandlerContext<'a> {
         PropertyHandlerContext {
-            allocator: self.allocator,
+            arena: self.arena,
             targets: self.targets,
             is_important: false,
             supports: Vec::new(),
@@ -115,7 +115,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// transmute (PORTING.md §Forbidden).
     #[inline]
     fn bump_static(&self) -> &'static Bump {
-        unsafe { core::mem::transmute::<&Bump, &'static Bump>(self.allocator) }
+        unsafe { core::mem::transmute::<&Bump, &'static Bump>(self.arena) }
     }
 
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
@@ -139,7 +139,7 @@ impl<'a> PropertyHandlerContext<'a> {
         for entry in &self.supports {
             // PERF(port): was appendAssumeCapacity
             dest.push(css::CssRule::Supports(css::SupportsRule {
-                condition: entry.condition.deep_clone(self.allocator),
+                condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
                     v: {
                         let mut v: Vec<css::CssRule<T>> = Vec::with_capacity(1);
@@ -348,5 +348,5 @@ impl<'a> PropertyHandlerContext<'a> {
 //   source:     src/css/context.zig (307 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      allocator field dropped (Vec-backed); @field comptime params reshaped to runtime args; unused_symbols type from LIFETIMES.tsv may need reconciling with bun_collections; MediaFeature/Value variant shapes guessed
+//   notes:      arena field dropped (Vec-backed); @field comptime params reshaped to runtime args; unused_symbols type from LIFETIMES.tsv may need reconciling with bun_collections; MediaFeature/Value variant shapes guessed
 // ──────────────────────────────────────────────────────────────────────────

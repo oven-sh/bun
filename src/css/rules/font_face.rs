@@ -5,7 +5,7 @@ use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
 use crate::{PrintErr, Printer};
 
-// PERF(port): Zig used `std.ArrayListUnmanaged` fed by the CSS arena allocator.
+// PERF(port): Zig used `std.ArrayListUnmanaged` fed by the CSS arena arena.
 // Phase B should swap to `bun_alloc::ArenaVec<'bump, T>` and thread `'bump`.
 type ArrayList<T> = Vec<T>;
 
@@ -81,30 +81,30 @@ impl FontFaceProperty {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // PORT NOTE: Zig `css.implementDeepClone` field-walk, hand-expanded.
         match self {
             FontFaceProperty::Source(v) => {
-                FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(allocator)).collect())
+                FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
             }
-            FontFaceProperty::FontFamily(v) => FontFaceProperty::FontFamily(v.deep_clone(allocator)),
-            FontFaceProperty::FontStyle(v) => FontFaceProperty::FontStyle(v.deep_clone(allocator)),
-            FontFaceProperty::FontWeight(v) => FontFaceProperty::FontWeight(v.deep_clone(allocator)),
-            FontFaceProperty::FontStretch(v) => FontFaceProperty::FontStretch(v.deep_clone(allocator)),
+            FontFaceProperty::FontFamily(v) => FontFaceProperty::FontFamily(v.deep_clone(arena)),
+            FontFaceProperty::FontStyle(v) => FontFaceProperty::FontStyle(v.deep_clone(arena)),
+            FontFaceProperty::FontWeight(v) => FontFaceProperty::FontWeight(v.deep_clone(arena)),
+            FontFaceProperty::FontStretch(v) => FontFaceProperty::FontStretch(v.deep_clone(arena)),
             FontFaceProperty::UnicodeRange(v) => {
                 FontFaceProperty::UnicodeRange(v.iter().map(|r| UnicodeRange { start: r.start, end: r.end }).collect())
             }
-            FontFaceProperty::Custom(v) => FontFaceProperty::Custom(v.deep_clone(allocator)),
+            FontFaceProperty::Custom(v) => FontFaceProperty::Custom(v.deep_clone(arena)),
         }
     }
 }
 
 impl FontStyle {
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         match self {
             FontStyle::Normal => FontStyle::Normal,
             FontStyle::Italic => FontStyle::Italic,
-            FontStyle::Oblique(a) => FontStyle::Oblique(a.deep_clone(allocator)),
+            FontStyle::Oblique(a) => FontStyle::Oblique(a.deep_clone(arena)),
         }
     }
 }
@@ -484,7 +484,7 @@ impl FontFormat {
         }
     }
 
-    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` variant-walk. All payloads are
         // `Copy` / arena-slice idents → identity copy.
         match self {
@@ -554,11 +554,11 @@ impl Source {
         }
     }
 
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
-            Source::Url(u) => Source::Url(u.deep_clone(allocator)),
-            Source::Local(l) => Source::Local(l.deep_clone(allocator)),
+            Source::Url(u) => Source::Url(u.deep_clone(arena)),
+            Source::Local(l) => Source::Local(l.deep_clone(arena)),
         }
     }
 }
@@ -725,11 +725,11 @@ impl UrlSource {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk, hand-expanded.
         Self {
-            url: self.url.deep_clone(allocator),
-            format: self.format.as_ref().map(|f| f.deep_clone(allocator)),
+            url: self.url.deep_clone(arena),
+            format: self.format.as_ref().map(|f| f.deep_clone(arena)),
             tech: self.tech.clone(),
         }
     }

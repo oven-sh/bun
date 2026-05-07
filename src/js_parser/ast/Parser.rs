@@ -481,10 +481,10 @@ impl<'a> Parser<'a> {
             // PORT NOTE: Zig's `string` aliased the long-lived option storage
             // directly. `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
-            let allocator = p.allocator;
-            let import_source: &'a [u8] = allocator.alloc_slice_copy(p.options.jsx.import_source());
+            let arena = p.arena;
+            let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
             let classic_import_source: &'a [u8] =
-                allocator.alloc_slice_copy(&p.options.jsx.classic_import_source);
+                arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(
                 bun_options_types::ImportKind::Require,
                 logger::Loc { start: 0 },
@@ -551,11 +551,11 @@ impl<'a> Parser<'a> {
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
         let mut symbols_ = symbols;
-        // PORT NOTE: Zig `moveToListManaged(allocator)` rebinds the same
-        // backing storage to an `ArrayList(allocator)`. The Rust Vec
+        // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
+        // backing storage to an `ArrayList(arena)`. The Rust Vec
         // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
         // copy elements into the arena. Phase B may grow a zero-copy adapter.
-        p.symbols = bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.allocator);
+        p.symbols = bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
 
         p.prepare_for_visit_pass()?;
 
@@ -563,7 +563,7 @@ impl<'a> Parser<'a> {
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
-            let args_slice: &mut [Expr] = p.allocator.alloc_slice_fill_with(1, |_| expr);
+            let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
             // SAFETY: arena slice outlives the returned `Ast`; Vec::Borrowed → no-op Drop.
             let args = unsafe { Vec::from_bump_slice(args_slice) };
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
@@ -574,8 +574,8 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
 
-        let lazy_data = js_ast::StoreRef::from_bump(p.allocator.alloc(final_expr.data));
-        let stmts: &mut [Stmt] = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
+        let lazy_data = js_ast::StoreRef::from_bump(p.arena.alloc(final_expr.data));
+        let stmts: &mut [Stmt] = p.arena.alloc_slice_fill_with(1, |_| Stmt {
             data: js_ast::StmtData::SLazyExport(lazy_data),
             loc: expr.loc,
         });
@@ -584,7 +584,7 @@ impl<'a> Parser<'a> {
             symbol_uses: core::mem::take(&mut p.symbol_uses),
             ..Default::default()
         };
-        let mut parts = BumpVec::with_capacity_in(2, p.allocator);
+        let mut parts = BumpVec::with_capacity_in(2, p.arena);
         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
         parts.push(ns_export_part);
         parts.push(part);
@@ -688,7 +688,7 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
         p.prepare_for_visit_pass()?;
 
-        let mut parts = BumpVec::new_in(p.allocator);
+        let mut parts = BumpVec::new_in(p.arena);
 
         p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
         visit_tracer.end();
@@ -740,12 +740,12 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // PERF(port): was stack-fallback allocator (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
-        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.allocator);
-        // PERF(port): was stack-fallback allocator (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
-        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.allocator);
+        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
+        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
+        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
+        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
-        // (Zig asserted the stack-fallback allocator owns the buffer; not applicable here.)
+        // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -840,9 +840,9 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
-        let mut before = BumpVec::<js_ast::Part>::new_in(p.allocator);
-        let mut after = BumpVec::<js_ast::Part>::new_in(p.allocator);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.allocator);
+        let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
         // (defer after.deinit()/before.deinit() — Zig only frees the backing buffer; element
         // ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
@@ -854,7 +854,7 @@ impl<'a> Parser<'a> {
 
         // --inspect-brk
         if p.options.features.set_breakpoint_on_first_line {
-            let debugger_stmts = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
+            let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
                 data: js_ast::StmtData::SDebugger(Default::default()),
                 loc: logger::Loc::EMPTY,
             });
@@ -929,9 +929,9 @@ impl<'a> Parser<'a> {
             // entry per top-level `enum`). `scope_order_to_visit` is `&'a mut
             // [_]`; save/restore moves the unique borrow out into a local and
             // back (Zig held a plain `[]ScopeOrder` slice value).
-            let allocator = p.allocator;
+            let arena = p.arena;
             let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> =
-                BumpVec::new_in(allocator);
+                BumpVec::new_in(arena);
             let mut preprocessed_enum_i: usize = 0;
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
@@ -957,8 +957,8 @@ impl<'a> Parser<'a> {
                             &mut *p.scopes_in_order_for_enum.values()[idx].as_ptr()
                         };
 
-                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(allocator);
-                        let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut enum_parts, sliced)?;
                         preprocessed_enums.push(enum_parts);
 
@@ -987,11 +987,11 @@ impl<'a> Parser<'a> {
                                     })?,
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
-                                let sliced = allocator.alloc_slice_copy(&[new_stmt]);
+                                let sliced = arena.alloc_slice_copy(&[new_stmt]);
                                 p.append_part(&mut parts, sliced)?;
                             }
                         } else {
-                            let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
                             p.append_part(&mut parts, sliced)?;
                         }
                     }
@@ -1015,7 +1015,7 @@ impl<'a> Parser<'a> {
                             &mut parts
                         };
 
-                        let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(parts_list, sliced)?;
                     }
 
@@ -1025,7 +1025,7 @@ impl<'a> Parser<'a> {
                         // https://github.com/kysely-org/kysely/issues/412
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
-                        let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 
                         if should_move {
@@ -1038,7 +1038,7 @@ impl<'a> Parser<'a> {
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
-                        let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 
                         if should_move {
@@ -1050,7 +1050,7 @@ impl<'a> Parser<'a> {
                         // pre-visited parts instead of `appendSlice`.
                         let enum_parts = core::mem::replace(
                             &mut preprocessed_enums[preprocessed_enum_i],
-                            BumpVec::new_in(allocator),
+                            BumpVec::new_in(arena),
                         );
                         for part in enum_parts {
                             parts.push(part);
@@ -1072,7 +1072,7 @@ impl<'a> Parser<'a> {
                         p.scope_order_to_visit = &mut taken[enum_scope_count..];
                     }
                     _ => {
-                        let sliced = allocator.alloc_slice_copy(&[*stmt]);
+                        let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
                     }
                 }
@@ -1107,7 +1107,7 @@ impl<'a> Parser<'a> {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
                     crate::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-                let decls = p.allocator.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                let decls = p.arena.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
                 if uses_dirname {
                     decls[0] = G::Decl {
                         binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
@@ -1130,7 +1130,7 @@ impl<'a> Parser<'a> {
                     declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
                 }
 
-                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
+                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
                     p.s(
                         S::Local {
                             kind: js_ast::LocalKind::KVar,
@@ -1163,7 +1163,7 @@ impl<'a> Parser<'a> {
 
         if p.should_unwrap_commonjs_to_esm() {
             if !p.imports_to_convert_from_require.as_slice().is_empty() {
-                let all_stmts = p.allocator.alloc_slice_fill_with::<Stmt, _>(
+                let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
                     p.imports_to_convert_from_require.len(),
                     |_| Stmt { loc: logger::Loc::EMPTY, data: js_ast::StmtData::SEmpty(S::Empty {}) },
                 );
@@ -1443,7 +1443,7 @@ impl<'a> Parser<'a> {
                                         part.stmts = {
                                             let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
                                                 part.stmts.len() + 1,
-                                                p.allocator,
+                                                p.arena,
                                             );
                                             // PERF(port): was appendSliceAssumeCapacity
                                             new_stmts.extend_from_slice(&part_stmts[0..j]);
@@ -1553,7 +1553,7 @@ impl<'a> Parser<'a> {
 
                     if let Some(star) = export_star_redirect {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
-                            // TODO(port): Zig set `.allocator = p.allocator`; arena ownership tracked elsewhere in Rust
+                            // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
                             // SAFETY: see note on the matching arm above.
                             import_records: unsafe {
                                 Vec::from_bump_slice(p.import_records.items_mut())
@@ -1610,7 +1610,7 @@ impl<'a> Parser<'a> {
                 if let Some(record) = import_record {
                     // find the usage of the export symbol
 
-                    let mut notes = BumpVec::<logger::Data>::new_in(p.allocator);
+                    let mut notes = BumpVec::<logger::Data>::new_in(p.arena);
 
                     notes.push(logger::Data {
                         text: {
@@ -1751,7 +1751,7 @@ impl<'a> Parser<'a> {
             let count = (uses_dirname as usize) + (uses_filename as usize);
             let mut declared_symbols =
                 crate::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let decls = p.allocator.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+            let decls = p.arena.alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
             if uses_dirname {
                 // var __dirname = import.meta
                 let import_meta = p.new_expr(E::ImportMeta {}, logger::Loc::EMPTY);
@@ -1787,7 +1787,7 @@ impl<'a> Parser<'a> {
                 declared_symbols.append_assume_capacity(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
             }
 
-            let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
+            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
                 p.s(
                     S::Local {
                         kind: js_ast::LocalKind::KVar,
@@ -1874,7 +1874,7 @@ impl<'a> Parser<'a> {
 
                 // Create object binding pattern for destructuring
                 let mut properties =
-                    BumpVec::<B::Property>::with_capacity_in(items_count, p.allocator);
+                    BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
                 for (symbol_name, get_ref) in Jest::FIELDS {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
@@ -1911,7 +1911,7 @@ impl<'a> Parser<'a> {
                     },
                     logger::Loc::EMPTY,
                 );
-                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| local_stmt);
+                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
 
                 before.push(js_ast::Part {
                     stmts: part_stmts,
@@ -1929,7 +1929,7 @@ impl<'a> Parser<'a> {
 
                 // For ESM modules, use import statement
                 let mut clauses =
-                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.allocator);
+                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.arena);
                 for (symbol_name, get_ref) in Jest::FIELDS {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
@@ -1963,7 +1963,7 @@ impl<'a> Parser<'a> {
                     logger::Loc::EMPTY,
                 );
 
-                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| import_stmt);
+                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| import_stmt);
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
@@ -2026,9 +2026,9 @@ impl<'a> Parser<'a> {
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
             // semantically a no-op vs. the Zig.
             let import_source: &'a [u8] =
-                p.allocator.alloc_slice_copy(p.options.jsx.import_source());
+                p.arena.alloc_slice_copy(p.options.jsx.import_source());
             let package_name: &'a [u8] =
-                p.allocator.alloc_slice_copy(&p.options.jsx.package_name);
+                p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];

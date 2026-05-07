@@ -69,7 +69,7 @@ impl BorderRadius {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
             Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
         } else {
-            // PORT NOTE: Zig `widths.deepClone(allocator)` — `LengthPercentage` is
+            // PORT NOTE: Zig `widths.deepClone(arena)` — `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
             Rect {
                 top: widths.top.clone(),
@@ -223,7 +223,7 @@ macro_rules! logical_property_helper {
             $self.flush($d, $ctx);
         }
 
-        // PORT NOTE: Zig stored `property.deepClone(allocator)`. `Property` itself
+        // PORT NOTE: Zig stored `property.deepClone(arena)`. `Property` itself
         // has no blanket `Clone`; callers pass an already-deep_clone'd `Property`.
         $self.$prop = Some($val);
         $self.category = PropertyCategory::Logical;

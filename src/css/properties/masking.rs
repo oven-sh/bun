@@ -135,7 +135,7 @@ pub struct Polygon {
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
     // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
     // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
-    // plain Vec<Point> until Phase B verifies the allocator.
+    // plain Vec<Point> until Phase B verifies the arena.
     pub points: Vec<Point>,
 }
 

@@ -1092,7 +1092,7 @@ pub struct Options<'a> {
     pub runtime_imports: runtime::Imports,
     pub module_hash: u32,
     pub source_path: Option<FsPath<'a>>,
-    // allocator: dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
+    // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,

@@ -122,7 +122,7 @@ pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; non-AST crate →
+    // PORT NOTE: Zig stored `std.mem.Allocator param`; non-AST crate →
     // global mimalloc, field dropped (PORTING.md §allocators).
 }
 

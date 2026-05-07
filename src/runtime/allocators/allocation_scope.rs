@@ -39,10 +39,10 @@ impl GenericAllocator for StdAllocator {
     fn allocator(&self) -> StdAllocator { *self }
 }
 
-/// Extension shim: Zig `arena.allocator()` returned a `std.mem.Allocator` handle. Per
+/// Extension shim: Zig `arena.arena()` returned a `std.mem.Allocator` handle. Per
 /// PORTING.md §Allocators, `bun_alloc::Arena`/`MimallocArena` is now `bumpalo::Bump` and
 /// callers thread `&Bump` directly — the bump *is* the allocator handle. This lets ported
-/// `heap.allocator()` call sites resolve without a rewrite. Not `GenericAllocator` because
+/// `heap.arena()` call sites resolve without a rewrite. Not `GenericAllocator` because
 /// `Bump: !Clone`.
 pub trait BumpAllocatorExt {
     fn allocator(&self) -> &Self;
@@ -675,8 +675,8 @@ unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, re
 }
 
 #[inline]
-pub fn is_instance(allocator: StdAllocator) -> bool {
-    ENABLED && core::ptr::eq(allocator.vtable, &raw const VTABLE)
+pub fn is_instance(alloc: StdAllocator) -> bool {
+    ENABLED && core::ptr::eq(alloc.vtable, &raw const VTABLE)
 }
 
 #[inline]

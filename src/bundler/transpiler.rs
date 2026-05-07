@@ -122,10 +122,10 @@ pub struct Transpiler<'a> {
     // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
     // TODO(port): lifetime — restructure once linker/resolver own their logs.
     pub log: *mut logger::Log,
-    // TODO(port): allocator — bundler is an AST crate per PORTING.md so we
+    // TODO(port): arena — bundler is an AST crate per PORTING.md so we
     // thread an arena, but callers usually pass `bun.default_allocator`.
     // Phase B: confirm whether this should be removed (global mimalloc) or kept.
-    pub allocator: &'a Arena,
+    pub arena: &'a Arena,
     pub result: options::TransformResult,
     pub resolver: Resolver<'a>,
     // TODO(port): lifetime — Zig used the global `Fs.FileSystem.instance`
@@ -171,11 +171,11 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:102 setAllocator`.
     // TODO: remove this method. it does not make sense
-    pub fn set_allocator(&mut self, allocator: &'a Arena) {
-        self.allocator = allocator;
-        // PORT NOTE: `crate::Linker` is the unit stub — no `.allocator` field.
-        // `Resolver` dropped its `allocator` field (global mimalloc; see
-        // resolver/lib.rs `// allocator: dropped`), so nothing left to thread.
+    pub fn set_arena(&mut self, arena: &'a Arena) {
+        self.arena = arena;
+        // PORT NOTE: `crate::Linker` is the unit stub — no `.arena` field.
+        // `Resolver` dropped its `arena` field (global mimalloc; see
+        // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
 
     /// Shared borrow of the process-lifetime `Fs::FileSystem` singleton.
@@ -295,7 +295,7 @@ impl<'a> Transpiler<'a> {
                     && !(entry_point.starts_with(b"./")
                         || entry_point.starts_with(b".\\"))
                 {
-                    // Spec: `strings.append(allocator, "./", entry_point)`.
+                    // Spec: `strings.append(arena, "./", entry_point)`.
                     let mut prefixed = Vec::with_capacity(2 + entry_point.len());
                     prefixed.extend_from_slice(b"./");
                     prefixed.extend_from_slice(entry_point);
@@ -418,7 +418,7 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.allocator, Some(env_loader))?;
+        self.options.load_defines(self.arena, Some(env_loader))?;
 
         let mut is_development = false;
         if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
@@ -597,7 +597,7 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:233 configureLinkerWithAutoJSX`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // PORT NOTE: `Linker::init` dropped its `allocator` arg (linker.rs:172
+        // PORT NOTE: `Linker::init` dropped its `arena` arg (linker.rs:172
         // — global mimalloc). Zig stored borrowed `*T` into the linker; the
         // un-gated `crate::linker::Linker` mirrors that with raw pointers so
         // `&mut self.options` etc. coerce directly. Self-reference is
@@ -878,7 +878,7 @@ impl ParseResult {
 
 /// Port of `transpiler.zig:Transpiler.ParseOptions`.
 pub struct ParseOptions<'a> {
-    pub allocator: &'a Arena,
+    pub arena: &'a Arena,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
     pub file_hash: Option<u32>,
@@ -1163,7 +1163,7 @@ impl<'a> Transpiler<'a> {
     /// match the un-gated struct field types — Zig aliased the same `*Log`
     /// into `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
-        allocator: &'a Arena,
+        arena: &'a Arena,
         log: *mut logger::Log,
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader<'static>>,
@@ -1223,9 +1223,9 @@ impl<'a> Transpiler<'a> {
             (*env_loader).quiet = !(*log).level.at_least(logger::Level::Info);
         }
 
-        // var pool = try allocator.create(ThreadPool);
+        // var pool = try arena.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
-        //     .allocator = allocator,
+        //     .arena = arena,
         // });
 
         // `log` stays raw — `from_api` stores it in `BundleOptions.log: *mut`
@@ -1250,7 +1250,7 @@ impl<'a> Transpiler<'a> {
         let resolve_results = Box::new(ResolveResults::default());
         Ok(Transpiler {
             fs,
-            allocator,
+            arena,
             timer: SystemTimer::start().expect("Timer fail"),
             resolver: Resolver::init1(log, fs, resolver_opts),
             log,
@@ -1319,7 +1319,7 @@ impl<'a> Transpiler<'a> {
         // trait with `fn source() -> Option<&Source>`.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult> {
-        let allocator = this_parse.allocator;
+        let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
         let file_hash = this_parse.file_hash;
@@ -1410,8 +1410,8 @@ impl<'a> Transpiler<'a> {
             }
 
             // PERF(port): Zig forwarded `if (use_shared_buffer)
-            // bun.default_allocator else this_parse.allocator` — the Rust
-            // `read_file_with_allocator` drops the allocator (global mimalloc
+            // bun.default_allocator else this_parse.arena` — the Rust
+            // `read_file_with_allocator` drops the arena (global mimalloc
             // for the non-shared path; see resolver/lib.rs PORT NOTE).
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),
@@ -1662,7 +1662,7 @@ impl<'a> Transpiler<'a> {
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
                 let parsed = match crate::cache::JavaScript::init()
-                    .parse(allocator, opts, define, log, source)
+                    .parse(arena, opts, define, log, source)
                 {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
@@ -1793,31 +1793,31 @@ impl<'a> Transpiler<'a> {
                     options::Loader::Jsonc => {
                         // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                         // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                        match bun_interchange::json::parse_ts_config::<false>(source, log, allocator) {
+                        match bun_interchange::json::parse_ts_config::<false>(source, log, arena) {
                             Ok(e) => e,
                             Err(_) => return None,
                         }
                     }
                     options::Loader::Json => {
-                        match bun_interchange::json::parse::<false>(source, log, allocator) {
+                        match bun_interchange::json::parse::<false>(source, log, arena) {
                             Ok(e) => e,
                             Err(_) => return None,
                         }
                     }
                     options::Loader::Toml => {
-                        match bun_interchange::toml::TOML::parse(source, log, allocator, false) {
+                        match bun_interchange::toml::TOML::parse(source, log, arena, false) {
                             Ok(e) => e,
                             Err(_) => return None,
                         }
                     }
                     options::Loader::Yaml => {
-                        match bun_interchange::yaml::YAML::parse(source, log, allocator) {
+                        match bun_interchange::yaml::YAML::parse(source, log, arena) {
                             Ok(e) => e,
                             Err(_) => return None,
                         }
                     }
                     options::Loader::Json5 => {
-                        match bun_interchange::json5::JSON5Parser::parse(source, log, allocator) {
+                        match bun_interchange::json5::JSON5Parser::parse(source, log, arena) {
                             Ok(e) => e,
                             Err(_) => return None,
                         }
@@ -1829,19 +1829,19 @@ impl<'a> Transpiler<'a> {
 
                 let mut symbols: Vec<js_ast::Symbol> = Vec::new();
 
-                // PORT NOTE: reshaped — Zig `allocator.alloc(Part, 1)` returned
+                // PORT NOTE: reshaped — Zig `arena.alloc(Part, 1)` returned
                 // an arena slice, but `Ast::from_parts` takes `Box<[Part]>`
                 // (Vec owns its buffer). The single-part array is built on
                 // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
                 let parts: Box<[js_ast::Part]> = 'parts: {
                     if this_parse.keep_json_and_toml_as_one_statement {
                         let stmt = js_ast::Stmt::allocate(
-                            allocator,
+                            arena,
                             js_ast::S::SExpr { value: expr, ..Default::default() },
                             logger::Loc { start: 0 },
                         );
-                        // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
-                        let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
+                        // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
+                        let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
 
@@ -1849,7 +1849,7 @@ impl<'a> Transpiler<'a> {
                         let properties: &mut [js_ast::G::Property] = obj.properties.slice_mut();
                         if !properties.is_empty() {
                             let n = properties.len();
-                            // PORT NOTE: Zig `expandToCapacity()` / `allocator.alloc(Symbol, n)`
+                            // PORT NOTE: Zig `expandToCapacity()` / `arena.alloc(Symbol, n)`
                             // leave slots uninitialized, which is inert in Zig.
                             // The loop below writes sparsely at index `i` and
                             // `continue`s on `"default"` / duplicate keys, so
@@ -1866,7 +1866,7 @@ impl<'a> Transpiler<'a> {
                             // is arena-owned; `ClauseItem: Default` so
                             // `alloc_slice_fill_default` is fine.
                             let export_clauses =
-                                allocator.alloc_slice_fill_default::<js_ast::ClauseItem>(n);
+                                arena.alloc_slice_fill_default::<js_ast::ClauseItem>(n);
                             let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
                                 bun_collections::StringHashMap::default();
                             // duplicate_key_checker drops at end of scope (defer .deinit())
@@ -1881,7 +1881,7 @@ impl<'a> Transpiler<'a> {
                                 let key = prop.key.as_mut().unwrap();
                                 let key_loc = key.loc;
                                 let name: &[u8] =
-                                    key.data.e_string_mut().expect("infallible: variant checked").slice(allocator);
+                                    key.data.e_string_mut().expect("infallible: variant checked").slice(arena);
                                 // Do not make named exports for "default" exports
                                 if name == b"default" {
                                     continue;
@@ -1908,17 +1908,17 @@ impl<'a> Transpiler<'a> {
                                 symbols[count] = js_ast::Symbol {
                                     original_name: match bun_string::MutableString::ensure_valid_identifier(name) {
                                         // Spec transpiler.zig:1049 calls
-                                        // `MutableString.ensureValidIdentifier(name, allocator)`
+                                        // `MutableString.ensureValidIdentifier(name, arena)`
                                         // — the identifier lives in the
                                         // per-parse arena. Arena-copy the
                                         // owned `Box<[u8]>` so it is freed
                                         // with the arena instead of leaking
                                         // (PORTING.md §Forbidden patterns
                                         // bars `Box::into_raw` for `&'static`).
-                                        // SAFETY: ARENA — `allocator` outlives
+                                        // SAFETY: ARENA — `arena` outlives
                                         // the returned `ParseResult.ast`.
                                         Ok(boxed) => {
-                                            std::ptr::from_ref::<[u8]>(allocator.alloc_slice_copy(&boxed))
+                                            std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&boxed))
                                         }
                                         Err(_) => return None,
                                     },
@@ -1928,7 +1928,7 @@ impl<'a> Transpiler<'a> {
                                 let ref_ = js_ast::Ref::init(count as u32, 0, false);
                                 decls[count] = js_ast::G::Decl {
                                     binding: js_ast::Binding::alloc(
-                                        allocator,
+                                        arena,
                                         js_ast::ast::b::Identifier { r#ref: ref_ },
                                         key_loc,
                                     ),
@@ -1973,7 +1973,7 @@ impl<'a> Transpiler<'a> {
                                 logger::Loc { start: 0 },
                             );
 
-                            let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
+                            let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                             break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                         }
                     }
@@ -1991,7 +1991,7 @@ impl<'a> Transpiler<'a> {
                         );
 
                         let stmts =
-                            std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
+                            std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
                         break 'parts Box::new([js_ast::Part { stmts, ..Default::default() }]);
                     }
                 };
@@ -2027,8 +2027,8 @@ impl<'a> Transpiler<'a> {
                     },
                     logger::Loc { start: 0 },
                 );
-                // PERF(port): was `allocator.alloc(Stmt, 1) catch unreachable`.
-                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
+                // PERF(port): was `arena.alloc(Stmt, 1) catch unreachable`.
+                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 
@@ -2047,13 +2047,13 @@ impl<'a> Transpiler<'a> {
             options::Loader::Md => {
                 let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
                     // Spec transpiler.zig:1162 allocates the rendered HTML via
-                    // `allocator` (the per-parse arena), so it is freed with the
+                    // `arena` (the per-parse arena), so it is freed with the
                     // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
                     // PORTING.md §Forbidden patterns bars `Box::leak` here.
-                    // SAFETY: ARENA — `allocator` outlives the returned
+                    // SAFETY: ARENA — `arena` outlives the returned
                     // `ParseResult.ast` (Phase-A `Str` convention erases
                     // `'bump` to `'static` for `E::String.data`).
-                    Ok(h) => unsafe { &*std::ptr::from_ref::<[u8]>(allocator.alloc_slice_copy(&h)) },
+                    Ok(h) => unsafe { &*std::ptr::from_ref::<[u8]>(arena.alloc_slice_copy(&h)) },
                     Err(_) => {
                         let _ = log.add_error_fmt(
                             None,
@@ -2074,7 +2074,7 @@ impl<'a> Transpiler<'a> {
                     },
                     logger::Loc { start: 0 },
                 );
-                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(allocator.alloc_slice_copy(&[stmt]));
+                let stmts = std::ptr::from_mut::<[js_ast::Stmt]>(arena.alloc_slice_copy(&[stmt]));
                 let parts: Box<[js_ast::Part]> =
                     Box::new([js_ast::Part { stmts, ..Default::default() }]);
 
@@ -2241,9 +2241,9 @@ impl<'a> Transpiler<'a> {
                 writer,
                 // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
                 // the Rust port (for `binary_expression_stack` arena). Zig
-                // threaded `opts.allocator`; here `self.allocator` IS the
+                // threaded `opts.arena`; here `self.arena` IS the
                 // per-transpiler `bun_alloc::Arena = bumpalo::Bump`.
-                self.allocator,
+                self.arena,
                 &ast,
                 symbols,
                 source,
@@ -2287,7 +2287,7 @@ impl<'a> Transpiler<'a> {
                     writer,
                     // PORT NOTE: `print_ast` takes a `&bumpalo::Bump` (for
                     // `binary_expression_stack` arena) — same as the Cjs arm.
-                    self.allocator,
+                    self.arena,
                     &ast,
                     symbols,
                     source,
@@ -2378,7 +2378,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // PORT NOTE: thread the per-transpiler arena (mirrors the Cjs arm /
             // spec transpiler.zig:635 — same shape across all three arms).
-            self.allocator,
+            self.arena,
             &ast,
             symbols,
             source,
@@ -2723,7 +2723,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 let parse_opts = ParseOptions {
-                    allocator: self.allocator,
+                    arena: self.arena,
                     path: logger::fs::Path::init(file_path_text),
                     loader,
                     dirname_fd,
@@ -2841,14 +2841,14 @@ impl<'a> Transpiler<'a> {
                         opts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
 
-                    // SAFETY: `self.allocator` is the per-transpile arena;
+                    // SAFETY: `self.arena` is the per-transpile arena;
                     // the CSS AST it backs is dropped before this fn returns
                     // (only `result.code: Vec<u8>` escapes, which is
                     // global-heap). `'static` matches the crate-wide erasure
                     // on `StyleSheet`/`ParserOptions` (see css_parser.rs
                     // TODO(port): 'bump threading).
                     let alloc: &'static Arena =
-                        unsafe { &*std::ptr::from_ref::<Arena>(self.allocator) };
+                        unsafe { &*std::ptr::from_ref::<Arena>(self.arena) };
 
                     let (mut sheet, extra) = match bun_css::StyleSheet::<
                         bun_css::DefaultAtRule,

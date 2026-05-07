@@ -17,7 +17,7 @@ const PAGE_SIZE_MIN: usize = 4096;
 /// Mirrors Zig's `LinearFifoBufferType = union(enum)`.
 ///
 /// In the Zig original this is a *comptime* value that selects a struct layout
-/// (`buf: [N]T` vs `buf: []T`, `allocator: Allocator` vs `void`). Rust cannot
+/// (`buf: [N]T` vs `buf: []T`, `std.mem.Allocator` param vs `void`). Rust cannot
 /// branch struct layout on a const-generic enum payload, so dispatch is done
 /// via the [`LinearFifoBuffer`] trait below; this enum is kept for API parity.
 pub enum LinearFifoBufferType {
@@ -110,7 +110,7 @@ impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
 
 /// `buffer_type == .Dynamic` — heap-allocated, growable.
 ///
-/// Zig stores `allocator: Allocator` + `buf: []T`. Per §Allocators (non-AST
+/// Zig stores `std.mem.Allocator` param + `buf: []T`. Per §Allocators (non-AST
 /// crate) the allocator param is dropped and global mimalloc backs `Box`.
 pub struct DynamicBuffer<T>(Box<[MaybeUninit<T>]>);
 
@@ -193,7 +193,7 @@ impl<'a, T> LinearFifo<T, SliceBuffer<'a, T>> {
 }
 
 impl<T> LinearFifo<T, DynamicBuffer<T>> {
-    /// `init` for `.Dynamic`. Zig takes `allocator: Allocator`; dropped per
+    /// `init` for `.Dynamic`. Zig takes `std.mem.Allocator` param; dropped per
     /// §Allocators (non-AST crate).
     pub fn init() -> Self {
         Self {

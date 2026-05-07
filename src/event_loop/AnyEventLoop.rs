@@ -201,7 +201,7 @@ impl<'a> AnyEventLoop<'a> {
     }
 
     pub fn init() -> AnyEventLoop<'a> {
-        // PORT NOTE: Zig took `allocator: std.mem.Allocator`; dropped per §Allocators (non-AST crate).
+        // PORT NOTE: Zig took `std.mem.Allocator param`; dropped per §Allocators (non-AST crate).
         AnyEventLoop::Mini(MiniEventLoop::init())
     }
 

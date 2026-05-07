@@ -87,7 +87,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // const ConstPointer = AddConst(Pointer);             → `&T` / `&[T]`
 
 // #pointer: Pointer,     → the Box itself (Box<T> IS the pointer)
-// #allocator: Allocator, → deleted (global mimalloc; PORTING.md §Allocators)
+// #std.mem.Allocator param, → deleted (global mimalloc; PORTING.md §Allocators)
 
 // pub const Unmanaged = owned.Unmanaged(Pointer, Allocator);
 //   → managed/unmanaged split disappears (no allocator field to elide). `Box<T>` is already
@@ -255,11 +255,11 @@ pub type Unmanaged<T /*, Allocator */> = Box<T>;
 // const Managed = OwnedIn(Pointer, Allocator);  → Box<T>
 
 // ── toManaged ────────────────────────────────────────────────────────────────────────────────
-//   toManaged(self: *Self, allocator: Allocator) Managed
+//   toManaged(self: *Self, std.mem.Allocator param) Managed
 //     → boxed                                    (identity; allocator param deleted)
 
 // ── deinit ───────────────────────────────────────────────────────────────────────────────────
-//   deinit(self: *Self, allocator: Allocator) void
+//   deinit(self: *Self, std.mem.Allocator param) void
 //     → drop(boxed)                              (allocator param deleted)
 
 // ── get ──────────────────────────────────────────────────────────────────────────────────────

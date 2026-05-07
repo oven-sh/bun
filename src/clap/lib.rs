@@ -410,7 +410,7 @@ impl Default for Help {
 
 /// Options that can be set to customize the behavior of parsing.
 pub struct ParseOptions<'a> {
-    // PORT NOTE: `allocator: mem.Allocator` field deleted — non-AST crate uses
+    // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
     // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,

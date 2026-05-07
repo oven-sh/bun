@@ -50,7 +50,7 @@ type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
-    // allocator field dropped — global mimalloc (callers pass `bun.default_allocator`)
+    // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
     // PORT NOTE: Zig stored borrowed `*BundleOptions` / `*Log` / `*Resolver` /
     // `*ResolveQueue` / `*ResolveResults` / `*FileSystem`. The un-gated
     // `Transpiler` struct owns those values directly and also owns `linker:
@@ -160,7 +160,7 @@ fn without_leading_slash(s: &[u8]) -> &[u8] {
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
 /// `BSSStringList` singleton.
 ///
-/// Zig used `linker.allocator.dupe(u8, ...)` / `allocPrint` with
+/// Zig used `linker.arena.dupe(u8, ...)` / `allocPrint` with
 /// `bun.default_allocator` and never frees the result — the linker is a
 /// per-transpile singleton whose output paths flow into `ImportRecord.path:
 /// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
@@ -265,7 +265,7 @@ impl Linker {
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) -> Self {
-        // Zig wrote `relative_paths_list = ImportPathsList.init(allocator);`
+        // Zig wrote `relative_paths_list = ImportPathsList.init(arena);`
         // here; the singleton accessor handles that lazily on first use.
         let _ = relative_paths_list_ptr();
 

@@ -80,11 +80,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
-    // SAFETY: `worker.allocator` is set in `Worker::create` to point at the
+    // SAFETY: `worker.arena` is set in `Worker::create` to point at the
     // worker-owned bump arena; lives for the worker's lifetime.
-    let allocator: &Arena = unsafe { &*worker.allocator };
+    let arena: &Arena = unsafe { &*worker.arena };
 
-    let value = match task_callback(task, &mut log, allocator) {
+    let value = match task_callback(task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),

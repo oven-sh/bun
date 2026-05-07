@@ -114,7 +114,7 @@ pub mod bun_css {
             /// css_parser.zig:3238 `parseBundler` — without `bun_css` there is
             /// no parser; return an empty sheet.
             pub fn parse_bundler(
-                _allocator: &bun_alloc::Arena,
+                _arena: &bun_alloc::Arena,
                 _code: &[u8],
                 _options: ParserOptions,
                 _import_records: &mut Vec<ImportRecord>,
@@ -125,7 +125,7 @@ pub mod bun_css {
             /// css_parser.zig `StyleSheet.minify` — identity when CSS disabled.
             pub fn minify(
                 &mut self,
-                _allocator: &bun_alloc::Arena,
+                _arena: &bun_alloc::Arena,
                 _options: &MinifyOptions,
                 _extra: &StylesheetExtra,
             ) -> core::result::Result<(), ()> {
@@ -380,7 +380,7 @@ impl CompileResult {
 // PORT NOTE: manual `Clone` because `bun_js_printer::PrintResult` doesn't
 // derive it (its fields are all `Clone`-able, so destructure and rebuild).
 // `vec![CompileResult::default(); n]` in `generateChunksInParallel.rs` needs
-// this to pre-size the per-chunk result buffers — Zig used `allocator.alloc`
+// this to pre-size the per-chunk result buffers — Zig used `arena.alloc`
 // (uninit), Rust fills with defaults.
 impl Clone for CompileResult {
     fn clone(&self) -> Self {

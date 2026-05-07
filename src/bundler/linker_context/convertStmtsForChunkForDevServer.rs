@@ -322,5 +322,5 @@ pub use crate::ParseTask;
 //   source:     src/bundler/linker_context/convertStmtsForChunkForDevServer.zig (192 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      MultiArrayList column accessors (`input_files.items().loader/source`) follow sibling-file convention; arena allocator threaded as &'bump Bump; `E::Arrow.args` lifetime erased pending Phase-B 'bump threading.
+//   notes:      MultiArrayList column accessors (`input_files.items().loader/source`) follow sibling-file convention; arena arena threaded as &'bump Bump; `E::Arrow.args` lifetime erased pending Phase-B 'bump threading.
 // ──────────────────────────────────────────────────────────────────────────

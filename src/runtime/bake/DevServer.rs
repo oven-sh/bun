@@ -2983,7 +2983,7 @@ impl DevServer {
 
         let heap = bun_alloc::MimallocArena::new();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
-        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.allocator()` accessor);
+        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.arena()` accessor);
         // `Bump::alloc` is the inherent method, and `BundleV2::init`'s `alloc`
         // param is `&bun_alloc::Arena` (== `&Bump`).
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
@@ -2991,12 +2991,12 @@ impl DevServer {
         // later moved into `bv2.graph.heap`. Bumpalo chunk storage is heap-allocated
         // and stable across the move of the `Bump` handle, so erase the borrow to a
         // raw pointer (same rationale as `event_loop` below).
-        let ast_memory_allocator: *mut bun_js_parser::ASTMemoryAllocator =
+        let ast_memory_store: *mut bun_js_parser::ASTMemoryAllocator =
             heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
         // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_allocator }.enter();
+        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -3010,7 +3010,7 @@ impl DevServer {
             )));
 
         // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
-        // `alloc: &Arena` derived from it. Zig's `heap.allocator()` is a
+        // `alloc: &Arena` derived from it. Zig's `heap.arena()` is a
         // `Copy` vtable handle that survives the move; in Rust the `Bump` is
         // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
         // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
@@ -3637,7 +3637,7 @@ pub fn finalize_bundle(
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
 
-    // PERF(port): was stack-fallback (65536) on bv2.allocator()
+    // PERF(port): was stack-fallback (65536) on bv2.arena()
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
         .list

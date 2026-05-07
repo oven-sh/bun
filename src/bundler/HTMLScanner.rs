@@ -18,7 +18,7 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 // TODO(port): lifetime — `log`/`source` are borrowed for the scanner's lifetime
 // (LIFETIMES.tsv had no row for this file; classified locally as BORROW_PARAM).
 pub struct HTMLScanner<'a> {
-    // allocator field dropped — global mimalloc (see PORTING.md §Allocators).
+    // arena field dropped — global mimalloc (see PORTING.md §Allocators).
     pub import_records: Vec<ImportRecord>, // Zig: ImportRecord.List
     pub log: &'a mut Log,
     pub source: &'a Source,
@@ -72,7 +72,7 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        // Zig: `try this.allocator.dupeZ(u8, path_to_use)` — leak into 'static for Path<'static>.
+        // Zig: `try this.arena.dupeZ(u8, path_to_use)` — leak into 'static for Path<'static>.
         let owned: &'static [u8] = path_to_use.to_vec().leak();
         let record = ImportRecord {
             path: FsPath::init(owned),

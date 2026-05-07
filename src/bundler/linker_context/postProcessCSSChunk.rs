@@ -20,7 +20,7 @@ pub fn post_process_css_chunk(
     // SAFETY: `ctx.c` is a non-null backref into `BundleV2.linker`, valid for the
     // duration of the link pass; this fn is the sole writer for `chunk` (per-chunk task).
     let c = unsafe { &mut *ctx.c };
-    // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` in Phase B
+    // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump` in Phase B
     // PORT NOTE: avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -128,8 +128,8 @@ pub fn post_process_css_chunk(
     //     j.AddString("\n")
     // }
 
-    // SAFETY: `worker.allocator` set by `Worker::create`, outlives the worker step.
-    let alloc = unsafe { &*worker.allocator };
+    // SAFETY: `worker.arena` set by `Worker::create`, outlives the worker step.
+    let alloc = unsafe { &*worker.arena };
     chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
         alloc,
         &mut j,
@@ -162,5 +162,5 @@ pub fn post_process_css_chunk(
 //   source:     src/bundler/linker_context/postProcessCSSChunk.zig (127 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      worker.allocator is a per-worker arena (not global mimalloc) — thread `&'bump Bump` to StringJoiner/break_output_into_pieces in Phase B; default_allocator arg to j.push dropped; enum variant paths for options.{source_maps,mode} and MultiArrayList field-slice accessor are guessed — verify in Phase B.
+//   notes:      worker.arena is a per-worker arena (not global mimalloc) — thread `&'bump Bump` to StringJoiner/break_output_into_pieces in Phase B; default_allocator arg to j.push dropped; enum variant paths for options.{source_maps,mode} and MultiArrayList field-slice accessor are guessed — verify in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

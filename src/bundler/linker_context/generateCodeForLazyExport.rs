@@ -142,7 +142,7 @@ pub fn generate_code_for_lazy_export(
                 log: &'a mut Log,
                 loc: Loc,
                 // PERF(port): was `std.mem.Allocator` (arena) — bundler is an AST crate; thread `&'bump Bump`.
-                allocator: &'a Arena,
+                arena: &'a Arena,
             }
 
             impl<'a> Visitor<'a> {
@@ -191,7 +191,7 @@ pub fn generate_code_for_lazy_export(
                     idx: IndexInt,
                     compose_loc: Loc,
                 ) {
-                    let _ = self.allocator;
+                    let _ = self.arena;
                     let syms: &SymbolList = &self.all_symbols[css_ref.source_index(idx) as usize];
                     // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
                     let name: &[u8] =
@@ -342,10 +342,10 @@ pub fn generate_code_for_lazy_export(
             // forbids uninit refs, so the Visitor is constructed inside the loop with
             // a fresh `parts` borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
-            // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+            // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
             // borrow across the `this.log` reborrow inside the Visitor below.
-            let allocator: &Arena = unsafe { &*std::ptr::from_ref::<Arena>(this.allocator()) };
+            let arena: &Arena = unsafe { &*std::ptr::from_ref::<Arena>(this.arena()) };
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -371,7 +371,7 @@ pub fn generate_code_for_lazy_export(
                     loc: stmt.loc,
                     log: this.log,
                     all_sources,
-                    allocator,
+                    arena,
                     all_symbols,
                 };
                 visitor.clear_all();
@@ -390,7 +390,7 @@ pub fn generate_code_for_lazy_export(
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
                     let parts_slice: *mut [E::TemplatePart] =
-                        allocator.alloc_slice_fill_iter(template_parts.into_iter());
+                        arena.alloc_slice_fill_iter(template_parts.into_iter());
                     value = Expr::init(
                         E::Template {
                             tag: None,
@@ -404,7 +404,7 @@ pub fn generate_code_for_lazy_export(
                 // SAFETY: `Symbol.original_name: *const [u8]` is arena-owned for the link pass.
                 let key: &[u8] =
                     unsafe { &*symbols.at(ref_.inner_index() as usize).original_name };
-                exports.put(allocator, key, value)?;
+                exports.put(arena, key, value)?;
             }
 
             // SAFETY: `part.stmts` non-empty (checked above).
@@ -480,11 +480,11 @@ pub fn generate_code_for_lazy_export(
                         continue;
                     }
 
-                    // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+                    // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
-                        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.allocator()) };
+                        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.arena()) };
                     let name = key_str.slice(alloc);
 
                     // TODO: support non-identifier names
@@ -505,7 +505,7 @@ pub fn generate_code_for_lazy_export(
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
-                    // PERF(port): was `this.allocator().alloc(Stmt, 1)` (arena).
+                    // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).
                     let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                         Stmt::alloc(
                             S::Local {
@@ -539,11 +539,11 @@ pub fn generate_code_for_lazy_export(
                         .fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
-                // SAFETY: `LinkerContext::allocator()` returns a stable `&Arena` valid for the
+                // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
                 // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                 // across the `&mut self` call to `generate_named_export_in_file` below.
                 let alloc: &bun_alloc::Arena =
-                    unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.allocator()) };
+                    unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(this.arena()) };
                 let name = alloc.alloc_slice_copy(&name_buf);
 
                 let generated = this.generate_named_export_in_file(
@@ -582,5 +582,5 @@ pub use crate::ThreadPool;
 //   source:     src/bundler/linker_context/generateCodeForLazyExport.zig (421 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      Heavy borrowck reshaping (Visitor moved into loop; `parts` re-borrowed); arena allocator threading deferred to Phase B.
+//   notes:      Heavy borrowck reshaping (Visitor moved into loop; `parts` re-borrowed); arena arena threading deferred to Phase B.
 // ──────────────────────────────────────────────────────────────────────────

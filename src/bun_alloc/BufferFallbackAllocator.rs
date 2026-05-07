@@ -7,15 +7,15 @@ use core::ffi::c_void;
 use crate::{Alignment, AllocatorVTable, FixedBufferAllocator, StdAllocator};
 
 pub struct BufferFallbackAllocator<'a> {
-    fallback_allocator: StdAllocator,
-    fixed_buffer_allocator: FixedBufferAllocator<'a>,
+    fallback: StdAllocator,
+    fixed: FixedBufferAllocator<'a>,
 }
 
 impl<'a> BufferFallbackAllocator<'a> {
-    pub fn init(buffer: &'a mut [u8], fallback_allocator: StdAllocator) -> BufferFallbackAllocator<'a> {
+    pub fn init(buffer: &'a mut [u8], fallback: StdAllocator) -> BufferFallbackAllocator<'a> {
         BufferFallbackAllocator {
-            fallback_allocator,
-            fixed_buffer_allocator: FixedBufferAllocator::init(buffer),
+            fallback,
+            fixed: FixedBufferAllocator::init(buffer),
         }
     }
 
@@ -27,7 +27,7 @@ impl<'a> BufferFallbackAllocator<'a> {
     }
 
     pub fn reset(&mut self) {
-        self.fixed_buffer_allocator.reset();
+        self.fixed.reset();
     }
 }
 
@@ -41,32 +41,32 @@ static VTABLE: AllocatorVTable = AllocatorVTable {
 unsafe fn alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ra: usize) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
-    FixedBufferAllocator::alloc(&mut self_.fixed_buffer_allocator, len, alignment, ra)
-        .or_else(|| self_.fallback_allocator.raw_alloc(len, alignment, ra))
+    FixedBufferAllocator::alloc(&mut self_.fixed, len, alignment, ra)
+        .or_else(|| self_.fallback.raw_alloc(len, alignment, ra))
         .unwrap_or(core::ptr::null_mut())
 }
 
 unsafe fn resize(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> bool {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
-    if self_.fixed_buffer_allocator.owns_ptr(buf.as_ptr()) {
+    if self_.fixed.owns_ptr(buf.as_ptr()) {
         return FixedBufferAllocator::resize(
-            &mut self_.fixed_buffer_allocator,
+            &mut self_.fixed,
             buf,
             alignment,
             new_len,
             ra,
         );
     }
-    self_.fallback_allocator.raw_resize(buf, alignment, new_len, ra)
+    self_.fallback.raw_resize(buf, alignment, new_len, ra)
 }
 
 unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_len: usize, ra: usize) -> *mut u8 {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
-    if self_.fixed_buffer_allocator.owns_ptr(memory.as_ptr()) {
+    if self_.fixed.owns_ptr(memory.as_ptr()) {
         return FixedBufferAllocator::remap(
-            &mut self_.fixed_buffer_allocator,
+            &mut self_.fixed,
             memory,
             alignment,
             new_len,
@@ -75,7 +75,7 @@ unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_l
         .unwrap_or(core::ptr::null_mut());
     }
     self_
-        .fallback_allocator
+        .fallback
         .raw_remap(memory, alignment, new_len, ra)
         .unwrap_or(core::ptr::null_mut())
 }
@@ -83,15 +83,15 @@ unsafe fn remap(ctx: *mut c_void, memory: &mut [u8], alignment: Alignment, new_l
 unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize) {
     // SAFETY: ctx was set to `&mut BufferFallbackAllocator` in `allocator()`.
     let self_: &mut BufferFallbackAllocator = unsafe { &mut *ctx.cast::<BufferFallbackAllocator>() };
-    if self_.fixed_buffer_allocator.owns_ptr(buf.as_ptr()) {
+    if self_.fixed.owns_ptr(buf.as_ptr()) {
         return FixedBufferAllocator::free(
-            &mut self_.fixed_buffer_allocator,
+            &mut self_.fixed,
             buf,
             alignment,
             ra,
         );
     }
-    self_.fallback_allocator.raw_free(buf, alignment, ra)
+    self_.fallback.raw_free(buf, alignment, ra)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

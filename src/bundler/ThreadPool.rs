@@ -5,7 +5,7 @@
 //! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
 //! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
 //! `Worker::create` / `initialize_transpiler` are live via
-//! `Transpiler::{clone_for_worker, set_log, set_allocator}`; the
+//! `Transpiler::{clone_for_worker, set_log, set_arena}`; the
 //! `linker.resolver` backref stays a PORT NOTE while `crate::Linker` is the
 //! unit stub (wired by `configure_linker`).
 
@@ -76,9 +76,9 @@ unsafe impl Send for ThreadPool {}
 unsafe impl Sync for ThreadPool {}
 
 impl Default for ThreadPool {
-    /// Placeholder so `bundle_v2` can `allocator().alloc(ThreadPool::default())`
+    /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
     /// before overwriting with [`ThreadPool::init`]. Mirrors Zig's
-    /// `allocator.create(ThreadPool)` which yields uninit memory.
+    /// `arena.create(ThreadPool)` which yields uninit memory.
     fn default() -> Self {
         Self {
             io_pool: None,
@@ -219,7 +219,7 @@ impl ThreadPool {
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
         // PORT NOTE: Spec ThreadPool.zig:85 allocated via the bundle arena
-        // (`v2.allocator().create`), so the `false` ownership flag was
+        // (`v2.arena().create`), so the `false` ownership flag was
         // harmless — the arena reclaimed it. Here we `Box::into_raw` (global
         // heap), so `deinit()` must `Box::from_raw` it back; record ownership.
         let owned = worker_pool.is_none();
@@ -227,7 +227,7 @@ impl ThreadPool {
             Some(p) => p.as_ptr(),
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                // PERF(port): was `v2.allocator().create(ThreadPoolLib)` —
+                // PERF(port): was `v2.arena().create(ThreadPoolLib)` —
                 // using Box::into_raw (global mimalloc).
                 let pool = Box::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config { max_threads: u32::from(cpu_count), ..Default::default() },
@@ -398,11 +398,11 @@ impl ThreadPool {
             worker.write(Worker {
                 ctx: self.v2,
                 heap: MaybeUninit::uninit(),
-                allocator: ptr::null(),
+                arena: ptr::null(),
                 thread: ThreadPoolLib::Thread::current(),
                 data: MaybeUninit::uninit(),
                 quit: false,
-                ast_memory_allocator: ManuallyDrop::new(js_ast::ASTMemoryAllocator::default()),
+                ast_memory_store: ManuallyDrop::new(js_ast::ASTMemoryAllocator::default()),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
@@ -422,26 +422,26 @@ impl ThreadPool {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Per-OS-thread bundler state. Heap-allocated and pinned (the
-/// `deinit_task`/`allocator` fields are self-referential); never moved after
+/// `deinit_task`/`arena` fields are self-referential); never moved after
 /// `get_worker` boxes it.
 pub struct Worker {
     /// Thread-local arena. `MaybeUninit` because Zig writes `undefined` until
     /// [`Worker::create`] runs; reading it before `has_created` is UB.
     pub heap: MaybeUninit<ThreadLocalArena>,
 
-    /// Thread-local memory allocator
+    /// Thread-local memory arena
     /// All allocations are freed in `deinit` at the very end of bundling.
     // PORT NOTE: self-referential borrow of `heap` — kept as a raw pointer so
     // it can be reseated in `create()` without a self-borrow. Zig stored the
     // `std.mem.Allocator` vtable; here it's just `&heap`.
-    pub allocator: *const ThreadLocalArena,
+    pub arena: *const ThreadLocalArena,
 
     pub ctx: *const BundleV2<'static>,
 
     pub data: MaybeUninit<WorkerData>,
     pub quit: bool,
 
-    pub ast_memory_allocator: ManuallyDrop<js_ast::ASTMemoryAllocator>,
+    pub ast_memory_store: ManuallyDrop<js_ast::ASTMemoryAllocator>,
     pub has_created: bool,
     /// `ThreadPoolLib.Thread.current` — null when called off a pool thread.
     pub thread: *mut ThreadPoolLib::Thread,
@@ -503,7 +503,7 @@ impl Worker {
                 worker.temporary_arena.assume_init_drop();
                 worker.stmt_list.assume_init_drop();
                 ptr::drop_in_place(worker.data.assume_init_mut());
-                ManuallyDrop::drop(&mut worker.ast_memory_allocator);
+                ManuallyDrop::drop(&mut worker.ast_memory_store);
             }
         }
         // SAFETY: caller contract — `this` was Box::into_raw'd. Reclaim the
@@ -527,7 +527,7 @@ impl Worker {
             worker.create(ctx);
         }
 
-        worker.ast_memory_allocator.push();
+        worker.ast_memory_store.push();
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             // PORT NOTE: `MimallocArena::help_catch_memory_issues` collected
@@ -545,7 +545,7 @@ impl Worker {
             // See `get()` — `help_catch_memory_issues` no-op while heap = Bump.
         }
 
-        self.ast_memory_allocator.pop();
+        self.ast_memory_store.pop();
     }
 
     pub fn init(&mut self, v2: &BundleV2<'_>) {
@@ -561,22 +561,22 @@ impl Worker {
         self.has_created = true;
         Output::Source::configure_thread();
         self.heap.write(ThreadLocalArena::new());
-        // Self-referential — `allocator` borrows `self.heap`.
+        // Self-referential — `arena` borrows `self.heap`.
         // SAFETY: heap was just initialized on the line above.
-        self.allocator = std::ptr::from_ref::<ThreadLocalArena>(unsafe { self.heap.assume_init_ref() });
+        self.arena = std::ptr::from_ref::<ThreadLocalArena>(unsafe { self.heap.assume_init_ref() });
 
-        let allocator = self.allocator;
+        let arena = self.arena;
 
-        // Zig: `.{ .allocator = this.allocator }` then `reset()`. The Rust
+        // Zig: `.{ .arena = this.arena }` then `reset()`. The Rust
         // ASTMemoryAllocator owns its bump arena internally and ignores the
         // passed fallback (see ASTMemoryAllocator::new doc).
-        // SAFETY: allocator points to the just-initialized self.heap.
-        *self.ast_memory_allocator =
-            js_ast::ASTMemoryAllocator::new(unsafe { &*allocator });
-        self.ast_memory_allocator.reset();
+        // SAFETY: arena points to the just-initialized self.heap.
+        *self.ast_memory_store =
+            js_ast::ASTMemoryAllocator::new(unsafe { &*arena });
+        self.ast_memory_store.reset();
 
-        // SAFETY: allocator points to self.heap which outlives self.data.
-        let log: *mut Logger::Log = unsafe { (*allocator).alloc(Logger::Log::init()) };
+        // SAFETY: arena points to self.heap which outlives self.data.
+        let log: *mut Logger::Log = unsafe { (*arena).alloc(Logger::Log::init()) };
         self.data.write(WorkerData {
             log,
             estimated_input_lines_of_code: 0,
@@ -585,18 +585,18 @@ impl Worker {
             other_transpiler: None,
         });
         self.ctx = std::ptr::from_ref::<BundleV2<'_>>(ctx).cast();
-        // PERF(port): was `bun.ArenaAllocator.init(this.allocator)` — using a
+        // PERF(port): was `bun.ArenaAllocator.init(this.arena)` — using a
         // fresh Bump (no nested-arena type yet).
         self.temporary_arena.write(bun_alloc::Arena::new());
         self.stmt_list.write(StmtList::init());
         // SAFETY: self.data was just written above.
         let data = unsafe { self.data.assume_init_mut() };
-        Self::initialize_transpiler(data.log, &mut data.transpiler, ctx.transpiler(), allocator);
+        Self::initialize_transpiler(data.log, &mut data.transpiler, ctx.transpiler(), arena);
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
 
-    /// Clone `from` into `transpiler` and rewire its log/allocator/resolver.
+    /// Clone `from` into `transpiler` and rewire its log/arena/resolver.
     ///
     /// PORT NOTE: reshaped for borrowck — associated fn (no `&mut self`) so
     /// callers can borrow `self.data.transpiler` and `self.data.log` disjointly.
@@ -604,7 +604,7 @@ impl Worker {
         log: *mut Logger::Log,
         transpiler: &mut MaybeUninit<Transpiler<'static>>,
         from: &Transpiler<'_>,
-        allocator: *const ThreadLocalArena,
+        arena: *const ThreadLocalArena,
     ) {
         // Zig: `transpiler.* = from.*;`
         // SAFETY: `from` is the `BundleV2`-owned transpiler which outlives every
@@ -626,10 +626,10 @@ impl Worker {
         // SAFETY: `t.fs` points at the process-lifetime `Fs::FileSystem`
         // singleton (transpiler.rs `Transpiler::init`); outlives every worker.
         t.resolver.fs = unsafe { &raw mut *t.fs };
-        // SAFETY: `allocator` points at `Worker.heap` (initialized in `create`)
+        // SAFETY: `arena` points at `Worker.heap` (initialized in `create`)
         // which outlives `WorkerData`; lifetime erased to `'static` to match the
         // slot's erased `Transpiler<'static>`.
-        t.set_allocator(unsafe { &*allocator });
+        t.set_arena(unsafe { &*arena });
         // PORT NOTE: `transpiler.linker.resolver = &transpiler.resolver` —
         // `crate::Linker` is still the unit stub `Linker(())` (lib.rs:158); the
         // self-referential resolver backref is wired by `configure_linker` once
@@ -659,7 +659,7 @@ impl Worker {
                 // Some in this branch per Zig `.?`.
                 let client: &Transpiler<'_> =
                     unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
-                Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
+                Self::initialize_transpiler(data.log, &mut slot, client, self.arena);
                 data.other_transpiler = Some(slot);
             }
             // SAFETY: `initialize_transpiler` fully wrote the slot above (or on
@@ -696,7 +696,7 @@ pub use bun_js_parser::Index;
 //   blocked_on: crate::Linker.resolver (unit stub — see initialize_transpiler PORT NOTE);
 //               bun_alloc::MimallocArena (help_catch_memory_issues);
 //               bun_perf PerfEvent codegen (Bundler.Worker.create)
-//   notes:      Heavy `undefined`-init + self-referential allocator field →
+//   notes:      Heavy `undefined`-init + self-referential arena field →
 //               MaybeUninit/ManuallyDrop on Worker. io_thread_pool::shutdown()
 //               Zig source missing trailing return; io_thread_pool::acquire()
 //               Zig source skips ref-count bump on the lock-race path (mirrored).

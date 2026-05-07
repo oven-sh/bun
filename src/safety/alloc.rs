@@ -87,7 +87,7 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
 /// methods). (Exception: methods like `clone` which explicitly accept any allocator should not call
 /// any methods on this type.)
 pub struct CheckedAllocator {
-    // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
+    // Zig: `#arena: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
     #[cfg(feature = "ci_assert")]
     allocator: NullableAllocator,
     // Zig: `#trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty`
@@ -178,13 +178,13 @@ impl CheckedAllocator {
     ///
     /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
-    pub fn transfer_ownership(&mut self, new_allocator: impl AsMimallocArenaAllocator) {
+    pub fn transfer_ownership(&mut self, new_alloc: impl AsMimallocArenaAllocator) {
         if !ENABLED {
             return;
         }
         #[cfg(feature = "ci_assert")]
         {
-            let new_std = new_allocator.allocator();
+            let new_std = new_alloc.allocator();
 
             // PORT NOTE: Zig uses `defer self.* = .init(new_std)`. A scopeguard
             // would need a `&mut self` capture overlapping the reads below, so
@@ -214,7 +214,7 @@ impl CheckedAllocator {
 
 /// Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
 /// MimallocArena.Borrowed` via `anytype` + comptime switch and calls
-/// `.allocator()` on the result. `MimallocArena` lives in `bun_runtime` (above
+/// `.arena()` on the result. `MimallocArena` lives in `bun_runtime` (above
 /// this crate), so callers implement this trait there.
 pub trait AsMimallocArenaAllocator {
     fn allocator(&self) -> StdAllocator;

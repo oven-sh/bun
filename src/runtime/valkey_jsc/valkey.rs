@@ -315,7 +315,7 @@ pub struct ValkeyClient {
     pub max_retries: u32, // Maximum retry attempts
 
     pub flags: ConnectionFlags,
-    // PORT NOTE: `allocator: std.mem.Allocator` deleted (non-AST crate; global mimalloc).
+    // PORT NOTE: `std.mem.Allocator param` deleted (non-AST crate; global mimalloc).
 
     // Auto-pipelining
     pub auto_flusher: AutoFlusher,

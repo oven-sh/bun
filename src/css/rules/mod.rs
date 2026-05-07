@@ -498,7 +498,7 @@ impl<R> CssRuleList<R> {
                 let dep = if dest.dependencies.is_some() {
                     Some(css::dependencies::Dependency::Import(
                         css::dependencies::ImportDependency::new(
-                            dest.allocator,
+                            dest.arena,
                             import_rule,
                             dest.filename(),
                             dest.local_names,
@@ -656,13 +656,13 @@ impl<R> CssRuleList<R> {
             }
         }
 
-        // Zig: css.deepDeinit(CssRule(AtRule), context.allocator, &this.v);
+        // Zig: css.deepDeinit(CssRule(AtRule), context.arena, &this.v);
         // Rust drops the old Vec on assignment.
         self.v = rules;
         Ok(())
     }
 
-    /// Zig: `css.implementDeepClone(@This(), this, allocator)`.
+    /// Zig: `css.implementDeepClone(@This(), this, arena)`.
     pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
@@ -672,7 +672,7 @@ impl<R> CssRuleList<R> {
 }
 
 impl<R> CssRule<R> {
-    /// Zig: `css.implementDeepClone(@This(), this, allocator)` — variant-wise
+    /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
     /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
     /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
     /// as **inherent** methods rather than `DeepClone` trait impls during the
@@ -809,8 +809,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
-            declarations: dc::decl_block_static(&sty.declarations, context.allocator),
-            rules: sty.rules.deep_clone(context.allocator),
+            declarations: dc::decl_block_static(&sty.declarations, context.arena),
+            rules: sty.rules.deep_clone(context.arena),
             loc: sty.loc,
         };
         clone.update_prefix(context);
@@ -835,7 +835,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // `&'static Arena` here (PORTING.md §Forbidden).
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
-            declarations: dc::decl_block_empty_static(context.allocator),
+            declarations: dc::decl_block_empty_static(context.arena),
             rules: rulesss,
             vendor_prefix: sty.vendor_prefix,
             loc: sty.loc,
@@ -956,7 +956,7 @@ impl StyleRuleKeyMap {
         Some(bucket.swap_remove(pos))
     }
 
-    /// Zig `style_rules.put(ctx.allocator, key, idx)`.
+    /// Zig `style_rules.put(ctx.arena, key, idx)`.
     pub fn insert(&mut self, key: StyleRuleKey) {
         self.buckets.entry(key.hash).or_default().push(key.index);
     }
@@ -1074,7 +1074,7 @@ pub struct StyleContext<'a> {
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
-/// PORT NOTE: Zig carried `allocator: std.mem.Allocator` for the AST arena;
+/// PORT NOTE: Zig carried `arena: std.mem.Allocator` for the AST arena;
 /// here that is `&'a Arena` (bumpalo). All sub-allocations during minify go
 /// through it so the whole transformed tree is bulk-freed with the arena.
 // PORT NOTE: split lifetimes — `'bump` is the parser arena (long), `'a` is the
@@ -1082,8 +1082,8 @@ pub struct StyleContext<'a> {
 // the handler borrow to outlive the arena (invariance via `bumpalo::Vec`),
 // making `Stylesheet::minify`'s stack-local handlers unusable.
 pub struct MinifyContext<'a, 'bump> {
-    /// Arena that owns the AST being minified (same allocator it was parsed into).
-    pub allocator: &'bump bun_alloc::Arena,
+    /// Arena that owns the AST being minified (same arena it was parsed into).
+    pub arena: &'bump bun_alloc::Arena,
     pub targets: &'a css::targets::Targets,
     pub handler: &'a mut css::DeclarationHandler<'bump>,
     pub important_handler: &'a mut css::DeclarationHandler<'bump>,

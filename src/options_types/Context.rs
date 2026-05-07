@@ -31,7 +31,7 @@ pub struct ContextData {
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
     // always non-null for the process lifetime. Callers deref via `ctx.log()`.
     pub log: *mut logger::Log,
-    // PORT NOTE: `allocator: std.mem.Allocator` deleted (global mimalloc).
+    // PORT NOTE: `std.mem.Allocator param` deleted (global mimalloc).
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,

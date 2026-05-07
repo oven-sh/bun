@@ -15,7 +15,7 @@ use crate::RenderOptions;
 // here; revisit in Phase B if `'src` causes friction.
 pub struct HtmlRenderer<'src> {
     pub out: OutputBuffer,
-    // allocator: dropped — non-AST crate uses global mimalloc
+    // allocator dropped — non-AST crate uses global mimalloc
     pub src_text: &'src [u8],
     pub image_nesting_level: u32,
     // PORT NOTE: was `&'src [u8]` borrowing parser content; owned now so the
@@ -30,7 +30,7 @@ pub struct HtmlRenderer<'src> {
 
 pub struct OutputBuffer {
     pub list: Vec<u8>,
-    // allocator: dropped — non-AST crate uses global mimalloc
+    // allocator dropped — non-AST crate uses global mimalloc
     pub oom: bool,
 }
 

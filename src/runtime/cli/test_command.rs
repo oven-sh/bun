@@ -2589,7 +2589,7 @@ impl TestCommand {
         }
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
-        // TODO(port): vm_.arena = &arena; vm_.allocator = arena.allocator(); — arena threading
+        // TODO(port): vm_.arena = &arena; vm_.allocator = arena.arena(); — arena threading
         // dropped here. Phase B should reintroduce a bun_alloc::Arena and assign to vm.
         vm_.event_loop_ref().ensure_waker();
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the

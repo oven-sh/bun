@@ -1027,7 +1027,7 @@ pub trait IntoExprData: Sized {
     /// Construct `Data` using the thread-local `Data::Store` arena (Zig: `Expr.init`).
     fn into_data_store(self) -> Data;
     /// Construct `Data` using a caller-supplied arena (Zig: `Expr.allocate`).
-    /// Be careful to free the memory (or use an allocator that does it for you).
+    /// Be careful to free the memory (or use an arena that does it for you).
     fn into_data_alloc(self, bump: &Bump) -> Data;
 }
 
@@ -1295,7 +1295,7 @@ impl From<logger::js_ast::Expr> for Expr {
 
 impl Expr {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
-    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
         ICOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -2952,18 +2952,18 @@ impl EqlKindT for StrictEql {
 }
 
 /// Minimal parser surface needed by `Data::eql` — Zig wrote `p: anytype` and
-/// touched only `p.allocator` + `p.module_ref`. Kept separate from
+/// touched only `p.arena` + `p.module_ref`. Kept separate from
 /// `ast::p::ParserLike` so this file does not grow that trait (out of scope);
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
-    fn allocator(&self) -> &Bump;
+    fn arena(&self) -> &Bump;
     fn module_ref(&self) -> Ref;
 }
 impl<'a, const TS: bool, J: crate::JsxT, const SCAN: bool> EqlParser
     for crate::ast::p::P<'a, TS, J, SCAN>
 {
     #[inline]
-    fn allocator(&self) -> &Bump { self.allocator }
+    fn arena(&self) -> &Bump { self.arena }
     #[inline]
     fn module_ref(&self) -> Ref { self.module_ref }
 }
@@ -3071,8 +3071,8 @@ impl Data {
                 match right {
                     Data::EString(r) => {
                         let mut r = *r;
-                        r.resolve_rope_if_needed(p.allocator());
-                        l.resolve_rope_if_needed(p.allocator());
+                        r.resolve_rope_if_needed(p.arena());
+                        l.resolve_rope_if_needed(p.arena());
                         return Equality {
                             ok: true,
                             equal: r.eql_string(&l),
@@ -3082,8 +3082,8 @@ impl Data {
                     Data::EInlinedEnum(inlined) => {
                         if let Data::EString(r) = inlined.value.data {
                             let mut r = r;
-                            r.resolve_rope_if_needed(p.allocator());
-                            l.resolve_rope_if_needed(p.allocator());
+                            r.resolve_rope_if_needed(p.arena());
+                            l.resolve_rope_if_needed(p.arena());
                             return Equality {
                                 ok: true,
                                 equal: r.eql_string(&l),
@@ -3096,7 +3096,7 @@ impl Data {
                     }
                     Data::ENumber(r) => {
                         if !K::STRICT {
-                            l.resolve_rope_if_needed(p.allocator());
+                            l.resolve_rope_if_needed(p.arena());
                             if r.value == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
                                 return Equality::TRUE;
                             }

@@ -133,7 +133,7 @@ pub struct TestRunner<'a> {
     pub bail: u32,
     pub max_concurrency: u32,
 
-    // PORT NOTE: `allocator: std.mem.Allocator` field deleted — global mimalloc.
+    // PORT NOTE: `std.mem.Allocator param` field deleted — global mimalloc.
     // TODO(port): `drainer` had `= undefined` default in Zig
     pub drainer: jsc::AnyTask::AnyTask,
 

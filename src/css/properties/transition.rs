@@ -50,7 +50,7 @@ impl Transition {
     }
 
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, allocator) — field-by-field
+        // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
         // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
         // arena indirections; #[derive(Clone)] is exact.
         self.clone()
@@ -149,17 +149,17 @@ macro_rules! handler_maybe_flush {
 }
 
 macro_rules! handler_property {
-    ($this:expr, $dest:expr, $context:expr, $allocator:expr, $feature:expr, $field:ident, $val:expr, $vp:expr) => {{
+    ($this:expr, $dest:expr, $context:expr, $arena:expr, $feature:expr, $field:ident, $val:expr, $vp:expr) => {{
         handler_maybe_flush!($this, $dest, $context, $field, $val, $vp);
 
         // Otherwise, update the value and add the prefix.
         if let Some((v, prefixes)) = &mut $this.$field {
-            *v = $val.deep_clone($allocator);
+            *v = $val.deep_clone($arena);
             prefixes.insert($vp);
             *prefixes = $context.targets.prefixes(*prefixes, $feature);
         } else {
             let prefixes = $context.targets.prefixes($vp, $feature);
-            let cloned_val = $val.deep_clone($allocator);
+            let cloned_val = $val.deep_clone($arena);
             $this.$field = Some((cloned_val, prefixes));
             $this.has_any = true;
         }
@@ -177,21 +177,21 @@ impl TransitionHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
-        let allocator = dest.bump();
+        let arena = dest.bump();
         match prop {
             Property::TransitionProperty(x) => {
-                handler_property!(self, dest, context, allocator, Feature::TransitionProperty, properties, &x.0, x.1)
+                handler_property!(self, dest, context, arena, Feature::TransitionProperty, properties, &x.0, x.1)
             }
             Property::TransitionDuration(x) => {
-                handler_property!(self, dest, context, allocator, Feature::TransitionDuration, durations, &x.0, x.1)
+                handler_property!(self, dest, context, arena, Feature::TransitionDuration, durations, &x.0, x.1)
             }
             Property::TransitionDelay(x) => {
-                handler_property!(self, dest, context, allocator, Feature::TransitionDelay, delays, &x.0, x.1)
+                handler_property!(self, dest, context, arena, Feature::TransitionDelay, delays, &x.0, x.1)
             }
             Property::TransitionTimingFunction(x) => {
-                handler_property!(self, dest, context, allocator, Feature::TransitionTimingFunction, timing_functions, &x.0, x.1)
+                handler_property!(self, dest, context, arena, Feature::TransitionTimingFunction, timing_functions, &x.0, x.1)
             }
             Property::Transition(x) => {
                 let val: &SmallList<Transition, 1> = &x.0;
@@ -203,35 +203,35 @@ impl TransitionHandler {
                 let mut timing_functions = SmallList::<EasingFunction, 1>::init_capacity(val.len());
 
                 for item in val.slice() {
-                    properties.append(item.property.deep_clone(allocator));
+                    properties.append(item.property.deep_clone(arena));
                 }
                 handler_maybe_flush!(self, dest, context, properties, &properties, vp);
 
                 for item in val.slice() {
-                    durations.append(item.duration.deep_clone(allocator));
+                    durations.append(item.duration.deep_clone(arena));
                 }
                 handler_maybe_flush!(self, dest, context, durations, &durations, vp);
 
                 for item in val.slice() {
-                    delays.append(item.delay.deep_clone(allocator));
+                    delays.append(item.delay.deep_clone(arena));
                 }
                 handler_maybe_flush!(self, dest, context, delays, &delays, vp);
 
                 for item in val.slice() {
-                    timing_functions.append(item.timing_function.deep_clone(allocator));
+                    timing_functions.append(item.timing_function.deep_clone(arena));
                 }
                 handler_maybe_flush!(self, dest, context, timing_functions, &timing_functions, vp);
 
-                handler_property!(self, dest, context, allocator, Feature::TransitionProperty, properties, &properties, vp);
-                handler_property!(self, dest, context, allocator, Feature::TransitionDuration, durations, &durations, vp);
-                handler_property!(self, dest, context, allocator, Feature::TransitionDelay, delays, &delays, vp);
-                handler_property!(self, dest, context, allocator, Feature::TransitionTimingFunction, timing_functions, &timing_functions, vp);
+                handler_property!(self, dest, context, arena, Feature::TransitionProperty, properties, &properties, vp);
+                handler_property!(self, dest, context, arena, Feature::TransitionDuration, durations, &durations, vp);
+                handler_property!(self, dest, context, arena, Feature::TransitionDelay, delays, &delays, vp);
+                handler_property!(self, dest, context, arena, Feature::TransitionTimingFunction, timing_functions, &timing_functions, vp);
             }
             Property::Unparsed(x) => {
                 if is_transition_property(&x.property_id) {
                     self.flush(dest, context);
                     dest.push(Property::Unparsed(
-                        x.get_prefixed(allocator, context.targets, Feature::Transition),
+                        x.get_prefixed(arena, context.targets, Feature::Transition),
                     ));
                 } else {
                     return false;
@@ -253,7 +253,7 @@ impl TransitionHandler {
         }
         self.has_any = false;
 
-        let allocator = dest.bump();
+        let arena = dest.bump();
 
         let mut _properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)> = self.properties.take();
         let mut _durations: Option<(SmallList<Time, 1>, VendorPrefix)> = self.durations.take();
@@ -261,7 +261,7 @@ impl TransitionHandler {
         let mut _timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)> = self.timing_functions.take();
 
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> =
-            if let Some(p) = &mut _properties { expand_properties(&mut p.0, allocator, context) } else { None };
+            if let Some(p) = &mut _properties { expand_properties(&mut p.0, arena, context) } else { None };
 
         if _properties.is_some() && _durations.is_some() && _delays.is_some() && _timing_functions.is_some() {
             // PORT NOTE: reshaped for borrowck — Zig held simultaneous &mut to all four
@@ -279,17 +279,17 @@ impl TransitionHandler {
                 & *delay_prefixes
                 & *timing_prefixes;
             if !intersection.is_empty() {
-                let transitions = get_transitions(allocator, properties, durations, delays, timing_functions);
+                let transitions = get_transitions(arena, properties, durations, delays, timing_functions);
 
                 if let Some(rtl_properties2) = &mut rtl_properties {
-                    let rtl_transitions = get_transitions(allocator, rtl_properties2, durations, delays, timing_functions);
+                    let rtl_transitions = get_transitions(arena, rtl_properties2, durations, delays, timing_functions);
                     context.add_logical_rule(
                         Property::Transition((transitions, intersection)),
                         Property::Transition((rtl_transitions, intersection)),
                     );
                 } else {
                     dest.push(Property::Transition((
-                        transitions.deep_clone(allocator),
+                        transitions.deep_clone(arena),
                         intersection,
                     )));
                 }
@@ -346,7 +346,7 @@ impl TransitionHandler {
 
 #[inline]
 fn get_transitions(
-    allocator: &bun_alloc::Arena,
+    arena: &bun_alloc::Arena,
     properties: &mut SmallList<PropertyId, 1>,
     durations: &mut SmallList<Time, 1>,
     delays: &mut SmallList<Time, 1>,
@@ -365,17 +365,17 @@ fn get_transitions(
     let mut timing_idx: u32 = 0;
     for property_id in properties.slice() {
         let duration = if durations.len() > durations_idx {
-            durations.at(durations_idx).deep_clone(allocator)
+            durations.at(durations_idx).deep_clone(arena)
         } else {
             Time::Seconds(0.0)
         };
         let delay = if delays.len() > delays_idx {
-            delays.at(delays_idx).deep_clone(allocator)
+            delays.at(delays_idx).deep_clone(arena)
         } else {
             Time::Seconds(0.0)
         };
         let timing_function = if timing_functions.len() > timing_idx {
-            timing_functions.at(timing_idx).deep_clone(allocator)
+            timing_functions.at(timing_idx).deep_clone(arena)
         } else {
             EasingFunction::Ease
         };
@@ -383,7 +383,7 @@ fn get_transitions(
         cycle_bump(&mut delays_idx, delays.len());
         cycle_bump(&mut timing_idx, timing_functions.len());
         let transition = Transition {
-            property: property_id.deep_clone(allocator),
+            property: property_id.deep_clone(arena),
             duration,
             delay,
             timing_function,
@@ -398,12 +398,12 @@ fn get_transitions(
         for &prefix_flag in VendorPrefix::FIELDS {
             if prefix_to_iter.contains(prefix_flag) {
                 let mut t = if cloned {
-                    transition.deep_clone(allocator)
+                    transition.deep_clone(arena)
                 } else {
                     // TODO(port): Zig moved `transition` here on first iteration; Rust
                     // can't move out of a value that may be reused next iteration.
                     // Clone unconditionally for now.
-                    transition.deep_clone(allocator)
+                    transition.deep_clone(arena)
                 };
                 cloned = true;
                 t.property = property_id.with_prefix(prefix_flag);
@@ -417,17 +417,17 @@ fn get_transitions(
 
 fn expand_properties(
     properties: &mut SmallList<PropertyId, 1>,
-    allocator: &bun_alloc::Arena,
+    arena: &bun_alloc::Arena,
     context: &mut PropertyHandlerContext,
 ) -> Option<SmallList<PropertyId, 1>> {
     #[inline]
     fn replace(
-        allocator: &bun_alloc::Arena,
+        arena: &bun_alloc::Arena,
         propertiez: &mut SmallList<PropertyId, 1>,
         props: &[PropertyId],
         i: u32,
     ) {
-        propertiez.slice_mut()[i as usize] = props[0].deep_clone(allocator);
+        propertiez.slice_mut()[i as usize] = props[0].deep_clone(arena);
         if props.len() > 1 {
             propertiez.insert_slice(i + 1, &props[1..]);
         }
@@ -441,21 +441,21 @@ fn expand_properties(
         let result = get_logical_properties(properties.at(i));
         match result {
             LogicalPropertyId::Block(feature, block) if context.should_compile_logical(feature) => {
-                replace(allocator, properties, block, i);
+                replace(arena, properties, block, i);
                 if let Some(rtl) = &mut rtl_properties {
-                    replace(allocator, rtl, block, i);
+                    replace(arena, rtl, block, i);
                 }
                 i += 1;
             }
             LogicalPropertyId::Inline(feature, ltr, rtl) if context.should_compile_logical(feature) => {
                 // Clone properties to create RTL version only when needed.
                 if rtl_properties.is_none() {
-                    rtl_properties = Some(properties.deep_clone(allocator));
+                    rtl_properties = Some(properties.deep_clone(arena));
                 }
 
-                replace(allocator, properties, ltr, i);
+                replace(arena, properties, ltr, i);
                 if let Some(rtl_props) = &mut rtl_properties {
-                    replace(allocator, rtl_props, rtl, i);
+                    replace(arena, rtl_props, rtl, i);
                 }
 
                 i += u32::try_from(ltr.len()).expect("int cast");

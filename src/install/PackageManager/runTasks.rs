@@ -435,7 +435,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
-                            let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                            bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -443,9 +443,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     fmt_args.0,
                                     bstr::BStr::new(fmt_args.1),
                                 ),
-                            );
+                            ));
                         } else {
-                            let _ = unsafe { &mut *manager.log }.add_warning_fmt(
+                            bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
                                 None,
                                 logger::Loc::EMPTY,
                                 format_args!(
@@ -453,7 +453,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     fmt_args.0,
                                     bstr::BStr::new(fmt_args.1),
                                 ),
-                            );
+                            ));
                         }
 
                         if manager.subcommand != Subcommand::Remove {
@@ -495,7 +495,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if manager.is_network_task_required(task.task_id) {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -505,9 +505,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
-                        );
+                        ));
                     } else {
-                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -517,7 +517,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
-                        );
+                        ));
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {
@@ -737,7 +737,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
 
                     if is_required {
-                        let _ = unsafe { &mut *manager.log }.add_error_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -749,9 +749,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     PathSep::Auto,
                                 ),
                             ),
-                        );
+                        ));
                     } else {
-                        let _ = unsafe { &mut *manager.log }.add_warning_fmt(
+                        bun_core::handle_oom(unsafe { &mut *manager.log }.add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -763,7 +763,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     PathSep::Auto,
                                 ),
                             ),
-                        );
+                        ));
                     }
                     if manager.subcommand != Subcommand::Remove {
                         for request in manager.update_requests.iter_mut() {

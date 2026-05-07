@@ -3804,9 +3804,9 @@ pub mod sync {
             // each discovered descendant. waitMacKqueue registers the
             // script's own knote.
             #[cfg(target_os = "macos")]
-            if no_orphans_kq != spawn_sys::INVALID_FD {
+            if no_orphans_kq.fd() != spawn_sys::INVALID_FD {
                 // SAFETY: FFI
-                unsafe { Bun__noOrphans_begin(no_orphans_kq.native(), process.pid) };
+                unsafe { Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid) };
             }
         }
         // Move `jc` into the guard so the defer closure owns it (avoids holding
@@ -3887,7 +3887,7 @@ pub mod sync {
                     process.pid,
                     ppid,
                     &*jc,
-                    no_orphans_kq,
+                    no_orphans_kq.fd(),
                     &mut out,
                     &mut out_fds_to_wait_for,
                     &mut out_fds,

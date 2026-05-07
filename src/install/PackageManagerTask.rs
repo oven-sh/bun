@@ -49,8 +49,8 @@ pub struct Task<'a> {
 
 /// Zig: struct field defaults (`status = .waiting`, `threadpool_task = .{ .callback = &callback }`,
 /// `err = null`, `apply_patch_task = null`, `next = null`) with the remaining fields left
-/// `= undefined`. Callers MUST overwrite `tag`, `request`, `id`, `log`, `package_manager`
-/// before the task is observed. Exposed as a module-level fn so call sites that import this
+/// `= undefined`. Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
+/// the task is observed. Exposed as a module-level fn so call sites that import this
 /// module as `Task` can write `..Task::uninit()` in struct-update position.
 #[inline]
 pub fn uninit() -> Task<'static> {
@@ -61,7 +61,12 @@ pub fn uninit() -> Task<'static> {
         tag: Tag::PackageManifest,
         request: unsafe { core::mem::zeroed() },
         data: unsafe { core::mem::zeroed() },
-        log: unsafe { core::mem::zeroed() },
+        // Every Zig caller passes `logger.Log.init(allocator)` for this field.
+        // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
+        // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
+        // base value's `log` when the caller supplies their own, so this must
+        // be a valid (empty) Log either way.
+        log: Log::default(),
         id: Id(0),
         package_manager: core::ptr::null(),
         // Real Zig field defaults:
@@ -208,11 +213,18 @@ impl<'a> Task<'a> {
                 .sub(core::mem::offset_of!(Task, threadpool_task))
                 .cast::<Task>()
         };
-        // SAFETY: BACKREF — package_manager outlives all tasks it owns. Taken
-        // as `&mut` because `get_cache_directory` lazily initialises the cache
-        // dir on first call (Zig used a `var instance: PackageManager`).
-        let manager: &mut PackageManager =
-            unsafe { &mut *((*this).package_manager as *mut PackageManager) };
+        // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
+        // owns. Kept as a raw `*mut` for the whole function: this callback runs
+        // on ThreadPool workers concurrently (and concurrently with the main
+        // thread), so binding a long-lived `&mut PackageManager` here would be
+        // aliased-`&mut` UB. Subfields touched cross-thread (`resolve_tasks`,
+        // `wake`) are reached through raw-ptr/shared accessors below; the few
+        // callees whose signatures still take `&mut PackageManager`
+        // (`get_cache_directory`, `get_package_metadata`) are dereferenced
+        // inline at the call boundary only — same race as the Zig spec's
+        // freely-aliased `*PackageManager`.
+        let manager: *mut PackageManager =
+            unsafe { (*this).package_manager as *mut PackageManager };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
 

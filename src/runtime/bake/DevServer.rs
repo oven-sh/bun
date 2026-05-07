@@ -27,6 +27,7 @@ use bun_bundler::linker_graph::FileListExt as _;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::ast::server_component_boundary::ServerComponentBoundarySliceExt as _;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};

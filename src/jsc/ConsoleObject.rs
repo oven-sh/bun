@@ -350,13 +350,15 @@ impl Drop for ConsoleStreamLock {
 /// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`
 /// (Zig: `defer if (options.flush) writer.flush()`). Holds a raw fat pointer
 /// so the body of the scope can keep its own `&mut *writer` borrow; the guard
-/// only dereferences at scope exit when no other borrow is live.
-struct FlushOnDrop {
-    writer: *mut dyn bun_io::Write,
+/// only dereferences at scope exit when no other borrow is live. The lifetime
+/// parameter carries the trait-object bound — `*mut dyn Trait` in a struct
+/// field defaults to `+ 'static`, which a borrowed writer cannot satisfy.
+struct FlushOnDrop<'a> {
+    writer: *mut (dyn bun_io::Write + 'a),
     enabled: bool,
 }
 
-impl Drop for FlushOnDrop {
+impl Drop for FlushOnDrop<'_> {
     #[inline]
     fn drop(&mut self) {
         if self.enabled {

@@ -317,8 +317,6 @@ pub mod registry {
             &name[1..]
         }
 
-        // TODO(b2): body gated — api::NpmRegistry field set + URL<'a> ownership rework
-        
         pub fn from_api(
             name: &[u8],
             registry_: api::NpmRegistry,
@@ -336,18 +334,18 @@ pub mod registry {
                 }
             }
 
-            // PORT NOTE: Scope holds `URL<'static>`; Zig's `URL.parse(registry.url)`
-            // borrowed long-lived `[]const u8`. Leak the owned href to satisfy `'static`
-            // (TODO(b2): switch to `OwnedURL` once `bun_url` exposes the owned variant).
-            let registry_url: &'static [u8] =
-                Box::leak(core::mem::take(&mut registry.url));
-            let mut url = URL::parse(registry_url);
+            // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
+            // `[]const u8`; here `url` borrows the owned `registry_url` buffer
+            // for the duration of parsing. The final href is stored as
+            // `OwnedURL` (owned `Box<[u8]>`) on `Scope` — no `Box::leak`.
+            let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
+            let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
             let mut needs_normalize = false;
 
-            // TODO(port): heap-allocated buffer that owns `auth`/`user` — Zig used a single
-            // allocation; in Rust we keep the Box alive for the lifetime of the Scope.
+            // Backing storage for `user`/`auth` when synthesized from
+            // username:password (Zig used a single `default_allocator.alloc`).
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
             if registry.token.is_empty() {
@@ -460,8 +458,6 @@ pub mod registry {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
                         let total = combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
                         output_buf_owned = vec![0u8; total].into_boxed_slice();
-                        // TODO(port): lifetime — Zig leaked this allocation into the Scope; here
-                        // we transfer ownership via `output_buf_owned` and slice into it.
                         let (user_slice, output_buf) = output_buf_owned.split_at_mut(combo_len);
                         user_slice[..registry.username.len()].copy_from_slice(&registry.username);
                         user_slice[registry.username.len()] = b':';
@@ -476,32 +472,41 @@ pub mod registry {
 
             registry.token = env.get_auto(&registry.token).into();
 
-            if needs_normalize {
+            // Copy `auth`/`user` into owned buffers now so the borrows of
+            // `registry_url` / `output_buf_owned` are released before
+            // `registry_url` is moved into `final_href` below.
+            let auth: Box<[u8]> = Box::from(auth);
+            let user: Box<[u8]> = Box::from(&*user);
+            drop(output_buf_owned);
+
+            let final_href: Box<[u8]> = if needs_normalize {
                 let mut href = Vec::new();
                 write!(
                     &mut href,
                     "{}://{}/{}/",
                     bstr::BStr::new(url.display_protocol()),
                     url.display_host(),
-                    bstr::BStr::new(strings::trim(&url.pathname, b"/")),
+                    bstr::BStr::new(strings::trim(url.pathname, b"/")),
                 )
                 .unwrap();
-                // PORT NOTE: Zig `allocPrint` with `default_allocator` — leaked.
-                let href: &'static [u8] = Box::leak(href.into_boxed_slice());
-                url = URL::parse(href);
-            }
+                href.into_boxed_slice()
+            } else {
+                // PORT NOTE: reshaped for borrowck — `url` (borrowing
+                // `registry_url`) is dead on this branch (every path that
+                // mutated `url.pathname` also set `needs_normalize = true`).
+                registry_url
+            };
 
-            let url_hash = Self::hash(strings::without_trailing_slash(&url.href));
+            let url_hash = Self::hash(strings::without_trailing_slash(&final_href));
 
             Ok(Scope {
                 name: name.into(),
-                url,
+                url: OwnedURL::from_href(final_href),
                 url_hash,
-                token: registry.token.into(),
-                auth: auth.into(),
-                user: user.to_vec().into_boxed_slice(),
+                token: registry.token,
+                auth,
+                user,
             })
-            // PORT NOTE: `output_buf_owned` is dropped here; `auth`/`user` were copied above.
         }
     }
 
@@ -3180,21 +3185,8 @@ impl PackageManifest {
                 if let Some(time_obj) = json.as_property(b"time") {
                     if let Some(publish_time_expr) = time_obj.expr.get(version_name) {
                         if let Some(publish_time_str) = publish_time_expr.as_string(&bump) {
-                            // MOVE_DOWN(b0): bun_jsc::wtf::parse_es5_date → bun_wtf (date parser is
-                            // jsc-independent FFI). The extern decl is duplicated locally so the
-                            // minimum-release-age filter (`is_package_version_too_recent`) is not a
-                            // silent no-op while the `bun_wtf` crate split is pending.
-                            unsafe extern "C" {
-                                fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
-                            }
-                            if !publish_time_str.is_empty() {
-                                // SAFETY: publish_time_str.as_ptr() is valid for publish_time_str.len() bytes.
-                                let ms = unsafe {
-                                    WTF__parseES5Date(publish_time_str.as_ptr(), publish_time_str.len())
-                                };
-                                if ms.is_finite() {
-                                    package_version.publish_timestamp_ms = ms;
-                                }
+                            if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                                package_version.publish_timestamp_ms = ms;
                             }
                         }
                     }

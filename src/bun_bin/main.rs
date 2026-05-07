@@ -43,7 +43,11 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     //   JSC's conservative GC scan and `StackBounds::contains` see them.
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
-    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    // symbolize=0 + fast_unwind_on_fatal=1: the debug binary is ~735MB and
+    //   ASAN's in-process symbolizer takes 10s+ per frame, which makes crashes
+    //   look like hangs during development. Re-enable via ASAN_OPTIONS env when
+    //   you actually want symbolized output.
+    c"detect_stack_use_after_return=0:detect_leaks=0:symbolize=0:fast_unwind_on_fatal=1".as_ptr()
 }
 
 fn main() {
@@ -61,11 +65,9 @@ fn main() {
     //      (Zig's `initArgv`/`start_time` are folded into `bun_core::argv()`
     //      and `bun_core::start_time()` — no eager call needed.)
 
-    // 4. Stdio + Output sink. `install_output_sink` registers the
-    //    `OutputSinkVTable` that `bun_core::output` writes through;
-    //    `stdio::init()` then calls C's `bun_initialize_process()` and wires
-    //    stdout/stderr `Source`s.
-    bun_sys::install_output_sink();
+    // 4. Stdio + Output sink. The `OutputSinkVTable` is link-time provided by
+    //    `bun_sys` (`__BUN_OUTPUT_SINK_VTABLE`); `stdio::init()` calls C's
+    //    `bun_initialize_process()` and wires stdout/stderr `Source`s.
     output::stdio::init();
     struct FlushOnDrop;
     impl Drop for FlushOnDrop {

@@ -1795,9 +1795,11 @@ impl PostgresSQLConnection {
                                     // protocol::ErrorResponse). Convert to JSValue and forward via
                                     // on_js_error instead of moving the cached error out.
                                     if let Some(ref e) = statement.error_response {
-                                        if let Ok(ev) = e.to_js(self.global()) {
-                                            req.on_js_error(ev, self.global());
-                                        }
+                                        let ev = match e.to_js(self.global()) {
+                                            Ok(v) => v,
+                                            Err(err) => self.global().take_error(err),
+                                        };
+                                        req.on_js_error(ev, self.global());
                                     }
                                     if offset == 0 {
                                         unsafe { PostgresSQLQuery::deref_(req_ptr) };

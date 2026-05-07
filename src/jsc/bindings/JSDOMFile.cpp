@@ -63,32 +63,44 @@ public:
         if (JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value)))
             return true;
 
-        // Standard OrdinaryHasInstance check — walks via [[GetPrototypeOf]] and
-        // respects Proxy traps. If File.prototype isn't in the chain at all, the
-        // value is definitively not `instanceof File`.
-        // See https://github.com/oven-sh/bun/issues/25422.
+        // Walk the prototype chain ourselves instead of relying on
+        // OrdinaryHasInstance. File.prototype is currently the same object as
+        // Blob.prototype (see the TODO at the top of this file), so the
+        // standard walk would say true for any value that has Blob.prototype in
+        // its chain — including real Blob instances, proxies wrapping them,
+        // and `Object.create(blob)`. Reject when we pass through a JSBlob that
+        // doesn't have the `is_jsdom_file` flag set, before reaching the
+        // prototype property. See https://github.com/oven-sh/bun/issues/25422.
         auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue prototype = object->getDirect(vm, vm.propertyNames->prototype);
-        if (!JSObject::defaultHasInstance(globalObject, value, prototype))
+        if (!prototype.isObject())
             return false;
 
-        // The chain matched, but File.prototype is currently the same object as
-        // Blob.prototype (see the TODO at the top of this file), so a real Blob
-        // — including one wrapped in a Proxy — would also match here. Reject
-        // those by unwrapping proxies and seeing whether the underlying cell is
-        // a Blob without the `is_jsdom_file` flag.
-        JSObject* unwrapped = asObject(value);
-        while (auto* proxy = dynamicDowncast<ProxyObject>(unwrapped)) {
-            unwrapped = proxy->target();
-            if (!unwrapped)
-                break;
+        JSValue current = value;
+        while (true) {
+            // Unwrap proxies so we look at the underlying cell type, not the
+            // ProxyObject wrapper.
+            JSObject* unwrapped = current.getObject();
+            while (auto* proxy = dynamicDowncast<ProxyObject>(unwrapped)) {
+                unwrapped = proxy->target();
+                if (!unwrapped)
+                    break;
+            }
+            if (unwrapped
+                && unwrapped->inherits<WebCore::JSBlob>()
+                && !JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(unwrapped)))
+                return false;
+
+            // [[GetPrototypeOf]] respects Proxy traps.
+            JSValue next = current.getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (next.isUndefinedOrNull())
+                return false;
+            if (next == prototype)
+                return true;
+            current = next;
         }
-        if (unwrapped
-            && unwrapped->inherits<WebCore::JSBlob>()
-            && !JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(unwrapped)))
-            return false;
-
-        return true;
     }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

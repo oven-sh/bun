@@ -384,6 +384,19 @@ describe("File `instanceof` checks", () => {
     expect(nested instanceof Blob).toBe(true);
   });
 
+  test("an object whose prototype chain passes through a Blob is not instanceof File", () => {
+    // The JS prototype-chain analogue of the Proxy(Blob) case: walking
+    // `Object.create(blob)` upward goes through a real Blob before reaching
+    // Blob.prototype (which equals File.prototype internally). Browsers and
+    // Node both return false because File.prototype is genuinely not in the
+    // chain there; we have to mimic that by rejecting when the chain crosses
+    // a non-File JSBlob.
+    const blob = new Blob(["hi"]);
+    expect(Object.create(blob) instanceof File).toBe(false);
+    expect(Object.create(blob) instanceof Blob).toBe(true);
+    expect(({ __proto__: blob } as any) instanceof File).toBe(false);
+  });
+
   test("Proxy with getPrototypeOf trap that disclaims File is not instanceof File", () => {
     // If the trap explicitly returns a non-File prototype, the value should not
     // be `instanceof File` even if the underlying target is a real File.

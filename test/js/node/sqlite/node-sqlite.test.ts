@@ -883,9 +883,7 @@ test("deserialize() frees open sessions instead of orphaning their preupdate hoo
   const buf = db.serialize();
   db.deserialize(buf);
   // Wrapper reports closed — the handle was freed above, not leaked.
-  expect(() => session.changeset()).toThrow(
-    expect.objectContaining({ code: "ERR_INVALID_STATE" }),
-  );
+  expect(() => session.changeset()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   // Symbol.dispose on a stale session is a silent no-op (no
   // double-free of the already-deleted handle).
   expect(() => session[Symbol.dispose]()).not.toThrow();

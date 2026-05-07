@@ -102,12 +102,14 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map::Shared
-        //   `entry.files: MultiArrayList<Option<Rc<PackedMap>>>` — `memory_cost()`/`slice()`
-        //   require `T: MultiArrayElement`, but orphan rules forbid implementing the upstream
-        //   trait for `Option<Rc<_>>` here. See IncrementalGraph.rs for the same blockage.
-        let _ = &entry.files;
-        source_maps += 0;
+        // PORT NOTE: Zig stored `MultiArrayList(PackedMap.Shared)` and called
+        // `entry.files.memoryCost()` (capacityInBytes). The Rust port stores a
+        // plain `Vec<packed_map::Shared>` (see source_map_store.rs PORT NOTE),
+        // so the SoA byte-count is replaced by `cap * size_of::<Shared>()`.
+        source_maps += entry.files.capacity() * size_of::<packed_map::Shared>();
+        for file in entry.files.iter() {
+            source_maps += file.memory_cost();
+        }
     }
     // .incremental_result
     // TODO(port): exhaustiveness check for IncrementalResult fields (was bun.meta.useAllFields)

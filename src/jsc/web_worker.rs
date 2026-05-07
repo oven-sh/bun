@@ -574,6 +574,10 @@ impl WebWorker {
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
+                // Rebind to defeat Rust 2021 disjoint-field capture, which would
+                // otherwise capture only `worker_ptr.0` (a `*const WebWorker`,
+                // not `Send`) instead of the `SendPtr` wrapper.
+                let worker_ptr = worker_ptr;
                 // SAFETY: `worker_ptr.0` is the `Box::into_raw` ptr from above;
                 // owned by C++ `WebCore::Worker` for the lifetime of the thread.
                 let this = unsafe { &*worker_ptr.0 };

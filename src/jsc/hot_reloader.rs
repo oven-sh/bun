@@ -40,16 +40,11 @@ pub enum ImportWatcher {
 
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
-         // TODO(b2-blocked): bun_watcher::Watcher::start
-        {
-            // TODO(port): narrow error set
-            match self {
-                ImportWatcher::Hot(w) => return w.start(),
-                ImportWatcher::Watch(w) => return w.start(),
-                ImportWatcher::None => return Ok(()),
-            }
+        match self {
+            ImportWatcher::Hot(w) => w.start(),
+            ImportWatcher::Watch(w) => w.start(),
+            ImportWatcher::None => Ok(()),
         }
-        Ok(())
     }
 
     #[inline]
@@ -62,13 +57,10 @@ impl ImportWatcher {
 
     #[inline]
     pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
-         // TODO(b2-blocked): bun_watcher::Watcher::index_of
         match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => return w.index_of(hash),
-            ImportWatcher::None => {}
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.index_of(hash),
+            ImportWatcher::None => None,
         }
-        let _ = hash;
-        None
     }
 
     #[inline]
@@ -370,13 +362,10 @@ fn record_changed_path(path: &[u8]) {
     if path.is_empty() {
         return;
     }
-     // TODO(b2-blocked): bun_collections::StringSet::insert
-    {
-        // SAFETY: pointer set once by test_command before watcher thread starts;
-        // only watcher thread reaches here.
-        unsafe { (*set).insert(path) };
-    }
-    let _ = set;
+    // SAFETY: pointer set once by test_command before watcher thread starts;
+    // only the watcher thread reaches here. `bun.handleOom` is implicit —
+    // `StringSet::insert` panics on OOM via the global allocator.
+    unsafe { (*set).insert(path) };
 }
 
 /// Write the recorded changed paths to the trigger file so the next
@@ -414,11 +403,7 @@ fn flush_changed_paths_for_reload() {
             buf.extend_from_slice(p);
             buf.push(b'\n');
         }
-         // TODO(b2-blocked): bun_sys::File::write_file
-        {
-            let _ = bun_sys::File::write_file(Fd::cwd(), dest, &buf);
-        }
-        let _ = (dest, &buf);
+        let _ = bun_sys::File::write_file(Fd::cwd(), dest, &buf);
     }
 }
 
@@ -483,8 +468,6 @@ impl Default for MainFile {
 
 impl MainFile {
     pub fn init(file: &'static [u8]) -> MainFile {
-         // TODO(b2-blocked): bun_watcher::Watcher::get_hash, bun_paths::dirname, bun_core::is_slice_in_buffer
-        {
         let mut main = MainFile {
             file,
             hash: if !file.is_empty() {
@@ -503,12 +486,7 @@ impl MainFile {
             main.dir_hash = Watcher::get_hash(main.dir);
         }
 
-        return main;
-        } // end 
-        MainFile {
-            file,
-            ..Default::default()
-        }
+        main
     }
 }
 
@@ -758,11 +736,7 @@ where
         key: &[u8],
         value: *mut core::ffi::c_void,
     ) {
-         // TODO(b2-blocked): bun_collections::StringHashMap::put
-        {
-            self.tombstones.put(key, value).expect("unreachable");
-        }
-        let _ = (key, value);
+        self.tombstones.put(key, value).expect("unreachable");
     }
 
     fn get_tombstone(

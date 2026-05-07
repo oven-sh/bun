@@ -203,10 +203,10 @@ pub use super::visit::*;
 pub use super::maybe::*;
 pub use super::symbols::*;
 pub use super::lower_decorators::*;
-// `BinaryExpressionVisitor` is referenced as a field type; provide an opaque
-// stand-in until visit_binary_expression.rs un-gates.
-#[derive(Default)]
-pub struct BinaryExpressionVisitor;
+// Re-export the real visitor so `P::binary_expression_stack` is typed against
+// the same struct `visitExpr.rs` pushes into it (cross-call buffer reuse,
+// matching Zig's `p.binary_expression_stack`).
+pub use super::visit_binary_expression::BinaryExpressionVisitor;
 
 pub struct RecentlyVisitedTSNamespace {
     pub expr: js_ast::ExprData,
@@ -566,7 +566,7 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     // PERF(port): was stack-fallback alloc — profile in Phase B
-    pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
+    pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor<'a>>,
     // TODO(b2-blocked): SideEffects::BinaryExpressionSimplifyVisitor — round-D (SideEffects.rs)
     pub binary_expression_simplify_stack: ListManaged<'a, ()>,
 

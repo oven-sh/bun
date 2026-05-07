@@ -301,7 +301,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references — matches the Zig shape (`*ConsoleObject` field).
-    (*global.bun_vm()).console as *mut ConsoleObject
+    unsafe { (*global.bun_vm()).console as *mut ConsoleObject }
 }
 
 /// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the

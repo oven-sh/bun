@@ -68,7 +68,6 @@ impl VM {
     pub fn create(heap_type: HeapType) -> NonNull<VM> {
         // SAFETY: JSC__VM__create never returns null.
         unsafe { NonNull::new_unchecked(JSC__VM__create(heap_type as u8)) }
-        // TODO(port): lifetime — returned VM is owned until `deinit`; consider a wrapper type
     }
 
     // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
@@ -111,8 +110,8 @@ impl VM {
         unsafe { JSC__VM__deferGC(self.as_mut_ptr(), ctx, callback) }
     }
 
-    pub fn deprecated_report_extra_memory(&self, size: usize) {
-        // TODO(port): jsc.markBinding(@src()) — debug instrumentation
+    pub fn report_extra_memory(&self, size: usize) {
+        crate::mark_binding!();
         // SAFETY: self is a valid VM.
         unsafe { JSC__VM__reportExtraMemory(self.as_mut_ptr(), size) }
     }
@@ -211,14 +210,17 @@ impl VM {
         unsafe { JSC__VM__clearHasTerminationRequest(self.as_mut_ptr()) }
     }
 
+    #[track_caller]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
-        // TODO(port): ExceptionValidationScope::init takes @src() in Zig — needs source-location plumbing
-        let scope = ExceptionValidationScope::init(global_object);
+        let mut scope =
+            ExceptionValidationScope::new(global_object, core::panic::Location::caller());
         scope.assert_no_exception();
         // SAFETY: self and global_object are valid; value is a live JSValue on this VM.
         unsafe { JSC__VM__throwError(self.as_mut_ptr(), global_object.as_mut_ptr(), value) }
         scope.assert_exception_presence_matches(true);
-        // `defer scope.deinit()` → handled by Drop
+        // Zig: `defer scope.deinit()` — `ExceptionValidationScope` has no `Drop`, destroy explicitly.
+        // SAFETY: scope was initialized via `ExceptionValidationScope::new` above and not yet destroyed.
+        unsafe { ExceptionValidationScope::destroy(&mut scope) };
         JsError::Thrown
     }
 

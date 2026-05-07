@@ -241,6 +241,26 @@ const MAX_REDIRECT_URL_LENGTH: usize = 128 * 1024;
 #[unsafe(export_name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE")]
 pub static mut MAX_HTTP_HEADER_SIZE: usize = 16 * 1024;
 
+/// Safe accessor for the mutable global `MAX_HTTP_HEADER_SIZE`.
+///
+/// Mirrors Zig's `bun.http.max_http_header_size` reads. The static is exported
+/// to C++ via `BUN_DEFAULT_MAX_HTTP_HEADER_SIZE` so it must remain a plain
+/// `static mut usize`; this wrapper centralizes the `unsafe` for Rust callers.
+#[inline]
+pub fn max_http_header_size() -> usize {
+    // SAFETY: written only at startup (CLI parsing) or from the JS thread via
+    // `set_max_http_header_size`; reads on the JS / HTTP thread observe a
+    // consistent word-sized value.
+    unsafe { MAX_HTTP_HEADER_SIZE }
+}
+
+/// Safe setter for `MAX_HTTP_HEADER_SIZE` (see [`max_http_header_size`]).
+#[inline]
+pub fn set_max_http_header_size(v: usize) {
+    // SAFETY: see `max_http_header_size`.
+    unsafe { MAX_HTTP_HEADER_SIZE = v }
+}
+
 pub static mut OVERRIDDEN_DEFAULT_USER_AGENT: &'static [u8] = b"";
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";

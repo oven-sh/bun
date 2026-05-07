@@ -7,6 +7,7 @@ use bun_str::ZigString;
 
 use crate::crypto::{create_crypto_error, evp, HMAC};
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
+use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 use crate::webcore::blob::BlobExt as _;
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
@@ -188,10 +189,101 @@ impl CryptoHasher {
 
     // ── JS host fns ────────────────────────────────────────────────────────
 
-    // `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`
-    // `pub const hash   = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
-    // TODO(port): proc-macro — `wrapInstanceMethod`/`wrapStaticMethod` reflect on the
-    // wrapped fn's parameter list to decode CallFrame args. Phase B: emit via #[bun_jsc::host_fn].
+    /// `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`
+    ///
+    /// Hand-expanded `wrapInstanceMethod` decode for the parameter list
+    /// `(*CryptoHasher, *JSGlobalObject, ?Node.StringOrBuffer)`.
+    pub fn digest(
+        this: &mut Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<1>();
+        // ?Node.StringOrBuffer (instance-method arm: empty/undefined/null → None)
+        let output: Option<StringOrBuffer> = if arguments.len > 0 {
+            let arg = arguments.ptr[0];
+            if !arg.is_empty_or_undefined_or_null() {
+                match StringOrBuffer::from_js(global, arg)? {
+                    Some(v) => Some(v),
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected string or buffer"
+                        )));
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Self::digest_(this, global, output)
+    }
+
+    /// `pub const hash = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
+    ///
+    /// Hand-expanded `wrapStaticMethod` decode for the parameter list
+    /// `(*JSGlobalObject, ZigString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
+    pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<3>();
+        let mut i = 0usize;
+        let mut next_eat = || {
+            if i < arguments.len {
+                let v = arguments.ptr[i];
+                i += 1;
+                Some(v)
+            } else {
+                None
+            }
+        };
+
+        // ZigString
+        let algorithm = {
+            let Some(string_value) = next_eat() else {
+                return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+            };
+            if string_value.is_undefined_or_null() {
+                return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+            }
+            string_value.get_zig_string(global)?
+        };
+
+        // Node.BlobOrStringOrBuffer
+        let input = {
+            let Some(arg) = next_eat() else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "expected blob, string or buffer"
+                )));
+            };
+            match BlobOrStringOrBuffer::from_js(global, arg)? {
+                Some(b) => b,
+                None => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "expected blob, string or buffer"
+                    )));
+                }
+            }
+        };
+
+        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
+        let output: Option<StringOrBuffer> = match next_eat() {
+            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
+                Some(v) => Some(v),
+                None => {
+                    if arg.is_undefined() {
+                        None
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected string or buffer"
+                        )));
+                    }
+                }
+            },
+            None => None,
+        };
+
+        Self::hash_(global, algorithm, input, output)
+    }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
         global.throw(format_args!("HMAC has been consumed and is no longer usable"))
@@ -229,7 +321,7 @@ impl CryptoHasher {
     pub fn get_algorithms(
         global: &JSGlobalObject,
         _: JSValue,
-        _: JSValue,
+        _: PropertyName,
     ) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }

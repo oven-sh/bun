@@ -229,9 +229,9 @@ pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     debug_assert!(str.tag() != bstr::Tag::Dead);
     // `defer str.deref()` — handled by Drop
     if str.length() == 0 {
-        return Ok(bun_jsc::node::Encoding::Utf8.to_js(global));
+        return Ok(crate::node::Encoding::Utf8.to_js(global));
     }
-    if let Some(enc) = str.in_map_case_insensitive(&bun_jsc::node::Encoding::MAP) {
+    if let Some(enc) = str.in_map_case_insensitive(&crate::node::types::ENCODING_MAP) {
         return Ok(enc.to_js(global));
     }
     Ok(JSValue::UNDEFINED)

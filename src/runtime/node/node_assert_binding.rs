@@ -19,7 +19,7 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
     let nargs = frame.arguments_count();
     if nargs < 2 {
-        return global.throw_not_enough_arguments("printMyersDiff", 2, frame.arguments_count());
+        return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
     }
 
     let actual_arg: JSValue = frame.argument(0);
@@ -32,10 +32,10 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     };
 
     if !actual_arg.is_string() {
-        return global.throw_invalid_argument_type_value("actual", "string", actual_arg);
+        return Err(global.throw_invalid_argument_type_value("actual", "string", actual_arg));
     }
     if !expected_arg.is_string() {
-        return global.throw_invalid_argument_type_value("expected", "string", expected_arg);
+        return Err(global.throw_invalid_argument_type_value("expected", "string", expected_arg));
     }
 
     let actual_str = actual_arg.to_bun_string(global)?;
@@ -43,8 +43,8 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     let expected_str = expected_arg.to_bun_string(global)?;
     // `defer expected_str.deref()` — handled by Drop on bun_str::String
 
-    debug_assert!(actual_str.tag != bstring::Tag::Dead);
-    debug_assert!(expected_str.tag != bstring::Tag::Dead);
+    debug_assert!(actual_str.tag() != bstring::Tag::Dead);
+    debug_assert!(expected_str.tag() != bstring::Tag::Dead);
 
     node_assert::myers_diff(
         // allocator param dropped (was arena-backed; non-AST crate uses global mimalloc)
@@ -56,32 +56,28 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-// TODO(port): `[]const u8` payload type for DiffList — exact Rust element type
-// depends on DiffList port in assert/myers_diff.rs (likely Box<[u8]> or &'bump [u8]).
-type StrDiffList = DiffList<Box<[u8]>>;
+type StrDiffList<'a> = DiffList<&'a [u8]>;
 
 #[allow(dead_code)]
-fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList) -> JsResult<JSValue> {
+fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList<'_>) -> JsResult<JSValue> {
     // todo: replace with toJS
-    let array = JSValue::create_empty_array(global, diff_list.as_slice().len())?;
-    for (i, line) in diff_list.as_slice().iter().enumerate() {
+    let array = JSValue::create_empty_array(global, diff_list.len())?;
+    for (i, line) in diff_list.iter().enumerate() {
         let obj = JSValue::create_empty_object_with_null_prototype(global);
         if obj.is_empty() {
-            return global.throw_out_of_memory();
+            return Err(global.throw_out_of_memory());
         }
         obj.put(
             global,
             bstring::String::static_(b"kind"),
-            JSValue::js_number(line.kind as u32),
+            JSValue::js_number(line.kind as u32 as f64),
         );
         obj.put(
             global,
             bstring::String::static_(b"value"),
-            // TODO(port): JSValue.fromAny(global, []const u8, line.value) — generic
-            // comptime-type dispatch; map to the concrete &[u8] → JSValue helper.
-            JSValue::from_any(global, &line.value),
+            JSValue::from_any(global, line.value)?,
         );
-        array.put_index(global, i as u32, obj);
+        array.put_index(global, i as u32, obj)?;
     }
     Ok(array)
 }
@@ -94,7 +90,7 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
     exports.put(
         global,
         bstring::String::static_(b"myersDiff"),
-        JSFunction::create(global, "myersDiff", myers_diff, 2, Default::default()),
+        JSFunction::create(global, "myersDiff", __jsc_host_myers_diff, 2, Default::default()),
     );
 
     exports
@@ -103,7 +99,6 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_assert_binding.zig (85 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      DiffList<T> element type & JSValue::from_any signature need confirmation in Phase B; bun.String.static mapped to String::static_ (keyword collision).
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

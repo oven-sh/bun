@@ -396,14 +396,16 @@ impl Source {
 pub mod stdin_tty {
     use super::*;
 
-    static mut DATA: MaybeUninit<uv::uv_tty_t> = MaybeUninit::uninit();
+    // PORTING.md §Global mutable state: init guarded by `LOCK` + `INITIALIZED`;
+    // afterwards only accessed by uv on the loop thread. RacyCell.
+    static DATA: bun_core::RacyCell<MaybeUninit<uv::uv_tty_t>> =
+        bun_core::RacyCell::new(MaybeUninit::uninit());
     static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
     pub fn value() -> *mut uv::uv_tty_t {
-        // SAFETY: address-of a static; never dereferenced here.
-        unsafe { core::ptr::addr_of_mut!(DATA).cast::<uv::uv_tty_t>() }
+        DATA.get().cast::<uv::uv_tty_t>()
     }
 
     pub fn is_stdin_tty(tty: *const Tty) -> bool {

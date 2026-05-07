@@ -54,15 +54,26 @@ impl bun_io::Write for IoWriterAdapter<'_> {
 // Exported globals
 // ──────────────────────────────────────────────────────────────────────────
 
+// `AtomicBool`/`AtomicI32`/`AtomicUsize` have the same size/alignment as the
+// underlying scalar, so the `#[no_mangle]` symbol layout is unchanged for the
+// C++ side; Rust gets race-free reads.
 #[unsafe(no_mangle)]
-pub static mut has_bun_garbage_collector_flag_enabled: bool = false;
+pub static has_bun_garbage_collector_flag_enabled: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub static mut isBunTest: bool = false;
+pub static isBunTest: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub static mut Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
+pub static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
+    core::sync::atomic::AtomicI32::new(10);
 
 // TODO: evaluate if this has any measurable performance impact.
-pub static mut SYNTHETIC_ALLOCATION_LIMIT: usize = u32::MAX as usize;
+pub static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(u32::MAX as usize);
+#[inline]
+pub fn synthetic_allocation_limit() -> usize {
+    SYNTHETIC_ALLOCATION_LIMIT.load(core::sync::atomic::Ordering::Relaxed)
+}
 // `string_allocation_limit` lives in `bun_string` (read by `String::max_length`
 // without an upward dep on this crate) and is C-exported there as
 // `Bun__stringSyntheticAllocationLimit`. Re-export under the Zig spec name.
@@ -393,7 +404,8 @@ pub struct VMHolder;
 // PORT NOTE: Zig nests `pub var main_thread_vm` inside the struct namespace;
 // Rust forbids associated `static`s, so it lives at module scope and is
 // re-exported as `VMHolder::MAIN_THREAD_VM` via a const fn accessor.
-pub static mut MAIN_THREAD_VM: Option<*mut VirtualMachine> = None;
+pub static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 impl VMHolder {
     thread_local! {
@@ -408,8 +420,7 @@ impl VMHolder {
             let vm_instance = unsafe { &mut *vm_instance };
             vm_instance.global = global;
             if vm_instance.is_main_thread {
-                // SAFETY: mutable static only touched on the main JS thread
-                unsafe { MAIN_THREAD_VM = Some(vm_instance) };
+                MAIN_THREAD_VM.store(vm_instance, core::sync::atomic::Ordering::Release);
             }
         }
         Self::CACHED_GLOBAL_OBJECT.set(Some(global));
@@ -439,16 +450,14 @@ thread_local! {
     pub static IS_MAIN_THREAD_VM: Cell<bool> = const { Cell::new(false) };
 }
 
-pub static mut IS_SMOL_MODE: bool = false;
+pub static IS_SMOL_MODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// Process-global "smol" flag (Zig: `bun.jsc.VirtualMachine.is_smol_mode`).
-/// Set once during VM init before workers spawn; thereafter read-only, so a
-/// relaxed unsynchronized read is sound.
+/// Set once during VM init before workers spawn; thereafter read-only.
 #[inline]
 pub fn is_smol_mode() -> bool {
-    // SAFETY: written once at startup before any concurrent reader exists;
-    // `&raw const` avoids the edition-2024 `static_mut_refs` lint.
-    unsafe { *&raw const IS_SMOL_MODE }
+    IS_SMOL_MODE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Default)]
@@ -620,8 +629,8 @@ impl VirtualMachine {
     }
 
     pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
-        // SAFETY: written once during main-thread init
-        unsafe { MAIN_THREAD_VM }
+        let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        if p.is_null() { None } else { Some(p) }
     }
 
     #[inline]
@@ -1148,8 +1157,7 @@ impl VirtualMachine {
             return true;
         }
 
-        // SAFETY: `isBunTest` is a process-global written once at startup.
-        if unsafe { isBunTest } {
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -1789,8 +1797,7 @@ impl VirtualMachine {
         };
         VMHolder::VM.set(Some(vm));
         if opts.is_main_thread {
-            // SAFETY: written once during main-thread init.
-            unsafe { MAIN_THREAD_VM = Some(vm) };
+            MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
@@ -1954,7 +1961,7 @@ impl VirtualMachine {
 
         if opts.smol {
             // SAFETY: written once during init.
-            unsafe { IS_SMOL_MODE = true };
+            IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
         Ok(vm)
@@ -2893,12 +2900,10 @@ impl VirtualMachine {
             }
             if gc_level == b"1" {
                 self.aggressive_garbage_collection = GCLevel::Mild;
-                // SAFETY: process-global written once at startup.
-                unsafe { has_bun_garbage_collector_flag_enabled = true };
+                has_bun_garbage_collector_flag_enabled.store(true, core::sync::atomic::Ordering::Relaxed);
             } else if gc_level == b"2" {
                 self.aggressive_garbage_collection = GCLevel::Aggressive;
-                // SAFETY: process-global written once at startup.
-                unsafe { has_bun_garbage_collector_flag_enabled = true };
+                has_bun_garbage_collector_flag_enabled.store(true, core::sync::atomic::Ordering::Relaxed);
             }
             if let Some(value) = map.get(b"BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT") {
                 match core::str::from_utf8(value)
@@ -2906,8 +2911,7 @@ impl VirtualMachine {
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     Some(limit) => {
-                        // SAFETY: process-global written once at startup.
-                        unsafe { SYNTHETIC_ALLOCATION_LIMIT = limit };
+                        SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
                         STRING_ALLOCATION_LIMIT
                             .store(limit, core::sync::atomic::Ordering::Relaxed);
                     }
@@ -2933,8 +2937,7 @@ impl VirtualMachine {
             return;
         }
 
-        // SAFETY: `isBunTest` is a process-global written once at startup.
-        if unsafe { isBunTest } {
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;
@@ -3266,8 +3269,7 @@ impl VirtualMachine {
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
-        // SAFETY: process-global written once at startup.
-        unsafe { IS_SMOL_MODE = opts.smol };
+        IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
 
@@ -3354,7 +3356,7 @@ impl VirtualMachine {
         unsafe { (*vm_ref.event_loop()).ensure_waker() };
         if opts.smol {
             // SAFETY: process-global written once at startup.
-            unsafe { IS_SMOL_MODE = true };
+            IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         Ok(vm)
     }

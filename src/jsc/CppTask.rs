@@ -1,4 +1,5 @@
 use core::marker::{PhantomData, PhantomPinned};
+use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{task_tag, TaskTag, Taskable};
@@ -53,16 +54,13 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task
-    ///
-    /// SAFETY: returns `&'static mut VirtualMachine`; two calls alias the same
-    /// VM. Caller must not hold another live `&mut VirtualMachine`.
-    // TODO(port): VirtualMachine is process-lifetime; revisit `'static` once bun_jsc settles on
-    // a borrow convention for VM handles.
-    pub unsafe fn get_vm(&self) -> Option<&'static mut VirtualMachine> {
+    /// Get the VM that created this task. Returns the raw pointer (PORTING.md
+    /// §Global mutable state — VirtualMachine is process-lifetime; callers
+    /// deref per-access so two calls don't fabricate aliasing `&mut`).
+    pub fn get_vm(&self) -> Option<NonNull<VirtualMachine>> {
         // SAFETY: `self` is a valid C++ EventLoopTaskNoContext; the returned VM (if non-null)
         // outlives this task.
-        unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(std::ptr::from_ref(self)).as_mut() }
+        NonNull::new(unsafe { Bun__EventLoopTaskNoContext__createdInBunVm(std::ptr::from_ref(self)) })
     }
 }
 
@@ -101,8 +99,8 @@ impl ConcurrentCppTask {
         drop(this);
         EventLoopTaskNoContext::run(cpp_task);
         if let Some(vm) = maybe_vm {
-            // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-            unsafe { (*vm.event_loop()).unref_concurrently() };
+            // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
+            unsafe { (*(*vm.as_ptr()).event_loop()).unref_concurrently() };
         }
     }
 }
@@ -112,8 +110,8 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
     crate::mark_binding!();
     // SAFETY: cpp_task is a valid C++ EventLoopTaskNoContext freshly handed over from C++.
     if let Some(vm) = unsafe { (*cpp_task).get_vm() } {
-        // SAFETY: `event_loop()` returns the VM-owned EventLoop; live for VM lifetime.
-        unsafe { (*vm.event_loop()).ref_concurrently() };
+        // SAFETY: process-lifetime VM; `event_loop()` returns the VM-owned EventLoop.
+        unsafe { (*(*vm.as_ptr()).event_loop()).ref_concurrently() };
     }
     let cpp = ConcurrentCppTask::new(cpp_task);
     // SAFETY: `cpp` is a freshly boxed ConcurrentCppTask; workpool_task is a valid field ptr.

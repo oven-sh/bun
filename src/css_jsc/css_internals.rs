@@ -124,7 +124,7 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref: &'static mut Log = unsafe { &mut *(&raw mut log) };
+    let log_ref = unsafe { &mut *(&raw mut log) };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {

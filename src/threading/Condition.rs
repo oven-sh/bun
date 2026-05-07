@@ -9,13 +9,13 @@
 //! ```ignore
 //! static M: Mutex = Mutex::new();
 //! static C: Condition = Condition::new();
-//! static mut PREDICATE: bool = false;
+//! static PREDICATE: AtomicBool = AtomicBool::new(false);
 //!
 //! fn consumer() {
 //!     M.lock();
 //!     // (unlock on scope exit)
 //!
-//!     while !PREDICATE {
+//!     while !PREDICATE.load(Relaxed) {
 //!         C.wait(&M);
 //!     }
 //!     M.unlock();
@@ -24,7 +24,7 @@
 //! fn producer() {
 //!     {
 //!         M.lock();
-//!         PREDICATE = true;
+//!         PREDICATE.store(true, Relaxed);
 //!         M.unlock();
 //!     }
 //!     C.signal();

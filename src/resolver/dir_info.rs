@@ -183,7 +183,8 @@ impl DirInfo {
     }
 
     pub fn get_parent(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.parent).map(|p| std::ptr::from_mut(p))
+        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
+        unsafe { (*hash_map_instance()).at_index(self.parent).map(|p| std::ptr::from_mut(p)) }
     }
 
     /// Returns a raw `*mut DirInfo` into the BSSMap singleton. The enclosing
@@ -193,7 +194,8 @@ impl DirInfo {
     ///
     /// SAFETY: caller must hold the resolver mutex.
     pub unsafe fn get_enclosing_browser_scope(&self) -> Option<*mut DirInfo> {
-        hash_map_instance().at_index(self.enclosing_browser_scope).map(|p| std::ptr::from_mut(p))
+        // SAFETY: BSSMap singleton lives for the process; resolver mutex held by caller.
+        unsafe { (*hash_map_instance()).at_index(self.enclosing_browser_scope).map(|p| std::ptr::from_mut(p)) }
     }
 }
 
@@ -201,17 +203,22 @@ impl DirInfo {
 // the comptime-returned struct). Rust `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-static mut DIR_INFO_MAP: Option<NonNull<HashMap>> = None;
+// PORTING.md §Global mutable state: lazy singleton; RacyCell over the option
+// because resolver init runs single-threaded before any concurrent access.
+static DIR_INFO_MAP: bun_core::RacyCell<Option<NonNull<HashMap>>> =
+    bun_core::RacyCell::new(None);
 
+/// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
+/// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline]
-pub fn hash_map_instance() -> &'static mut HashMap {
+pub fn hash_map_instance() -> *mut HashMap {
     // SAFETY: matches Zig's lazy global singleton; resolver init runs single-threaded
-    // before any concurrent access. `&raw mut` avoids the static_mut_refs lint.
+    // before any concurrent access.
     unsafe {
-        if (*(&raw const DIR_INFO_MAP)).is_none() {
-            *(&raw mut DIR_INFO_MAP) = Some(NonNull::from(HashMap::init()));
+        if (*DIR_INFO_MAP.get()).is_none() {
+            *DIR_INFO_MAP.get() = Some(HashMap::init());
         }
-        (*(&raw mut DIR_INFO_MAP)).unwrap().as_mut()
+        (*DIR_INFO_MAP.get()).unwrap().as_ptr()
     }
 }
 

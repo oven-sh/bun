@@ -22,9 +22,11 @@ use bun_runtime::test_runner::harness::recover;
 const _: () = assert!(cfg!(target_endian = "little"));
 
 // TODO(port): move to <area>_sys
+// `AtomicPtr<c_void>` is `#[repr(C)]` over `*mut c_void` — same extern layout
+// as libc's `char **environ`; written once at startup before any thread reads.
 unsafe extern "C" {
-    pub static mut _environ: *mut c_void;
-    pub static mut environ: *mut c_void;
+    pub static _environ: core::sync::atomic::AtomicPtr<c_void>;
+    pub static environ: core::sync::atomic::AtomicPtr<c_void>;
 }
 
 pub fn main() {
@@ -41,8 +43,8 @@ pub fn main() {
                 bun_alloc::mimalloc::mi_free as *mut _,
             );
             // TODO(port): std.os.environ.ptr — obtain the raw environ block pointer for Windows.
-            environ = core::ptr::null_mut();
-            _environ = core::ptr::null_mut();
+            environ.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            _environ.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
         }
     }
 

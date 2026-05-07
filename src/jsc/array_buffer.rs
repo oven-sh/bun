@@ -254,7 +254,7 @@ impl ArrayBuffer {
             return std::io::Cursor::new(&mut [][..]);
         }
         // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
-        let slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) };
+        let slice = unsafe { core::slice::from_raw_parts_mut::<'static, u8>(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
 

@@ -105,8 +105,8 @@ static RELATIVE_PATHS_LIST_PTR: core::sync::atomic::AtomicPtr<ImportPathsList> =
 #[inline]
 fn relative_paths_list_ptr() -> *mut ImportPathsList {
     RELATIVE_PATHS_LIST_ONCE.call_once(|| {
-        let p: *mut ImportPathsList = ImportPathsList::init();
-        RELATIVE_PATHS_LIST_PTR.store(p, core::sync::atomic::Ordering::Release);
+        let p = ImportPathsList::init();
+        RELATIVE_PATHS_LIST_PTR.store(p.as_ptr(), core::sync::atomic::Ordering::Release);
     });
     RELATIVE_PATHS_LIST_PTR.load(core::sync::atomic::Ordering::Acquire)
 }

@@ -44,7 +44,7 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
             .cast::<BundleV2>()
     };
     let worker = Worker::get(bv2);
-    // `defer worker.unget()` — explicit; Worker::get returns `&'static mut Worker`.
+    // `defer worker.unget()` — explicit; Worker::get returns the thread-local worker.
     let mut worker = scopeguard::guard(worker, |w| w.unget());
 
     // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"

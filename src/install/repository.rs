@@ -23,7 +23,7 @@ use crate::install::{self as Install, ExtractData, PackageManager};
 // storage so callers can return slices that outlive the access. Rust thread_local!
 // closures cannot express this without unsafe. Phase B should either (a) make
 // try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
-// `&'static mut PathBuffer` via UnsafeCell with documented single-use invariant.
+// a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
 struct TlBufs {
     final_path_buf: PathBuffer,
     ssh_path_buf: PathBuffer,
@@ -58,7 +58,7 @@ fn tl_bufs() -> *mut TlBufs {
     //   The invariant is therefore disjoint-FIELD access, not whole-struct uniqueness.
     // - The raw pointer is valid for the lifetime of the current thread (thread-local
     //   outlives all in-thread borrows; `TlBufs` has no `Drop`). Callers reborrow into
-    //   `&'static mut PathBuffer` per field as a deliberate escape hatch so
+    //   a raw `*mut PathBuffer` per field as a deliberate escape hatch so
     //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
     //   Callers must not retain a slice into a given field across a subsequent reborrow
     //   of that SAME field.
@@ -71,17 +71,21 @@ struct SloppyGlobalGitConfig {
     has_ssh_command: bool,
 }
 
-static mut SLOPPY_HOLDER: SloppyGlobalGitConfig = SloppyGlobalGitConfig {
-    has_askpass: false,
-    has_ssh_command: false,
-};
+// PORTING.md §Global mutable state: written exactly once under `Once`, then
+// read-only. RacyCell over the `Copy` POD (not `OnceLock` because
+// `load_and_parse` may early-return without writing yet must mark Once done).
+static SLOPPY_HOLDER: bun_core::RacyCell<SloppyGlobalGitConfig> =
+    bun_core::RacyCell::new(SloppyGlobalGitConfig {
+        has_askpass: false,
+        has_ssh_command: false,
+    });
 static LOAD_AND_PARSE_ONCE: Once = Once::new();
 
 impl SloppyGlobalGitConfig {
     pub fn get() -> SloppyGlobalGitConfig {
         LOAD_AND_PARSE_ONCE.call_once(Self::load_and_parse);
         // SAFETY: written exactly once under `Once` above; read-only thereafter.
-        unsafe { SLOPPY_HOLDER }
+        unsafe { SLOPPY_HOLDER.read() }
     }
 
     pub fn load_and_parse() {
@@ -180,10 +184,10 @@ impl SloppyGlobalGitConfig {
 
         // SAFETY: only called once via `Once::call_once`.
         unsafe {
-            SLOPPY_HOLDER = SloppyGlobalGitConfig {
+            SLOPPY_HOLDER.write(SloppyGlobalGitConfig {
                 has_askpass: found_askpass,
                 has_ssh_command: found_ssh_command,
-            };
+            });
         }
     }
 }
@@ -208,7 +212,11 @@ pub struct SharedEnv {
 // the global instead; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`)
 // store the reference. The map is written exactly once on first call from the
 // main install thread and never freed, matching Zig's lifetime.
-pub static mut SHARED_ENV: SharedEnv = SharedEnv { env: None };
+// PORTING.md §Global mutable state: lazy-init on the install main thread,
+// then `&'static`-read from worker threads. RacyCell — the install enqueue
+// path is single-threaded at the write point (Zig parity).
+pub static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
+    bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
     pub fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
@@ -217,7 +225,7 @@ impl SharedEnv {
         // `env` is `Some` it is never reassigned, so the returned `&'static`
         // remains valid for the program lifetime.
         unsafe {
-            let this = &mut *core::ptr::addr_of_mut!(SHARED_ENV);
+            let this = &mut *SHARED_ENV.get();
             if this.env.is_none() {
                 // Note: currently if the user sets this to some value that causes
                 // a prompt for a password, the stdout of the prompt will be masked

@@ -26,13 +26,17 @@ unsafe extern "C" {
 // JS thread. Phase B: wrap in a JS-thread-local cell or assert const-init of fields.
 // PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
-pub static mut CHILD_SINGLETON: Option<InternalMsgHolder> = None;
+// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
+// fields (`Strong`). RacyCell — single-thread access is the contract.
+pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
+    bun_core::RacyCell::new(None);
 
+/// Raw pointer to the (lazily-initialized) JS-thread singleton. Callers
+/// reborrow per-access — PORTING.md §Global mutable state.
 #[inline]
-fn child_singleton() -> &'static mut InternalMsgHolder {
+fn child_singleton() -> *mut InternalMsgHolder {
     // SAFETY: only called on the single JS thread; mirrors Zig `pub var` access.
-    // TODO(port): static mut reference — replace with proper single-thread cell in Phase B.
-    unsafe { (*core::ptr::addr_of_mut!(CHILD_SINGLETON)).get_or_insert_with(Default::default) }
+    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) as *mut _ }
 }
 
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
@@ -67,7 +71,8 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
-    let singleton = child_singleton();
+    // SAFETY: JS-thread only; sole live `&mut` for the block below.
+    let singleton = unsafe { &mut *child_singleton() };
     if callback.is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
@@ -137,7 +142,8 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
-    let singleton = child_singleton();
+    // SAFETY: JS-thread only; sole live `&mut` for the block below.
+    let singleton = unsafe { &mut *child_singleton() };
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(arguments[0], global);
     singleton.cb = StrongOptional::create(arguments[1], global);
@@ -148,7 +154,8 @@ pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> 
 pub fn handle_internal_message_child(global: &JSGlobalObject, message: JSValue) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, global)
+    // SAFETY: JS-thread only; per-call reborrow.
+    unsafe { &mut *child_singleton() }.dispatch(message, global)
 }
 
 #[bun_jsc::host_fn]
@@ -345,5 +352,5 @@ pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlo
 //   source:     src/runtime/node/node_cluster_binding.zig (304 lines)
 //   confidence: high
 //   todos:      2
-//   notes:      static mut CHILD_SINGLETON needs JS-thread cell
+//   notes:      RacyCell CHILD_SINGLETON needs JS-thread cell
 // ──────────────────────────────────────────────────────────────────────────

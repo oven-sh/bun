@@ -218,12 +218,17 @@ impl Step {
     }
 }
 
-// TODO(port): mutable global. Single-threaded install context writes this; consider AtomicU8.
-pub static mut SUPPORTED_METHOD: Method = if cfg!(target_os = "macos") {
-    Method::Clonefile
-} else {
-    Method::Hardlink
-};
+// PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
+// (no `Atomic<Method>`) — writers are the CLI option-load and the
+// clonefile/hardlink fallback in `install_with_method`, all on the install
+// main thread; isolated_install workers snapshot via `supported_method()`
+// once at startup.
+pub static SUPPORTED_METHOD: bun_core::RacyCell<Method> =
+    bun_core::RacyCell::new(if cfg!(target_os = "macos") {
+        Method::Clonefile
+    } else {
+        Method::Hardlink
+    });
 
 impl PackageInstall<'_> {
     /// Read accessor for the [`SUPPORTED_METHOD`] global (Zig:
@@ -234,7 +239,7 @@ impl PackageInstall<'_> {
         // SAFETY: written only on the install main thread before/between reads
         // (fall-back from clonefile/hardlink → copyfile); concurrent readers
         // (isolated_install workers) seed an atomic from this once at startup.
-        unsafe { SUPPORTED_METHOD }
+        unsafe { SUPPORTED_METHOD.read() }
     }
 }
 
@@ -399,8 +404,12 @@ impl HasWorkPoolTask for HardLinkWindowsInstallTask {
 #[cfg(windows)]
 pub type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
 
+// PORTING.md §Global mutable state: written once on the main thread by
+// `init_queue()` before any worker `run_from_thread_pool` reads it; workers
+// only ever take `&HardLinkQueue` (all queue methods are `&self`).
 #[cfg(windows)]
-static mut HARDLINK_QUEUE: core::mem::MaybeUninit<HardLinkQueue> = core::mem::MaybeUninit::uninit();
+static HARDLINK_QUEUE: bun_core::RacyCell<core::mem::MaybeUninit<HardLinkQueue>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
@@ -409,12 +418,12 @@ impl HardLinkWindowsInstallTask {
         // Returns a shared ref so worker threads in run_from_thread_pool() may safely
         // alias it via HARDLINK_QUEUE.assume_init_ref(); all queue methods take &self.
         unsafe {
-            HARDLINK_QUEUE.write(HardLinkQueue {
+            (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
                 thread_pool: &PackageManager::get().thread_pool,
                 errored_task: AtomicPtr::new(core::ptr::null_mut()),
                 wait_group: WaitGroup::init(),
             });
-            HARDLINK_QUEUE.assume_init_ref()
+            (*HARDLINK_QUEUE.get()).assume_init_ref()
         }
     }
 
@@ -445,7 +454,7 @@ impl HardLinkWindowsInstallTask {
                 .cast::<Self>()
         };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { HARDLINK_QUEUE.assume_init_ref() };
+        let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: self_ is valid until deinit().
@@ -2155,7 +2164,7 @@ impl<'a> PackageInstall<'a> {
             Method::Symlink
         } else {
             // SAFETY: single-threaded install context.
-            unsafe { SUPPORTED_METHOD }
+            unsafe { SUPPORTED_METHOD.read() }
         }
     }
 
@@ -2289,7 +2298,7 @@ impl<'a> PackageInstall<'a> {
                         Err(err) => {
                             if err == bun_core::err!("NotSupported") {
                                 // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD = Method::Copyfile };
+                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == bun_core::err!("FileNotFound") {
                                 return InstallResult::fail(
@@ -2312,7 +2321,7 @@ impl<'a> PackageInstall<'a> {
                         Err(err) => {
                             if err == bun_core::err!("NotSupported") {
                                 // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD = Method::Copyfile };
+                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == bun_core::err!("FileNotFound") {
                                 return InstallResult::fail(
@@ -2335,7 +2344,7 @@ impl<'a> PackageInstall<'a> {
                         {
                             if err == bun_core::err!("NotSameFileSystem") {
                                 // SAFETY: single-threaded install context.
-                                unsafe { SUPPORTED_METHOD = Method::Copyfile };
+                                unsafe { SUPPORTED_METHOD.write(Method::Copyfile) };
                                 supported_method_to_use = Method::Copyfile;
                                 break 'outer;
                             }

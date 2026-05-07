@@ -17,7 +17,7 @@ bun_core::declare_scope!(FileReader, visible);
 
 // TODO(port): `pending_view` and the `Js`/`Temporary` variants below borrow into a
 // JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
-// Represented as `&'static mut [u8]` / `&'static [u8]` here to keep function bodies
+// Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
 // readable; Phase B should replace with a proper raw-slice wrapper (BACKREF lifetime).
 
 pub struct FileReader {
@@ -597,8 +597,8 @@ impl FileReader {
                     if in_progress.len() >= buf.len() && !has_more {
                         in_progress[0..buf.len()].copy_from_slice(buf);
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
-                        let remaining: &'static mut [u8] =
-                            unsafe { mem::transmute::<&mut [u8], &'static mut [u8]>(&mut in_progress[buf.len()..]) };
+                        let remaining =
+                            unsafe { &mut *(&mut in_progress[buf.len()..] as *mut [u8]) };
                         self.read_inside_on_pull = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // SAFETY: buf outlives the on_pull call that consumes this.
@@ -1014,7 +1014,7 @@ impl readable_stream::SourceContext for FileReader {
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
         // by `arr` (see TODO(port) note at top of file).
-        let buf: &'static mut [u8] = unsafe { mem::transmute(buf) };
+        let buf = unsafe { &mut *(buf as *mut [u8]) };
         Self::on_pull(self, buf, arr)
     }
     fn on_cancel(&mut self) { Self::on_cancel(self) }

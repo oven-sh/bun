@@ -80,7 +80,7 @@ pub use ::bun_install_types::resolver_hooks as install_types;
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in
 /// `fs.rs` (gated) until bun_alloc::BSSStringList / bun_output land.
 pub mod fs {
-    use core::sync::atomic::{AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;
 
     use bun_core::ZStr;
@@ -181,14 +181,17 @@ pub mod fs {
         pub filename_store: &'static FilenameStore,
     }
 
-    // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
-    pub static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
-    pub static mut INSTANCE_LOADED: bool = false;
+    // Global mutable singleton; Zig used `var instance: FileSystem = undefined`.
+    // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
+    // serialized at startup; readers go through `instance()`.
+    pub static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
+        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+    pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
 
     /// Port of `FileSystem.max_fd` global in `fs.zig`.
     // PORT NOTE: Windows uses `HANDLE` (no monotone ordering); tracked POSIX-only.
     #[cfg(not(windows))]
-    pub static mut MAX_FD: bun_sys::RawFd = 0;
+    pub static MAX_FD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
@@ -230,8 +233,7 @@ pub mod fs {
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called (matches Zig global singleton).
-            // `&raw mut` avoids the `static_mut_refs` edition-2024 deny lint.
-            unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
+            unsafe { (*INSTANCE.get()).assume_init_mut() }
         }
 
         /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
@@ -256,8 +258,8 @@ pub mod fs {
             // SAFETY: matches Zig global singleton init pattern; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
-                if *(&raw const INSTANCE_LOADED) && !FORCE {
-                    return Ok((*(&raw mut INSTANCE)).as_mut_ptr());
+                if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
+                    return Ok((*INSTANCE.get()).as_mut_ptr());
                 }
             }
             let cwd: &'static [u8] = match top_level_dir {
@@ -286,19 +288,19 @@ pub mod fs {
             });
             // SAFETY: see above.
             unsafe {
-                (*(&raw mut INSTANCE)).write(FileSystem {
+                (*INSTANCE.get()).write(FileSystem {
                     top_level_dir: cwd,
                     top_level_dir_buf: bun_paths::PathBuffer::uninit(),
                     fs: Implementation::init(cwd),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
                 });
-                *(&raw mut INSTANCE_LOADED) = true;
+                INSTANCE_LOADED.store(true, Ordering::Release);
                 // Spec `Implementation.init` calls `DirEntry.EntryStore.init`;
                 // touch the singleton so it's initialized before any resolver
                 // worker hits it.
                 let _ = dir_entry::EntryStore::instance();
-                Ok((*(&raw mut INSTANCE)).as_mut_ptr())
+                Ok((*INSTANCE.get()).as_mut_ptr())
             }
         }
 
@@ -315,7 +317,7 @@ pub mod fs {
                     return;
                 }
                 // SAFETY: single-threaded mutation in resolver context (matches Zig global `max_fd`).
-                unsafe { MAX_FD = _fd.max(MAX_FD) };
+                MAX_FD.fetch_max(_fd, Ordering::Relaxed);
             }
         }
 
@@ -324,7 +326,7 @@ pub mod fs {
         #[cfg(not(windows))]
         pub fn max_fd() -> bun_sys::RawFd {
             // SAFETY: single-threaded read in resolver context (matches Zig global `max_fd`).
-            unsafe { MAX_FD }
+            MAX_FD.load(Ordering::Relaxed)
         }
 
         /// Port of `FileSystem.absBuf` in `fs.zig`.
@@ -1130,7 +1132,7 @@ pub mod fs {
             slot.write(value);
             // SAFETY: just wrote; threadlocal storage outlives caller (matches Zig
             // `&temp_entries_option`). Re-erase to 'static for the BSSMap-shaped
-            // `&'static mut EntriesOption` return type.
+            // unbounded `&mut EntriesOption` return type.
             unsafe { &mut *slot.as_mut_ptr() }
         })
     }
@@ -1500,7 +1502,7 @@ pub mod fs {
 
     /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
     // PORT NOTE: Zig stores `*DirEntry` (raw, BSSMap-owned). Modeled as
-    // `&'static mut DirEntry` so resolver match arms (`Entries(entries) =>
+    // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
     // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
     // `'static` is the ARENA lifetime.
     pub enum EntriesOption {
@@ -1529,7 +1531,7 @@ pub mod fs {
     /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
     pub type ReadDirResult = EntriesOption;
 
-    // SAFETY: ARENA — `EntriesOption` holds `&'static mut DirEntry` (whose `data`
+    // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
     // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
     // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
     // raw-pointer fields are the only thing blocking auto-Sync.
@@ -1863,7 +1865,7 @@ pub mod fs {
 
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 // PORT NOTE: Zig `entries_ptr = in_place orelse allocator.create(DirEntry)`.
-                // `EntriesOption::Entries` here holds `&'static mut DirEntry` (raw, BSSMap-stored
+                // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
                 // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
                 // `entries_option_map()` singleton (process-static).
                 let entries_ptr: *mut DirEntry = match in_place {
@@ -2516,7 +2518,7 @@ pub mod dir_entry_accessor {
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
             match res {
                 EntriesOption::Entries(entry) => {
-                    // SAFETY: ARENA — `entry: &'static mut DirEntry` borrows the BSSMap
+                    // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
                     let p: *const DirEntry = &raw const **entry;
                     Ok(Ok(DirEntryHandle { value: Some(unsafe { &*p }) }))
@@ -4282,9 +4284,11 @@ static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mut
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // TODO(port): `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED` (matches Zig's `bin_folders_loaded` lazy zero-init).
-static mut BIN_FOLDERS: core::mem::MaybeUninit<BinFolderArray> = core::mem::MaybeUninit::uninit();
+static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 static BIN_FOLDERS_LOCK: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
-static mut BIN_FOLDERS_LOADED: bool = false;
+static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -7203,13 +7207,12 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites
-        unsafe {
-            if !BIN_FOLDERS_LOADED {
-                return &[];
-            }
-            BIN_FOLDERS.assume_init_ref().const_slice()
+        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+            return &[];
         }
+        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
+        // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
+        unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
     }
 
     pub fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -8872,11 +8875,10 @@ impl<'a> Resolver<'a> {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
-                        unsafe {
-                            if !BIN_FOLDERS_LOADED {
-                                BIN_FOLDERS_LOADED = true;
-                                BIN_FOLDERS.write(BinFolderArray::default());
-                            }
+                        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+                            // SAFETY: callers hold RESOLVER_MUTEX; first init.
+                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                            BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
                         // TODO(port): std.fs.Dir.openDirZ → bun_sys
@@ -8891,7 +8893,7 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
-                            for existing_folder in BIN_FOLDERS.assume_init_ref().const_slice() {
+                            for existing_folder in (*BIN_FOLDERS.get()).assume_init_ref().const_slice() {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
                                 }
@@ -8900,7 +8902,7 @@ impl<'a> Resolver<'a> {
                             let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path) else {
                                 break 'append_bin_dir;
                             };
-                            let _ = BIN_FOLDERS.assume_init_mut().append(stored);
+                            let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
                         }
                     }
                 }
@@ -8909,11 +8911,10 @@ impl<'a> Resolver<'a> {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
                         if unsafe { &*q.entry }.kind(rfs!(), self.store_fd) == Fs::file_system::EntryKind::Dir {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
-                            unsafe {
-                                if !BIN_FOLDERS_LOADED {
-                                    BIN_FOLDERS_LOADED = true;
-                                    BIN_FOLDERS.write(BinFolderArray::default());
-                                }
+                            if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
+                                // SAFETY: callers hold RESOLVER_MUTEX; first init.
+                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                                BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                             }
 
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default()) else {
@@ -8927,7 +8928,7 @@ impl<'a> Resolver<'a> {
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
-                                for existing_folder in BIN_FOLDERS.assume_init_ref().const_slice() {
+                                for existing_folder in (*BIN_FOLDERS.get()).assume_init_ref().const_slice() {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
                                     }
@@ -8936,7 +8937,7 @@ impl<'a> Resolver<'a> {
                                 let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path) else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = BIN_FOLDERS.assume_init_mut().append(stored);
+                                let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
                             }
                         }
                     }

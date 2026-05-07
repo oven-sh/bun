@@ -24,7 +24,7 @@ extern crate bun_standalone_graph as bun_standalone_module_graph;
 fn cli_start_time() -> i128 {
     // SAFETY: `START_TIME` is written exactly once during single-threaded
     // CLI startup before any command body runs; read-only thereafter.
-    unsafe { crate::cli::START_TIME }
+    unsafe { crate::cli::START_TIME.read() }
 }
 
 /// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
@@ -552,8 +552,7 @@ impl BuildCommand {
             // Zig: `bun.jsc.AnyEventLoop.init(ctx.allocator)` — a Mini event loop
             // owned by the arena. `generate_from_cli` → `wait_for_parse` derefs
             // this via `r#loop()` to drain parse tasks; passing `None` panics.
-            let event_loop: &'static mut bun_event_loop::AnyEventLoop<'static> =
-                arena.alloc(bun_event_loop::AnyEventLoop::init());
+            let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,

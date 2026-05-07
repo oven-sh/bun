@@ -239,7 +239,7 @@ impl core::fmt::Display for FailReason {
         // explicit match on the one variant whose template contains `{s}`.
         if matches!(self, FailReason::InterpreterNotFound) {
             // SAFETY: failure_reason_argument is set before InterpreterNotFound is raised.
-            let arg = unsafe { FAILURE_REASON_ARGUMENT.unwrap() };
+            let arg = unsafe { FAILURE_REASON_ARGUMENT.read().unwrap() };
             // SAFETY: arg points into FAILURE_REASON_DATA which is a static buffer.
             let arg_slice = unsafe { core::slice::from_raw_parts(arg.0, arg.1) };
             write!(
@@ -249,7 +249,7 @@ impl core::fmt::Display for FailReason {
             )?;
             if DBG {
                 // SAFETY: single-threaded standalone exe; debug-only reset.
-                unsafe { FAILURE_REASON_ARGUMENT = None };
+                unsafe { FAILURE_REASON_ARGUMENT.write(None) };
             }
         } else {
             writer.write_str(template)?;
@@ -322,10 +322,13 @@ impl core::fmt::Write for NtWriter {
     }
 }
 
-static mut FAILURE_REASON_DATA: [u8; 512] = [0; 512];
+// PORTING.md §Global mutable state: standalone single-threaded shim exe (or
+// just-before-exit path when linked into bun). RacyCell — no concurrency.
+static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
 // Stored as (ptr, len) into FAILURE_REASON_DATA; Option<&'static [u8]> would also work but
-// keeps a reference into a `static mut` which Rust dislikes.
-static mut FAILURE_REASON_ARGUMENT: Option<(*const u8, usize)> = None;
+// keeps a reference across an interior-mutable static which Rust dislikes.
+static FAILURE_REASON_ARGUMENT: bun_core::RacyCell<Option<(*const u8, usize)>> =
+    bun_core::RacyCell::new(None);
 
 #[cold]
 #[inline(never)]
@@ -1223,17 +1226,18 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // SAFETY: FAILURE_REASON_DATA is a static buffer; this code path is only
                             // reached single-threaded (standalone exe or just before process exit).
                             unsafe {
-                                FAILURE_REASON_ARGUMENT = Some('brk: {
+                                let data = &mut *FAILURE_REASON_DATA.get();
+                                FAILURE_REASON_ARGUMENT.write(Some('brk: {
                                     let mut i: u32 = 0;
                                     while *spawn_command_line.add(i as usize) != ' ' as u16
                                         && i < 512
                                     {
-                                        FAILURE_REASON_DATA[i as usize] =
+                                        data[i as usize] =
                                             (*spawn_command_line.add(i as usize) & 0x7F) as u8;
                                         i += 1;
                                     }
-                                    break 'brk (FAILURE_REASON_DATA.as_ptr(), i as usize);
-                                });
+                                    break 'brk (data.as_ptr(), i as usize);
+                                }));
                             }
                             return LauncherMode::fail(MODE, FailReason::InterpreterNotFound);
                         } else {

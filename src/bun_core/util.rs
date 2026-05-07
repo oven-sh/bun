@@ -947,12 +947,13 @@ pub mod fd {
     use super::Fd;
     use core::ffi::{c_int, c_void};
 
-    // SAFETY: written once in windows_stdio::init() during single-threaded startup.
-    pub static mut WINDOWS_CACHED_STDIN:  Fd = Fd::INVALID;
-    pub static mut WINDOWS_CACHED_STDOUT: Fd = Fd::INVALID;
-    pub static mut WINDOWS_CACHED_STDERR: Fd = Fd::INVALID;
+    // Written once in windows_stdio::init() during single-threaded startup.
+    pub static WINDOWS_CACHED_STDIN: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
+    pub static WINDOWS_CACHED_STDOUT: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
+    pub static WINDOWS_CACHED_STDERR: super::RacyCell<Fd> = super::RacyCell::new(Fd::INVALID);
     #[cfg(debug_assertions)]
-    pub static mut WINDOWS_CACHED_FD_SET: bool = false;
+    pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
     unsafe extern "C" {
@@ -1103,6 +1104,72 @@ pub struct Version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
+}
+
+// ─── RacyCell ─────────────────────────────────────────────────────────────
+/// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
+/// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
+///
+/// This exists to replace `static mut` (banned per docs/PORTING.md §Global
+/// mutable state). Unlike `static mut`, taking `&RACY` does not assert
+/// uniqueness; callers stay in raw-ptr land via `.get()` and only deref for
+/// the duration of a single statement.
+///
+/// **Invariant the caller upholds:** all access is either single-threaded
+/// (e.g. HTTP-thread-only buffers, main-thread-only CLI state) or externally
+/// synchronized. For anything actually shared across threads, use
+/// `Atomic*` / `OnceLock` / `Mutex` instead — `RacyCell` is the last resort
+/// for scratch buffers and FFI-shaped globals where the Zig already proved
+/// thread-affinity.
+#[repr(transparent)]
+pub struct RacyCell<T: ?Sized>(core::cell::UnsafeCell<T>);
+// SAFETY: by construction, callers promise external synchronization or
+// single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
+// `Sync` on `T: Sync`), this impl is intentionally unconditional: many
+// payloads ported from `static mut` are `!Sync` only by auto-trait inference
+// (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
+// because all access is single-threaded or externally synchronized — the
+// exact contract `static mut` already imposed. **Do not** wrap types whose
+// `!Sync` is load-bearing (`Cell<T>`, `Rc<T>`, `RefCell<T>`); use
+// `thread_local!` or a real lock for those.
+unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
+unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
+
+impl<T> RacyCell<T> {
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self(core::cell::UnsafeCell::new(value))
+    }
+    /// Raw pointer to the contained value. Never produces a reference; callers
+    /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
+    #[inline]
+    pub const fn get(&self) -> *mut T {
+        self.0.get()
+    }
+    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
+    ///
+    /// # Safety
+    /// Caller guarantees no concurrent writer on another thread.
+    #[inline]
+    pub unsafe fn read(&self) -> T
+    where
+        T: Copy,
+    {
+        unsafe { *self.0.get() }
+    }
+    /// Convenience: overwrite the value.
+    ///
+    /// # Safety
+    /// Caller guarantees no concurrent reader/writer on another thread.
+    #[inline]
+    pub unsafe fn write(&self, value: T) {
+        unsafe { *self.0.get() = value; }
+    }
+}
+impl<T: Default> Default for RacyCell<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
 }
 
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
@@ -2086,7 +2153,7 @@ pub fn free_sensitive(p: *const core::ffi::c_char) {
 // `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
 // for `for arg in argv()`.
 static ARGV_STORAGE: std::sync::OnceLock<Vec<ZBox>> = std::sync::OnceLock::new();
-static mut ARGV: &'static [&'static ZStr] = &[];
+static ARGV: RacyCell<&'static [&'static ZStr]> = RacyCell::new(&[]);
 static ARGV_INIT: std::sync::Once = std::sync::Once::new();
 
 fn argv_storage() -> &'static [ZBox] {
@@ -2109,11 +2176,11 @@ fn argv_view() -> &'static [&'static ZStr] {
             })
             .collect();
         // SAFETY: single-threaded lazy init guarded by Once.
-        unsafe { ARGV = Vec::leak(view) };
+        unsafe { ARGV.write(Vec::leak(view)) };
     });
     // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
     // single-threaded startup or by the Once above.
-    unsafe { ARGV }
+    unsafe { ARGV.read() }
 }
 
 #[derive(Clone, Copy)]
@@ -2329,7 +2396,7 @@ pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
     // Prevent the lazy OS-argv init from later clobbering a manually-set view.
     ARGV_INIT.call_once(|| {});
     // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV = v };
+    unsafe { ARGV.write(v) };
 }
 
 /// Park an owned argv `Vec` in process-static storage and return the

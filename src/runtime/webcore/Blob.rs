@@ -2691,7 +2691,7 @@ impl BlobExt for Blob {
             Lifetime::Clone => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     // ArrayBuffer doesn't have this limit.
-                    if buf_len > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT } {
+                    if buf_len > jsc::virtual_machine::synthetic_allocation_limit() {
                         self.detach();
                         return Err(global.throw_out_of_memory());
                     }
@@ -2747,7 +2747,7 @@ impl BlobExt for Blob {
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
             Lifetime::Share => {
-                if buf_len > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT } && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
+                if buf_len > jsc::virtual_machine::synthetic_allocation_limit() && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     return Err(global.throw_out_of_memory());
                 }
                 let store = self.store.as_ref().expect("infallible: store present").clone();
@@ -2762,7 +2762,7 @@ impl BlobExt for Blob {
                 )
             }
             Lifetime::Transfer => {
-                if buf_len > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT }
+                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     self.detach();
@@ -2780,7 +2780,7 @@ impl BlobExt for Blob {
                 )
             }
             Lifetime::Temporary => {
-                if buf_len > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT }
+                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.

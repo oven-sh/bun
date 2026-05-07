@@ -71,7 +71,7 @@ pub fn now_ns() -> u64 {
         CALIBRATE_ONCE.call_once(calibrate);
         // SAFETY: CALIBRATION is only mutated inside `CALIBRATE_ONCE.call_once(calibrate)`;
         // `Once` establishes happens-before, so this read observes the fully-initialized value.
-        let cal = unsafe { *core::ptr::addr_of!(CALIBRATION) };
+        let cal = unsafe { CALIBRATION.read() };
         if cal.mult != 0 {
             let ticks = read_counter().wrapping_sub(cal.start_counter);
             // u64×u64→u128 widening mul + shift: 2 insns on x64 (`mul`+`shrd`),
@@ -107,7 +107,12 @@ impl Default for Calibration {
     }
 }
 
-static mut CALIBRATION: Calibration = Calibration { start_counter: 0, start_ns: 0, mult: 0 };
+// PORTING.md §Global mutable state: written exactly once inside
+// `CALIBRATE_ONCE.call_once`, which establishes happens-before for readers.
+// `RacyCell` (not `OnceLock`) because `calibrate()` may early-return without
+// writing (freq==0) yet must still mark the Once as done.
+static CALIBRATION: bun_core::RacyCell<Calibration> =
+    bun_core::RacyCell::new(Calibration { start_counter: 0, start_ns: 0, mult: 0 });
 static CALIBRATE_ONCE: std::sync::Once = std::sync::Once::new();
 
 fn calibrate() {
@@ -119,14 +124,14 @@ fn calibrate() {
     // SAFETY: only ever invoked via `CALIBRATE_ONCE.call_once`, which guarantees
     // exclusive access during this write and happens-before for subsequent readers.
     unsafe {
-        *core::ptr::addr_of_mut!(CALIBRATION) = Calibration {
+        CALIBRATION.write(Calibration {
             start_counter: read_counter(),
             start_ns,
             mult: u64::try_from(
                 (((NS_PER_S as u128) << SHIFT) + (freq / 2) as u128) / (freq as u128),
             )
             .unwrap(),
-        };
+        });
     }
 }
 
@@ -287,5 +292,5 @@ unsafe extern "C" {
 //   source:     src/perf/hw_timer.zig (171 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      static mut CALIBRATION guarded by Once; bun_sys::CLOCK_* / bun_core::Timespec / windows QPC wrappers assumed; cpuid uses core intrinsic (rbx reserved in Rust asm)
+//   notes:      OnceLock CALIBRATION; bun_sys::CLOCK_* / bun_core::Timespec / windows QPC wrappers assumed; cpuid uses core intrinsic (rbx reserved in Rust asm)
 // ──────────────────────────────────────────────────────────────────────────

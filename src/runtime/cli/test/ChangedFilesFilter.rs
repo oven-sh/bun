@@ -128,9 +128,9 @@ pub fn filter<'a>(
     // the comment after the call about intentionally leaving the
     // ThreadLocalArena and worker pool alive.
     let arena: &'static Arena = Box::leak(Box::new(Arena::new()));
-    let log: &'static mut logger::Log = Box::leak(Box::new(logger::Log::new()));
+    let log = Box::leak(Box::new(logger::Log::new()));
 
-    let scan_transpiler: &'static mut Transpiler<'static> = Box::leak(Box::new(
+    let scan_transpiler = Box::leak(Box::new(
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
             Ok(t) => t,
             Err(err) => {
@@ -384,15 +384,17 @@ pub fn init_watch_trigger() {
             fresh
         };
 
-        let set: &'static mut StringSet = Box::leak(Box::new(StringSet::new()));
-        // SAFETY: written once on the main thread before the watcher thread
-        // starts; after that only the watcher thread touches these. See doc
-        // on `hot_reloader::WATCH_CHANGED_PATHS`.
+        let set = Box::leak(Box::new(StringSet::new()));
+        // Written once on the main thread before the watcher thread starts;
+        // after that only the watcher thread touches these. See doc on
+        // `hot_reloader::WATCH_CHANGED_PATHS`.
+        // SAFETY: single-threaded init; trigger-file slot has no concurrent reader yet.
         unsafe {
-            jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(std::ptr::from_mut::<StringSet>(set));
-            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE =
-                Some(Box::leak(Box::new(path)).as_zstr());
+            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE
+                .write(Some(Box::leak(Box::new(path)).as_zstr()));
         }
+        jsc::hot_reloader::WATCH_CHANGED_PATHS
+            .store(std::ptr::from_mut::<StringSet>(set), core::sync::atomic::Ordering::Release);
     }
 }
 

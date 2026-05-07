@@ -88,7 +88,7 @@ struct OutdatedPackage {
     ///
     /// PORT NOTE: Zig stores `*PackageManager` here and reads
     /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
-    /// time. In Rust the caller's `&'static mut PackageManager` in
+    /// time. In Rust the caller's exclusive `&mut PackageManager` in
     /// `update_interactive` is live across the prompt loop, so any
     /// `&PackageManager` derived from a stored back-pointer would alias an
     /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
@@ -275,7 +275,7 @@ impl UpdateInteractiveCommand {
         // SAFETY: `init()` returns the process-singleton `*mut PackageManager`,
         // non-null and exclusively owned by this thread for the command's
         // duration (mirrors Zig's `*PackageManager`).
-        let manager: &'static mut PackageManager = unsafe { &mut *pm_ptr };
+        let manager: &mut PackageManager = unsafe { &mut *pm_ptr };
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
@@ -478,7 +478,7 @@ impl UpdateInteractiveCommand {
     fn update_interactive(
         ctx: Command::Context,
         original_cwd: &[u8],
-        manager: &'static mut PackageManager,
+        manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
@@ -705,7 +705,7 @@ impl UpdateInteractiveCommand {
 
                 // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
                 // `PackageManager::init` (single-threaded CLI startup).
-                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH };
+                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
                 // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
                 // the Rust port of `install_with_manager` takes the original cwd
                 // path slice instead. Snapshot before the `&mut manager` borrow.

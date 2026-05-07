@@ -2724,7 +2724,7 @@ pub mod sync {
         }
 
         // SAFETY: extern static
-        unsafe { Bun__currentSyncPID = 0 };
+        unsafe { &Bun__currentSyncPID }.store(0, core::sync::atomic::Ordering::Relaxed);
         let _signals = SignalForwarding::register();
 
         let process = match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
@@ -2735,13 +2735,10 @@ pub mod sync {
         // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
         // that hasn't `setsid()`-escaped.
         // SAFETY: extern static
-        unsafe {
-            Bun__currentSyncPID = if no_orphans {
-                -i64::from(process.pid)
-            } else {
-                i64::from(process.pid)
-            };
-        }
+        unsafe { &Bun__currentSyncPID }.store(
+            if no_orphans { -i64::from(process.pid) } else { i64::from(process.pid) },
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
         let mut jc = JobControl { prev: 0, script_pgid: 0 };
         let pgid_pushed = no_orphans && ParentDeathWatchdog::push_sync_pgid(process.pid);

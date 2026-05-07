@@ -137,10 +137,13 @@ pub const K_FS_EVENTS_SYSTEM: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED
     | K_FS_EVENT_STREAM_EVENT_FLAG_UNMOUNT
     | K_FS_EVENT_STREAM_EVENT_FLAG_ROOT_CHANGED;
 
-// TODO(port): static mut globals — Phase B may want OnceLock / parking_lot statics
+// TODO(port): mutable globals — Phase B may want OnceLock / parking_lot statics
 static FSEVENTS_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
-static mut FSEVENTS_DEFAULT_LOOP: Option<NonNull<FSEventsLoop>> = None;
+// PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,
+// read with double-checked-locking. RacyCell — the mutex is the synchronizer.
+static FSEVENTS_DEFAULT_LOOP: bun_core::RacyCell<Option<NonNull<FSEventsLoop>>> =
+    bun_core::RacyCell::new(None);
 
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
@@ -183,13 +186,13 @@ impl CoreFoundation {
     pub fn get() -> CoreFoundation {
         // SAFETY: FSEVENTS_CF is only mutated under FSEVENTS_MUTEX inside init_library()
         unsafe {
-            if let Some(cf) = FSEVENTS_CF {
+            if let Some(cf) = FSEVENTS_CF.read() {
                 return cf;
             }
         }
         let _guard = FSEVENTS_MUTEX.lock();
         unsafe {
-            if let Some(cf) = FSEVENTS_CF {
+            if let Some(cf) = FSEVENTS_CF.read() {
                 return cf;
             }
         }
@@ -197,7 +200,7 @@ impl CoreFoundation {
         init_library();
 
         // SAFETY: init_library() populated FSEVENTS_CF or panicked
-        unsafe { FSEVENTS_CF.unwrap() }
+        unsafe { FSEVENTS_CF.read().unwrap() }
     }
 
     // We Actually never deinit it
@@ -237,13 +240,13 @@ impl CoreServices {
     pub fn get() -> CoreServices {
         // SAFETY: FSEVENTS_CS is only mutated under FSEVENTS_MUTEX inside init_library()
         unsafe {
-            if let Some(cs) = FSEVENTS_CS {
+            if let Some(cs) = FSEVENTS_CS.read() {
                 return cs;
             }
         }
         let _guard = FSEVENTS_MUTEX.lock();
         unsafe {
-            if let Some(cs) = FSEVENTS_CS {
+            if let Some(cs) = FSEVENTS_CS.read() {
                 return cs;
             }
         }
@@ -251,7 +254,7 @@ impl CoreServices {
         init_library();
 
         // SAFETY: init_library() populated FSEVENTS_CS or panicked
-        unsafe { FSEVENTS_CS.unwrap() }
+        unsafe { FSEVENTS_CS.read().unwrap() }
     }
 
     // We Actually never deinit it
@@ -263,8 +266,11 @@ impl CoreServices {
     // }
 }
 
-static mut FSEVENTS_CF: Option<CoreFoundation> = None;
-static mut FSEVENTS_CS: Option<CoreServices> = None;
+// PORTING.md §Global mutable state: written once under `FSEVENTS_MUTEX` in
+// `init_library()`, read with double-checked-locking. RacyCell over `Copy`
+// fn-ptr tables.
+static FSEVENTS_CF: bun_core::RacyCell<Option<CoreFoundation>> = bun_core::RacyCell::new(None);
+static FSEVENTS_CS: bun_core::RacyCell<Option<CoreServices>> = bun_core::RacyCell::new(None);
 
 fn init_library() {
     // Zig used std.c.dlopen with .{ .LAZY = true, .LOCAL = true }
@@ -278,7 +284,7 @@ fn init_library() {
 
     // SAFETY: only called under FSEVENTS_MUTEX
     unsafe {
-        FSEVENTS_CF = Some(CoreFoundation {
+        FSEVENTS_CF.write(Some(CoreFoundation {
             handle: fsevents_cf_handle,
             array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
                 .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
@@ -307,7 +313,7 @@ fn init_library() {
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
             run_loop_default_mode: dlsym(fsevents_cf_handle, c"kCFRunLoopDefaultMode")
                 .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        });
+        }));
     }
 
     let fsevents_cs_handle = bun_sys::dlopen(
@@ -320,7 +326,7 @@ fn init_library() {
 
     // SAFETY: only called under FSEVENTS_MUTEX
     unsafe {
-        FSEVENTS_CS = Some(CoreServices {
+        FSEVENTS_CS.write(Some(CoreServices {
             handle: fsevents_cs_handle,
             fs_event_stream_create: dlsym(fsevents_cs_handle, c"FSEventStreamCreate")
                 .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
@@ -338,7 +344,7 @@ fn init_library() {
             fs_event_stream_stop: dlsym(fsevents_cs_handle, c"FSEventStreamStop")
                 .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
             k_fs_event_stream_event_id_since_now: 18446744073709551615,
-        });
+        }));
     }
 }
 
@@ -954,7 +960,7 @@ pub fn watch(
     // TODO(port): narrow error set
     // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
     unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP {
+        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
             return Ok(FSEventsWatcher::init(
                 loop_.as_ptr(),
                 path,
@@ -965,12 +971,11 @@ pub fn watch(
             ));
         }
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
-        // Read by-value through a raw pointer to avoid creating &mut static (static_mut_refs)
-        if (*core::ptr::addr_of!(FSEVENTS_DEFAULT_LOOP)).is_none() {
-            FSEVENTS_DEFAULT_LOOP = NonNull::new(FSEventsLoop::init()?);
+        if FSEVENTS_DEFAULT_LOOP.read().is_none() {
+            FSEVENTS_DEFAULT_LOOP.write(NonNull::new(FSEventsLoop::init()?));
         }
         Ok(FSEventsWatcher::init(
-            FSEVENTS_DEFAULT_LOOP.unwrap().as_ptr(),
+            FSEVENTS_DEFAULT_LOOP.read().unwrap().as_ptr(),
             path,
             recursive,
             callback,
@@ -989,11 +994,11 @@ pub fn close_and_wait() {
     #[cfg(target_os = "macos")]
     // SAFETY: FSEVENTS_DEFAULT_LOOP is only mutated under FSEVENTS_DEFAULT_LOOP_MUTEX
     unsafe {
-        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP {
+        if let Some(loop_) = FSEVENTS_DEFAULT_LOOP.read() {
             let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock();
             // SAFETY: loop_ was Box::into_raw'd in FSEventsLoop::init(); reconstitute to run Drop
             drop(Box::from_raw(loop_.as_ptr()));
-            FSEVENTS_DEFAULT_LOOP = None;
+            FSEVENTS_DEFAULT_LOOP.write(None);
         }
     }
 }

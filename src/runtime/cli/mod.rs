@@ -245,30 +245,35 @@ macro_rules! __cli_concat_params {
 pub use crate::__cli_concat_params as concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
-// TODO(port): Zig `var start_time: i128 = undefined;` — mutable static, single-threaded init in Cli::start
-pub static mut START_TIME: i128 = 0;
+// Zig `var start_time: i128 = undefined;` — written once in `Cli::start`
+// during single-threaded startup. `i128` has no atomic; `RacyCell` is the
+// alias-safe static cell (read freely after init).
+pub static START_TIME: bun_core::RacyCell<i128> = bun_core::RacyCell::new(0);
 
 #[allow(non_upper_case_globals)]
 // PORT NOTE: Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. Guarded by `node::process::TITLE_MUTEX`.
-pub static mut Bun__Node__ProcessTitle: Option<Box<[u8]>> = None;
+pub static Bun__Node__ProcessTitle: bun_core::RacyCell<Option<Box<[u8]>>> =
+    bun_core::RacyCell::new(None);
 
 thread_local! {
     pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
-/// can ask "which subcommand are we in".
-// TODO(port): mutable static Option<Tag>; AtomicU8 once Tag has a stable repr.
-pub static mut CMD: Option<command::Tag> = None;
+/// can ask "which subcommand are we in". Set once during single-threaded
+/// startup; read freely thereafter.
+pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
-pub static mut PRETEND_TO_BE_NODE: bool = false;
+pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
-pub static mut IS_BUNX_EXE: bool = false;
+pub static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 bun_core::declare_scope!(CLI, hidden);
 
@@ -302,18 +307,20 @@ pub mod cli {
     pub use bun_options_types::CompileTarget::CompileTarget;
 
     // Zig `var log_: logger.Log = undefined;` — process-global, init in start().
-    pub static mut LOG_: core::mem::MaybeUninit<logger::Log> = core::mem::MaybeUninit::uninit();
+    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<logger::Log>> =
+        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
         // SAFETY: single-threaded process startup; no other reader yet
-        unsafe { START_TIME = bun_core::time::nano_timestamp() };
+        unsafe { START_TIME.write(bun_core::time::nano_timestamp()) };
+        bun_core::set_start_time(unsafe { START_TIME.read() });
         // SAFETY: single-threaded process startup
-        unsafe { (*(&raw mut LOG_)).write(logger::Log::init()) };
+        unsafe { (*LOG_.get()).write(logger::Log::init()) };
 
         // TODO(b2-blocked): MainPanicHandler wiring. Full body in cli_body.rs.
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
-        let log = unsafe { (*(&raw mut LOG_)).assume_init_mut() };
+        let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
             // TODO(b2): `Log::print` wants `&mut impl fmt::Write`;
             // `Output::error_writer()` is `*mut io::Writer`. Route through a
@@ -330,8 +337,10 @@ pub mod debug_flags {
     // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
     // hand off ownership of the argv-borrowed list without leaking the backing
     // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub static mut RESOLVE_BREAKPOINTS: Vec<&'static [u8]> = Vec::new();
-    pub static mut PRINT_BREAKPOINTS: Vec<&'static [u8]> = Vec::new();
+    pub static RESOLVE_BREAKPOINTS: bun_core::RacyCell<Vec<&'static [u8]>> =
+        bun_core::RacyCell::new(Vec::new());
+    pub static PRINT_BREAKPOINTS: bun_core::RacyCell<Vec<&'static [u8]>> =
+        bun_core::RacyCell::new(Vec::new());
 }
 
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
@@ -541,9 +550,10 @@ pub mod command {
     // Zig: `var global_cli_ctx: Context = undefined;` + `var context_data: ContextData = undefined;`
     // Process-lifetime singletons; written exactly once in `create_context_data`
     // during single-threaded startup, read everywhere thereafter.
-    static mut GLOBAL_CLI_CTX: *mut ContextData = core::ptr::null_mut();
-    static mut CONTEXT_DATA: core::mem::MaybeUninit<ContextData> =
-        core::mem::MaybeUninit::uninit();
+    static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
+        bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// Process-global CLI context. Only valid after `create_context_data` has run.
     ///
@@ -552,8 +562,7 @@ pub mod command {
     /// `&mut ContextData` is live (single-threaded CLI dispatch).
     #[inline]
     pub unsafe fn global_ctx() -> *mut ContextData {
-        // SAFETY: read of a process-lifetime static; see invariant above.
-        unsafe { GLOBAL_CLI_CTX }
+        GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Zig: `pub fn get() Context` — process-global CLI context handle.
@@ -561,7 +570,7 @@ pub mod command {
     pub fn get() -> Context<'static> {
         // SAFETY: only called after `create_context_data` initialized GLOBAL_CLI_CTX
         // during single-threaded startup; callers treat the result as read-mostly.
-        unsafe { &mut *GLOBAL_CLI_CTX }
+        unsafe { &mut *GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Relaxed) }
     }
 
     pub fn is_bun_x(argv0: &[u8]) -> bool {
@@ -598,13 +607,13 @@ pub mod command {
                 }
             }
             // SAFETY: single-threaded startup
-            unsafe { IS_BUNX_EXE = true };
+            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::BunxCommand;
         }
 
         if is_node(argv0) {
             // SAFETY: single-threaded startup
-            unsafe { PRETEND_TO_BE_NODE = true };
+            PRETEND_TO_BE_NODE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::RunAsNodeCommand;
         }
 
@@ -706,32 +715,33 @@ pub mod command {
     ) -> Result<*mut ContextData, bun_core::Error> {
         // SAFETY: single-threaded CLI startup; `CMD` is read by crash-reporter
         // and debug logging only.
-        unsafe { CMD = Some(cmd) };
+        unsafe { CMD.write(Some(cmd)) };
 
         // SAFETY: single-threaded CLI startup; first and only write to
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
         // address is sound for the process lifetime.
-        unsafe {
-            (*(&raw mut CONTEXT_DATA)).write(ContextData {
+        let ctx_ptr: *mut ContextData = unsafe {
+            (*CONTEXT_DATA.get()).write(ContextData {
                 args: bun_options_types::schema::api::TransformOptions::default(),
                 log: std::ptr::from_mut::<logger::Log>(log),
-                start_time: START_TIME,
+                start_time: START_TIME.read(),
                 ..Default::default()
             });
-            GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
-        }
+            (*CONTEXT_DATA.get()).assume_init_mut()
+        };
+        GLOBAL_CLI_CTX.store(ctx_ptr, core::sync::atomic::Ordering::Release);
 
         if USES_GLOBAL_OPTIONS[cmd] {
             // SAFETY: just initialized above; single-threaded.
-            let ctx = unsafe { &mut *GLOBAL_CLI_CTX };
+            let ctx = unsafe { &mut *ctx_ptr };
             ctx.args = arguments::parse(cmd, ctx)?;
         }
 
         #[cfg(windows)]
         {
             // SAFETY: just initialized above; single-threaded.
-            let ctx = unsafe { &mut *GLOBAL_CLI_CTX };
+            let ctx = unsafe { &mut *ctx_ptr };
             if ctx.debug.hot_reload == HotReload::Watch {
                 // TODO(b2-blocked): bun_sys::windows::is_watcher_child /
                 // become_watcher_manager — Windows watcher hand-off path.
@@ -740,15 +750,13 @@ pub mod command {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();
                     } else {
-                        // SAFETY: single-threaded startup
-                        unsafe { bun_core::AUTO_RELOAD_ON_CRASH = true };
+                        bun_core::set_auto_reload_on_crash(true);
                     }
                 }
             }
         }
 
-        // SAFETY: just initialized above.
-        Ok(unsafe { GLOBAL_CLI_CTX })
+        Ok(ctx_ptr)
     }
     pub use create_context_data as init;
 
@@ -811,8 +819,8 @@ pub mod command {
                     Output::flush();
                     Global::exit(1);
                 }
-                // `Output::writer()` already returns `&'static mut io::Writer`;
-                // no raw deref needed (was `*mut` in an earlier port pass).
+                // `Output::writer()` returns the process-global writer; no raw
+                // deref needed (was `*mut` in an earlier port pass).
                 let writer = Output::writer();
                 let _ = writer.write_all(shell.completions());
                 Output::flush();
@@ -954,8 +962,7 @@ pub mod command {
             Tag::BunxCommand => {
                 // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::BunxCommand, log)? };
-                // SAFETY: IS_BUNX_EXE set during which() before any threads.
-                let start_idx = if unsafe { IS_BUNX_EXE } { 0 } else { 1 };
+                let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) { 0 } else { 1 };
                 let argv = argv_zslice();
                 return super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..]);
             }

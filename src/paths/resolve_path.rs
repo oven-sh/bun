@@ -401,13 +401,13 @@ thread_local! {
         const { UnsafeCell::new(PathBuffer::ZEROED) };
 }
 
+/// Raw pointer into the thread-local scratch buffer. Callers reborrow
+/// per-access — PORTING.md §Global mutable state. Valid until the next call on
+/// this thread; do not hold across re-entry (matches Zig threadlocal-var
+/// pointer semantics).
 #[inline]
-pub fn relative_to_common_path_buf() -> &'static mut PathBuffer {
-    // PORT NOTE: Zig returned a raw pointer into the thread-local. Returned borrow
-    // is valid until the next call on this thread; callers must not hold it across
-    // re-entry. Matches Zig threadlocal-var pointer semantics.
-    // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
-    RELATIVE_TO_COMMON_PATH_BUF.with(|b| unsafe { &mut *b.get() })
+pub fn relative_to_common_path_buf() -> *mut PathBuffer {
+    RELATIVE_TO_COMMON_PATH_BUF.with(|b| b.get())
 }
 
 /// Find a relative path from a common path
@@ -617,7 +617,8 @@ pub fn relative_normalized<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &'a [u8],
     to: &'a [u8],
 ) -> &'a [u8] {
-    relative_normalized_buf::<P, ALWAYS_COPY>(relative_to_common_path_buf(), from, to)
+    // SAFETY: thread-local scratch; single live borrow per thread.
+    relative_normalized_buf::<P, ALWAYS_COPY>(unsafe { &mut *relative_to_common_path_buf() }, from, to)
 }
 
 pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
@@ -673,7 +674,8 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
 }
 
 pub fn relative_z(from: &[u8], to: &[u8]) -> &'static ZStr {
-    relative_buf_z(relative_to_common_path_buf(), from, to)
+    // SAFETY: thread-local scratch; single live borrow per thread.
+    relative_buf_z(unsafe { &mut *relative_to_common_path_buf() }, from, to)
 }
 
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
@@ -771,7 +773,8 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'static [u8] {
-    relative_platform_buf::<P, ALWAYS_COPY>(relative_to_common_path_buf(), from, to)
+    // SAFETY: thread-local scratch; single live borrow per thread.
+    relative_platform_buf::<P, ALWAYS_COPY>(unsafe { &mut *relative_to_common_path_buf() }, from, to)
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {

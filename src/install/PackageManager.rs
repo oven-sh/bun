@@ -758,9 +758,10 @@ impl PackageManager {
 
 // Zig: `const TimePasser = struct { pub var last_time: u64 = 0; };` — a one-field
 // namespace whose only consumer is `hasEnoughTimePassedBetweenWaitingMessages`.
-// The wrapper struct adds nothing in Rust; keep just the `static mut` (main-thread
-// only, see SAFETY note at the read site).
-static mut TIME_PASSER_LAST_TIME: u64 = 0;
+// PORTING.md §Global mutable state: counter → Atomic. Main-thread-only so
+// `Relaxed` matches the Zig non-atomic read/write.
+static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 
 thread_local! {
     static CACHED_PACKAGE_FOLDER_NAME_BUFS: RefCell<PathBuffer> =
@@ -783,7 +784,10 @@ mod holder {
     // and later writes `manager.* = ...` in-place. OnceLock<Box<T>> can't express
     // allocate-then-fill (no `&mut` after set). Keep a raw ptr for now.
     // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>> in Phase B.
-    pub static mut RAW_PTR: *mut PackageManager = core::ptr::null_mut();
+    // PORTING.md §Global mutable state: ptr written once on main thread, read
+    // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
+    pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
     // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
@@ -791,8 +795,12 @@ mod holder {
     // the singleton, never freed. Avoids `Box::leak` per PORTING.md §Forbidden.
     // TODO(port): retype `dot_env::Loader.map` to `Box<Map>` so this becomes an owned field
     // (`Box<dot_env::Loader>`) on `PackageManager` and these statics disappear.
-    pub static mut ENV_MAP: *mut dot_env::Map = core::ptr::null_mut();
-    pub static mut ENV_LOADER: *mut dot_env::Loader<'static> = core::ptr::null_mut();
+    // Write-once during single-threaded init; never read afterwards (kept only
+    // to anchor the allocation). RacyCell over the raw ptr.
+    pub static ENV_MAP: bun_core::RacyCell<*mut dot_env::Map> =
+        bun_core::RacyCell::new(core::ptr::null_mut());
+    pub static ENV_LOADER: bun_core::RacyCell<*mut dot_env::Loader<'static>> =
+        bun_core::RacyCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
@@ -800,9 +808,14 @@ mod holder {
     pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 }
 
-static mut CWD_BUF: PathBuffer = PathBuffer::ZEROED;
-static mut ROOT_PACKAGE_JSON_PATH_BUF: PathBuffer = PathBuffer::ZEROED;
-pub static mut ROOT_PACKAGE_JSON_PATH: &ZStr = ZStr::EMPTY; // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
+// PORTING.md §Global mutable state: single-thread (main) scratch buffers →
+// RacyCell. `ROOT_PACKAGE_JSON_PATH` is a slice into the buf above it; written
+// once in `init()`, read on main + CLI commands afterwards.
+static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
+static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
+    bun_core::RacyCell::new(PathBuffer::ZEROED);
+pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> =
+    bun_core::RacyCell::new(ZStr::EMPTY); // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -854,12 +867,9 @@ impl PackageManager {
         // SAFETY: main-thread only (also guards TIME_PASSER_LAST_TIME below); reads
         // event_loop.iteration_number which is written only by the same main-thread tick loop.
         let iter = unsafe { (*get()).event_loop.iteration_number() };
-        // SAFETY: only called from main thread
-        unsafe {
-            if TIME_PASSER_LAST_TIME < iter {
-                TIME_PASSER_LAST_TIME = iter;
-                return true;
-            }
+        if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
+            TIME_PASSER_LAST_TIME.store(iter, core::sync::atomic::Ordering::Relaxed);
+            return true;
         }
         false
     }
@@ -874,13 +884,15 @@ impl PackageManager {
         // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
         // `linker.options = &options`), so cache by pointer in a process-static.
         // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
-        unsafe {
-            if CONFIGURE_ENV_FOR_SCRIPTS_ONCE.is_null() {
-                let t = configure_env_for_scripts_run(self, ctx, log_level)?;
-                CONFIGURE_ENV_FOR_SCRIPTS_ONCE = Box::into_raw(Box::new(t));
-            }
-            Ok(&mut *CONFIGURE_ENV_FOR_SCRIPTS_ONCE)
+        let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
+        if ptr.is_null() {
+            let t = configure_env_for_scripts_run(self, ctx, log_level)?;
+            ptr = Box::into_raw(Box::new(t));
+            CONFIGURE_ENV_FOR_SCRIPTS_ONCE.store(ptr, core::sync::atomic::Ordering::Release);
         }
+        // SAFETY: `ptr` is a leaked `Box<Transpiler>`; main-thread-only so the
+        // `&mut` is exclusive for the caller's scope.
+        Ok(unsafe { &mut *ptr })
     }
 
     pub fn http_proxy(&mut self, url: &URL<'_>) -> Option<URL<'static>> {
@@ -1053,8 +1065,9 @@ impl PackageManager {
 // TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
 // and caches the result. `Transpiler` is non-`Copy` and self-referential, so cache
 // a process-static raw pointer (mirrors Zig `var ..: Transpiler = undefined;`).
-static mut CONFIGURE_ENV_FOR_SCRIPTS_ONCE: *mut transpiler::Transpiler<'static> =
-    core::ptr::null_mut();
+// PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
+static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<transpiler::Transpiler<'static>> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
@@ -1358,7 +1371,7 @@ pub fn allocate_package_manager() {
         if ptr.is_null() {
             bun_alloc::out_of_memory();
         }
-        holder::RAW_PTR = ptr;
+        holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     }
 }
 
@@ -1373,9 +1386,9 @@ pub fn allocate_package_manager() {
 /// projection (e.g. `unsafe { &(*get()).cache_directory_path }`) and justify
 /// exclusivity / atomicity at the deref site.
 pub fn get() -> *mut PackageManager {
-    // SAFETY: reading a `static mut` raw-pointer slot; `allocate_package_manager()`
-    // is the sole writer and runs on the main thread before any caller of `get()`.
-    unsafe { holder::RAW_PTR }
+    // `allocate_package_manager()` is the sole writer and runs on the main
+    // thread before any caller of `get()`; Acquire pairs with its Release.
+    holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1414,14 +1427,13 @@ pub fn init(
     let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
-    // `&raw mut` avoids the `static_mut_refs` 2024-edition deny; repr(transparent) makes
-    // the `*mut PathBuffer → *mut u8` cast sound.
+    // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
     unsafe {
-        let cwd_ptr = (&raw mut CWD_BUF).cast::<u8>();
+        let cwd_ptr = CWD_BUF.get().cast::<u8>();
         #[cfg(windows)]
         {
             let _ =
-                path::path_to_posix_buf::<u8>(top_level_dir_no_trailing_slash, &mut *(&raw mut CWD_BUF));
+                path::path_to_posix_buf::<u8>(top_level_dir_no_trailing_slash, &mut *CWD_BUF.get());
         }
         #[cfg(not(windows))]
         {
@@ -1622,7 +1634,7 @@ pub fn init(
                     let json_path = unsafe {
                         bun_sys::get_fd_path(
                             json_file_guard.handle,
-                            &mut *(&raw mut ROOT_PACKAGE_JSON_PATH_BUF),
+                            &mut *ROOT_PACKAGE_JSON_PATH_BUF.get(),
                         )?
                     };
                     let json_source =
@@ -1763,35 +1775,36 @@ pub fn init(
     // SAFETY: main-thread global
     unsafe {
         let tld = fs.top_level_dir();
-        CWD_BUF[..tld.len()].copy_from_slice(tld);
-        CWD_BUF[tld.len()] = 0;
+        let cwd = &mut *CWD_BUF.get();
+        cwd[..tld.len()].copy_from_slice(tld);
+        cwd[tld.len()] = 0;
         // Zig: `fs.top_level_dir = cwd_buf[0..len :0]` (PackageManager.zig:776).
         // Route through the FsVTable setter so the resolver's cached cwd is
         // rebound to the process-lifetime CWD_BUF (it was a transient slice
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(core::slice::from_raw_parts(
-            (&raw const CWD_BUF).cast::<u8>(),
+            CWD_BUF.get().cast::<u8>(),
             tld.len(),
         ));
         // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
-        let root_buf = &mut *(&raw mut ROOT_PACKAGE_JSON_PATH_BUF);
+        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
         let plen = p.len();
         root_buf[plen] = 0;
-        ROOT_PACKAGE_JSON_PATH = ZStr::from_raw(root_buf.as_ptr(), plen);
+        ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
 
     // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)`
     // (PackageManager.zig:779). Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option: &'static mut fs::DirEntry =
+    let entries_option =
         match fs.read_directory(fs.top_level_dir(), 0, true)? {
             fs::EntriesOption::Entries(e) => {
                 // SAFETY: the BSSMap singleton owns `*e` for the process
                 // lifetime, and `init()` runs single-threaded before any other
-                // access — sole `&'static mut` is sound.
+                // access — sole exclusive borrow is sound.
                 unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
             }
             fs::EntriesOption::Err(e) => return Err(e.canonical_error),
@@ -1808,14 +1821,14 @@ pub fn init(
             bun_alloc::out_of_memory();
         }
         core::ptr::write(map_ptr, dot_env::Map::init());
-        holder::ENV_MAP = map_ptr;
+        holder::ENV_MAP.write(map_ptr);
 
         let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>()).cast::<dot_env::Loader<'static>>();
         if loader_ptr.is_null() {
             bun_alloc::out_of_memory();
         }
         core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
-        holder::ENV_LOADER = loader_ptr;
+        holder::ENV_LOADER.write(loader_ptr);
         &mut *loader_ptr
     };
 
@@ -2039,7 +2052,7 @@ pub fn init(
         // hashing the raw bytes would seed a key the resolver never looks up — copy into
         // a stack buffer and convert separators in place.
         // SAFETY: ROOT_PACKAGE_JSON_PATH set above on the main thread.
-        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH }.as_ref();
+        let raw: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_ref();
         let mut buf = PathBuffer::uninit();
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
@@ -2232,7 +2245,8 @@ pub fn init_with_runtime_once(
     // Work through the raw pointer until `ptr::write` below has fully
     // initialized it (Zig PackageManager.zig:1013 `const manager = get()`
     // yields a raw `*PackageManager` with no validity invariant).
-    let manager_ptr: *mut PackageManager = unsafe { holder::RAW_PTR };
+    let manager_ptr: *mut PackageManager =
+        holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire);
     // Zig: `FileSystem.instance.fs.readDirectory(top_level_dir, null, 0, true)`
     // (PackageManager.zig:1014). Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot. On error Zig calls `Output.err` then `@panic`
@@ -2240,7 +2254,7 @@ pub fn init_with_runtime_once(
     // where the resolver already opened `top_level_dir`, so failure is a
     // programmer-error / fs-disappeared edge.
     let fs_instance = FileSystem::instance();
-    let root_dir: &'static mut fs::DirEntry =
+    let root_dir =
         match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true).map(|r| &mut *r) {
             // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
             // and runtime init runs once on the main thread before any other access.
@@ -2451,7 +2465,7 @@ pub fn init_with_runtime_once(
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
     // passed in does not alias the `&mut Lockfile` receiver.
     // PORT NOTE: `root_dir` was moved into `*manager` above (the field is
-    // `&'static mut DirEntry`, so the local reborrow is for `'static` and the
+    // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
     // original binding is dead). Read it back through `manager.root_dir`.
     if manager.root_dir.has_comptime_query(b"bun.lockb") {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));

@@ -1082,9 +1082,7 @@ impl Scrypt {
 
 impl CryptoJobCtx for Scrypt {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        // SAFETY: `SYNTHETIC_ALLOCATION_LIMIT` is a `pub static mut` written only at
-        // VM init; read-only access here is sound on the JS thread.
-        if self.keylen as usize > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT } {
+        if self.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }
         let (buf, bytes) =

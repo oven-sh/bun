@@ -42,5 +42,5 @@ pub fn load() {
 //   source:     src/sql/postgres/DebugSocketMonitorWriter.zig (23 lines)
 //   confidence: medium
 //   todos:      1
-//   notes:      module-level mutable file → static mut Option<File> guarded by Once; std.fs replaced with bun_sys::File
+//   notes:      module-level mutable file → OnceLock<File>; std.fs replaced with bun_sys::File
 // ──────────────────────────────────────────────────────────────────────────

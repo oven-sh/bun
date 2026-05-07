@@ -36,10 +36,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSSecretKeyObject, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSecretKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSecretKeyObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSecretKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSecretKeyObject = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSecretKeyObject; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSecretKeyObject; });
     }
 
     DECLARE_INFO;

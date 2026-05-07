@@ -21,10 +21,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<InternalFieldObject, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForInternalFieldObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForInternalFieldObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForInternalFieldObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForInternalFieldObject = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForInternalFieldObject; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForInternalFieldObject; });
     }
 
     // never changes size

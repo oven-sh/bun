@@ -60,10 +60,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<PendingVirtualModuleResult, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForPendingVirtualModuleResult.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForPendingVirtualModuleResult = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForPendingVirtualModuleResult; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForPendingVirtualModuleResult; });
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);

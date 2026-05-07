@@ -39,10 +39,8 @@ public:
 
         return WebCore::subspaceForImpl<NapiExternal, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiExternal.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiExternal = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiExternal.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiExternal = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNapiExternal; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNapiExternal; });
     }
 
     ~NapiExternal();

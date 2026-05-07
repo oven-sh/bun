@@ -22,10 +22,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMIMEParams.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMIMEParams = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMIMEParams.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMIMEParams = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSMIMEParams; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSMIMEParams; });
     }
 
     static JSMIMEParams* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSMap* map);

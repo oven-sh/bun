@@ -32,10 +32,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSHTTPParser, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSHTTPParser.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHTTPParser = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSHTTPParser.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHTTPParser = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSHTTPParser; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSHTTPParser; });
     }
 
     DECLARE_INFO;

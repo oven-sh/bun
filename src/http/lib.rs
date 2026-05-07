@@ -2069,13 +2069,9 @@ impl HTTPClient {
         // mark that we are connecting
         self.flags.defer_fail_until_connecting_is_complete = true;
         // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
-        let guard = scopeguard::guard((), |_| {
-            // TODO(port): defer self.completeConnectingProcess() — captures &mut self;
-            // reshaped below as explicit calls before each return.
-        });
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.completeConnectingProcess()`
-        // is called explicitly at every exit point instead.
-        let _ = guard;
+        // PORT NOTE: Zig `defer this.completeConnectingProcess()` cannot be a Drop guard here
+        // (it needs `&mut self`, which would alias every other `self.*` call in the body),
+        // so it is reshaped as an explicit `self.complete_connecting_process()` before each return.
 
         // TODO(port): allocator vtable identity check elided (no allocator param in Rust)
 

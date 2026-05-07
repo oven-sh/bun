@@ -2611,10 +2611,12 @@ impl H2FrameParser {
 
     pub fn flush(&mut self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
-        self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
-        // TODO(port): scopeguard borrows self; use raw deref pattern in Phase B
-        let _ = scopeguard::ScopeGuard::into_inner(_g);
+        // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
+        // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
+        // not borrow `self`.
+        // SAFETY: `self` is live; `&mut self` provenance lets the guard's drop
+        // write the refcount and (if it hits zero) run `deinit`.
+        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
 
         self.uncork();
         let mut written = match self.native_socket {

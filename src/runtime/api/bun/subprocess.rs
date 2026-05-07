@@ -1207,7 +1207,7 @@ impl Subprocess<'_> {
         let mut did_update_has_pending_activity = false;
 
         // SAFETY: `jsc_vm` is the live VM; `event_loop()` returns its owned EventLoop.
-        // Kept as raw `*mut` so the scopeguard closure and the body can both call
+        // Kept as raw `*mut` so the enter guard and the body can both call
         // `&mut`-taking methods without tripping borrowck.
         let event_loop = unsafe { (*jsc_vm).event_loop() };
 

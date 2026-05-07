@@ -1002,12 +1002,12 @@ impl CryptoHasherZig {
         h.update(input.slice());
 
         if let Some(output_buf) = output {
-            // SAFETY: length checked above; output_buf backing storage outlives this frame.
+            // SAFETY: length checked above; `output_buf.ptr` is the JSC-owned
+            // writable backing store, outliving this frame. Build the `&mut`
+            // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
+            // (Stacked-Borrows UB).
             let out = unsafe {
-                core::slice::from_raw_parts_mut(
-                    output_buf.byte_slice().as_ptr() as *mut u8,
-                    digest_length_comptime,
-                )
+                core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime)
             };
             h.final_(out);
             Ok(output_buf.value)
@@ -1323,17 +1323,18 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         // PORT NOTE: reshaped for borrowck — Zig used `*Hasher.Digest` rebound into output buffer.
         let output_digest_slice: &mut H::Digest;
         if let Some(output_buf) = &output {
-            let bytes = output_buf.byte_slice();
-            if bytes.len() < H::DIGEST {
+            let bytes_len = output_buf.byte_slice().len();
+            if bytes_len < H::DIGEST {
                 // Zig `comptimePrint` → runtime `format_args!`; observable string is identical.
                 return Err(global.throw_invalid_arguments(
                     format_args!("TypedArray must be at least {} bytes", H::DIGEST),
                 ));
             }
-            // SAFETY: bytes.len() >= H::DIGEST checked above; H::Digest = [u8; H::DIGEST].
-            output_digest_slice = unsafe {
-                &mut *(bytes.as_ptr() as *mut u8 as *mut H::Digest)
-            };
+            // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
+            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
+            // `&mut` directly from the raw `*mut u8` field — never via
+            // `&[u8].as_ptr()` (Stacked-Borrows UB).
+            output_digest_slice = unsafe { &mut *(output_buf.ptr as *mut H::Digest) };
         } else {
             output_digest_slice = &mut output_digest_buf;
         }

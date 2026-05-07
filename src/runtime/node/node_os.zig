@@ -127,7 +127,7 @@ fn cpuPartName(implementer: u32, part: u32) []const u8 {
 }
 
 /// Set a CPU's model field. Used to apply model info per-CPU rather than broadcasting.
-fn setCpuModel(globalThis: *jsc.JSGlobalObject, values: *jsc.JSValue, cpu_idx: u32, model: []const u8) !void {
+fn setCpuModel(globalThis: *jsc.JSGlobalObject, values: jsc.JSValue, cpu_idx: u32, model: []const u8) !void {
     const cpu = try values.getIndex(globalThis, cpu_idx);
     cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model).withEncoding().toJS(globalThis));
 }
@@ -260,12 +260,12 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                             const part_name = cpuPartName(arm_impl.?, arm_part.?);
                             if (isKnownArmPart(part_name)) {
                                 const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                                try setCpuModel(globalThis, &values, cpu_index, model_str);
+                                try setCpuModel(globalThis, values, cpu_index, model_str);
                             } else if (hardware_value) |hv| {
-                                try setCpuModel(globalThis, &values, cpu_index, hv);
+                                try setCpuModel(globalThis, values, cpu_index, hv);
                             }
                         } else if (hardware_value) |hv| {
-                            try setCpuModel(globalThis, &values, cpu_index, hv);
+                            try setCpuModel(globalThis, values, cpu_index, hv);
                         }
                     }
                 }
@@ -274,7 +274,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                 arm_impl = null;
                 arm_part = null;
             } else if (strings.eqlComptime(key, "model name")) {
-                try setCpuModel(globalThis, &values, cpu_index, value);
+                try setCpuModel(globalThis, values, cpu_index, value);
             } else if (strings.eqlComptime(key, "Hardware")) {
                 // Stash the SoC name; apply only to CPUs that end up with no model.
                 hardware_value = value;
@@ -295,12 +295,12 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                     const part_name = cpuPartName(arm_impl.?, arm_part.?);
                     if (isKnownArmPart(part_name)) {
                         const model_str = formatArmModel(&model_name_buf, impl_name, part_name);
-                        try setCpuModel(globalThis, &values, cpu_index, model_str);
+                        try setCpuModel(globalThis, values, cpu_index, model_str);
                     } else if (hardware_value) |hv| {
-                        try setCpuModel(globalThis, &values, cpu_index, hv);
+                        try setCpuModel(globalThis, values, cpu_index, hv);
                     }
                 } else if (hardware_value) |hv| {
-                    try setCpuModel(globalThis, &values, cpu_index, hv);
+                    try setCpuModel(globalThis, values, cpu_index, hv);
                 }
             }
         }
@@ -312,7 +312,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             while (try it.next()) |cpu| : (idx += 1) {
                 const model = cpu.get(globalThis, "model");
                 if (model.isUndefined() or model.isNull()) {
-                    try setCpuModel(globalThis, &values, idx, hv);
+                    try setCpuModel(globalThis, values, idx, hv);
                 }
             }
         }
@@ -324,7 +324,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             while (try it.next()) |cpu| : (idx += 1) {
                 const model = cpu.get(globalThis, "model");
                 if (model.isUndefined() or model.isNull()) {
-                    try setCpuModel(globalThis, &values, idx, "unknown");
+                    try setCpuModel(globalThis, values, idx, "unknown");
                 }
             }
         }

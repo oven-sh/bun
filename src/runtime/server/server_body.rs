@@ -280,6 +280,18 @@ where
         }
         RespLike::to_any_response(resp).on_data(handler::<ThisServer, SSL, DBG, H3>, self as *mut Self);
     }
+    #[inline]
+    fn on_start_buffering_callback(this: *mut c_void) {
+        Self::on_start_buffering_callback(this)
+    }
+    #[inline]
+    fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
+        Self::on_start_streaming_request_body_callback(this)
+    }
+    #[inline]
+    fn on_request_body_readable_stream_available(this: *mut c_void, stream: JSValue) {
+        Self::on_request_body_readable_stream_available(this, stream)
+    }
 }
 
 // PORT NOTE: local request/response trait so generic `Ctx::Req` / `Ctx::Resp`

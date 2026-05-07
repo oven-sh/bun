@@ -367,6 +367,180 @@ pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 
 // ──────────────────────────────────────────────────────────────────────────
+// Handle / stream / pipe surface (libuv.zig:391-1495 subset).
+//
+// Layouts here are ported field-for-field from the Zig `extern struct`s only
+// where the Rust callers touch a field directly (`.data`). Everything past
+// `data` is an opaque tail sized to >= the C `sizeof`. libuv only writes
+// within `sizeof(uv_<kind>_t)` of the pointer it is handed, so over-allocation
+// is safe; we never read those bytes from Rust.
+// ──────────────────────────────────────────────────────────────────────────
+
+pub type uv_os_fd_t = HANDLE;
+
+/// `Handle.Type` (libuv.zig:414). `#[repr(C)]` — value comes back from
+/// `uv_guess_handle` so the discriminant must match `uv_handle_type`.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+pub enum HandleType {
+    Unknown = 0,
+    Async = 1,
+    Check = 2,
+    FsEvent = 3,
+    FsPoll = 4,
+    Handle = 5,
+    Idle = 6,
+    NamedPipe = 7,
+    Poll = 8,
+    Prepare = 9,
+    Process = 10,
+    Stream = 11,
+    Tcp = 12,
+    Timer = 13,
+    Tty = 14,
+    Udp = 15,
+    Signal = 16,
+    File = 17,
+}
+pub type uv_handle_type = HandleType;
+/// `bun_sys::isatty` compares against this constant on Windows.
+pub const UV_TTY: HandleType = HandleType::Tty;
+
+pub type uv_close_cb = Option<unsafe extern "C" fn(*mut uv_handle_t)>;
+pub type uv_connection_cb = Option<unsafe extern "C" fn(*mut uv_stream_t, ReturnCode)>;
+
+/// `uv_handle_t` — every libuv handle begins with this header. Only `data` is
+/// touched from Rust; the tail is opaque storage written by libuv.
+#[repr(C)]
+pub struct Handle {
+    pub data: *mut c_void,
+    _opaque: [*mut c_void; 11], // loop, type+pad, close_cb, queue[2], u[4], endgame_next, flags+pad
+}
+pub type uv_handle_t = Handle;
+
+/// `uv_stream_t` — opaque; first field is `uv_handle_t` so a `*mut Pipe` /
+/// `*mut Handle` cast to `*mut uv_stream_t` is valid for `data`.
+#[repr(C)]
+pub struct uv_stream_t {
+    pub data: *mut c_void,
+    _opaque: [u8; 0],
+}
+
+/// `uv_pipe_t` (libuv.zig:1374). `data` is the only Rust-touched field. Tail
+/// is sized to cover Windows x64 `sizeof(uv_pipe_t)`; over-allocation is
+/// harmless because the struct is always either heap-boxed (`Box<Pipe>`) or
+/// the trailing field of a heap-boxed owner (`WindowsNamedPipeListeningContext`).
+//
+// PERF(port): replace with full field-accurate layout once the bindgen sweep
+// lands; the conservative tail here trades a few hundred bytes per pipe for
+// not hand-maintaining 18 nested `extern union`s.
+#[repr(C)]
+pub struct Pipe {
+    pub data: *mut c_void,
+    pub loop_: *mut uv_loop_t,
+    // Everything past `loop_` is libuv-internal. 80 ptr-words ≈ 640 bytes on
+    // x64, comfortably >= `sizeof(uv_pipe_t)` (Windows x64 measures ~576).
+    _opaque: [*mut c_void; 80],
+}
+
+pub const UV_PIPE_NO_TRUNCATE: c_uint = 1;
+
+unsafe extern "C" {
+    pub fn uv_guess_handle(file: uv_file) -> uv_handle_type;
+    pub fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb);
+    pub fn uv_is_closing(handle: *const uv_handle_t) -> c_int;
+    pub fn uv_listen(stream: *mut uv_stream_t, backlog: c_int, cb: uv_connection_cb) -> ReturnCode;
+    pub fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
+    pub fn uv_pipe_init(loop_: *mut uv_loop_t, handle: *mut Pipe, ipc: c_int) -> ReturnCode;
+    pub fn uv_pipe_bind2(handle: *mut Pipe, name: *const u8, namelen: usize, flags: c_uint) -> ReturnCode;
+}
+
+impl ReturnCode {
+    /// Zig `ReturnCode.zero` enum variant — keep the lowercase fn for callers
+    /// that ported `== uv.ReturnCode.zero` literally.
+    #[inline]
+    pub const fn zero() -> ReturnCode { ReturnCode(0) }
+    #[inline]
+    pub fn from_raw(v: c_int) -> ReturnCode { ReturnCode(v) }
+}
+
+impl Pipe {
+    /// `uv_pipe_init` (libuv.zig:1419). Returns the raw `ReturnCode`; callers
+    /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
+    /// free of `bun_sys`.
+    pub fn init(&mut self, loop_: *mut uv_loop_t, ipc: bool) -> ReturnCode {
+        // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation; `loop_` is the
+        // process libuv loop.
+        unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) }
+    }
+
+    /// `uv_pipe_bind2` with `UV_PIPE_NO_TRUNCATE` (libuv.zig:1439).
+    pub fn bind(&mut self, named_pipe: &[u8], flags: c_uint) -> ReturnCode {
+        // SAFETY: pipe is initialized; libuv copies the name.
+        unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
+    }
+
+    /// `StreamMixin::listen` (libuv.zig:3047). The Zig version monomorphises a
+    /// `fn(*Ctx, ReturnCode)` wrapper; here the caller supplies a plain
+    /// `uv_connection_cb` and recovers its context from `handle.data` itself
+    /// (set by this fn). Same wire behaviour, no comptime trampoline.
+    pub fn listen(
+        &mut self,
+        backlog: i32,
+        context: *mut c_void,
+        on_connect: unsafe extern "C" fn(*mut uv_stream_t, ReturnCode),
+    ) -> ReturnCode {
+        self.data = context;
+        // SAFETY: `Pipe` is layout-compatible with `uv_stream_t` for the first
+        // field; libuv treats every stream subtype this way.
+        unsafe { uv_listen((self as *mut Pipe).cast(), backlog, Some(on_connect)) }
+    }
+
+    /// `Pipe::listenNamedPipe` (libuv.zig:1432) — bind + listen.
+    pub fn listen_named_pipe(
+        &mut self,
+        named_pipe: &[u8],
+        backlog: i32,
+        context: *mut c_void,
+        on_connect: unsafe extern "C" fn(*mut uv_stream_t, ReturnCode),
+    ) -> ReturnCode {
+        let rc = self.bind(named_pipe, UV_PIPE_NO_TRUNCATE);
+        if rc.errno().is_some() {
+            return rc;
+        }
+        self.listen(backlog, context, on_connect)
+    }
+
+    /// `StreamMixin::accept` (libuv.zig:3060).
+    pub fn accept(&mut self, client: &mut Pipe) -> ReturnCode {
+        // SAFETY: both pipes embed `uv_stream_t` at offset 0.
+        unsafe { uv_accept((self as *mut Pipe).cast(), (client as *mut Pipe).cast()) }
+    }
+
+    /// `HandleMixin::close` (libuv.zig:448). `cb` receives the same pointer
+    /// cast back to `*mut Pipe`.
+    pub fn close(&mut self, cb: unsafe extern "C" fn(*mut Pipe)) {
+        // SAFETY: `Pipe` embeds `uv_handle_t` at offset 0; cb signature is
+        // ABI-identical to `uv_close_cb` modulo the pointee type.
+        unsafe {
+            uv_close(
+                (self as *mut Pipe).cast(),
+                Some(core::mem::transmute::<
+                    unsafe extern "C" fn(*mut Pipe),
+                    unsafe extern "C" fn(*mut uv_handle_t),
+                >(cb)),
+            )
+        }
+    }
+
+    #[inline]
+    pub fn is_closing(&self) -> bool {
+        // SAFETY: `Pipe` embeds `uv_handle_t` at offset 0.
+        unsafe { uv_is_closing((self as *const Pipe).cast()) != 0 }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/libuv_sys/libuv.zig (subset: fs_t, uv_buf_t, Loop, O,
 //               ReturnCode{,I64}, uv_fs_* externs)

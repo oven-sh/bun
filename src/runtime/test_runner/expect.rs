@@ -246,20 +246,38 @@ impl Expect {
         args: &'static str,
         not: bool,
     ) -> &'static str {
-        // .zig:103-109 comptime-concats `received ++ [not.] ++ matcher_name ++ (args)`.
-        // Rust has no comptime string concat across runtime call sites, so render
-        // at runtime and leak. This is the matcher-FAILURE path only — the test
-        // is about to print the diff and (in CI) the process exits — so the leak
-        // is bounded by failing-assertion count, which is acceptable. Returning
-        // `&'static str` keeps the ~280 call sites and `throw()`'s `signature:
+        // .zig:103-109 comptime-concats `received ++ [not.] ++ matcher_name ++ (args)`
+        // into rodata. Rust has no comptime string concat across runtime call
+        // sites (all ~188 callers pass literals, but the `not` bool is runtime
+        // in some), so emulate via a process-lifetime intern table: each
+        // unique (matcher, args, not) triple is rendered exactly once and the
+        // boxed str is owned by the static `CACHE` for the rest of the process
+        // — same lifetime semantics as the Zig comptime result. Returning
+        // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
         // &'static str` parameter unchanged.
+        use std::collections::HashMap;
+        use std::sync::OnceLock;
+        type Key = (&'static str, &'static str, bool);
+        static CACHE: OnceLock<parking_lot::Mutex<HashMap<Key, Box<str>>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(Default::default);
+
+        let mut map = cache.lock();
+        if let Some(s) = map.get(&(matcher_name, args, not)) {
+            // SAFETY: `CACHE` is process-static and entries are never removed
+            // or mutated, so the `Box<str>` allocation outlives the program.
+            return unsafe { &*(s.as_ref() as *const str) };
+        }
         const RECEIVED: &str = "<d>expect(<r><red>received<r><d>).<r>";
-        let s = if not {
+        let s: Box<str> = if not {
             format!("{RECEIVED}not<d>.<r>{matcher_name}<d>(<r>{args}<d>)<r>")
         } else {
             format!("{RECEIVED}{matcher_name}<d>(<r>{args}<d>)<r>")
-        };
-        Box::leak(s.into_boxed_str())
+        }
+        .into_boxed_str();
+        let ptr = s.as_ref() as *const str;
+        map.insert((matcher_name, args, not), s);
+        // SAFETY: just inserted into process-static `CACHE`; never removed.
+        unsafe { &*ptr }
     }
 
     pub fn throw_pretty_matcher_error(

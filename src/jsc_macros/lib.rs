@@ -148,7 +148,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let __g = unsafe { &*__global };
                 let __f = unsafe { &*__frame };
-                ::bun_jsc::__macro_support::host_fn_result(__g, #fn_name(__g, __f))
+                ::bun_jsc::__macro_support::host_fn_result(__g, || #fn_name(__g, __f))
             },
         ),
         // `Free` with a receiver == method-style (PORTING.md permits omitting
@@ -182,7 +182,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                     let __t = unsafe { &mut *__this };
                     let __g = unsafe { &*__global };
                     let __f = unsafe { &*__frame };
-                    ::bun_jsc::__macro_support::host_fn_result(__g, #call)
+                    ::bun_jsc::__macro_support::host_fn_result(__g, || #call)
                 },
             )
         }
@@ -200,7 +200,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                 // provenance — `&mut T` reborrows to `&T` for read-only getters.
                 let __t = unsafe { &mut *__this };
                 let __g = unsafe { &*__global };
-                ::bun_jsc::__macro_support::host_fn_result(__g, Self::#fn_name(__t, __g))
+                ::bun_jsc::__macro_support::host_fn_result(__g, || Self::#fn_name(__t, __g))
             },
         ),
         HostFnKind::Setter => (
@@ -218,7 +218,7 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
                 let __g = unsafe { &*__global };
                 ::bun_jsc::__macro_support::host_fn_setter_result(
                     __g,
-                    Self::#fn_name(__t, __g, __value),
+                    || Self::#fn_name(__t, __g, __value),
                 )
             },
         ),

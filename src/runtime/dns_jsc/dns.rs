@@ -4958,7 +4958,7 @@ macro_rules! export_host_fn {
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let g = unsafe { &*g };
-                ::bun_jsc::__macro_support::host_fn_result(g, $scope::$f(g, unsafe { &*f }))
+                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, unsafe { &*f }))
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $name)]
@@ -4968,7 +4968,7 @@ macro_rules! export_host_fn {
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let g = unsafe { &*g };
-                ::bun_jsc::__macro_support::host_fn_result(g, $scope::$f(g, unsafe { &*f }))
+                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, unsafe { &*f }))
             }
         };
     };

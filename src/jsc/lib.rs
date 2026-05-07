@@ -587,8 +587,8 @@ impl ThrowFmtArgs for () {
 }
 impl ThrowFmtArgs for core::fmt::Arguments<'_> {
     #[inline]
-    fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
-        global.throw(fmt, self)
+    fn dispatch_throw(self, global: &JSGlobalObject, _fmt: &'static str) -> JsError {
+        global.throw(self)
     }
     #[inline]
     fn dispatch_throw_invalid_arguments(

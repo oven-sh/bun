@@ -6,20 +6,9 @@ use bun_str::strings;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
-// Local shim for `JSValue::create_uninitialized_uint8_array` (lives in the still-gated
-// bun_jsc JSValue.rs). Wraps the C++ FFI directly with the same `JsResult` contract.
-unsafe extern "C" {
-    fn JSC__JSValue__createUninitializedUint8Array(
-        global: *const JSGlobalObject,
-        len: usize,
-    ) -> JSValue;
-}
-
 #[inline]
 fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
-    bun_jsc::from_js_host_call(global, || unsafe {
-        JSC__JSValue__createUninitializedUint8Array(global, len)
-    })
+    JSValue::create_uninitialized_uint8_array(global, len)
 }
 
 #[unsafe(no_mangle)]

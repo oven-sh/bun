@@ -480,9 +480,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
-    // TODO(port): lifetime — AbortSignal is intrusive-refcounted; ref()/unref() are
-    // manual. Model as Option<NonNull<AbortSignal>> with a Drop guard in Phase B.
-    let mut signal: Option<NonNull<AbortSignal>> = None;
+    // AbortSignal is intrusive-refcounted; the +1 from `ref_()` is released by
+    // `SignalRef`'s Drop on every early-return path, and disarmed via `take()`
+    // when ownership is moved into `FetchOptions`.
+    let mut signal = SignalRef(None);
     // Custom Hostname
     let mut hostname: Option<bun_core::ZBox> = None;
     let mut range: Option<bun_core::ZBox> = None;
@@ -513,13 +514,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // PORT NOTE: the Zig `defer { ... }` block here freed signal/unix_socket_path/
     // url_proxy_buffer/headers/body/hostname/range/ssl_config on every exit path.
-    // In Rust, all of these are owning types whose Drop runs on early return.
-    // The explicit `signal.unref()` is the only side-effect not covered by Drop:
-    // TODO(port): errdefer — Zig had `defer if (signal) |sig| sig.unref();` capturing
-    // `signal` by ref across many mutations. Borrowck forbids guard-by-ref here; the
-    // matched unref() is now done explicitly on the early-return paths via the Drop
-    // of FetchTasklet (which adopts the ref) or, on error, leaked until Phase B.
-    let _ = &signal;
+    // In Rust, all of these are owning types whose Drop runs on early return
+    // (`signal` via `SignalRef`).
 
     let options_object: Option<JSValue> = 'brk: {
         if let Some(options) = args.next_eat() {
@@ -1130,7 +1126,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // signal: AbortSignal | undefined;
-    signal = 'extract_signal: {
+    signal.0 = 'extract_signal: {
         if let Some(options) = options_object {
             if let Some(signal_) = options.get(global_this, "signal")? {
                 if !signal_.is_undefined() {
@@ -1264,9 +1260,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {
-        let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
-        // TODO(port): errdefer — Zig deferred `fetch_headers_to_deref.deref()`. Borrowck
-        // forbids the by-ref scopeguard here; deref is done explicitly after use below.
+        // Zig: `defer { if (fetch_headers_to_deref) |fh| fh.deref() }` — releases
+        // the +1 from `create_from_js` on every exit path (including the
+        // `has_exception()` early returns below).
+        let mut fetch_headers_to_deref = FetchHeadersRef(None);
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
@@ -1284,7 +1281,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?
                         {
-                            fetch_headers_to_deref = Some(headers__.as_ptr());
+                            fetch_headers_to_deref.0 = Some(headers__);
                             break 'brk Some(headers__.as_ptr());
                         }
 
@@ -1320,7 +1317,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?
                         {
-                            fetch_headers_to_deref = Some(headers__.as_ptr());
+                            fetch_headers_to_deref.0 = Some(headers__);
                             break 'brk Some(headers__.as_ptr());
                         }
 
@@ -1374,12 +1371,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             headers
         };
 
-        // PORT NOTE: deferred `fetch_headers_to_deref.deref()` (release +1 from create_from_js).
-        if let Some(fh) = fetch_headers_to_deref {
-            // SAFETY: fh was obtained from create_from_js which returns +1 ref.
-            unsafe { (*fh).deref() };
-        }
-
+        // `fetch_headers_to_deref` Drop releases the +1 from create_from_js.
         break 'extract_headers result;
     };
 
@@ -1539,7 +1531,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let mut response = Box::new(Response::init(
+        let response = Box::into_raw(Box::new(Response::init(
             response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1549,11 +1541,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             },
             url_string.clone(),
             false,
-        ));
+        )));
 
+        // Ownership of the boxed Response transfers to the JS GC; see
+        // `data_url_response` for the rationale.
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            response.to_js(global_this),
+            Response::make_maybe_pooled(global_this, response),
         ));
     }
 
@@ -1871,8 +1865,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // 'static lifetime is a raw-pointer fiction matching the Zig @ptrCast.
                 let _ = S3StreamWrapper::resolve(result, ctx as *mut S3StreamWrapper<'static>);
             }
+            // Zig: `credentialsWithOptions.credentials.dupe()` — heap-allocate a
+            // fresh intrusive-refcounted copy. `upload_stream` calls
+            // `IntrusiveRc::init_ref(this)` and stores it in the long-lived
+            // `MultiPartUpload`, so passing our stack-local `credentials_with_options.credentials`
+            // would dangle once this block returns.
+            let creds_heap: *mut bun_s3_signing::S3Credentials =
+                credentials_with_options.credentials.dupe().into_raw();
             let _ = s3::upload_stream(
-                &mut credentials_with_options.credentials,
+                // SAFETY: `creds_heap` is a fresh `Box::into_raw`'d S3Credentials
+                // (ref=1); `upload_stream` bumps the refcount and the
+                // MultiPartUpload derefs on completion.
+                unsafe { &mut *creds_heap },
                 s3_path,
                 readable_stream.get(global_this).unwrap(),
                 global_this,

@@ -248,14 +248,30 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
 
-// PORT NOTE: the public `body::BodyMixin` is currently a methodless stub
-// (the real trait with `get_body_value`/`get_fetch_headers`/etc. defaults lives
-// in `body::_jsc_gated` and is TODO(b2-blocked) to be re-exported). The
-// inherent `Response::get_body_value` / `get_fetch_headers` /
-// `get_form_data_encoding` / `get_body_readable_stream` methods below carry the
-// real bodies; once `body` re-exports the gated trait, restore the delegating
-// impl (see git history).
-impl BodyMixin for Response {}
+impl BodyMixin for Response {
+    #[inline]
+    fn get_body_value(&mut self) -> &mut BodyValue {
+        Response::get_body_value(self)
+    }
+    #[inline]
+    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
+        // Zig: `?*FetchHeaders` — opaque C++ handle, pass as raw ptr.
+        self.init.headers.as_deref().map(core::ptr::NonNull::from)
+    }
+    #[inline]
+    fn get_form_data_encoding(
+        &mut self,
+    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+        Response::get_form_data_encoding(self)
+    }
+    #[inline]
+    fn get_body_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
+        Response::get_body_readable_stream(self, global_object)
+    }
+}
 
 impl Response {
     pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {

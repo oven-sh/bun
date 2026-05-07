@@ -107,7 +107,7 @@ mod ConcurrentTask {
     }
     #[inline] pub fn from_callback<T>(
         ptr: *mut T,
-        cb: fn(*mut T) -> core::result::Result<(), *mut ()>,
+        cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
     ) -> *mut ConcurrentTask {
         ConcurrentTask::from_callback(ptr, cb)
     }

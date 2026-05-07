@@ -3386,7 +3386,7 @@ pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
     BundleV2::on_load(load, bv2);
 }
 
-fn on_load_from_js_loop_raw(load: *mut jsc_api::JSBundler::Load) -> Result<(), *mut ()> {
+fn on_load_from_js_loop_raw(load: *mut jsc_api::JSBundler::Load) -> bun_event_loop::JsResult<()> {
     // SAFETY: `load` is a valid pointer set up by `from_callback`.
     on_load_from_js_loop(unsafe { &mut *load });
     Ok(())
@@ -3539,7 +3539,7 @@ pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
     BundleV2::on_resolve(resolve, bv2);
 }
 
-fn on_resolve_from_js_loop_raw(resolve: *mut jsc_api::JSBundler::Resolve) -> Result<(), *mut ()> {
+fn on_resolve_from_js_loop_raw(resolve: *mut jsc_api::JSBundler::Resolve) -> bun_event_loop::JsResult<()> {
     // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
     on_resolve_from_js_loop(unsafe { &mut *resolve });
     Ok(())

@@ -1657,8 +1657,11 @@ pub fn init(
         let tld = fs.top_level_dir();
         CWD_BUF[..tld.len()].copy_from_slice(tld);
         CWD_BUF[tld.len()] = 0;
-        // Zig: `fs.top_level_dir = cwd_buf[..len :0]` — opaque handle has no setter.
-        // TODO(port): blocked_on bun_sys::fs::FileSystem::set_top_level_dir
+        // Zig: `fs.top_level_dir = cwd_buf[0..len :0]` (PackageManager.zig:776).
+        // Route through the FsVTable setter so the resolver's cached cwd is
+        // rebound to the process-lifetime CWD_BUF (it was a transient slice
+        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
+        fs.set_top_level_dir(core::slice::from_raw_parts(CWD_BUF.as_ptr(), tld.len()));
         // Zig: `bun.getFdPathZ(file, &buf)` — bun_sys exposes the non-Z form;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let p = bun_sys::get_fd_path(
@@ -1670,13 +1673,18 @@ pub fn init(
         ROOT_PACKAGE_JSON_PATH = ZStr::from_raw(ROOT_PACKAGE_JSON_PATH_BUF.as_ptr(), plen);
     }
 
-    // Zig: `fs.fs.readDirectory(fs.top_level_dir, ...)` — the resolver-tier
-    // `RealFS` cache. The opaque `bun_sys::fs::FileSystem` doesn't expose
-    // `fs.read_directory` (it lives behind the vtable). For init purposes the
-    // root dir is only used to seed `manager.root_dir` for env-file discovery.
-    // TODO(port): blocked_on bun_sys::fs vtable read_directory
+    // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)`
+    // (PackageManager.zig:779). Routes through the FsVTable to the resolver's
+    // BSSMap-owned `*DirEntry` slot.
+    // SAFETY: the vtable returns an erased `*mut bun_resolver::fs::DirEntry`
+    // (provenance is `&mut **e as *mut _`, see resolver/fs.rs SYS_FS_VTABLE);
+    // the BSSMap singleton owns it for the process lifetime, and `init()` runs
+    // single-threaded before any other access — sole `&'static mut` is sound.
     let entries_option: &'static mut fs::DirEntry =
-        todo!("blocked_on: bun_sys::fs::FsVTable::read_directory (resolver T4 hook)");
+        match fs.read_directory(fs.top_level_dir(), 0, true)? {
+            fs::EntriesOption::Entries(p) => unsafe { &mut *(p as *mut fs::DirEntry) },
+            fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        };
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate

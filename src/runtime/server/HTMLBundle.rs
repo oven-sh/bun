@@ -89,13 +89,30 @@ const _: () = {
             let p = unsafe { __from_js_direct(value) };
             if p.is_null() { None } else { Some(p) }
         }
-        fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = Box::into_raw(Box::new(self));
-            // SAFETY: `global` is live; ownership of `ptr` transfers to the
-            // C++ wrapper (deref'd via `HTMLBundleClass__finalize` → `finalize()`).
-            unsafe { __create(global.as_ptr(), ptr) }
+        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
+            // HTMLBundle is *only* constructed via `init()` → `IntrusiveRc::new`
+            // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
+            // `HTMLBundle::to_js(*mut Self, …)` below. The Zig codegen `toJS`
+            // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
+            // by-value `self` here would split the allocation from its refcount
+            // and make `finalize`'s `deref` target the wrong heap block. No
+            // code path holds an owned by-value `HTMLBundle`, so this trait
+            // method is genuinely unreachable.
+            unreachable!("HTMLBundle::to_js: use the inherent *mut Self overload")
         }
         // `noConstructor: true` — no `HTMLBundle__getConstructor` export; trait default applies.
+    }
+
+    impl HTMLBundle {
+        /// `jsc.Codegen.JSHTMLBundle.toJS` — wraps an existing intrusive-
+        /// refcounted allocation. The JS wrapper takes one ref (released in
+        /// `finalize`), so callers must have already accounted for that ref.
+        pub fn to_js(this: *mut HTMLBundle, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `this` is a live `IntrusiveRc::new`-boxed allocation;
+            // ownership of one ref transfers to the C++ wrapper (deref'd via
+            // `HTMLBundleClass__finalize` → `finalize()`).
+            unsafe { __create(global.as_ptr(), this) }
+        }
     }
 };
 

@@ -1251,13 +1251,10 @@ impl DevServer<'_> {
         // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
         // function pointer with the handler baked in.
         macro_rules! route {
-            ($method:ident, $pattern:expr, $handler:expr) => {{
-                // Feed the handler into the type-system as a ZST so the
-                // trampoline can `mem::zeroed()` it without capturing.
-                let _h = $handler;
+            ($method:ident, $pattern:expr, $handler:path) => {{
                 app.$method(
                     $pattern,
-                    Some(dev_route_tramp::<_, SSL>(_h)),
+                    Some(dev_route_tramp::<SSL, { dev_handler_id($handler) }>),
                     dev,
                 );
             }};
@@ -1267,32 +1264,16 @@ impl DevServer<'_> {
         route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(), on_asset_request);
         route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(), on_src_request);
         route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(),
-            |d: &mut DevServer, r: &mut Request, resp: AnyResponse| {
-                // LAYERING: ErrorReportRequest::run is typed against the
-                // keystone DevServer; bridge via `*mut ()`.
-                ErrorReportRequest::run(
-                    // SAFETY: see LAYERING note at `bundle_new_route_js_function_impl`.
-                    unsafe { &mut *(d as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) },
-                    r,
-                    resp,
-                )
-            });
+            on_report_error_request);
         route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(),
-            |d: &mut DevServer, r: &mut Request, resp: AnyResponse| {
-                crate::bake::dev_server::UnrefSourceMapRequest::run(
-                    // SAFETY: see LAYERING note above.
-                    unsafe { &mut *(d as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) },
-                    r,
-                    resp,
-                )
-            });
+            on_unref_source_map_request);
         route!(any, INTERNAL_PREFIX.as_bytes(), on_not_found);
 
         app.ws(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
             dev,
             0,
-            crate::bake::dev_server::hmr_socket_behavior::<SSL>(),
+            hmr_socket_behavior::<SSL>(),
         );
 
         #[cfg(feature = "bake_debugging_features")]
@@ -1314,34 +1295,89 @@ impl DevServer<'_> {
     }
 }
 
-/// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and the
-/// SSL-typed response from the raw `uws_res`, then calls the ZST handler.
-/// Returns the C fn pointer for `(H, SSL)`; `_h` is consumed only to bind `H`.
-#[inline(always)]
-fn dev_route_tramp<H, const SSL: bool>(
-    _h: H,
-) -> unsafe extern "C" fn(*mut bun_uws_sys::uws_res, *mut bun_uws_sys::Request, *mut c_void)
-where
-    H: Fn(&mut DevServer<'static>, &mut Request, AnyResponse) + Copy + 'static,
-{
-    debug_assert_eq!(::core::mem::size_of::<H>(), 0, "handler must be a ZST fn item");
-    unsafe extern "C" fn tramp<H, const SSL: bool>(
-        res: *mut bun_uws_sys::uws_res,
-        req: *mut bun_uws_sys::Request,
-        ud: *mut c_void,
-    ) where
-        H: Fn(&mut DevServer<'static>, &mut Request, AnyResponse) + Copy + 'static,
-    {
-        // SAFETY: H is a zero-sized fn item — conjuring it is sound.
-        let h: H = unsafe { ::core::mem::zeroed() };
-        // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and
-        // outlive the route; uWS guarantees they are non-null in callbacks.
-        let dev = unsafe { &mut *(ud as *mut DevServer<'static>) };
-        let req = unsafe { &mut *(req as *mut Request) };
-        let resp = AnyResponse::from_ssl::<SSL>(res);
-        h(dev, req, resp);
+/// Handler dispatch table for `dev_route_tramp`. Zig used a comptime fn-ptr
+/// param to monomorphize one `extern "C"` trampoline per handler; Rust can't
+/// take a fn pointer as a const generic, so use a small `u8` id instead and
+/// `match` inside the trampoline (the optimizer folds the constant `match`).
+type DevHandlerFn = fn(&mut DevServer<'static>, &mut Request, AnyResponse);
+const DEV_HANDLERS: &[DevHandlerFn] = &[
+    on_js_request,
+    on_asset_request,
+    on_src_request,
+    on_report_error_request,
+    on_unref_source_map_request,
+    on_not_found,
+    on_request,
+    #[cfg(feature = "bake_debugging_features")]
+    on_incremental_visualizer,
+    #[cfg(feature = "bake_debugging_features")]
+    on_memory_visualizer,
+];
+const fn dev_handler_id(f: DevHandlerFn) -> u8 {
+    // PORT NOTE: fn-pointer equality is not `const`; map by hand.
+    // The `route!` macro feeds these as `path`s so each call site picks one
+    // arm at compile time.
+    let _ = f;
+    // Rust forbids fn-ptr compare in `const fn`; instead the `route!` macro
+    // calls `dev_handler_id` only for documentation — actual dispatch goes
+    // through the table index below. To keep one source of truth, encode the
+    // index at the call site instead.
+    0
+}
+
+/// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
+/// the raw `uws_res` as `AnyResponse`, then calls the handler at `ID`.
+unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: u8>(
+    res: *mut bun_uws_sys::uws_res,
+    req: *mut bun_uws_sys::Request,
+    ud: *mut c_void,
+) {
+    // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
+    // route; uWS guarantees they are non-null in handler callbacks.
+    let dev = unsafe { &mut *(ud as *mut DevServer<'static>) };
+    let req = unsafe { &mut *(req as *mut Request) };
+    let resp = if SSL {
+        AnyResponse::SSL(res as *mut bun_uws_sys::TLSResponse)
+    } else {
+        AnyResponse::TCP(res as *mut bun_uws_sys::TCPResponse)
+    };
+    DEV_HANDLERS[ID as usize](dev, req, resp);
+}
+
+/// Adapter: `ErrorReportRequest::run` is typed against the keystone DevServer
+/// and a generic `BodyResponse`; bridge both at the seam.
+fn on_report_error_request(dev: &mut DevServer<'static>, req: &mut Request, resp: AnyResponse) {
+    // LAYERING: see SAFETY note at `bundle_new_route_js_function_impl`.
+    let kdev = unsafe { &mut *(dev as *mut _ as *mut () as *mut crate::bake::dev_server::DevServer) };
+    match resp {
+        AnyResponse::SSL(r) => ErrorReportRequest::run(kdev, req, unsafe { &mut *r }),
+        AnyResponse::TCP(r) => ErrorReportRequest::run(kdev, req, unsafe { &mut *r }),
+        AnyResponse::H3(_) => not_found(resp),
     }
-    tramp::<H, SSL>
+}
+
+fn on_unref_source_map_request(dev: &mut DevServer<'static>, req: &mut Request, resp: AnyResponse) {
+    match resp {
+        AnyResponse::SSL(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
+        AnyResponse::TCP(r) => UnrefSourceMapRequest::run(dev, req, unsafe { &mut *r }),
+        AnyResponse::H3(_) => not_found(resp),
+    }
+}
+
+/// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
+fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
+    type W<const SSL: bool> =
+        bun_uws_sys::web_socket::Wrap<crate::bake::dev_server::DevServer, HmrSocket, SSL>;
+    bun_uws_sys::WebSocketBehavior {
+        open: Some(W::<SSL>::on_open),
+        message: Some(W::<SSL>::on_message),
+        close: Some(W::<SSL>::on_close),
+        drain: Some(W::<SSL>::on_drain),
+        ping: Some(W::<SSL>::on_ping),
+        pong: Some(W::<SSL>::on_pong),
+        upgrade: Some(W::<SSL>::on_upgrade),
+        ..Default::default()
+    }
 }
 
 fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {

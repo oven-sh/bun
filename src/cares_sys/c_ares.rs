@@ -1504,25 +1504,6 @@ impl struct_any_reply {
         }
         Ok(reply)
     }
-
-    pub unsafe extern "C" fn callback_wrapper<T: AnyHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *(ctx as *mut T) };
-        if status != ARES_SUCCESS {
-            this.on_any(Error::get(status), timeouts, None);
-            return;
-        }
-        match Self::parse(buffer, buffer_length) {
-            Ok(reply) => this.on_any(None, timeouts, Some(reply)),
-            Err(err) => this.on_any(Some(err), timeouts, None),
-        }
-    }
 }
 
 impl Drop for struct_any_reply {

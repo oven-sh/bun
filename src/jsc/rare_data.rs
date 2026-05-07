@@ -972,7 +972,9 @@ impl RareData {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
             };
-            let is_atty = syscall::isatty(fd);
+            // Zig: `if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false`
+            // — on Windows an invalid stdin handle must short-circuit to false.
+            let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
             // SAFETY: hook contract documented on `STDIO_BLOB_STORE_CTOR`.
             let store = unsafe { Self::stdio_ctor()(fd, is_atty, mode) };
             self.stdin_store = NonNull::new(store);
@@ -1014,12 +1016,13 @@ pub extern "C" fn Bun__Process__getStdinFdType(vm: *mut VirtualMachine, fd: i32)
         }
         _ => unreachable!(),
     };
-    if (mode & libc::S_IFMT) == libc::S_IFIFO {
-        StdinFdType::Pipe
-    } else if (mode & libc::S_IFMT) == libc::S_IFSOCK {
-        StdinFdType::Socket
-    } else {
-        StdinFdType::File
+    // Zig: `bun.S.ISFIFO(mode)` / `bun.S.ISSOCK(mode)` — platform-shimmed (works on
+    // Windows where libc::S_IFSOCK is undefined and on macOS where the libc constants
+    // are u16). `kind_from_mode` uses hard-coded u32 octal masks for the same effect.
+    match bun_sys::kind_from_mode(mode) {
+        bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
+        bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
+        _ => StdinFdType::File,
     }
 }
 

@@ -328,13 +328,10 @@ impl DeferredFailure {
         // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into
         // a raw pointer here and reconstituted inside the trampoline (mirrors Zig's
         // `default_allocator.create`/`destroy` pair).
-        // TODO(port): bun_event_loop::JsResult is currently `Result<(), *mut ()>` (erased
-        // jsc::Error); discard the typed error until the upstream alias is unified.
-        fn run_raw(ptr: *mut DeferredFailure) -> Result<(), *mut ()> {
+        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `Box::into_raw` below; we are the sole owner.
             let this = unsafe { Box::from_raw(ptr) };
-            let _ = DeferredFailure::run(this);
-            Ok(())
+            DeferredFailure::run(this).map_err(Into::into)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(Box::into_raw(self), run_raw);

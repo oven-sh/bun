@@ -1551,10 +1551,18 @@ impl Lockfile {
 // Printer
 // ────────────────────────────────────────────────────────────────────────────
 
+/// Port of `Lockfile.Printer` (src/install/lockfile.zig).
+/// Typed against the canonical exported `crate::Lockfile` /
+/// `crate::PackageManagerOptionsStub` (the column-vec stub shapes that
+/// `PackageManager` carries) so `print_install_summary` / `write_yarn_lock`
+/// can construct it directly off `manager.lockfile` / `manager.options`
+/// without a stub→real conversion. The standalone `Printer::print` /
+/// `print_with_lockfile` path also routes through the stub `Lockfile`'s
+/// `load_from_cwd` so there is a single `Printer` type.
 pub struct Printer<'a> {
-    pub lockfile: &'a mut Lockfile,
-    pub options: PackageManagerOptions,
-    pub successfully_installed: Option<DynamicBitSet>,
+    pub lockfile: &'a crate::Lockfile,
+    pub options: &'a crate::PackageManagerOptionsStub,
+    pub successfully_installed: Option<&'a DynamicBitSet>,
     pub updates: &'a [UpdateRequest],
 }
 
@@ -1614,13 +1622,14 @@ impl<'a> Printer<'a> {
         // crate's init (which installs the vtable); `instance()` here asserts it.
         let _ = FileSystem::instance();
 
-        let mut lockfile = Box::new(Lockfile::init_empty_value());
-        // TODO(port): Zig allocates uninitialized then calls loadFromCwd which initializes via
-        // initEmpty/loadFromBytes. Here we pre-initialize.
+        // PORT NOTE: `Printer` is typed against the canonical `crate::Lockfile`
+        // (column-vec stub) so it matches `PackageManager.lockfile`; this
+        // standalone path routes through the same type and its `load_from_cwd`.
+        let mut lockfile = Box::<crate::Lockfile>::default();
 
-        let load_from_disk = lockfile.load_from_cwd::<false>(None, log);
+        let load_from_disk = lockfile.load_from_cwd(core::ptr::null_mut(), log, true);
         match load_from_disk {
-            LoadResult::Err(cause) => {
+            crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {
                     LoadStep::OpenFile => Output::pretty_errorln(format_args!(
                         "<r><red>error<r> opening lockfile:<r> {}.",
@@ -1645,7 +1654,7 @@ impl<'a> Printer<'a> {
                 }
                 Global::crash();
             }
-            LoadResult::NotFound => {
+            crate::lockfile::LoadResult::NotFound => {
                 Output::pretty_errorln(format_args!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
@@ -1654,11 +1663,11 @@ impl<'a> Printer<'a> {
                 ));
                 Global::crash();
             }
-            LoadResult::Ok(_) => {}
+            crate::lockfile::LoadResult::Ok(_) => {}
         }
 
         let writer = Output::writer_buffered();
-        match Self::print_with_lockfile(&mut lockfile, format, writer) {
+        match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
             Err(e) if e == err!("OutOfMemory") => bun_core::out_of_memory(),
             Err(e) if e == err!("BrokenPipe") || e == err!("WriteFailed") => return Ok(()),
@@ -1669,13 +1678,13 @@ impl<'a> Printer<'a> {
     }
 
     pub fn print_with_lockfile<W: bun_io::Write>(
-        lockfile: &mut Lockfile,
+        lockfile: &crate::Lockfile,
         format: PrinterFormat,
         writer: W,
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
         let fs = FileSystem::instance_mut();
-        let mut options = PackageManagerOptions {
+        let mut options = crate::PackageManagerOptionsStub {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
         };
@@ -1703,7 +1712,7 @@ impl<'a> Printer<'a> {
 
         let mut printer = Printer {
             lockfile,
-            options,
+            options: &options,
             successfully_installed: None,
             updates: &[],
         };

@@ -151,13 +151,30 @@ impl crate::webcore::body::BodyOwnerJs for Request {
 // returns `None`; without this override the `@hasDecl(Type, "getBodyReadableStream")`
 // paths in Body.zig are silently dead.
 //
-// TODO(b2-blocked): the real `BodyMixin` (with required `get_body_value` /
-// `get_fetch_headers` / `get_form_data_encoding` / `get_body_readable_stream`
-// methods) lives behind `body::_jsc_gated`; the public stub trait is empty.
-// The inherent `Request::*` methods below are still defined and dispatched
-// directly — re-add the trait-method bodies once Body.rs un-gates the real
-// trait (`pub use _jsc_gated::BodyMixin;`).
-impl BodyMixin for Request {}
+impl BodyMixin for Request {
+    #[inline]
+    fn get_body_value(&mut self) -> &mut BodyValue {
+        Request::get_body_value(self)
+    }
+    #[inline]
+    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
+        // Zig: `?*FetchHeaders` — opaque C++ handle, pass as raw ptr.
+        self.headers.as_deref().map(core::ptr::NonNull::from)
+    }
+    #[inline]
+    fn get_form_data_encoding(
+        &mut self,
+    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
+        Request::get_form_data_encoding(self)
+    }
+    #[inline]
+    fn get_body_readable_stream(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
+        Request::get_body_readable_stream(self, global_object)
+    }
+}
 
 // ─── un-gated header accessors & simple getters ─────────────────────────────
 impl Request {

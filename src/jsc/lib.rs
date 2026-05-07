@@ -6,14 +6,13 @@
 //! LAYERING: `jsc.zig` carries deprecated aliases `WebCore = bun.webcore`,
 //! `API = bun.api`, `Node = bun.api.node`, `Subprocess = bun.api.Subprocess`.
 //! In the Rust crate graph those targets live in `bun_runtime`, which depends
-//! on this crate. The Rust port hoists the **data shapes** lower-tier crates
-//! genuinely need (`Blob`, `Blob::Store`, `BuildArtifact`, `PathLike`,
-//! `PathOrFileDescriptor`) into this crate as the single nominal definition —
-//! see `webcore_types.rs` / `node_path.rs` — and `bun_runtime` re-exports them
-//! and layers behaviour on top. Everything else under those aliases
-//! (`Request`/`Response`/`Subprocess`/`Jest`/`NewSocket`/…) is referenced via
-//! `bun_runtime::{webcore,api,node}` directly; consumers that needed them
-//! (e.g. `output_file_jsc`) have been moved up into `bun_runtime`.
+//! on this crate — re-exporting them here would create a cycle. The Zig source
+//! already marks every one of them `Deprecated` with a "TODO: Remove" header,
+//! so the Rust port drops the aliases outright. Callers reference
+//! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
+//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
+//! have been moved up into `bun_runtime`, and the few that only need an opaque
+//! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]

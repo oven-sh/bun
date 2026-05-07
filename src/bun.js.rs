@@ -146,8 +146,6 @@ impl Run {
                     graph: Some(NonNull::from(&mut *graph_ptr).cast()),
                     is_main_thread: true,
                     smol: ctx.runtime_options.smol,
-                    // TODO(b2-cycle): `Options.debugger` is `()` until the real type lands.
-                    debugger: (),
                     dns_result_order: DnsResultOrder::from_string_or_die(
                         &ctx.runtime_options.dns_result_order,
                     ) as u8,

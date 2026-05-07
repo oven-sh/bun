@@ -1957,8 +1957,10 @@ pub struct Options {
     // TODO(b2-cycle): real type is `bun_standalone_module_graph::StandaloneModuleGraph`,
     // but that crate is not at this tier. Stored opaque.
     pub graph: Option<NonNull<c_void>>,
-    // TODO(b2-cycle): real type is `bun_cli::Command::Debugger`.
-    pub debugger: (),
+    // PORT NOTE: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
+    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
+    // CLI option struct lives in `bun_cli`, a forward dep). See
+    // `runtime/jsc_hooks.rs` for the spec :1321 `configureDebugger` call site.
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
 }
@@ -1974,7 +1976,6 @@ impl Default for Options {
             dns_result_order: 0,
             eval: false,
             graph: None,
-            debugger: (),
             is_main_thread: false,
             destruct_main_thread_on_exit: false,
         }

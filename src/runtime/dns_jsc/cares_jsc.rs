@@ -704,9 +704,8 @@ impl ErrorDeferred {
         }
         impl Context {
             // PORT NOTE: `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> Result<(), *mut ()>` (event-loop-layer JsResult), so the
-            // bun_jsc-layer error is erased here.
-            fn callback(this: *mut Context) -> Result<(), *mut ()> {
+            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
+            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the Box::into_raw'd pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { Box::from_raw(this) };

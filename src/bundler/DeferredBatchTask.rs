@@ -91,34 +91,7 @@ impl DeferredBatchTask {
         ));
 
         // Zig: `getBundleV2().jsLoopForPlugins().enqueueTaskConcurrent(task)`.
-        // `jsLoopForPlugins` body inlined here (CYCLEBREAK GENUINE — `*jsc.EventLoop`
-        // is a T6 type the bundler can't name).
-        let bv2 = self.get_bundle_v2();
-        debug_assert!(bv2.plugins.is_some());
-        if let Some(completion) = bv2.completion {
-            // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
-            let vt = COMPLETION_DISPATCH.load(Ordering::Acquire);
-            debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
-            // SAFETY: vtable registered by T6 at init; `completion` is a live non-null backref.
-            unsafe { ((*vt).enqueue_task_concurrent)(NonNull::new_unchecked(completion), task) };
-        } else {
-            // Bake path: the bundle loop *is* the JS event loop (Zig's
-            // `switch (this.loop().*) { .js => |l| l, .mini => @panic(...) }`).
-            // The erased `EventLoop` here carries the JS-loop owner directly;
-            // route through the registered `JsEventLoopVTable`. The `.mini`
-            // panic in Zig collapses to the `expect` below — there is no
-            // reachable mini-loop with plugins.
-            let owner = bv2
-                .r#loop()
-                .expect("No JavaScript event loop for transpiler plugins to run on")
-                .as_ptr();
-            let vt = bun_event_loop::any_event_loop::JS_EVENT_LOOP_VTABLE
-                .load(Ordering::Acquire);
-            debug_assert!(!vt.is_null(), "JS_EVENT_LOOP_VTABLE not registered by T6");
-            // SAFETY: `owner` is a live erased `*mut jsc::EventLoop`; vtable
-            // contract per `bun_event_loop::JsEventLoopVTable`.
-            unsafe { ((*vt).enqueue_task_concurrent)(owner, task) };
-        }
+        self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }
 
     pub fn run_on_js_thread(&mut self) {

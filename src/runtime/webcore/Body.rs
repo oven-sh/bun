@@ -2481,17 +2481,6 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
     jsc::to_js_host_fn(ValueBufferer::on_reject_stream)(global, callframe)
 }
 
-} // mod _jsc_gated
-
-pub use _jsc_gated::{extract, ValueBufferer};
-
-/// Stub `BodyMixin` so `impl BodyMixin for Response/Request {}` type-checks
-/// while the real trait (with `get_text`/`get_json`/etc. host-fn defaults)
-/// is gated above. The real trait extends `BodyOwnerJs` and provides ~9
-/// default-method bodies that call JSC.
-// TODO(b2-blocked): replace with `pub use _jsc_gated::BodyMixin;`.
-pub trait BodyMixin: Sized {}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/Body.zig (1833 lines)

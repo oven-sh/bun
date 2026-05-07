@@ -986,13 +986,17 @@ fn get_ast(
             ));
         }
         Loader::Html => {
-            let mut scanner = HTMLScanner::init(bump, log, source);
-            scanner.scan(&source.contents)?;
+            // PORT NOTE: scope the scanner so its `&mut log` / `&source`
+            // borrows release before `new_lazy_export_ast` re-borrows them.
+            let import_records = {
+                let mut scanner = HTMLScanner::init(log, source);
+                scanner.scan(&source.contents)?;
+                scanner.import_records
+            };
 
             // Reuse existing code for creating the AST
             // because it handles the various Ref and other structs we
             // need in order to print code later.
-            let import_records = scanner.import_records;
             let import_records_len = import_records.len;
             let output_format = opts.output_format;
             let mut ast = js_parser::new_lazy_export_ast(

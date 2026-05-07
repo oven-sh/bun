@@ -372,8 +372,7 @@ pub mod lib_uv_backend {
         // SAFETY: holder is a valid heap allocation
         unsafe {
             (*holder).task = jsc::AnyTask::new::<Holder>(Holder::run, holder);
-            // SAFETY: JSGlobalObject outlives the request.
-            (*(*this).head.global_this)
+            (*this).head.global_this()
                 .bun_vm()
                 .enqueue_task(jsc::Task::init(&mut (*holder).task));
         }
@@ -440,7 +439,7 @@ pub mod lib_uv_backend {
                     if (*request).cache.pending_cache() {
                         (*resolver).drain_pending_host_native(
                             (*request).cache.pos_in_pending(),
-                            &*(*request).head.global_this,
+                            (*request).head.global_this(),
                             rc.int(),
                             GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
                         );
@@ -1328,7 +1327,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        &*(*this).head.global_this,
+                        (*this).head.global_this(),
                         status,
                         GetAddrInfoResultAny::Addrinfo(addr_info),
                     );
@@ -1379,7 +1378,7 @@ impl GetAddrInfoRequest {
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
-                                &*(*this).head.global_this,
+                                (*this).head.global_this(),
                                 0,
                                 any,
                             );
@@ -1453,7 +1452,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        &*(*this).head.global_this,
+                        (*this).head.global_this(),
                         retcode,
                         GetAddrInfoResultAny::Addrinfo((*uv_info).addrinfo),
                     );
@@ -1733,6 +1732,20 @@ pub struct DNSLookup {
 }
 
 impl DNSLookup {
+    /// Borrow the owning `JSGlobalObject`.
+    ///
+    /// SAFETY (encapsulated): `global_this` is assigned exactly once at
+    /// construction from a live `&JSGlobalObject` (never null) and is a
+    /// JSC_BORROW backref — the global outlives every `DNSLookup` it spawns.
+    /// The pointee is the JSC heap global, not memory owned by `self`, so the
+    /// returned `&` remains valid even after `self` is dropped (drain loops
+    /// rely on this when caching the ref across `Box::from_raw`).
+    #[inline]
+    pub fn global_this(&self) -> &JSGlobalObject {
+        // SAFETY: see doc comment — non-null backref that outlives `self`.
+        unsafe { &*self.global_this }
+    }
+
     pub fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
@@ -1757,7 +1770,7 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::options_jsc::result_any_to_js(&result, &*(*this).global_this)
+            let array = super::options_jsc::result_any_to_js(&result, (*this).global_this())
                 .ok()
                 .flatten()
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
@@ -1772,7 +1785,7 @@ impl DNSLookup {
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
-                    .reject_later(&*(*this).global_this);
+                    .reject_later((*this).global_this());
                 Self::destroy(this);
                 return;
             }
@@ -1800,7 +1813,7 @@ impl DNSLookup {
 
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             if let Some(err) = err_ {
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
@@ -1825,7 +1838,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
         unsafe {
-            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, &*(*this).global_this)
+            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, (*this).global_this())
                 .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             Self::on_complete_with_array(this, array);
         }
@@ -1837,7 +1850,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
-            let global_this = &*(*this).global_this;
+            let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -1864,8 +1877,7 @@ impl DNSLookup {
 impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
-        // SAFETY: JSGlobalObject outlives the request.
-        let _ = unsafe { &*self.global_this };
+        let _ = self.global_this();
         // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
         // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js));
@@ -3785,8 +3797,8 @@ impl Resolver {
 
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut prev_global = (*key.lookup).head.global_this();
+            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
@@ -3798,9 +3810,9 @@ impl Resolver {
             // std.c.addrinfo
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3847,7 +3859,7 @@ impl Resolver {
         };
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this;
+            let mut prev_global = (*key.lookup).head.global_this();
 
             {
                 array.ensure_still_alive();
@@ -3859,10 +3871,10 @@ impl Resolver {
             // std.c.addrinfo
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this;
+                let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = super::options_jsc::result_any_to_js(&result, &*new_global).unwrap_or(None).unwrap(); // TODO: properly propagate exception upwards
+                    array = super::options_jsc::result_any_to_js(&result, new_global).unwrap_or(None).unwrap(); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
 

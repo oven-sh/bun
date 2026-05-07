@@ -889,7 +889,7 @@ impl<'a> Linker<'a> {
                     return;
                 }
             };
-            let _close = scopeguard::guard((), |_| target.close());
+            let _close = sys::CloseOnDrop::new(target);
             self.create_windows_shim(target, abs_target, abs_dest, global);
         }
 
@@ -1124,7 +1124,7 @@ impl<'a> Linker<'a> {
                 }
             }
         };
-        let _close = scopeguard::guard((), |_| bunx_file.close());
+        let _close = sys::CloseOnDrop::file(&bunx_file);
 
         let rel_target = resolve_path::relative_buf_z(
             self.rel_buf,

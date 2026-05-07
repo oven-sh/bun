@@ -370,14 +370,22 @@ impl Framework {
         }
     }
 
-    /// `bake.Framework.addReactInstallCommandNote` (bake.zig).
+    /// `bake.Framework.react_install_command` (bake.zig:373).
+    pub const REACT_INSTALL_COMMAND: &str =
+        "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
+
+    /// `bake.Framework.addReactInstallCommandNote` (bake.zig:375).
     pub fn add_react_install_command_note(log: &mut bun_logger::Log) {
         bun_core::handle_oom(log.add_msg(bun_logger::Msg {
             kind: bun_logger::Kind::Note,
             data: bun_logger::range_data(
                 None,
                 bun_logger::Range::NONE,
-                b"Install the built-in React framework dependencies:\n  bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun\n".as_slice(),
+                concat!(
+                    "Install the built in react integration with \"",
+                    "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",
+                    "\"",
+                ),
             ),
             ..Default::default()
         }));

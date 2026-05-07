@@ -1399,7 +1399,7 @@ impl ServerWebSocket {
         JSValue::js_number(1.0)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // `passThis: true` — wrapper emitted by generated_classes.rs.
     pub fn close(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1440,7 +1440,7 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
+    // `passThis: true` — wrapper emitted by generated_classes.rs.
     pub fn terminate(
         &mut self,
         _global_this: &JSGlobalObject,

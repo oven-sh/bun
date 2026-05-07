@@ -163,24 +163,13 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for `requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        let mut r = bundle.requests.first;
-        while let Some(request) = r {
-            // SAFETY: intrusive singly-linked list; nodes are valid while DevServer holds them.
-            let request = unsafe { request.as_ref() };
-            other_bytes += size_of::<crate::bake::dev_server::deferred_request::Node>();
-            let _ = request; // suppress unused if Node size is all we need
-            r = request.next;
-        }
+        // PORT NOTE: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
+        // only to count nodes; `SinglyLinkedList::len()` does the same O(N) walk.
+        other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
     }
     // .next_bundle
     {
-        let mut r = dev.next_bundle.requests.first;
-        while let Some(request) = r {
-            // SAFETY: intrusive singly-linked list; nodes are valid while DevServer holds them.
-            let request = unsafe { request.as_ref() };
-            other_bytes += size_of::<crate::bake::dev_server::deferred_request::Node>();
-            r = request.next;
-        }
+        other_bytes += dev.next_bundle.requests.len() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_hash_map(&dev.next_bundle.route_queue);
     }
     // .route_lookup

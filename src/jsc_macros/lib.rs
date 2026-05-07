@@ -153,24 +153,43 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
         ),
         // `Free` with a receiver == method-style (PORTING.md permits omitting
         // the `(method)` arg when the signature has `&self`).
-        HostFnKind::Free | HostFnKind::Method => (
-            quote! {
-                #shim_ident(
-                    __this: *mut Self,
-                    __global: *mut ::bun_jsc::JSGlobalObject,
-                    __frame: *mut ::bun_jsc::CallFrame,
-                )
-            },
-            quote! { ::bun_jsc::JSValue },
-            quote! {
-                // SAFETY: `__this` is the wrapper's `m_ctx`; JSC guarantees the
-                // remaining pointers are live for the call.
-                let __t = unsafe { &mut *__this };
-                let __g = unsafe { &*__global };
-                let __f = unsafe { &*__frame };
-                ::bun_jsc::__macro_support::host_fn_result(__g, Self::#fn_name(__t, __g, __f))
-            },
-        ),
+        HostFnKind::Free | HostFnKind::Method => {
+            // `passThis: true` in `.classes.ts` adds a trailing
+            // `this_value: JSValue` parameter (Zig: `this_value: jsc.JSValue`).
+            // The real exported wrapper lives in `generated_classes.rs`; this
+            // placeholder shim only needs to type-check, so detect the 4-arg
+            // shape (receiver + global + frame + this_value) and forward
+            // `callframe.this()` accordingly.
+            let typed_args = func
+                .sig
+                .inputs
+                .iter()
+                .filter(|a| matches!(a, FnArg::Typed(_)))
+                .count();
+            let call = if typed_args >= 3 {
+                quote! { Self::#fn_name(__t, __g, __f, __f.this()) }
+            } else {
+                quote! { Self::#fn_name(__t, __g, __f) }
+            };
+            (
+                quote! {
+                    #shim_ident(
+                        __this: *mut Self,
+                        __global: *mut ::bun_jsc::JSGlobalObject,
+                        __frame: *mut ::bun_jsc::CallFrame,
+                    )
+                },
+                quote! { ::bun_jsc::JSValue },
+                quote! {
+                    // SAFETY: `__this` is the wrapper's `m_ctx`; JSC guarantees the
+                    // remaining pointers are live for the call.
+                    let __t = unsafe { &mut *__this };
+                    let __g = unsafe { &*__global };
+                    let __f = unsafe { &*__frame };
+                    ::bun_jsc::__macro_support::host_fn_result(__g, #call)
+                },
+            )
+        }
         HostFnKind::Getter => (
             quote! {
                 #shim_ident(

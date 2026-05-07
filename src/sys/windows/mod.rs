@@ -4039,6 +4039,38 @@ pub fn update_stdio_mode_flags(i: bun_sys::Stdio, opts: UpdateStdioModeFlagsOpts
     Ok(original_mode)
 }
 
+/// RAII guard: applies [`update_stdio_mode_flags`] to **stdin** on construction
+/// and restores the original console mode on `Drop`. Replaces the Zig
+/// `defer SetConsoleMode(stdin, original_mode)` pattern at call sites.
+///
+/// If the underlying `GetConsoleMode`/`SetConsoleMode` fails (e.g. stdin is not
+/// a console), the guard is inert and `Drop` is a no-op — matching the Zig
+/// callers' `catch null` behaviour.
+pub struct StdinModeGuard {
+    original: Option<DWORD>,
+}
+
+impl StdinModeGuard {
+    #[inline]
+    pub fn set(opts: UpdateStdioModeFlagsOpts) -> Self {
+        Self {
+            original: update_stdio_mode_flags(bun_sys::Stdio::StdIn, opts).ok(),
+        }
+    }
+}
+
+impl Drop for StdinModeGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(mode) = self.original {
+            // SAFETY: stdin handle is valid for the lifetime of the process.
+            unsafe {
+                let _ = externs::SetConsoleMode(bun_sys::Stdio::StdIn.fd().cast(), mode);
+            }
+        }
+    }
+}
+
 const WATCHER_CHILD_ENV: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD");
 // NUL-terminated form for Win32 LPCWSTR (`GetEnvironmentVariableW`); `w!` does
 // NOT append a terminator on its own.

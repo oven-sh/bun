@@ -1197,3 +1197,27 @@ impl Stmt {
     #[inline]
     pub fn data_store_reset() {}
 }
+
+/// RAII scope for the thread-local AST data stores.
+///
+/// Zig: `Expr.Data.Store.reset(); Stmt.Data.Store.reset(); defer { ...reset() }`.
+/// Construct at the top of a parse scope; resets both stores on entry and again
+/// on every exit path (including `?`/early return). Replaces the
+/// `scopeguard::guard((), |_| ...)` pattern banned by docs/PORTING.md.
+#[must_use = "dropping immediately resets the AST data stores; bind to `let _scope = ...`"]
+pub struct DataStoreScope(());
+impl DataStoreScope {
+    #[inline]
+    pub fn new() -> Self {
+        Expr::data_store_reset();
+        Stmt::data_store_reset();
+        Self(())
+    }
+}
+impl Drop for DataStoreScope {
+    #[inline]
+    fn drop(&mut self) {
+        Expr::data_store_reset();
+        Stmt::data_store_reset();
+    }
+}

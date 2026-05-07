@@ -894,13 +894,11 @@ impl ValkeyClient {
     ) -> JsResult<SubscribeHandled> {
         // Resolve the promise with the potentially transformed value
         let global_this = self.global_object();
-        let loop_ = self.vm.event_loop();
 
         debug!("Handling a subscribe response: {}", value);
-        // SAFETY: `event_loop()` returns a non-null `*mut EventLoop`; per-use reborrow keeps
-        // `&mut EventLoop` lifetimes disjoint between `enter()` and the deferred `exit()`.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
+        // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
+        let _exit = unsafe { EventLoop::enter_scope(self.vm.event_loop()) };
 
         match value {
             RESPValue::Error(_) => {
@@ -1179,11 +1177,9 @@ impl ValkeyClient {
         // Resolve the promise with the potentially transformed value
         let promise_ptr = &mut pair.promise;
         let global_this = self.global_object();
-        let loop_ = self.vm.event_loop();
 
         // SAFETY: see `handle_subscribe_response`.
-        unsafe { (*loop_).enter() };
-        let _exit = scopeguard::guard((), move |_| unsafe { (*loop_).exit() });
+        let _exit = unsafe { EventLoop::enter_scope(self.vm.event_loop()) };
 
         if matches!(value, RESPValue::Error(_)) {
             let js_err = match resp_value_to_js(value, global_this) {

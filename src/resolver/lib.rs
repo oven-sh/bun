@@ -3041,7 +3041,7 @@ pub mod options {
     /// silently ignored every `--external` absolute path / package name.
     pub use bun_collections::StringSet;
 
-    /// FORWARD_DECL: `bun_bundler::options::Conditions`.
+    /// Port of `bundler/options.zig` `Conditions`.
     #[derive(Default)]
     pub struct Conditions {
         pub import: crate::package_json::ConditionsMap,
@@ -3063,7 +3063,7 @@ pub mod options {
         s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
     }
 
-    /// FORWARD_DECL: `bun_bundler::options::ResolveFileExtensions`.
+    /// Port of `bundler/options.zig` `ResolveFileExtensions`.
     pub struct ExtensionOrder {
         pub default: ExtensionOrderGroup,
         pub node_modules: ExtensionOrderGroup,
@@ -3149,14 +3149,18 @@ pub mod options {
     // field on the local `BundleOptions` subset stay source-compatible.
     pub use ::bun_options_types::ForceNodeEnv;
 
-    /// FORWARD_DECL: `bun_bundler::options::Framework` (Bake).
+    /// Port of `bundler/options.zig` `Framework` (Bake) — only the
+    /// `built_in_modules` field, which is the sole resolver-read member.
     pub struct Framework {
         pub built_in_modules: bun_collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
     }
 
-    /// FORWARD_DECL: `bun_bundler::options::BundleOptions` — only the fields
-    /// the resolver reads. Real type is ~200 fields; this is the structural
-    /// subset until MOVE_DOWN to bun_options_types completes.
+    /// Resolver-tier `BundleOptions` — the canonical resolver-input struct.
+    /// `bun_bundler::options::BundleOptions` (the ~200-field CLI/config
+    /// aggregate) projects into this via
+    /// `bun_bundler::transpiler::resolver_bundle_options_subset`; the bundler
+    /// depends on this crate, so this type is the lower-tier source of truth
+    /// for everything resolution reads.
     pub struct BundleOptions {
         pub target: Target,
         pub packages: Packages,
@@ -3167,7 +3171,7 @@ pub mod options {
         pub extra_cjs_extensions: Box<[Box<[u8]>]>,
         pub framework: Option<Framework>,
         pub global_cache: bun_options_types::GlobalCache::GlobalCache,
-        // FORWARD_DECL: `?*api.BunInstall` (options.zig:1753). Spec consumer
+        // Zig: `?*api.BunInstall` (options.zig:1753). Spec consumer
         // `PackageManagerOptions.zig:load` only reads through it, so `*const`
         // — the bundler projects this from `Option<&api::BunInstall>` and a
         // `*mut` here would launder read-only provenance into a writable ptr.
@@ -3190,9 +3194,9 @@ pub mod options {
         pub tsconfig_override: Option<Box<[u8]>>,
         pub production: bool,
         pub force_node_env: ForceNodeEnv,
-        // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in
+        // Bundler-only fields read via `c.resolver.opts` in
         // `linker_context/*` (Zig stores the full `BundleOptions` on the
-        // resolver). These are projected by `bun_bundler` at link time.
+        // resolver). Projected by `bun_bundler` at link time.
         pub output_dir: Box<[u8]>,
         pub root_dir: Box<[u8]>,
         pub public_path: Box<[u8]>,

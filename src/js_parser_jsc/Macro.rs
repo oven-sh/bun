@@ -206,7 +206,7 @@ impl MacroContext {
             };
             Output::flush();
         }
-        scopeguard::defer! { Output::flush(); }
+        let _flush_guard = Output::flush_guard();
 
         // PORT NOTE: reshaped for borrowck — Zig copies the Macro by value out
         // of the map. We snapshot the small POD fields we need (`disabled`,

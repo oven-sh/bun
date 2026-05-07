@@ -79,12 +79,24 @@ impl ThreadSafeStreamBuffer {
     pub fn acquire(&mut self) -> &mut StreamBuffer {
         self.mutex.lock();
         // PORT NOTE: reshaped for borrowck — Zig returns &this.buffer while the
-        // mutex stays locked until `release()`. Phase B may want a guard type.
+        // mutex stays locked until `release()`. Prefer `lock()` (RAII guard) for
+        // simple critical sections; this split form remains for callers that
+        // interleave release with disjoint `self` access.
         &mut self.buffer
     }
 
     pub fn release(&mut self) {
         self.mutex.unlock();
+    }
+
+    /// RAII spelling of `acquire()`/`release()` — locks the mutex and returns a
+    /// guard that derefs to the inner `StreamBuffer` and unlocks on `Drop`.
+    /// Use this instead of a bare `acquire`/`release` pair so the lock is
+    /// released on every return path.
+    #[inline]
+    pub fn lock(&mut self) -> StreamBufferGuard<'_> {
+        self.mutex.lock();
+        StreamBufferGuard(self)
     }
 
     /// Should only be called in the main thread and before scheduling it to the http thread
@@ -107,10 +119,37 @@ impl ThreadSafeStreamBuffer {
     }
 }
 
+/// RAII guard returned by [`ThreadSafeStreamBuffer::lock`]. Derefs to the
+/// protected `StreamBuffer` and releases the mutex on `Drop` (Zig:
+/// `const buf = sb.acquire(); defer sb.release();`).
+pub struct StreamBufferGuard<'a>(&'a mut ThreadSafeStreamBuffer);
+
+impl core::ops::Deref for StreamBufferGuard<'_> {
+    type Target = StreamBuffer;
+    #[inline]
+    fn deref(&self) -> &StreamBuffer {
+        &self.0.buffer
+    }
+}
+
+impl core::ops::DerefMut for StreamBufferGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut StreamBuffer {
+        &mut self.0.buffer
+    }
+}
+
+impl Drop for StreamBufferGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.mutex.unlock();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/ThreadSafeStreamBuffer.zig (61 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      intrusive ThreadSafeRefCount stubbed pending bun_ptr::IntrusiveArc; acquire/release split-lock may want a guard in Phase B
+//   notes:      intrusive ThreadSafeRefCount stubbed pending bun_ptr::IntrusiveArc; acquire/release split-lock kept for complex callers, RAII via lock()->StreamBufferGuard
 // ──────────────────────────────────────────────────────────────────────────

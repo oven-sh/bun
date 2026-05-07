@@ -1171,7 +1171,7 @@ pub fn inject(
         #[cfg(not(windows))]
         {
             // defer self_fd.close()
-            let _self_fd_guard = scopeguard::guard((), move |_| self_fd.close());
+            let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 Output::pretty_errorln(format_args!(
@@ -2041,12 +2041,7 @@ pub fn serialize_json_source_map_for_standalone(
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
-    AstExpr::data_store_reset();
-    AstStmt::data_store_reset();
-    let _reset_guard = scopeguard::guard((), |_| {
-        AstExpr::data_store_reset();
-        AstStmt::data_store_reset();
-    });
+    let _reset_guard = bun_logger::js_ast::DataStoreScope::new();
 
     let json = bun_interchange::json::parse::<false>(&json_src, &mut log, &arena)
         .map_err(|_| err!("InvalidSourceMap"))?;

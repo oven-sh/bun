@@ -339,6 +339,10 @@ extern "C" ssize_t posix_spawn_bun(
         // Close read end in child
         close(errpipe[0]);
 #endif
+#if OS(LINUX)
+        if (use_fork_fallback && fork_errpipe[0] >= 0)
+            close(fork_errpipe[0]);
+#endif
         return startChild();
     }
 
@@ -391,19 +395,30 @@ extern "C" ssize_t posix_spawn_bun(
     // error comes through fork_errpipe.
     if (child != -1) {
         if (use_fork_fallback && fork_errpipe[0] >= 0) {
-            // Fork fallback: read errno from pipe
+            // Fork fallback: close parent's write end so read() gets EOF on exec
+            close(fork_errpipe[1]);
+            fork_errpipe[1] = -1;
+
             int child_err = 0;
-            ssize_t n = read(fork_errpipe[0], &child_err, sizeof(child_err));
+            ssize_t n;
+            do {
+                n = read(fork_errpipe[0], &child_err, sizeof(child_err));
+            } while (n == -1 && errno == EINTR);
+
             close(fork_errpipe[0]);
+
             if (n == sizeof(child_err) && child_err != 0) {
                 wait4(child, NULL, 0, NULL);
                 res = child_err;
-            } else {
+            } else if (n == 0) {
                 res = 0;
                 if (pid) *pid = child;
+            } else {
+                wait4(child, NULL, 0, NULL);
+                res = (n == -1) ? errno : EIO;
             }
         } else if (child_errno != 0) {
-            // Child failed to exec - it set child_errno and called _exit()
+            // Child failed to exec — it set child_errno and called _exit()
             // Reap the zombie child process
             wait4(child, NULL, 0, NULL);
             res = child_errno;
@@ -416,6 +431,10 @@ extern "C" ssize_t posix_spawn_bun(
         }
     } else {
         // fork/vfork() failed
+        if (use_fork_fallback) {
+            if (fork_errpipe[0] >= 0) close(fork_errpipe[0]);
+            if (fork_errpipe[1] >= 0) close(fork_errpipe[1]);
+        }
         res = errno;
     }
 #endif

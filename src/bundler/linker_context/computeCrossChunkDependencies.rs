@@ -103,7 +103,7 @@ pub fn compute_cross_chunk_dependencies(
             // struct's `'a` (which now ties only the local SoA-column borrows)
             // is not forced to equal the LinkerContext's invariant `'_`.
             ctx: (c as *const LinkerContext<'_>).cast::<LinkerContext<'static>>(),
-            symbols: &mut c.graph.symbols as *mut js_ast::ast::symbol::Map,
+            symbols: &c.graph.symbols as *const js_ast::ast::symbol::Map,
         };
 
         // SAFETY: `parse_graph` backref valid for the link pass.
@@ -151,7 +151,11 @@ pub struct CrossChunkDependencies<'a> {
     // outer `CrossChunkDependencies<'_>` borrow is not tied to the LinkerContext's
     // own invariant lifetime parameter.
     ctx: *const LinkerContext<'static>,
-    symbols: *mut js_ast::ast::symbol::Map,
+    // PORT NOTE: `*const` — `walk` runs concurrently across worker threads; each
+    // touches disjoint per-chunk symbol slots via `Map::assign_chunk_index(&self)`
+    // (raw-ptr per-slot write through BabyList's `NonNull`). Holding `&mut Map`
+    // here would assert whole-map exclusivity per thread = aliasing UB.
+    symbols: *const js_ast::ast::symbol::Map,
 }
 
 // SAFETY: `CrossChunkDependencies` is shared across worker threads via
@@ -167,7 +171,9 @@ impl<'a> CrossChunkDependencies<'a> {
         // pass; `walk` runs under `each_ptr` with per-chunk partitioning (see PORT NOTE on
         // the struct fields). `chunks` aliases the `each_ptr` slice but is only read here.
         let ctx: &LinkerContext<'_> = unsafe { &*deps.ctx };
-        let symbols: &mut js_ast::ast::symbol::Map = unsafe { &mut *deps.symbols };
+        // Shared `&Map` across threads — per-slot writes go through raw `*mut Symbol`
+        // (see PORT NOTE on the `symbols` field); no `&mut Map` is materialized.
+        let symbols: &js_ast::ast::symbol::Map = unsafe { &*deps.symbols };
         let _chunks: &[Chunk] = unsafe { &*deps.chunks };
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`

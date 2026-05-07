@@ -8,7 +8,6 @@
 //!
 //! Three dispatchers are defined:
 //!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants; src/jsc/Task.zig).
-//!      Registered into `bun_jsc::RUN_TASK_HOOK` / `TICK_QUEUE_HOOK`.
 //!   2. [`run_file_poll`] — `bun_aio::FilePoll::Owner` (~13 variants;
 //!      src/aio/posix_event_loop.zig `FilePoll.onUpdate`).
 //!
@@ -1062,5 +1061,5 @@ pub fn __bun_run_tasks(
 //               IOWriter::run_from_main_thread, security-scan pipe writer)
 //               are forward-declared in their owning modules.
 //   notes:      §Dispatch hot-path — high tier owns the match; low tier
-//               stores (tag, ptr) + AtomicPtr hook only.
+//               stores (tag, ptr) and calls link-time `extern "Rust"` only.
 // ──────────────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ use core::fmt;
 use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
-pub use bun_core::{fd, Fd, FdKind, FdNative, FdOptional as Optional, Stdio, FD_PATH_HOOK};
+pub use bun_core::{fd, Fd, FdKind, FdNative, FdOptional as Optional, Stdio};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
 /// for callers porting Zig's `std.posix.fd_t` / `bun.FD.native()`.
 pub type RawFd = FdNative;
@@ -413,15 +413,11 @@ pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError>
     Ok(out)
 }
 
-/// Debug-only: install the `Display for Fd` path-resolution hook so logging an
-/// `Fd` shows `3[/path/to/file]` instead of just `3`.
-pub fn install_fd_path_hook() {
-    FD_PATH_HOOK.store(get_fd_path_debug as *mut (), core::sync::atomic::Ordering::Release);
-}
-
 /// Best-effort fd → path for debug Display. Returns bytes written, 0 on
-/// failure, -1 on EBADF/ENOENT (so caller can show `[BADF]`).
-unsafe fn get_fd_path_debug(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+/// failure, -1 on EBADF/ENOENT (so caller can show `[BADF]`). Declared
+/// `extern "Rust"` in `bun_core::util`; link-time resolved.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     #[cfg(target_os = "linux")]
     {
         // readlink("/proc/self/fd/N")
@@ -451,6 +447,23 @@ unsafe fn get_fd_path_debug(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         unsafe { libc::strlen(buf.cast()) as isize }
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    { let _ = (fd, buf, cap); 0 }
+}
+
+/// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Declared
+/// `extern "Rust"` in `bun_core::util`; link-time resolved. Returns code
+/// units written (>0), <0 on error, 0 on non-Windows.
+#[unsafe(no_mangle)]
+pub unsafe fn __bun_fd_path_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
+    #[cfg(windows)]
+    {
+        // SAFETY: buf has `cap` u16 units; `get_fd_path_w` writes at most that.
+        match unsafe { sys::get_fd_path_w(fd, core::slice::from_raw_parts_mut(buf, cap)) } {
+            Ok(s) => s.len() as isize,
+            Err(_) => -1,
+        }
+    }
+    #[cfg(not(windows))]
     { let _ = (fd, buf, cap); 0 }
 }
 

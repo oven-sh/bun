@@ -505,29 +505,22 @@ pub mod internal {
         fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
     }
 
-    /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
-    /// `(hostname, port)` so the result is cached by the time the connect
-    /// path needs it. The resolver/event-loop machinery lives in
-    /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
-    /// (`bun_install`) reach it via this link-time hook to avoid a crate
-    /// cycle. Registered once at startup by `bun_runtime`.
-    pub static PREFETCH_HOOK: core::sync::atomic::AtomicPtr<()> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+    unsafe extern "Rust" {
+        /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
+        /// `(hostname, port)` so the result is cached by the time the connect
+        /// path needs it. The resolver/event-loop machinery lives in
+        /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
+        /// (`bun_install`) reach it via this link-time extern to avoid a crate
+        /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
+        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
+    }
 
     #[inline]
     pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
-        let hook = PREFETCH_HOOK.load(core::sync::atomic::Ordering::Relaxed);
-        if hook.is_null() {
-            // Prefetch is a perf hint; if the runtime hook is not registered
-            // (e.g. headless install in a tier without `bun_runtime`), skip.
-            return;
-        }
-        // SAFETY: `PREFETCH_HOOK` is set by `bun_runtime` at startup to a
-        // `fn(*mut c_void, *const u8, usize, u16)` thunk that wraps
-        // `dns_jsc::internal::prefetch`. `hostname` is NUL-terminated and live
-        // for the call.
-        let f: fn(*mut c_void, *const u8, usize, u16) = unsafe { core::mem::transmute(hook) };
-        f(loop_ as *mut c_void, hostname.as_ptr(), hostname.len(), port);
+        // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
+        // the call. Prefetch is a perf hint — the body short-circuits if no
+        // resolver is available.
+        unsafe { __bun_dns_prefetch(loop_ as *mut c_void, hostname.as_ptr(), hostname.len(), port) }
     }
 
     /// Register `pc` to be notified when the addrinfo `request` resolves.

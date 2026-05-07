@@ -493,14 +493,15 @@ impl CompressionStreamImpl for NativeZstd {
     fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: `this` is live per the trait contract; `ref_count` is a `Cell`.
+        let n = unsafe { (*this).ref_count.get() } - 1;
+        unsafe { (*this).ref_count.set(n) };
         if n == 0 {
-            // SAFETY: `self` was Box-allocated by `constructor()`; refcount hit zero so
+            // SAFETY: `this` was Box-allocated by `constructor()`; refcount hit zero so
             // no other borrow exists. Reconstitute the Box to run Drop + free.
             // PORT NOTE: matches Zig `bun.destroy(this)` via RefCount.deinit.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            unsafe { drop(Box::from_raw(this)) };
         }
     }
 

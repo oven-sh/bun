@@ -2275,39 +2275,66 @@ struct FrameworkRequestArgs {
 }
 
 impl DevServer {
-    fn compute_arguments_for_framework_request(
-        &mut self,
+    /// PORT NOTE: raw-pointer receiver. Zig freely held aliasing `*DevServer` /
+    /// `*RouteBundle` / `*Router.Type` heap pointers across this body; the
+    /// previous Rust port bound long-lived `&mut RouteBundle` / `&mut Type` from
+    /// `&mut *self_ptr` and then reborrowed `&mut *self_ptr` again — overlapping
+    /// `&mut` UB. Per docs/PORTING.md §Global mutable state we instead stay in
+    /// raw-ptr land: hold `*mut Self` / `*mut Type` and deref per-access via
+    /// place projection (`(*this).field`), never materializing a whole-struct
+    /// `&mut DevServer` while a sub-borrow is live.
+    ///
+    /// SAFETY: `this` must point to a live `DevServer`; `framework_bundle` must
+    /// point into `(*this).route_bundles[route_bundle_index].data`. Neither
+    /// `route_bundles` nor `router.types` is reallocated during this call.
+    unsafe fn compute_arguments_for_framework_request(
+        this: *mut Self,
         route_bundle_index: route_bundle::Index,
         framework_bundle: &mut route_bundle::Framework,
         params_js_value: JSValue,
         first_request: bool,
     ) -> JsResult<FrameworkRequestArgs> {
-        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
-        let global = unsafe { &*(*self.vm).global };
-        // PORT NOTE: this method reads/writes several disjoint `self` fields
-        // (`route_bundles[i]`, `router.{routes,types}`, `server_graph`,
-        // `client_graph`); Zig freely reborrowed the heap pointers. Erase to a
-        // raw `*mut Self` so each access can independently reborrow.
-        let self_ptr = self as *mut Self;
-        // SAFETY: each `&mut *self_ptr` below accesses a disjoint field.
-        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(route_bundle_index);
-        let route_type_idx = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index).r#type;
-        let router_type = unsafe { &mut *self_ptr }.router.type_ptr(route_type_idx);
+        // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime.
+        let global = unsafe { &*(*(*this).vm).global };
+        // SAFETY: place projections off `*this` — `router` / `server_graph` /
+        // `route_bundles` are disjoint fields; each reborrow is scoped to its
+        // expression so no two `&mut` overlap. `framework_bundle` lives in
+        // `route_bundles[_].data`, disjoint from every other field touched here.
+        let route_type_idx =
+            unsafe { (*this).router.route_ptr(framework_bundle.route_index).r#type };
+        // Held raw; deref per-access. `router.types` is a `Box<[Type]>` — never
+        // reallocated for the lifetime of `DevServer`.
+        let router_type: *mut framework_router::Type =
+            unsafe { (*this).router.type_ptr(route_type_idx) };
+        // Scalar copy — `route_bundles[i]` is otherwise only read (via
+        // `generate_css_js_array`, which now takes `&RouteBundle`).
+        let client_script_generation: u32 = unsafe {
+            (*this).route_bundles[route_bundle_index.get() as usize].client_script_generation
+        };
 
         Ok(FrameworkRequestArgs {
             // routerTypeMain
-            router_type_main: match router_type.server_file_string.get() {
+            router_type_main: match unsafe { (*router_type).server_file_string.get() } {
                 Some(s) => s,
                 None => 'str: {
-                    // SAFETY: see PORT NOTE on `self_ptr` above.
-                    let name = &unsafe { &*self_ptr }.server_graph.bundled_files.keys()
-                        [from_opaque_file_id::<{ bake::Side::Server }>(router_type.server_file).get() as usize];
+                    // SAFETY: `server_graph` is disjoint from `router` / `route_bundles`.
+                    let name = unsafe {
+                        &(*this).server_graph.bundled_files.keys()[from_opaque_file_id::<
+                            { bake::Side::Server },
+                        >((*router_type).server_file)
+                        .get() as usize]
+                    };
                     let mut buf = paths::path_buffer_pool::get();
                     let s = bun_jsc::bun_string_jsc::create_utf8_for_js(
                         global,
-                        unsafe { &*self_ptr }.relative_path(&mut *buf, name),
+                        // SAFETY: `relative_path(&self)` only reads `self.root`;
+                        // no `&mut` derived from `*this` is live across this call.
+                        unsafe { (*this).relative_path(&mut *buf, name) },
                     )?;
-                    router_type.server_file_string = jsc::StrongOptional::create(s, global);
+                    // SAFETY: per-access raw deref; `router.types` not reallocated.
+                    unsafe {
+                        (*router_type).server_file_string = jsc::StrongOptional::create(s, global)
+                    };
                     break 'str s;
                 }
             },
@@ -2315,43 +2342,51 @@ impl DevServer {
             route_modules: match framework_bundle.cached_module_list.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    // SAFETY: see PORT NOTE on `self_ptr` above.
-                    let keys = unsafe { &*self_ptr }.server_graph.bundled_files.keys();
+                    // SAFETY: `server_graph` / `router` are disjoint from
+                    // `route_bundles`; `route` is a `&Route` reborrowed per step.
+                    let keys = unsafe { (*this).server_graph.bundled_files.keys() };
                     let mut n: usize = 1;
-                    let mut route = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index);
+                    let mut route =
+                        unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
                     loop {
                         if route.file_layout.is_some() {
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = unsafe { &*self_ptr }.router.route_ptr(p);
+                        route = unsafe { (*this).router.route_ptr(p) };
                     }
                     let arr = JSValue::create_empty_array(global, n)?;
-                    route = unsafe { &*self_ptr }.router.route_ptr(framework_bundle.route_index);
+                    route = unsafe { (*this).router.route_ptr(framework_bundle.route_index) };
                     {
                         let mut buf = paths::path_buffer_pool::get();
-                        let mut route_name = BunString::clone_utf8(unsafe { &*self_ptr }.relative_path(
-                            &mut *buf,
-                            &keys[from_opaque_file_id::<{ bake::Side::Server }>(
-                                route.file_page.unwrap(),
+                        let mut route_name = BunString::clone_utf8(unsafe {
+                            (*this).relative_path(
+                                &mut *buf,
+                                &keys[from_opaque_file_id::<{ bake::Side::Server }>(
+                                    route.file_page.unwrap(),
+                                )
+                                .get() as usize],
                             )
-                            .get() as usize],
-                        ));
+                        });
                         arr.put_index(global, 0, route_name.transfer_to_js(global)?)?;
                     }
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
                             let mut buf = paths::path_buffer_pool::get();
-                            let mut layout_name = BunString::clone_utf8(unsafe { &*self_ptr }.relative_path(
-                                &mut *buf,
-                                &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get() as usize],
-                            ));
+                            let mut layout_name = BunString::clone_utf8(unsafe {
+                                (*this).relative_path(
+                                    &mut *buf,
+                                    &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout)
+                                        .get()
+                                        as usize],
+                                )
+                            });
                             arr.put_index(global, u32::try_from(n).unwrap(), layout_name.transfer_to_js(global)?)?;
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
-                        route = unsafe { &*self_ptr }.router.route_ptr(p);
+                        route = unsafe { (*this).router.route_ptr(p) };
                     }
                     framework_bundle.cached_module_list = jsc::StrongOptional::create(arr, global);
                     break 'arr arr;
@@ -2362,7 +2397,7 @@ impl DevServer {
                 Some(s) => s,
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
-                    let generation: u32 = route_bundle.client_script_generation;
+                    let generation: u32 = client_script_generation;
                     // Zig: `"{x}{x}", .{ asBytes(&u32), asBytes(&u32) }` → fixed
                     // 8-char native-endian byte hex per u32; `on_js_request`
                     // slices exactly 16 chars and decodes via `parse_hex_to_int`.
@@ -2497,26 +2532,24 @@ impl DevServer {
         resp: AnyResponse,
         method: Method,
     ) {
-        // PORT NOTE: erase `self` to a raw pointer so the `route_bundle`/`html`
-        // borrows don't conflict with the `&mut self` calls below (Zig held
-        // these as plain heap pointers).
+        // PORT NOTE: erase `self` to a raw pointer so the `route_bundle` borrow
+        // doesn't conflict with the `&mut self` calls below (Zig held these as
+        // plain heap pointers). Per docs/PORTING.md §Global mutable state: hold
+        // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
         let self_ptr = self as *mut Self;
-        // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
-        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(route_bundle_index);
-        debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
-        let route_bundle_ptr = route_bundle as *mut RouteBundle;
-        let html = match &mut route_bundle.data {
-            route_bundle::Data::Html(h) => h,
-            _ => unreachable!(),
-        };
+        // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
+        let route_bundle: *mut RouteBundle =
+            &mut unsafe { &mut *self_ptr }.route_bundles[route_bundle_index.get() as usize];
+        debug_assert!(matches!(unsafe { &(*route_bundle).data }, route_bundle::Data::Html(_)));
 
-        let blob: *mut StaticRoute = match html.cached_response {
+        let blob: *mut StaticRoute = match unsafe { (*route_bundle).data.html().cached_response } {
             Some(b) => b.as_ptr(),
             None => 'generate: {
                 // SAFETY: `generate_html_payload` reads `route_bundle.data` /
-                // `client_graph` and never reallocates `route_bundles`.
+                // `client_graph` and never reallocates `route_bundles`. No
+                // `&mut` into `*route_bundle` is live across this call.
                 let payload = unsafe { &mut *self_ptr }
-                    .generate_html_payload(route_bundle_index, unsafe { &mut *route_bundle_ptr }, html)
+                    .generate_html_payload(route_bundle_index, unsafe { &*route_bundle })
                     .expect("oom");
 
                 let route_ptr = StaticRoute::init_from_any_blob(
@@ -2527,7 +2560,9 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                html.cached_response = ::core::ptr::NonNull::new(route_ptr);
+                // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
+                unsafe { (*route_bundle).data.html_mut().cached_response =
+                    ::core::ptr::NonNull::new(route_ptr) };
                 break 'generate route_ptr;
             }
         };
@@ -2555,9 +2590,13 @@ impl DevServer {
     fn generate_html_payload(
         &mut self,
         route_bundle_index: route_bundle::Index,
-        route_bundle: &mut RouteBundle,
-        html: &mut route_bundle::Html,
+        route_bundle: &RouteBundle,
     ) -> Result<Vec<u8>, bun_core::Error> {
+        // PORT NOTE: Zig passed `*RouteBundle` and `*RouteBundle.HTML` separately
+        // (overlapping); re-derive `html` here from `route_bundle.data` so the
+        // caller never holds two `&mut` into the same allocation. `route_bundle`
+        // is read-only in this fn — `&RouteBundle` suffices.
+        let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
         debug_assert!(unsafe { (*html.html_bundle).dev_server_id } == Some(route_bundle_index));
@@ -3277,7 +3316,7 @@ impl DevServer {
         Ok(client_bundle)
     }
 
-    fn generate_css_js_array(&mut self, route_bundle: &mut RouteBundle) -> JsResult<JSValue> {
+    fn generate_css_js_array(&mut self, route_bundle: &RouteBundle) -> JsResult<JSValue> {
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Framework(_)));
         if cfg!(debug_assertions) {
             debug_assert!(!route_bundle.data.framework().cached_css_file_array.has());

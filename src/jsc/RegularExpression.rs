@@ -105,6 +105,37 @@ impl RegularExpression {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `bun_install_types::NodeLinker` / `bun_install::PnpmMatcher` extern impls.
+//
+// Those lower-tier crates cannot name `jsc::RegularExpression`. Zig
+// (`PnpmMatcher.zig`) called `bun.jsc.RegularExpression.init` inline after
+// `bun.jsc.initialize(false)`. The bodies live here as `#[no_mangle]` Rust-ABI
+// fns, declared `extern "Rust"` on the low-tier side; link-time resolved.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[unsafe(no_mangle)]
+pub fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
+    // Zig: `bun.jsc.initialize(false)` before first compile (idempotent).
+    crate::initialize(false);
+    match RegularExpression::init(pattern, Flags::None) {
+        Ok(r) => core::ptr::NonNull::new(r.cast()),
+        Err(_) => None,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool {
+    // SAFETY: `regex` was produced by `__bun_regex_compile`.
+    unsafe { (*regex.as_ptr().cast::<RegularExpression>()).matches(*input) }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
+    // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
+    unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/RegularExpression.zig (57 lines)
 //   confidence: high

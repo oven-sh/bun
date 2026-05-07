@@ -414,10 +414,16 @@ impl Map {
         bun_core::output::flush();
     }
 
-    pub fn assign_chunk_index(&mut self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
+    // PORT NOTE: takes `&self` (not `&mut self`) — the only caller
+    // (`computeCrossChunkDependencies::walk`) runs concurrently across worker
+    // threads with each touching disjoint per-chunk symbol slots. The write
+    // goes through the raw `*mut Symbol` returned by `get()` (provenance from
+    // BabyList's raw `NonNull`, independent of the `&self` borrow), so no
+    // whole-map `&mut` is asserted. See `get()` SOUNDNESS note.
+    pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
         struct Iterator<'a> {
-            map: &'a mut Map,
+            map: &'a Map,
             chunk_index: u32,
         }
 

@@ -604,6 +604,38 @@ impl AWSSignatureCache {
 // Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
 
 // ──────────────────────────────────────────────────────────────────────────
+// `bun_s3_signing::credentials` extern impls — Zig credentials.zig:485
+// reached `jsc.VirtualMachine.getMainThreadVM() orelse get()).rareData()`
+// inline. Declared `extern "Rust"` in the lower-tier `bun_s3_signing` crate;
+// link-time resolved.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline(always)]
+fn s3_rare_data() -> *mut RareData {
+    let vm = VirtualMachine::get_main_thread_vm().unwrap_or_else(VirtualMachine::get);
+    // SAFETY: `vm` is the live per-thread (or main-thread) VM.
+    unsafe { (*vm).rare_data() as *mut RareData }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_s3_aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
+    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
+    unsafe { (*s3_rare_data()).aws_cache().get(day, key) }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_s3_aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
+    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
+    unsafe { (*s3_rare_data()).aws_cache().set(day, key, digest) }
+}
+
+#[unsafe(no_mangle)]
+pub fn __bun_s3_boring_engine() -> *mut boring::ENGINE {
+    // SAFETY: `s3_rare_data()` returns the live per-VM RareData.
+    unsafe { (*s3_rare_data()).boring_engine() }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
 

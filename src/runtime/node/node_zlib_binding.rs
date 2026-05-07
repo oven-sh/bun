@@ -231,7 +231,17 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
 
     // Intrusive refcount (Zig `bun.ptr.RefCount`).
     fn ref_(&self);
-    fn deref(&self);
+    /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
+    /// `Box::from_raw`) when it hits zero.
+    ///
+    /// PORT NOTE: raw-pointer receiver. The previous `fn deref(&self)` cast
+    /// `&self → *const Self → *mut Self` and freed through it — UB (writes
+    /// through a pointer derived from a shared ref). All call sites already
+    /// hold either `&mut T` (which coerces) or `*mut T`.
+    ///
+    /// SAFETY: `this` must point to a live `Self` allocated via `Box::into_raw`
+    /// in `constructor()`. After this returns, `*this` may have been freed.
+    unsafe fn deref(this: *mut Self);
 
     // Per-class codegen (`T.js.*` cached-property accessors).
     fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue>;
@@ -421,7 +431,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let Some(this_value) = this.this_value_mut().try_swap() else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
             this.poll_ref_mut().unref(vm);
-            this.deref();
+            // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload
+            // and is not accessed after this call.
+            unsafe { T::deref(this) };
             return;
         };
 
@@ -429,7 +441,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         if !Self::check_error(this, global, this_value) {
             this.poll_ref_mut().unref(vm);
-            this.deref();
+            // SAFETY: see above.
+            unsafe { T::deref(this) };
             return;
         }
 
@@ -455,7 +468,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
 
         this.poll_ref_mut().unref(vm);
-        this.deref();
+        // SAFETY: matching `ref_()` in `write()`; `this` is the heap payload and
+        // is not accessed after this call.
+        unsafe { T::deref(this) };
     }
 
     pub fn write_sync(
@@ -583,7 +598,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             }
             *this.write_in_progress_mut() = false;
         }
-        this.deref();
+        // SAFETY: matching `ref_()` above; `this` is the heap payload and is not
+        // accessed after this call.
+        unsafe { T::deref(this) };
 
         Ok(JSValue::UNDEFINED)
     }
@@ -726,7 +743,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
     pub fn finalize(this: *mut T) {
         // SAFETY: called from JSC finalizer on mutator thread; this is valid
-        unsafe { (*this).deref() };
+        unsafe { T::deref(this) };
     }
 }
 
@@ -895,19 +912,19 @@ macro_rules! __impl_compression_stream {
             }
 
             #[inline] fn ref_(&self) { self.ref_count.set(self.ref_count.get() + 1); }
-            #[inline] fn deref(&self) {
-                let n = self.ref_count.get() - 1;
-                self.ref_count.set(n);
+            #[inline] unsafe fn deref(this: *mut Self) {
+                // SAFETY: `this` is live per the trait contract; `ref_count` is a
+                // `Cell<u32>` so the read/write is sound through a raw `*mut`.
+                let n = unsafe { (*this).ref_count.get() } - 1;
+                unsafe { (*this).ref_count.set(n) };
                 if n == 0 {
                     // Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
                     // → calls `deinit(this)` then `bun.destroy(this)`. The
                     // per-type `Self::deinit(*mut Self)` does both (closes the
                     // stream and `Box::from_raw`s the payload).
-                    // SAFETY: refcount hit zero ⇒ `&self` is the last live
-                    // reference; `self` was `Box::into_raw`'d at construction.
-                    // We never materialize a `&mut` here — `deinit` takes the
-                    // raw `*mut Self` and is responsible for freeing it.
-                    Self::deinit(self as *const Self as *mut Self);
+                    // SAFETY: refcount hit zero ⇒ no other borrow remains;
+                    // `this` was `Box::into_raw`'d at construction.
+                    unsafe { Self::deinit(this) };
                 }
             }
 

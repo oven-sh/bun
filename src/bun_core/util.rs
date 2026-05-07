@@ -883,20 +883,17 @@ impl FdOptional {
     }
 }
 
-/// Debug-only hook: bun_sys installs a fn that resolves an FD to its path
-/// (readlink `/proc/self/fd/N` on Linux, `F_GETPATH` on macOS). Display calls
-/// it when set so T0 doesn't depend on bun_paths.
-pub static FD_PATH_HOOK: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-type FdPathHookFn = unsafe fn(Fd, buf: *mut u8, cap: usize) -> isize;
-
-/// Wide-char variant of `FD_PATH_HOOK` (Windows `getFdPathW` →
-/// `GetFinalPathNameByHandleW`). bun_sys installs it at startup with signature
-/// `unsafe fn(Fd, *mut u16, cap: usize) -> isize` (>0 = code units, <0 = error).
-/// CYCLEBREAK: lets `bun_paths::Path::<u16>::init_fd_path` resolve an FD to a
-/// UTF-16 path without depending on `bun_sys`.
-pub static FD_PATH_HOOK_W: core::sync::atomic::AtomicPtr<()> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+unsafe extern "Rust" {
+    /// Resolves an FD to its path (readlink `/proc/self/fd/N` on Linux,
+    /// `F_GETPATH` on macOS). Defined `#[no_mangle]` in `bun_sys::fd` so T0
+    /// doesn't depend on bun_paths/bun_sys at compile time. Returns bytes
+    /// written (>0), 0 on failure, -1 on EBADF/ENOENT.
+    pub fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize;
+    /// Wide-char variant (Windows `getFdPathW` → `GetFinalPathNameByHandleW`).
+    /// Returns code units written (>0), <0 on error. Defined `#[no_mangle]` in
+    /// `bun_sys::fd`.
+    pub fn __bun_fd_path_w(fd: Fd, buf: *mut u16, cap: usize) -> isize;
+}
 
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -907,18 +904,13 @@ impl core::fmt::Display for Fd {
             write!(w, "{}", fd.0)?;
             #[cfg(debug_assertions)]
             if fd.0 >= 3 {
-                let hook = FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
-                if !hook.is_null() {
-                    // SAFETY: hook was installed by bun_sys with FdPathHookFn signature.
-                    let f: FdPathHookFn = unsafe { core::mem::transmute(hook) };
-                    let mut buf = [0u8; 1024];
-                    // SAFETY: buf is 1024 bytes, passed with matching cap.
-                    let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
-                    if n > 0 {
-                        write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
-                    } else if n == -1 {
-                        w.write_str("[BADF]")?;
-                    }
+                let mut buf = [0u8; 1024];
+                // SAFETY: buf is 1024 bytes, passed with matching cap.
+                let n = unsafe { __bun_fd_path(fd, buf.as_mut_ptr(), buf.len()) };
+                if n > 0 {
+                    write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
+                } else if n == -1 {
+                    w.write_str("[BADF]")?;
                 }
             }
             Ok(())

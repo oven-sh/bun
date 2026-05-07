@@ -74,14 +74,11 @@ pub mod npm {
 // depend on the full package manager.
 //
 // The Zig source calls `jsc.RegularExpression` (tier-6) directly. That edge is
-// broken with a one-shot vtable hook (PORTING.md §Dispatch / debug-hook):
-// `bun_runtime::init()` registers REGEX_VTABLE; until then regex patterns
-// degrade to `Pattern::MatchAll` (only reachable in `bun install` standalone
-// where JSC is uninitialised anyway).
+// broken with link-time `extern "Rust"` (`__bun_regex_*`) defined `#[no_mangle]`
+// in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
-use core::ptr::{null_mut, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
 use bun_logger as logger;
@@ -89,22 +86,16 @@ use bun_logger::ast;
 use bun_string::{strings, String as BunString};
 use bun_string::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 
-/// Erased `bun_jsc::RegularExpression` vtable. Registered once at startup by
-/// `bun_runtime`; `compile` performs `jsc::initialize(false)` lazily.
-pub struct RegexVTable {
+// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
+// Zig called it inline. The bodies are defined `#[no_mangle]` in
+// `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
+// resolved at link time.
+unsafe extern "Rust" {
     /// Compile `pattern` with no flags. `None` ⇔ `error.InvalidRegExp`.
-    pub compile: unsafe fn(pattern: BunString) -> Option<NonNull<()>>,
-    pub matches: unsafe fn(regex: NonNull<()>, input: &BunString) -> bool,
-    pub drop: unsafe fn(regex: NonNull<()>),
-}
-
-/// Hook: tier-6 writes a leaked `&'static RegexVTable`. Null = JSC unavailable.
-pub static REGEX_VTABLE: AtomicPtr<RegexVTable> = AtomicPtr::new(null_mut());
-
-#[inline]
-fn regex_vtable() -> Option<&'static RegexVTable> {
-    let p = REGEX_VTABLE.load(Ordering::Acquire);
-    if p.is_null() { None } else { Some(unsafe { &*p }) }
+    /// Performs `jsc::initialize(false)` lazily on first call.
+    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
+    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
+    fn __bun_regex_drop(regex: NonNull<()>);
 }
 
 /// Owned, type-erased JSC regex; drops through the vtable.
@@ -116,28 +107,22 @@ pub struct RegularExpression(NonNull<()>);
 impl RegularExpression {
     #[inline]
     pub fn matches(&self, input: &BunString) -> bool {
-        match regex_vtable() {
-            // SAFETY: self.0 was produced by vt.compile.
-            Some(vt) => unsafe { (vt.matches)(self.0, input) },
-            None => false,
-        }
+        // SAFETY: self.0 was produced by `__bun_regex_compile`.
+        unsafe { __bun_regex_matches(self.0, input) }
     }
 }
 
 impl Drop for RegularExpression {
     fn drop(&mut self) {
-        if let Some(vt) = regex_vtable() {
-            // SAFETY: self.0 was produced by vt.compile; runs JSC destructor + free.
-            unsafe { (vt.drop)(self.0) }
-        }
+        // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
+        unsafe { __bun_regex_drop(self.0) }
     }
 }
 
 #[inline]
 fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    let vt = regex_vtable()?;
-    // SAFETY: vtable registered once at startup; pattern ownership transfers.
-    unsafe { (vt.compile)(pattern) }.map(RegularExpression)
+    // SAFETY: link-time extern; pattern ownership transfers.
+    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
 }
 
 pub struct PnpmMatcher {
@@ -217,7 +202,7 @@ impl PnpmMatcher {
         let arena = Arena::new();
 
         // bun.jsc.initialize(false) is now performed lazily inside
-        // REGEX_VTABLE.compile (tier-6 owns it).
+        // `__bun_regex_compile` (tier-6 owns it).
 
         let mut matchers: Vec<Matcher> = Vec::new();
         let mut has_include = false;
@@ -423,15 +408,9 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     buf.push(b'$');
 
     // PERF(port): was inline `jsc::RegularExpression.init(.cloneUTF8(buf), .none)`
-    // — now indirect through REGEX_VTABLE (cold path, vtable per PORTING.md §Dispatch).
-    // The Zig source unconditionally calls `bun.jsc.initialize(false)` before
-    // compiling, so it never fails for lack of a JSC runtime. Here, when the
-    // vtable has not been registered (standalone `bun install` without JSC),
-    // degrade to MatchAll per the module-header contract instead of falsely
-    // reporting InvalidRegExp.
-    if regex_vtable().is_none() {
-        return Ok(Matcher { pattern: Pattern::MatchAll, is_exclude });
-    }
+    // — now link-time `__bun_regex_compile` (cold path). The Zig source
+    // unconditionally calls `bun.jsc.initialize(false)` before compiling; the
+    // extern impl does the same.
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 
@@ -444,7 +423,7 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
 //               src/install/npm.zig (Registry.default_url / default_url_hash)
 //   confidence: medium
 //   todos:      2
-//   notes:      jsc::RegularExpression erased behind REGEX_VTABLE hook
-//               (tier-6 registers in bun_runtime::init — Pass C).
+//   notes:      jsc::RegularExpression erased behind link-time extern
+//               (`__bun_regex_*` defined in bun_jsc).
 //               from_expr() un-gated (B-2): bun_logger::ast::ExprData landed.
 // ──────────────────────────────────────────────────────────────────────────

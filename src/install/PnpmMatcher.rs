@@ -1,61 +1,46 @@
 //! https://github.com/pnpm/pnpm/blob/3abd3946237aa6ba7831552310ec371ddd3616c2/config/matcher/src/index.ts
 
-use core::ptr::{null_mut, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::ptr::NonNull;
 
 use bun_alloc::{AllocError, Arena};
 use bun_js_parser::ast;
 use bun_logger as logger;
 use bun_string::{escape_reg_exp, strings, String as BunString};
 
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — opaque heap-allocated JSC regex.
-// Stored as raw NonNull<()> (NOT Box<ZST> — Box over a zero-sized opaque is a dangling
-// sentinel that would leak the real JSC allocation and skip its destructor).
-// All construct / match / drop go through the registered vtable (tier-6 owns impl).
-pub struct RegexVTable {
+// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
+// Zig called it inline. The bodies are defined `#[no_mangle]` in
+// `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
+// resolved at link time. Stored as raw NonNull<()> (NOT Box<ZST> — Box over a
+// zero-sized opaque is a dangling sentinel that would leak the real JSC
+// allocation and skip its destructor).
+unsafe extern "Rust" {
     /// Compile a pattern (flags are always `None` at every install call site).
     /// Performs jsc::initialize(false) lazily on first call.
-    pub compile: unsafe fn(pattern: BunString) -> Option<NonNull<()>>,
-    pub matches: unsafe fn(regex: NonNull<()>, input: &BunString) -> bool,
-    pub drop: unsafe fn(regex: NonNull<()>),
+    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
+    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
+    fn __bun_regex_drop(regex: NonNull<()>);
 }
 
-/// Hook: bun_runtime::init writes a `&'static RegexVTable`. Null = JSC unavailable
-/// (e.g. `bun install` standalone path) → regex matchers compile to MatchAll fallback.
-pub static REGEX_VTABLE: AtomicPtr<RegexVTable> = AtomicPtr::new(null_mut());
-
-#[inline]
-fn regex_vtable() -> Option<&'static RegexVTable> {
-    let p = REGEX_VTABLE.load(Ordering::Acquire);
-    if p.is_null() { None } else { Some(unsafe { &*p }) }
-}
-
-/// Erased owned JSC regex; drops through the vtable.
+/// Erased owned JSC regex; drops through the link-time externs.
 pub struct RegularExpression(NonNull<()>);
 impl RegularExpression {
     #[inline]
     pub fn matches(&self, input: &BunString) -> bool {
-        match regex_vtable() {
-            // SAFETY: self.0 was produced by vt.compile.
-            Some(vt) => unsafe { (vt.matches)(self.0, input) },
-            None => false,
-        }
+        // SAFETY: self.0 was produced by `__bun_regex_compile`.
+        unsafe { __bun_regex_matches(self.0, input) }
     }
 }
 impl Drop for RegularExpression {
     fn drop(&mut self) {
-        if let Some(vt) = regex_vtable() {
-            // SAFETY: self.0 was produced by vt.compile; drop runs JSC destructor + free.
-            unsafe { (vt.drop)(self.0) }
-        }
+        // SAFETY: self.0 was produced by `__bun_regex_compile`; drop runs JSC destructor + free.
+        unsafe { __bun_regex_drop(self.0) }
     }
 }
 
 #[inline]
 fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
-    let vt = regex_vtable()?;
-    // SAFETY: vtable registered once at startup.
-    unsafe { (vt.compile)(pattern) }.map(RegularExpression)
+    // SAFETY: link-time extern; pattern ownership transfers.
+    unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
 }
 
 pub struct PnpmMatcher {
@@ -124,7 +109,7 @@ impl PnpmMatcher {
     ) -> Result<PnpmMatcher, FromExprError> {
         let mut buf: Vec<u8> = Vec::new();
 
-        // jsc::initialize(false) is now performed lazily inside REGEX_VTABLE.compile (tier-6).
+        // jsc::initialize(false) is now performed lazily inside `__bun_regex_compile` (tier-6).
 
         let mut matchers: Vec<Matcher> = Vec::new();
 
@@ -326,20 +311,10 @@ fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMatche
     let _ = escape_reg_exp::escape_reg_exp_for_package_name_matching(trimmed, buf);
     buf.push(b'$');
 
-    // PERF(port): was inline jsc::RegularExpression::init — now indirect via REGEX_VTABLE.
-    // Distinguish vtable-absent (JSC unavailable / standalone install path → MatchAll
-    // fallback per the doc on REGEX_VTABLE) from vtable-present compile failure
-    // (genuine InvalidRegExp). Zig unconditionally `bun.jsc.initialize(false)`s, so
-    // valid patterns always compile there.
-    let Some(vt) = regex_vtable() else {
-        return Ok(Matcher {
-            pattern: Pattern::MatchAll,
-            is_exclude,
-        });
-    };
-    // SAFETY: vtable registered once at startup.
-    let regex = unsafe { (vt.compile)(BunString::clone_utf8(buf.as_slice())) }
-        .map(RegularExpression)
+    // PERF(port): was inline jsc::RegularExpression::init — now link-time
+    // `__bun_regex_compile`. Zig unconditionally `bun.jsc.initialize(false)`s,
+    // so valid patterns always compile; the extern impl does the same.
+    let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 
     Ok(Matcher {

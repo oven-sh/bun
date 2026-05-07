@@ -670,9 +670,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         // CYCLEBREAK: `getFdPath`/`getFdPathW` are syscalls living in `bun_sys`
         // (T1 sibling), which `bun_paths` cannot depend on. Route through
-        // `bun_core::FD_PATH_HOOK` / `FD_PATH_HOOK_W` — bun_sys installs them
-        // at startup with signature `unsafe fn(Fd, *mut U, cap: usize) -> isize`
-        // (>0 = units written, <0 = error).
+        // `bun_core::__bun_fd_path` / `__bun_fd_path_w` — declared
+        // `extern "Rust"` in bun_core, defined `#[no_mangle]` in bun_sys,
+        // link-time resolved (>0 = units written, <0 = error).
         // PORT NOTE: Zig `fd.getFdPath(this._buf.pooled)` dispatches on the
         // pooled buffer's element type (u8 → readlink/F_GETPATH, u16 →
         // GetFinalPathNameByHandleW). Rust monomorphizes eagerly, so we
@@ -685,15 +685,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let buf: &mut [u8] =
                 unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
 
-            let hook = bun_core::FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
-            if hook.is_null() {
-                // bun_sys hasn't installed the hook yet (early init / isolated test).
-                return Err(bun_core::Error::TODO);
-            }
-            // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u8, usize) -> isize`.
-            let f: unsafe fn(Fd, *mut u8, usize) -> isize = unsafe { core::mem::transmute(hook) };
-            // SAFETY: buf is valid for buf.len() writable bytes.
-            let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+            // SAFETY: buf is valid for buf.len() writable bytes; link-time
+            // extern defined in `bun_sys::fd`.
+            let n = unsafe { bun_core::__bun_fd_path(fd, buf.as_mut_ptr(), buf.len()) };
             if n < 0 {
                 return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
             }
@@ -706,15 +700,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let buf: &mut [u16] =
                 unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
 
-            let hook = bun_core::FD_PATH_HOOK_W.load(core::sync::atomic::Ordering::Acquire);
-            if hook.is_null() {
-                // bun_sys hasn't installed the wide hook yet (early init / non-Windows test).
-                return Err(bun_core::Error::TODO);
-            }
-            // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u16, usize) -> isize`.
-            let f: unsafe fn(Fd, *mut u16, usize) -> isize = unsafe { core::mem::transmute(hook) };
-            // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+            // SAFETY: buf is valid for buf.len() writable u16 units; link-time
+            // extern defined in `bun_sys::fd`.
+            let n = unsafe { bun_core::__bun_fd_path_w(fd, buf.as_mut_ptr(), buf.len()) };
             if n < 0 {
                 return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
             }

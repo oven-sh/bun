@@ -2676,6 +2676,20 @@ pub mod internal {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
+    /// `bun_dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
+    /// lower-tier `bun_dns` crate so `bun_install` can prefetch registry
+    /// hostnames without a crate cycle. Link-time resolved.
+    #[unsafe(no_mangle)]
+    pub fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
+        let host = if hostname.is_null() || len == 0 {
+            None
+        } else {
+            // SAFETY: caller passes a NUL-terminated `[u8; len]` live for the call.
+            Some(unsafe { ZStr::from_raw(hostname, len) })
+        };
+        prefetch(loop_ as *mut Loop, host, port);
+    }
+
     extern "C" fn us_getaddrinfo(
         loop_: *mut Loop,
         _host: *const c_char,

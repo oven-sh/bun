@@ -147,47 +147,33 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 /// `unsafe fn(numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>`
-pub type AwsCacheGetFn = unsafe fn(u64, &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>;
-/// `unsafe fn(numeric_day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN])`
-pub type AwsCacheSetFn = unsafe fn(u64, &[u8], [u8; DIGESTED_HMAC_256_LEN]);
-/// `unsafe fn() -> *mut ENGINE` (nullable)
-pub type BoringEngineFn = unsafe fn() -> *mut bun_sha_hmac::sha::ffi::ENGINE;
-
-/// Stored as type-erased fn-ptr; cast via [`AwsCacheGetFn`].
-pub static AWS_CACHE_GET_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
-/// Stored as type-erased fn-ptr; cast via [`AwsCacheSetFn`].
-pub static AWS_CACHE_SET_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
-/// Stored as type-erased fn-ptr; cast via [`BoringEngineFn`].
-pub static BORING_ENGINE_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
+// LAYERING: the per-VM `AWSSignatureCache` + `boringEngine` live in
+// `bun_jsc::rare_data` (which depends on this crate). Zig
+// (`credentials.zig:485`) reached `jsc.VirtualMachine.get().rareData()`
+// inline. The bodies are defined `#[no_mangle]` in `bun_jsc::rare_data` and
+// declared here as `extern "Rust"`; the linker resolves them.
+unsafe extern "Rust" {
+    fn __bun_s3_aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]>;
+    fn __bun_s3_aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]);
+    fn __bun_s3_boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE;
+}
 
 #[inline]
 fn aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
-    let p = AWS_CACHE_GET_HOOK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return None;
-    }
-    // SAFETY: hook registered by bun_runtime::init() with matching signature.
-    unsafe { core::mem::transmute::<*mut (), AwsCacheGetFn>(p)(day, key) }
+    // SAFETY: link-time extern; `key` borrowed for the call.
+    unsafe { __bun_s3_aws_cache_get(day, key) }
 }
 
 #[inline]
 fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
-    let p = AWS_CACHE_SET_HOOK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return;
-    }
-    // SAFETY: hook registered by bun_runtime::init() with matching signature.
-    unsafe { core::mem::transmute::<*mut (), AwsCacheSetFn>(p)(day, key, digest) }
+    // SAFETY: link-time extern; `key` borrowed for the call.
+    unsafe { __bun_s3_aws_cache_set(day, key, digest) }
 }
 
 #[inline]
 fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
-    let p = BORING_ENGINE_HOOK.load(Ordering::Relaxed);
-    if p.is_null() {
-        return core::ptr::null_mut();
-    }
-    // SAFETY: hook registered by bun_runtime::init() with matching signature.
-    unsafe { core::mem::transmute::<*mut (), BoringEngineFn>(p)() }
+    // SAFETY: link-time extern.
+    unsafe { __bun_s3_boring_engine() }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

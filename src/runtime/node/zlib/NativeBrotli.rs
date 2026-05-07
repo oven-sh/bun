@@ -564,15 +564,15 @@ impl CompressionStreamImpl for NativeBrotli {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: `this` is live per the trait contract; `ref_count` is a `Cell`.
+        let n = unsafe { (*this).ref_count.get() } - 1;
+        unsafe { (*this).ref_count.set(n) };
         if n == 0 {
-            // SAFETY: `self` was allocated via `Box::new` in `constructor`; the
+            // SAFETY: `this` was allocated via `Box::new` in `constructor`; the
             // intrusive refcount has reached zero so no other references remain.
             // Mirrors Zig `bun.ptr.RefCount(..).deref()` → `deinit()` + `bun.destroy(this)`.
             unsafe {
-                let this = self as *const Self as *mut Self;
                 (*this).deinit();
                 drop(Box::from_raw(this));
             }

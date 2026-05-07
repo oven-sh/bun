@@ -904,7 +904,9 @@ impl Package<u64> {
                         version_string_.slice(&manifest.string_buf),
                         version_string_.hash,
                     );
-                    let sliced = dep_version.sliced(lockfile.buffers.string_bytes.as_slice());
+                    // `string_builder` holds the `&mut string_bytes` borrow; read
+                    // through it instead of `lockfile.buffers.string_bytes`.
+                    let sliced = dep_version.sliced(string_builder.string_bytes.as_slice());
 
                     let mut behavior = group.behavior;
                     if is_peer {
@@ -936,8 +938,8 @@ impl Package<u64> {
                             Some(name.hash),
                             sliced.slice,
                             &sliced,
-                            Some(log),
-                            Some(pm),
+                            Some(&mut *log),
+                            Some(&mut *pm),
                         )
                         .unwrap_or_default(),
                     };
@@ -946,9 +948,8 @@ impl Package<u64> {
                     if group.behavior.is_optional() {
                         if let Some(j) = duplicate_at {
                             // need to shift dependencies after the duplicate to maintain sort order
-                            for k in (j + 1)..(total_dependencies_count as usize) {
-                                dependencies[k - 1] = dependencies[k];
-                            }
+                            // (in-place left-rotate by 1 over `[j .. total_dependencies_count)`)
+                            dependencies[j..total_dependencies_count as usize].rotate_left(1);
 
                             // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
                             // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.

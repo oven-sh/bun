@@ -2930,15 +2930,15 @@ mod bun_sys {
         let path = if path.last() == Some(&0) { &path[..path.len() - 1] } else { path };
         ::bun_sys::open_dir_at(dir, path).map_err(Into::into)
     }
-    // TODO(b2-blocked): `iterate_dir`'s real `WrappedIterator` is itself stubbed in
-    // `::bun_sys::dir_iterator` (T6 — `bun_runtime::node::dir_iterator` vtable). The
-    // resolver's `dir_info_cached_maybe_log` readdir loop compiles against the real
-    // type via the glob re-export above; the body will panic until T6 wires it.
+    // `iterate_dir` / `dir_iterator::WrappedIterator` are real ports in
+    // `::bun_sys::dir_iterator` (POSIX getdents / Windows NtQueryDirectoryFile)
+    // and reach this module via the `pub use ::bun_sys::*` glob above.
     pub use ::bun_sys::RawFd;
 }
 
-/// `bun_sys::Fd` extension surface the resolver names but `fd.rs` doesn't
-/// expose yet. TODO(b2-blocked): bun_sys::Fd::{close, cast, native, get_fd_path, ZERO}.
+/// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
+/// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
+/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)` per the Zig.
 trait FdExt: Sized {
     fn close(self);
     fn cast(self) -> bun_sys::RawFd;
@@ -3325,21 +3325,19 @@ fn intern_tsconfig_contents(contents: crate::cache::Contents) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(last.as_ptr(), last.len()) }
 }
 
-// TODO(b2-blocked): bun_output is a thin facade over bun_core::output but is
-// not in this crate's dep set; alias the underlying macros directly.
+// Port of `const debuglog = Output.scoped(.Resolver, .hidden)` (resolver.zig:4).
+// `bun_core::declare_scope!` emits the per-scope `static ScopedLogger`; the
+// `debuglog!` macro forwards to the real `bun_core::scoped_log!` so debug builds
+// emit and release builds dead-strip (PORTING.md §Logging).
+//
+// PORT NOTE: resolver.zig:1692 also binds `const dev = Output.scoped(.Resolver,
+// .visible)` for `bustDirCache` — same scope name, different visibility. Rust's
+// `declare_scope!` is one static per ident; route both through the `.hidden`
+// declaration (matches the file-top binding) and let `BUN_DEBUG_Resolver=1`
+// surface the bust log.
+bun_core::declare_scope!(Resolver, hidden);
 macro_rules! debuglog {
-    ($($arg:tt)*) => { if false { let _ = format_args!($($arg)*); } };
-}
-macro_rules! scoped_log {
-    ($scope:ident, $($arg:tt)*) => { if false { let _ = format_args!($($arg)*); } };
-}
-// `macro_rules!` is textual-scoped — `pub use` it so `bun_output::scoped_log!`
-// path-qualifies (matches Zig `bun.Output.scoped`).
-#[allow(unused_imports)]
-pub(crate) use scoped_log;
-mod bun_output {
-    #[allow(unused_imports)]
-    pub(crate) use super::scoped_log;
+    ($($arg:tt)*) => { ::bun_core::scoped_log!(Resolver, $($arg)*) };
 }
 
 // PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
@@ -5648,7 +5646,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton (see `dir_cache()` PORT NOTE);
         // narrow `&mut` for this call only.
         let second_bust = unsafe { &mut *self.dir_cache() }.remove(path);
-        bun_output::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
+        bun_core::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
         first_bust || second_bust
     }
 

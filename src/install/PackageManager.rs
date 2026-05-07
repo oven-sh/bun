@@ -874,11 +874,9 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
-            // Disambiguate `Clone::clone` from the inherent
-            // `Dependency::clone(&self, pm, buf, builder)` rebuilder.
             (self.on_wake.geton_dependency_error())(
                 ctx.as_ptr(),
-                Clone::clone(dependency),
+                dependency,
                 dependency_id,
                 err,
             );
@@ -907,7 +905,10 @@ impl PackageManager {
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
-                (on_wake.get_handler())(ctx.as_ptr(), this);
+                // `WakeHandler.handler`'s second arg is the erased
+                // `*mut PackageManager` (`bun_install_types` cannot name this
+                // type); cast back to `*mut c_void` here.
+                (on_wake.get_handler())(ctx.as_ptr(), this as *mut c_void);
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }

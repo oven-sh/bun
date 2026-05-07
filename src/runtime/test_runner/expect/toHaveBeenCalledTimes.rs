@@ -12,15 +12,13 @@ pub fn to_have_been_called_times(
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only tracing; dropped in port.
 
+    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
+    // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
+
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();
     let arguments: &[JSValue] = arguments_.slice();
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard here would hold &mut self
-    // for the whole body and conflict with later uses. Phase B: reshape (RAII guard on Expect
-    // or call post_match before each return).
-    let _post_match = scopeguard::guard((), |_| {
-        // this.post_match(global);
-    });
     let value: JSValue =
         this.get_value(global, this_value, "toHaveBeenCalledTimes", "<green>expected<r>")?;
 

@@ -466,5 +466,5 @@ pub fn watch(
 //   source:     src/runtime/node/win_watcher.zig (310 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      Heavy raw-ptr/libuv FFI; getOrPut reshaped to lookup+insert; FSWatcher/Event import paths and scopeguard self-borrow need Phase-B fixup.
+//   notes:      Heavy raw-ptr/libuv FFI; getOrPut reshaped to lookup+insert; FSWatcher/Event import paths need Phase-B fixup.
 // ──────────────────────────────────────────────────────────────────────────

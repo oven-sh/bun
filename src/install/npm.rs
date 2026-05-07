@@ -2232,15 +2232,15 @@ impl PackageManifest {
                 let mut package_version: PackageVersion = empty_version;
 
                 if let Some(cpu_q) = prop.value.as_ref().unwrap().as_property(b"cpu") {
-                    package_version.cpu = Negatable::<Architecture>::from_json(&cpu_q.expr)?;
+                    package_version.cpu = negatable_from_json::<Architecture, _>(&cpu_q.expr)?;
                 }
 
                 if let Some(os_q) = prop.value.as_ref().unwrap().as_property(b"os") {
-                    package_version.os = Negatable::<OperatingSystem>::from_json(&os_q.expr)?;
+                    package_version.os = negatable_from_json::<OperatingSystem, _>(&os_q.expr)?;
                 }
 
                 if let Some(libc) = prop.value.as_ref().unwrap().as_property(b"libc") {
-                    package_version.libc = Negatable::<Libc>::from_json(&libc.expr)?;
+                    package_version.libc = negatable_from_json::<Libc, _>(&libc.expr)?;
                 }
 
                 if let Some(has_install_script) = prop.value.as_ref().unwrap().as_property(b"hasInstallScript") {

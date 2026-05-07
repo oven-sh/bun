@@ -616,7 +616,7 @@ impl IOWriter {
             debug_assert!(s.writer_idx < s.writers.len());
         }
 
-        let _guard = scopeguard::guard((), |_| self.set_writing(false));
+        scopeguard::defer! { self.set_writing(false); }
         self.skip_dead();
 
         let idx = self.state().writer_idx;

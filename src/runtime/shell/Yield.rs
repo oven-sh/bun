@@ -56,25 +56,42 @@ thread_local! {
     static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
 }
 
-impl Yield {
+/// RAII re-entrancy depth guard: increments the thread-local depth counter on
+/// construction, decrements on `Drop`. Debug-only (no-op in release).
+struct DbgDepthGuard;
+
+impl DbgDepthGuard {
     /// Ideally 1, but resolving the JS Promise in `Interpreter::finish` can
     /// re-enter another shell script.
     const MAX_DEPTH: usize = 2;
 
-    /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub fn run(self, interp: &mut Interpreter) {
-        let tag: &'static str = (&self).into();
+    #[inline]
+    fn enter(tag: &'static str) -> Self {
         if cfg!(debug_assertions) {
             let n = DBG_CATCH_EXEC_WITHIN_EXEC.get();
             log!("Yield({}) depth = {} + 1", tag, n);
             debug_assert!(n <= Self::MAX_DEPTH);
             DBG_CATCH_EXEC_WITHIN_EXEC.set(n + 1);
         }
-        let _guard = scopeguard::guard((), move |_| {
-            if cfg!(debug_assertions) {
-                DBG_CATCH_EXEC_WITHIN_EXEC.set(DBG_CATCH_EXEC_WITHIN_EXEC.get() - 1);
-            }
-        });
+        let _ = tag;
+        Self
+    }
+}
+
+impl Drop for DbgDepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        if cfg!(debug_assertions) {
+            DBG_CATCH_EXEC_WITHIN_EXEC.set(DBG_CATCH_EXEC_WITHIN_EXEC.get() - 1);
+        }
+    }
+}
+
+impl Yield {
+    /// Trampoline: drive the interpreter until it suspends/finishes.
+    pub fn run(self, interp: &mut Interpreter) {
+        let tag: &'static str = (&self).into();
+        let _depth = DbgDepthGuard::enter(tag);
 
         // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
         // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep

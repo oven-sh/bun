@@ -2150,10 +2150,10 @@ pub fn parse_into_binary_lockfile(
 
                         if res.tag != ResolutionTag::Workspace {
                             if let Some(os) = deps_os_cpu_libc_bin_bundle_obj.get(b"os") {
-                                pkg.meta.os = Negatable::<Npm::OperatingSystem>::from_json(&os)?;
+                                pkg.meta.os = Npm::negatable_from_json::<Npm::OperatingSystem, _>(&os)?;
                             }
                             if let Some(arch) = deps_os_cpu_libc_bin_bundle_obj.get(b"cpu") {
-                                pkg.meta.arch = Negatable::<Npm::Architecture>::from_json(&arch)?;
+                                pkg.meta.arch = Npm::negatable_from_json::<Npm::Architecture, _>(&arch)?;
                             }
                             // TODO(dylan-conway)
                             // if (os_cpu_libc_obj.get("libc")) |libc| {

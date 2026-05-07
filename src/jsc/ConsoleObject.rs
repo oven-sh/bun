@@ -3402,6 +3402,7 @@ pub mod formatter {
                                 number_value,
                                 pf!("<r>")
                             ));
+                            if writer.failed { self.failed = true; }
                             return Ok(());
                         }
 
@@ -3413,6 +3414,7 @@ pub mod formatter {
                             number_value,
                             pf!("<r>")
                         ));
+                        if writer.failed { self.failed = true; }
                         return Ok(());
                     }
 
@@ -3746,6 +3748,7 @@ pub mod formatter {
                                 bool_value,
                                 pf!("<r>")
                             ));
+                            if writer.failed { self.failed = true; }
                             return Ok(());
                         }
                         writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
@@ -3755,6 +3758,7 @@ pub mod formatter {
                             bool_value,
                             pf!("<r>")
                         ));
+                        if writer.failed { self.failed = true; }
                         return Ok(());
                     }
                     if value.to_boolean() {

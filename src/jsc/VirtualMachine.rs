@@ -5094,8 +5094,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     reason: JSValue,
 ) -> JSValue {
     let like = is_error_like(global_object, reason).unwrap_or_else(|_| {
-        // SAFETY: extern "C" FFI; `global_object` is the live VM global.
-        unsafe { JSGlobalObject__clearException(global_object.as_ptr()) };
+        global_object.clear_exception();
         false
     });
     if like {
@@ -5105,14 +5104,13 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     // `vm_ptr()` returns the FFI `*mut VM` directly so the C++ side
     // (`JSC::VM&`) receives a pointer with mutable provenance.
     let reason_str = unsafe {
-        let s = Bun__noSideEffectsToString(
+        Bun__noSideEffectsToString(
             global_object.vm_ptr(),
             global_object.as_ptr(),
             reason,
-        );
-        JSGlobalObject__clearException(global_object.as_ptr());
-        s
+        )
     };
+    global_object.clear_exception();
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";

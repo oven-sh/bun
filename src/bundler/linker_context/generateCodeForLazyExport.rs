@@ -310,30 +310,30 @@ pub fn generate_code_for_lazy_export(
                                 None => {
                                     // it is from the current file
                                     for name in compose.names.slice() {
-                                    // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
-                                    let name_v = unsafe { &*name.v };
-                                    let Some(name_entry) = ast.local_scope.get_adapted(name_v, SliceBoxAdapter) else {
-                                        bun_core::handle_oom(self.log.add_error_fmt(
-                                            &self.all_sources[idx as usize],
-                                            compose.loc,
-                                            format_args!(
-                                                "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                                bun_fmt::quote(name_v),
-                                                bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
-                                            ),
-                                        ));
-                                        continue;
-                                    };
-                                    let name_ref = name_entry.ref_;
-                                    if !name_ref.can_be_composed() {
-                                        self.warn_non_single_class_composes(
-                                            ast,
-                                            name_ref,
-                                            idx,
-                                            compose.loc,
-                                        );
-                                    } else {
-                                        self.visit_name(ast, name_ref, idx);
+                                        // SAFETY: `CustomIdent.v: *const [u8]` borrows the source arena.
+                                        let name_v = unsafe { &*name.v };
+                                        let Some(name_entry) =
+                                            ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                        else {
+                                            bun_core::handle_oom(self.log.add_error_fmt(
+                                                &self.all_sources[idx as usize],
+                                                compose.loc,
+                                                format_args!(
+                                                    "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                                    bun_fmt::quote(name_v),
+                                                    bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
+                                                ),
+                                            ));
+                                            continue;
+                                        };
+                                        let name_ref = name_entry.ref_;
+                                        if !name_ref.can_be_composed() {
+                                            self.warn_non_single_class_composes(
+                                                ast, name_ref, idx, compose.loc,
+                                            );
+                                        } else {
+                                            self.visit_name(ast, name_ref, idx);
+                                        }
                                     }
                                 }
                             }

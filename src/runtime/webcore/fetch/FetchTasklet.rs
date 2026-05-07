@@ -1691,21 +1691,26 @@ impl FetchTasklet {
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
         // PORT NOTE: reshaped for borrowck — explicit unlock + deref at end instead of nested defers
-        // PORT NOTE: Zig did `task.http.?.* = async_http.*` (struct copy). `AsyncHTTP` is
-        // not `Clone` in Rust (owns Vecs/allocations); a bitwise copy here would alias
-        // owned buffers. Swap the `response_buffer` pointer (the only field the JS side
-        // observes between progress calls) and leave the rest until ownership is settled.
-        // TODO(port): revisit once AsyncHTTP layout is `Copy`-safe or split.
-        let _ = async_http;
-        // task_ref.http.as_mut().unwrap().response_buffer = unsafe { (*async_http).response_buffer };
+        // Zig: `task.http.?.* = async_http.*; task.http.?.response_buffer = async_http.response_buffer;`
+        // — bitwise struct copy of HTTP-thread state back into the JS-side instance.
+        // `AsyncHTTP` is not `Copy` in Rust (`HTTPClient: Drop`, owned Vecs), so use the
+        // explicit field-subset sync; see `AsyncHTTP::sync_progress_from` for the field list.
+        // SAFETY: `async_http` is the HTTP-thread copy passed by `on_async_http_callback`;
+        // it is alive for the duration of this call and not mutated concurrently (HTTP
+        // thread is blocked in the callback).
+        task_ref
+            .http
+            .as_mut()
+            .unwrap()
+            .sync_progress_from(unsafe { &*async_http });
 
         bun_output::scoped_log!(
             FetchTasklet,
             "callback success={} ignore_data={} has_more={} bytes={}",
-            task_ref.result.is_success(),
+            result.is_success(),
             task_ref.ignore_data,
-            task_ref.result.has_more,
-            task_ref.result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
+            result.has_more,
+            result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
 
         let prev_metadata = task_ref.result.metadata.take();

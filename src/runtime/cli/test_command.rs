@@ -2610,7 +2610,7 @@ impl TestCommand {
         // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
         // escape mirrors Zig's `defer` so the closure does not hold a borrowck
         // lock on `reporter` for the entire function body.
-        let _restore_only = scopeguard::guard((), move |_| unsafe { (*reporter_ptr).jest.only = prev_only; });
+        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;

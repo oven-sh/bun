@@ -9,8 +9,13 @@ describe("Bun.build compile with wasm", () => {
 
     const dir = tempDirWithFiles("build-compile-wasm", {
       "app.js": `
-        // Import a wasm module and properly instantiate it
-        import wasmPath from "./test.wasm";
+        // Import a wasm module and properly instantiate it.
+        // The 'file' import attribute opts out of the WebAssembly ESM
+        // integration (which exposes wasm exports as named imports) and
+        // requests an asset path instead. Without it 'import x from
+        // "./test.wasm"' fails with "Missing 'default' export" since wasm
+        // modules don't have a default export per the proposal.
+        import wasmPath from "./test.wasm" with { type: "file" };
 
         async function main() {
           try {

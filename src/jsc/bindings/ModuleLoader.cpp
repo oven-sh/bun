@@ -20,6 +20,7 @@
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -1176,6 +1177,37 @@ static JSValue fetchESMSourceCode(
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
+#if ENABLE(WEBASSEMBLY)
+    else if (res->result.value.tag == SyntheticModuleType::Wasm) {
+        // Implements the WebAssembly/ES Module Integration proposal:
+        // `import * as m from "./file.wasm"` compiles and instantiates the
+        // module, exposing its exports as named ES module exports.
+        //
+        // The Zig side packed the raw wasm bytes into source_code using
+        // Latin-1 (one byte per char). Extract them back here and hand them
+        // to JSC via a WebAssemblySourceProvider — JSModuleLoader dispatches
+        // SourceProviderSourceType::WebAssembly to JSWebAssembly::instantiate.
+        WTF::String wasmSource = res->result.value.source_code.toWTFString(BunString::NonNull);
+        Vector<uint8_t> wasmBytes;
+        if (wasmSource.is8Bit()) {
+            auto span = wasmSource.span8();
+            wasmBytes.append(span);
+        } else {
+            // Should be unreachable — Zig side always uses cloneLatin1 — but
+            // guard in case a future path ends up 16-bit.
+            auto span = wasmSource.span16();
+            wasmBytes.reserveInitialCapacity(span.size());
+            for (auto ch : span)
+                wasmBytes.append(static_cast<uint8_t>(ch & 0xff));
+        }
+
+        auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+        auto sourceUrlString = res->result.value.source_url.toWTFString(BunString::ZeroCopy);
+        auto sourceURL = !sourceUrlString.isEmpty() ? WTF::URL::fileURLWithFileSystemPath(sourceUrlString) : WTF::URL();
+        auto provider = JSC::WebAssemblySourceProvider::create(WTF::move(wasmBytes), JSC::SourceOrigin(sourceURL), WTF::move(moduleKey));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
+    }
+#endif
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {

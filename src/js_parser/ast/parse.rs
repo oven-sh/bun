@@ -1418,13 +1418,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         _opts: &mut ParseStatementOptions<'a>,
     ) -> Result<StmtList<'a>, Error> {
         let p = self;
-        // PORT NOTE: ParseStatementOptions is not Clone (holds &'a [Expr]); reconstruct
-        // a fresh per-iteration copy with the relevant scalar flags from `_opts`.
+        let mut opts = *_opts;
         let mut stmts = StmtList::new_in(p.arena);
 
         let mut return_without_semicolon_start: i32 = -1;
-        let is_module_scope = _opts.is_module_scope;
-        let is_namespace_scope = _opts.is_namespace_scope;
+        opts.lexical_decl = LexicalDecl::AllowAll;
         let mut is_directive_prologue = true;
 
         loop {
@@ -1438,12 +1436,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 break;
             }
 
-            let mut current_opts = ParseStatementOptions::<'a> {
-                lexical_decl: LexicalDecl::AllowAll,
-                is_module_scope,
-                is_namespace_scope,
-                ..Default::default()
-            };
+            let mut current_opts = opts;
             let mut stmt = p.parse_stmt(&mut current_opts)?;
 
             // Skip TypeScript types entirely

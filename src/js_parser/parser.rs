@@ -2283,6 +2283,7 @@ pub struct ExportClauseResult<'a> {
     pub had_type_only_exports: bool,
 }
 
+#[derive(Clone, Copy)]
 pub struct DeferredTsDecorators<'a> {
     pub values: &'a [js_ast::Expr],
 
@@ -2308,7 +2309,7 @@ pub struct ParseClassOptions<'a> {
     pub is_type_script_declare: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct ParseStatementOptions<'a> {
     pub ts_decorators: Option<DeferredTsDecorators<'a>>,
     pub lexical_decl: LexicalDecl,

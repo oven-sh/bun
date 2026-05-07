@@ -2294,7 +2294,12 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match s.app {
             // SAFETY: app handle is live while AnyServer is held.
             Some(app) => unsafe { (*app).publish(topic, message, opcode, compress) },
-            None => false,
+            // PORT NOTE: Zig spec uses `app.?` (panic on null). Defensive false
+            // here for the post-stop window; assert in debug to catch misuse.
+            None => {
+                debug_assert!(false, "publish on server with no app");
+                false
+            }
         })
     }
 

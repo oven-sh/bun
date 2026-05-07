@@ -27,7 +27,11 @@ use bun_uws as uws;
 pub use crate::generated_classes::js_SecureContext as js;
 
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
+// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
+// `extern "C" fn(..., *mut SecureContext)` shims — C++ never reads this layout
+// (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass]
+#[repr(C)]
 pub struct SecureContext {
     pub ctx: *mut boringssl::SSL_CTX,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach

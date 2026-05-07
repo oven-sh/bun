@@ -1,4 +1,4 @@
-#![allow(unused, dead_code, non_snake_case, private_interfaces)] // B-1 gate-and-stub
+#![allow(unused, dead_code, non_snake_case, private_interfaces)]
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
 // Despite being Next.js-compatible, it's not tied to Next.js.

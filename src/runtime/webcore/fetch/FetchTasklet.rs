@@ -453,9 +453,10 @@ impl FetchTasklet {
             if let Some(response) = self.get_current_response() {
                 // SAFETY: response is alive (native ref or weak hit)
                 let body = unsafe { (*response).get_body_value() };
-                // PORT NOTE: `to_error_instance` returns JsResult<()> (JsError);
-                // discard non-Terminated error here (matches Zig swallowing).
-                let _ = body.to_error_instance(err, global_this);
+                // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
+                // now; narrow back to the real `JsTerminated` here (Zig: `try body.toErrorInstance`).
+                body.to_error_instance(err, global_this)
+                    .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
             }
             return Ok(());
         }

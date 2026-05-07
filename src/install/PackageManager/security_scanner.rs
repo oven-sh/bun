@@ -1154,17 +1154,13 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = match spawn::spawn_process(
+        // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
+        let mut spawned = spawn::spawn_process(
             &spawn_options,
             argv.as_mut_ptr().cast(),
             bun_sys::environ_ptr(),
-        )? {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err_generic("Failed to spawn security scanner subprocess: {}", (e,));
-                return Err(err!("SpawnProcessFailed"));
-            }
-        };
+        )?
+        .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
         ipc_output_fds[1].close();
@@ -1173,10 +1169,13 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         self.ipc_reader.flags.insert(PosixFlags::NONBLOCKING);
 
-        // Disarm errdefer on success — both slots are None by now.
-        scopeguard::ScopeGuard::into_inner(fds);
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], StdioResult::Buffer((*pipe).cast()))?;
 
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], StdioResult::Buffer(pipe.cast()))
+        // Disarm errdefers on success — pipe ownership has transferred to
+        // json_writer; fd slots are already None.
+        scopeguard::ScopeGuard::into_inner(pipe);
+        scopeguard::ScopeGuard::into_inner(fds);
+        Ok(())
     }
 
     /// Common post-spawn setup: start the fd 3 reader, attach the process,

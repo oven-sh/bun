@@ -1120,8 +1120,9 @@ mod vm_loader_vtable {
             .map(|s| s as *const bun_logger::Source)
     }
     unsafe fn main(p: *const ()) -> &'static [u8] {
-        // SAFETY: see `origin_host`.
-        unsafe { (*vm(p)).main }
+        // SAFETY: see `origin_host`. `main()` borrows VM-lifetime storage; the
+        // hook contract erases that to `'static` (caller is the same VM).
+        unsafe { &*((*vm(p)).main() as *const [u8]) }
     }
     unsafe fn read_dir_info_package_json(p: *const (), dir: &[u8]) -> Option<*const PackageJSON> {
         // SAFETY: `p` is the live per-thread VM; `read_dir_info` is re-entrant
@@ -3804,7 +3805,7 @@ unsafe fn transpile_virtual_module(
         let opt = unsafe { (*jsc_vm).transpiler.options.loaders.get(path.name.ext).copied() };
         opt.unwrap_or_else(|| {
             // SAFETY: `jsc_vm` is the live per-thread VM.
-            if bun_string::strings::eql_long(specifier, unsafe { (*jsc_vm).main }, true) {
+            if bun_string::strings::eql_long(specifier, unsafe { (*jsc_vm).main() }, true) {
                 Loader::Js
             } else {
                 Loader::File

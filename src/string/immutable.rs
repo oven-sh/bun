@@ -289,6 +289,21 @@ pub mod unicode {
             self.c = cp;
             cp
         }
+
+        /// Zig: `CodepointIterator.needsUTF8Decoding` — true iff any byte in
+        /// `slice` begins a multi-byte WTF-8 sequence.
+        pub fn needs_utf8_decoding(slice: &[u8]) -> bool {
+            let mut i = 0usize;
+            while i < slice.len() {
+                let cp_len = wtf8_byte_sequence_length(slice[i]);
+                match cp_len {
+                    0 => return false,
+                    1 => i += 1,
+                    _ => return true,
+                }
+            }
+            false
+        }
     }
 
     #[derive(Default, Clone, Copy)]

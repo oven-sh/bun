@@ -1384,10 +1384,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             if body_len > 0 {
                 let body_slice = &data[..body_len];
                 // close is always utf8
-                // TODO(b2-blocked): bun_string::strings::is_valid_utf8 — lives in
-                // the gated `unicode_draft` module (simdutf-backed). Fall back
-                // to std until it un-gates. PERF(port): was simdutf — profile.
-                if core::str::from_utf8(body_slice).is_err() {
+                if !strings::is_valid_utf8(body_slice) {
                     self.terminate(ErrorCode::InvalidUtf8);
                     return;
                 }

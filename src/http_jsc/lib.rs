@@ -12,24 +12,12 @@
 //                        `bun_jsc::FetchHeaders` (moved out of bun_runtime);
 //                        `live_counts`/`quic_live_counts` compile against
 //                        `bun_http::{h2,h3}_client` atomics.
-//   - websocket_client → `impl WebSocket<SSL>` fully un-gated (~40 methods).
-//                        `vm_loop_ctx` un-gated via local `EventLoopCtxVTable`
-//                        (only `platform_event_loop` is hot; hoist into
-//                        `bun_jsc` once a canonical adapter lands).
-//                        `handle_handshake` un-gated via local extern decl for
-//                        `SSL_get_servername`. `close` 16-bit reason un-gated
-//                        via `ZigString::to_owned_slice`. C-ABI exports
-//                        un-gated (declare-site macro replaces `paste`).
-//                        Residual body-level gate: `write_blob`
-//                        (bun_runtime::webcore::Blob — dep cycle).
-//                        Submodules: cpp_websocket + websocket_proxy +
-//                        websocket_deflate un-gated (deflate's RareData pool
-//                        falls back to per-connection until bun_jsc::rare_data
-//                        WebSocketDeflateRareData shim lands). proxy_tunnel /
-//                        upgrade_client remain gated behind stubs (blocked on
-//                        bun_runtime::socket::ssl_wrapper::SslWrapper +
-//                        bun_runtime::api::server_config::SslConfig — dep
-//                        cycle; see websocket_client.rs header).
+//   - websocket_client → fully un-gated. `impl WebSocket<SSL>` (~40 methods)
+//                        + all five submodules (cpp_websocket, websocket_proxy,
+//                        websocket_deflate, proxy_tunnel, upgrade_client)
+//                        compile against `bun_jsc::webcore::Blob` shim and
+//                        `bun_jsc::rare_data` deflate pool. C-ABI exports via
+//                        declare-site macro. 0 residual gates.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod method_jsc;

@@ -639,21 +639,31 @@ pub mod webcore {
     pub use super::AutoFlusher;
     use super::*;
 
-    /// Opaque handle to `bun_runtime::webcore::Blob`.
+    /// Opaque view of `bun_runtime::webcore::Blob`. Never constructed by value
+    /// on this side — SQL only ever holds `*mut Blob` recovered from a JS
+    /// wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
+    /// through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
+    /// externs are real C++ symbols (generate-classes.ts), not Rust shims.
     #[repr(C)]
-    pub struct Blob { _opaque: core::cell::UnsafeCell<[u8; 0]> }
+    pub struct Blob {
+        _opaque: core::cell::UnsafeCell<[u8; 0]>,
+        _m: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+    }
     impl Blob {
         pub fn needs_to_read_file(&self) -> bool {
-            // SAFETY: `self` is a live `*const Blob` (codegen m_ctx payload).
-            unsafe { Bun__Blob__needsToReadFile(self._opaque.get() as *const c_void) }
+            // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
+            // (codegen m_ctx payload).
+            unsafe { (hooks().blob_needs_to_read_file)(self._opaque.get() as *const c_void) }
         }
         pub fn shared_view(&self) -> &[u8] {
             let mut len: usize = 0;
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
-            let ptr = unsafe { Bun__Blob__sharedView(self._opaque.get() as *const c_void, &mut len) };
+            let ptr = unsafe {
+                (hooks().blob_shared_view)(self._opaque.get() as *const c_void, &mut len)
+            };
             if ptr.is_null() || len == 0 { return &[]; }
-            // SAFETY: Zig guarantees `ptr[..len]` valid while the Blob lives.
+            // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
             unsafe { core::slice::from_raw_parts(ptr, len) }
         }
     }
@@ -669,14 +679,15 @@ pub mod webcore {
             let p = unsafe { Blob__fromJSDirect(value) };
             if p.is_null() { None } else { Some(p as *mut Self) }
         }
-        fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            // PORT NOTE: opaque shim is zero-sized; real callers go through
-            // `bun_runtime::webcore::Blob::to_js` which boxes and hands the
-            // pointer to `Blob__create`. This path exists only to satisfy the
-            // trait — SQL callers never construct a `Blob` by value.
-            let _ = global;
-            // SAFETY: never called on the opaque shim (zero-sized, no state).
-            unsafe { core::hint::unreachable_unchecked() }
+        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
+            // The opaque view is zero-sized and unconstructible (no `pub`
+            // ctor); real callers go through `bun_runtime::webcore::Blob::to_js`.
+            // Safe `unreachable!` so a stray generic-over-`JsClass` call panics
+            // with a diagnostic instead of invoking UB.
+            unreachable!(
+                "webcore::Blob is an opaque view on the sql_jsc side; \
+                 construct via bun_runtime::webcore::Blob"
+            )
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
             // SAFETY: `global` is live; codegen extern returns the cached ctor.
@@ -684,12 +695,11 @@ pub mod webcore {
         }
     }
 
+    // C++ codegen symbols (generate-classes.ts) — NOT Rust→Rust shims.
     unsafe extern "C" {
         fn Blob__fromJS(value: JSValue) -> *mut c_void;
         fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
         fn Blob__getConstructor(global: *mut JSGlobalObject) -> JSValue;
-        fn Bun__Blob__needsToReadFile(this: *const c_void) -> bool;
-        fn Bun__Blob__sharedView(this: *const c_void, out_len: *mut usize) -> *const u8;
     }
 }
 

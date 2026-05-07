@@ -8,7 +8,7 @@ use bun_js_parser as js_ast;
 use bun_logger as Logger;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
-use crate::bundle_v2::{FileMap, JSBundleCompletionTask, JSBundlerPlugin};
+use crate::bundle_v2::{dispatch, FileMap, JSBundlerPlugin};
 use crate::{BundleV2, Transpiler};
 
 /// Used to keep the bundle thread from spinning on Windows
@@ -108,8 +108,11 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// — folded into a single accessor so the opaque `FileMap` layout stays in T6.
     fn file_map(&mut self) -> Option<NonNull<FileMap>>;
     /// Zig: `switch (CompletionStruct) { BundleV2.JSBundleCompletionTask => completion, … }`
-    /// — the comptime type-switch collapses to a cast the impl provides.
-    fn as_js_bundle_completion_task(&mut self) -> NonNull<JSBundleCompletionTask>;
+    /// — the comptime type-switch collapses to a §Dispatch handle (erased
+    /// owner + `&'static` vtable) the impl provides, so the bundler can read
+    /// `result == .err` / `jsc_event_loop.enqueueTaskConcurrent` without
+    /// naming the concrete struct.
+    fn as_js_bundle_completion_task(&mut self) -> dispatch::CompletionHandle;
 
     /// Zig: `const transpiler = try allocator.create(bun.Transpiler);` followed by
     /// `try completion.configureBundler(transpiler, allocator);` — Zig left the

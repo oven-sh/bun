@@ -256,18 +256,10 @@ impl FileSystemRouter {
             unsafe { (*vm_ptr).transpiler.resolver.log = orig_log };
         });
 
-        // `clone_with_trailing_slash` — append '/' if missing.
-        let path_to_use: Vec<u8> = {
-            let s = root_dir_path.slice();
-            if s.ends_with(b"/") {
-                s.to_vec()
-            } else {
-                let mut v = Vec::with_capacity(s.len() + 1);
-                v.extend_from_slice(s);
-                v.push(b'/');
-                v
-            }
-        };
+        // `cloneWithTrailingSlash` → `strings.cloneNormalizingSeparators`: collapse duplicate
+        // separators and append the PLATFORM-NATIVE separator (`\` on Windows).
+        let path_to_use: Vec<u8> =
+            strings::paths::clone_normalizing_separators(root_dir_path.slice());
 
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&path_to_use) {
             Ok(Some(info)) => info,
@@ -599,23 +591,19 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         };
 
-        // SAFETY: `Match<'p>` borrows `params` and `path` bytes. `MatchedRoute::init` clones
-        // `params` into `params_list_holder` and re-points `route_holder.params` at the heap
-        // copy; `path` is `mem::forget`ed below (intentional leak per Zig spec). Forging
-        // `'static` matches the Zig raw-slice semantics (no borrow escapes the stack `params`).
-        let route: RouterMatch<'static> =
-            unsafe { core::mem::transmute::<RouterMatch<'_>, RouterMatch<'static>>(route) };
-
+        // PORT NOTE: Zig leaked `path` here (TODO comment in spec) and pointer-freed it
+        // in `MatchedRoute.deinit` via `mi_free(pathname.ptr)`. We instead MOVE `path`
+        // into `MatchedRoute` so the bytes that `route.pathname`/`query_string`/param
+        // values borrow are owned by the same heap-stable Box and freed on finalize.
         let result = MatchedRoute::init(
             route,
+            path,
             this.origin,
             this.asset_prefix,
             this.base_dir.unwrap(),
         )
         .expect("unreachable");
 
-        // TODO: Memory leak? See PORT NOTE in Zig spec — `path` intentionally leaked here.
-        core::mem::forget(path);
         Ok(result.to_js(global_this))
     }
 
@@ -685,8 +673,10 @@ impl FileSystemRouter {
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct MatchedRoute {
     /// Self-referential: always points at `self.route_holder`. See `init`.
-    // PORT NOTE: `Match<'a>` borrows arena/request bytes that outlive this object via
-    // intentional leaks (see `r#match`); `'static` matches the Zig raw-slice semantics.
+    // PORT NOTE: `Match<'a>` borrows (a) the resolver's process-lifetime DirnameStore for
+    // `name`/`file_path`/`basename`/`path` and (b) `self.pathname_backing` for
+    // `pathname`/`query_string`/param values. Both are stable for `Self`'s lifetime, so
+    // the stored `'static` is the standard self-referential erasure — see `init`.
     pub route: *const RouterMatch<'static>,
     // PORT NOTE: `route_holder`/`params_list_holder` are wrapped in `UnsafeCell` because
     // `route` (above) and `route_holder.params` hold raw self-referential pointers into
@@ -697,6 +687,10 @@ pub struct MatchedRoute {
     pub query_string_map: Option<QueryStringMap>,
     pub param_map: Option<QueryStringMap>,
     pub params_list_holder: UnsafeCell<route_param::List<'static>>,
+    /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
+    /// `params_list_holder` borrow. Replaces the Zig leak-then-`mi_free(pathname.ptr)`
+    /// pattern with proper ownership; freed by Drop on finalize.
+    pub pathname_backing: ZigStringSlice,
     pub origin: Option<*mut RefString>,
     pub asset_prefix: Option<*mut RefString>,
     pub needs_deinit: bool,

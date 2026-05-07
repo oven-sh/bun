@@ -6001,11 +6001,15 @@ struct UnrefSourceMapRequest {
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
-    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
-        Self::run_with_body(self, body, resp)
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+        // SAFETY: caller (BodyReaderMixin) passes the original Box::into_raw'd
+        // pointer with full-allocation provenance and no live borrows.
+        unsafe { Self::run_with_body(this, body, resp) }
     }
-    fn on_error(&mut self) {
-        Self::finalize(self as *mut _);
+    unsafe fn on_error(this: *mut Self) {
+        // SAFETY: caller passes the original Box::into_raw'd pointer; finalize
+        // consumes it via Box::from_raw exactly once.
+        unsafe { Self::finalize(this) }
     }
 }
 
@@ -6015,26 +6019,31 @@ impl UnrefSourceMapRequest {
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: dev as *mut DevServer as *mut DevServer,
+            dev: dev as *mut DevServer,
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request
         unsafe { (*ctx.dev).server.as_mut().unwrap().on_pending_request() };
-        // TODO(port): ctx is leaked into the body reader; freed in finalize()
         let raw = Box::into_raw(ctx);
         uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }
 
-    fn finalize(ctx: *mut UnrefSourceMapRequest) {
-        // SAFETY: ctx was Box::into_raw'd in run()
+    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`;
+    /// called exactly once.
+    unsafe fn finalize(ctx: *mut UnrefSourceMapRequest) {
+        // SAFETY: caller contract — ctx is the original Box allocation; no
+        // live borrow of *ctx exists.
         let ctx = unsafe { Box::from_raw(ctx) };
         // SAFETY: dev outlives the request
         unsafe { (*ctx.dev).server.as_mut().unwrap().on_static_request_complete() };
         drop(ctx);
     }
 
-    fn run_with_body(
-        ctx: &mut UnrefSourceMapRequest,
+    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`.
+    /// On `Ok` this consumes `ctx` via `finalize`; on `Err` ownership stays
+    /// with the caller (BodyReaderMixin → `on_error`).
+    unsafe fn run_with_body(
+        ctx: *mut UnrefSourceMapRequest,
         body: &[u8],
         r: AnyResponse,
     ) -> Result<(), bun_core::Error> {
@@ -6046,12 +6055,16 @@ impl UnrefSourceMapRequest {
             .map_err(|_| bun_core::err!(InvalidRequest))?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
-        // SAFETY: dev outlives the request
-        let _ = unsafe { &mut *ctx.dev }
+        // SAFETY: ctx is live (caller contract); dev outlives the request.
+        let _ = unsafe { &mut *(*ctx).dev }
             .source_maps
             .remove_or_upgrade_weak_ref(source_map_key, source_map_store::RemoveOrUpgradeMode::Remove);
         r.write_status(b"204 No Content");
         r.end(b"", false);
+        // SAFETY: ctx is the original Box::into_raw'd pointer; the only borrow
+        // derived from it points into a separate DevServer allocation and has
+        // ended.
+        unsafe { Self::finalize(ctx) };
         Ok(())
     }
 }

@@ -298,16 +298,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     // Zig: `list.*` — by-value copy of the List.
                     let list_val = unsafe { (*list).clone() };
-                    // PORT NOTE: `installer.manager` is the install-wide
-                    // `crate::PackageManager` (stub) — same global state Zig's
-                    // `installer.manager == manager`. Route through the
-                    // function-scope `manager` (real type) which carries
-                    // `spawn_package_lifecycle_scripts`, dereffing via the raw
-                    // provenance root so the two `&mut` don't alias.
                     let command_ctx = installer.command_ctx;
-                    // SAFETY: see `_drain_guard` provenance note — `manager_ptr`
-                    // is the root tag for every body access to `manager`.
-                    let spawn_res = unsafe { &mut *manager_ptr }.spawn_package_lifecycle_scripts(
+                    // PORT NOTE: `installer.manager == manager` (same allocation,
+                    // see fn-signature note); call via the body shadow which is a
+                    // reborrow of `manager_ptr` — no extra unsafe alias needed.
+                    let spawn_res = manager.spawn_package_lifecycle_scripts(
                         command_ctx,
                         list_val,
                         optional,
@@ -927,19 +922,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        // Iteration-local raw ptrs derived from the *shadows* (not the function-
-        // scope `manager_ptr`/`extract_ctx_ptr`). Under Stacked Borrows these are
-        // children of the shadow's Unique tag, so writing through them in a guard
-        // does NOT pop the shadow — the next loop iteration's use of `manager` /
-        // `extract_ctx` stays valid.
-        let mgr_iter_ptr: *mut PackageManager = manager;
-        let ctx_iter_ptr: *mut C::Ctx = extract_ctx;
-        let _ = ctx_iter_ptr; // used by `_resolve_guard` below
+        // The per-iteration scopeguards capture the function-scope provenance
+        // roots (`manager_ptr`/`extract_ctx_ptr`) — the body shadows
+        // `manager`/`extract_ctx` are reborrows of those same roots (see
+        // `_drain_guard` setup), so dereffing a root in a guard is valid both
+        // before *and* after every body use of the shadow under Stacked Borrows.
         let _put_task = scopeguard::guard((), move |()| {
-            // SAFETY: `mgr_iter_ptr`/`task_ptr` are live for the whole iteration;
-            // body accesses go through reborrows of these pointers, so their tags
-            // are still on the borrow stack when the guard fires.
-            unsafe { (*mgr_iter_ptr).preallocated_resolve_tasks.put(task_ptr) };
+            // SAFETY: `manager_ptr` is the provenance root for every body access
+            // to `manager`; `task_ptr` is the sole live handle to this pool slot.
+            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(task_ptr) };
         });
         manager.decrement_pending_tasks();
 
@@ -958,12 +949,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
                 let _put_net = scopeguard::guard((), move |()| {
-                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
-                    // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
-                    // `task.tag == PackageManifest` so `request.package_manifest`
-                    // is the active union arm.
+                    // SAFETY: see `_put_task` above — `manager_ptr` is the
+                    // function-scope provenance root; `task.tag == PackageManifest`
+                    // so `request.package_manifest` is the active union arm.
                     unsafe {
-                        (*mgr_iter_ptr)
+                        (*manager_ptr)
                             .preallocated_network_tasks
                             .put((*task_ptr).request.package_manifest.network);
                     }
@@ -1023,12 +1013,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
                 let _put_net = scopeguard::guard((), move |()| {
-                    // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
-                    // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
-                    // `task.tag == Extract` so `request.extract` is the active arm.
+                    // SAFETY: see `_put_task` above — `manager_ptr` is the
+                    // function-scope provenance root; `task.tag == Extract` so
+                    // `request.extract` is the active union arm.
                     unsafe {
                         if (*task_ptr).tag == Task::Tag::Extract {
-                            (*mgr_iter_ptr)
+                            (*manager_ptr)
                                 .preallocated_network_tasks
                                 .put((*task_ptr).request.extract.network);
                         }
@@ -1168,12 +1158,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let any_root = unsafe { &mut *any_root_ptr };
                         let _resolve_guard = scopeguard::guard((), move |()| {
                             // SAFETY: `any_root_ptr` outlives this labeled block and the
-                            // body only touches it via the shadow above; `ctx_iter_ptr`
-                            // is a child of the function-scope `extract_ctx` shadow so
-                            // dereffing it does not invalidate that shadow for the next
-                            // loop iteration.
+                            // body only touches it via the shadow above; `extract_ctx_ptr`
+                            // is the function-scope provenance root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
-                                C::on_resolve(unsafe { &mut *ctx_iter_ptr });
+                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         });
 
@@ -1482,10 +1470,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         let any_root = unsafe { &mut *any_root_ptr };
                         let _resolve_guard = scopeguard::guard((), move |()| {
                             // SAFETY: see Extract arm `_resolve_guard` — `any_root_ptr`
-                            // accessed only via the shadow; `ctx_iter_ptr` is a child of
-                            // the function-scope `extract_ctx` shadow.
+                            // accessed only via the shadow; `extract_ctx_ptr` is the
+                            // function-scope provenance root for `extract_ctx`.
                             if C::HAS_ON_RESOLVE && unsafe { *any_root_ptr } {
-                                C::on_resolve(unsafe { &mut *ctx_iter_ptr });
+                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
                             }
                         });
 

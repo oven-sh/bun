@@ -14,18 +14,15 @@
 #![allow(clippy::module_inception)]
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::Ordering;
 
-use bun_collections::{
-    bit_set::DynamicBitSet, ArrayHashMap, HiveArray, StringArrayHashMap, StringHashMap,
-};
-use bun_logger::Log;
+use bun_collections::{bit_set::DynamicBitSet, ArrayHashMap, StringArrayHashMap};
 use bun_safety::ThreadLock;
 
-use super::framework_router::{self, FrameworkRouter, OpaqueFileId, RouteIndex};
+use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
-use super::{Framework, Graph, Side, SplitBundlerOptions};
-use crate::server::{html_bundle::HTMLBundleRoute, AnyServer, SavedRequest, StaticRoute};
+use super::{Graph, Side};
+use crate::server::StaticRoute;
 
 // ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
 // Each draft is a faithful port of the `.zig` sibling but depends on

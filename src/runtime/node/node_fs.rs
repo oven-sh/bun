@@ -4343,11 +4343,13 @@ impl NodeFS {
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
-        // PORT NOTE: Zig has a `Syscall::fstatx` / `SUPPORTS_STATX_ON_LINUX`
-        // fast-path (Linux ≥4.11). `bun_sys` does not expose `statx` yet, so
-        // this falls through to plain `fstat` — identical to the Zig behaviour
-        // when statx is unavailable.
-        // PERF(port): wire `bun_sys::fstatx` once it lands — profile in Phase B.
+        #[cfg(target_os = "linux")]
+        if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
+            return match sys::fstatx(args.fd, sys::STATX_MASK_FOR_STATS) {
+                Maybe::Ok(result) => Maybe::Ok(Stats::init(&result, args.big_int)),
+                Maybe::Err(err) => Maybe::Err(err),
+            };
+        }
         match Syscall::fstat(args.fd) {
             Maybe::Ok(result) => Maybe::Ok(Stats::init(&PosixStat::init(&result), args.big_int)),
             Maybe::Err(err) => Maybe::Err(err),
@@ -4424,8 +4426,20 @@ impl NodeFS {
     }
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
-        // PERF(port): `Syscall::lstatx` fast-path — see `fstat`.
-        match Syscall::lstat(args.path.slice_z(&mut self.sync_error_buf)) {
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        #[cfg(target_os = "linux")]
+        if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
+            return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
+                Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
+                Maybe::Err(err) => {
+                    if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
+                        return Maybe::Ok(StatOrNotFound::NotFound);
+                    }
+                    Maybe::Err(err.with_path(args.path.slice()))
+                }
+            };
+        }
+        match Syscall::lstat(path) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
@@ -5912,7 +5926,18 @@ impl NodeFS {
                 return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }
-        // PERF(port): `Syscall::statx` fast-path — see `fstat`.
+        #[cfg(target_os = "linux")]
+        if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
+            return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
+                Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
+                Maybe::Err(err) => {
+                    if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
+                        return Maybe::Ok(StatOrNotFound::NotFound);
+                    }
+                    Maybe::Err(err.with_path(args.path.slice()))
+                }
+            };
+        }
         match Syscall::stat(path) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {

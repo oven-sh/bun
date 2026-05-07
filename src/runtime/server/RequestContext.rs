@@ -148,9 +148,12 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // TODO(port): LIFETIMES.tsv = SHARED → Arc<AbortSignal>. Shim AbortSignal
-    // is opaque/Copy; revisit once bun_jsc::AbortSignal is real.
-    pub signal: Option<Arc<AbortSignal>>,
+    // PORT NOTE: Zig `?*AbortSignal` (intrusive C++ refcount via
+    // `pendingActivityRef`/`pendingActivityUnref`). `Arc<AbortSignal>` was
+    // wrong — `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST
+    // never owns the C++ allocation. Store the raw pointer; ref/unref are
+    // routed through the C++ intrusive count (`shim::signal_unref`).
+    pub signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
     pub cookies: Option<*mut CookieMap>,
 
@@ -301,14 +304,18 @@ mod shim {
     #[inline] pub fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
     }
-    #[inline] pub fn signal_aborted(s: &Arc<AbortSignal>) -> bool {
-        s.aborted()
+    #[inline] pub fn signal_aborted(s: &NonNull<AbortSignal>) -> bool {
+        // SAFETY: `signal` is kept alive by `pending_activity_ref()` until
+        // `signal_unref` runs (intrusive C++ refcount).
+        unsafe { s.as_ref() }.aborted()
     }
-    #[inline] pub fn signal_fire(s: &Arc<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
-        s.signal(g, r)
+    #[inline] pub fn signal_fire(s: &NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+        // SAFETY: see `signal_aborted`.
+        unsafe { s.as_ref() }.signal(g, r)
     }
-    #[inline] pub fn signal_unref(s: &Arc<AbortSignal>) {
-        s.pending_activity_unref()
+    #[inline] pub fn signal_unref(s: &NonNull<AbortSignal>) {
+        // SAFETY: see `signal_aborted`.
+        unsafe { s.as_ref() }.pending_activity_unref()
     }
     #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
         cb.trigger(ev, g)

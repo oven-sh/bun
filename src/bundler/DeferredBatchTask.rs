@@ -5,10 +5,8 @@
 //! for every onLoad callback which called `.defer()`.
 
 use core::mem::offset_of;
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::bundle_v2::{JSBundleCompletionTask, JSBundlerPlugin};
+use crate::bundle_v2::JSBundlerPlugin;
 use crate::BundleV2;
 // CYCLEBREAK hot-dispatch: Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
@@ -18,15 +16,14 @@ use bun_event_loop::{Task, task_tag};
 pub use bun_js_parser::Ref;
 pub use bun_js_parser::Index;
 
+/// Re-export for callers that previously named
+/// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
+/// `bundle_v2::dispatch` alongside the other §Dispatch vtables.
+pub use crate::bundle_v2::dispatch::CompletionDispatch;
+
 // ──────────────────────────────────────────────────────────────────────────
-// CYCLEBREAK FORWARD_DECL bridges (mirrors ParseTask.rs:69 pattern):
-// `JSBundlerPlugin` / `JSBundleCompletionTask` are opaque `[u8; 0]` in
-// `bundle_v2.rs`; concrete layouts live in T6 (`bun_runtime::api::JSBundler`
-// / `bun_bundler_jsc`). `drainDeferred` has a real C++ entry point so we go
-// straight to FFI. The two `JSBundleCompletionTask` field reads have no C++
-// backing — T6 registers a tiny vtable at init so the bundler can read them
-// without naming the concrete struct. PERF(port): was direct field access in
-// Zig (`completion.result == .err`, `completion.jsc_event_loop`).
+// CYCLEBREAK FORWARD_DECL bridge: `JSBundlerPlugin` is an extern C++ type;
+// `drainDeferred` has a real C++ entry point so we go straight to FFI.
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     // src/jsc/bindings/JSBundlerPlugin.cpp: `JSBundlerPlugin__drainDeferred`.
@@ -34,18 +31,6 @@ unsafe extern "C" {
     // the only caller (`runOnJSThread` below) is `catch return`, so the void
     // FFI call is the observable behaviour.
     fn JSBundlerPlugin__drainDeferred(this: *mut JSBundlerPlugin, rejected: bool);
-}
-
-/// Registered by T6 (`bun_bundler_jsc`) at init.
-pub static COMPLETION_DISPATCH: AtomicPtr<CompletionDispatch> =
-    AtomicPtr::new(core::ptr::null_mut());
-pub struct CompletionDispatch {
-    /// Zig: `completion.result == .err`
-    pub result_is_err: unsafe fn(NonNull<JSBundleCompletionTask>) -> bool,
-    /// Zig: `completion.jsc_event_loop.enqueueTaskConcurrent(task)` — folds the
-    /// field access + enqueue so the bundler needn't name `*jsc.EventLoop`.
-    pub enqueue_task_concurrent:
-        unsafe fn(NonNull<JSBundleCompletionTask>, *mut ConcurrentTask),
 }
 
 #[derive(Default)]
@@ -101,15 +86,10 @@ impl DeferredBatchTask {
         {
             let bv2 = self.get_bundle_v2();
             // Zig: `if (bv2.completion) |c| c.result == .err else false`
-            let rejected = match bv2.completion {
-                Some(completion) => {
-                    let vt = COMPLETION_DISPATCH.load(Ordering::Acquire);
-                    debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
-                    // SAFETY: vtable registered by T6; `completion` is a live non-null backref.
-                    unsafe { ((*vt).result_is_err)(NonNull::new_unchecked(completion)) }
-                }
-                None => false,
-            };
+            let rejected = bv2
+                .completion
+                .map(|c| c.result_is_err())
+                .unwrap_or(false);
             // Zig: `bv2.plugins.?.drainDeferred(rejected) catch return;`
             let plugins = bv2.plugins.expect("plugins");
             // SAFETY: `plugins` is a live opaque C++ BunPlugin; FFI signature
@@ -135,5 +115,5 @@ impl DeferredBatchTask {
 //   source:     src/bundler/DeferredBatchTask.zig (52 lines)
 //   confidence: medium
 //   todos:      0
-//   notes:      intrusive container_of into BundleV2.drain_defer_task; jsLoopForPlugins inlined via COMPLETION_DISPATCH vtable (CYCLEBREAK — T6 owns JSBundleCompletionTask layout)
+//   notes:      intrusive container_of into BundleV2.drain_defer_task; jsLoopForPlugins routed via dispatch::CompletionHandle (CYCLEBREAK §Dispatch — T6 owns JSBundleCompletionTask layout)
 // ──────────────────────────────────────────────────────────────────────────

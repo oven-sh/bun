@@ -468,10 +468,13 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         set_socket_field: Option<impl FnOnce(&mut This, Self)>,
         is_ipc: bool,
     ) -> Option<Self> {
+        // Zig `?*This` is null-niche optimized (8 bytes); the dispatch
+        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
+        // write must match that layout — NOT `Option<*mut This>` (16 bytes).
         let raw = g.from_fd(
             k,
             core::ptr::null_mut(),
-            size_of::<Option<*mut This>>() as c_int,
+            size_of::<Option<core::ptr::NonNull<This>>>() as c_int,
             handle.native(),
             is_ipc,
         );
@@ -480,7 +483,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         }
 
         // SAFETY: ext storage is sized for `?*This` and `raw` is live.
-        unsafe { *(*raw).ext::<Option<*mut This>>() = Some(this) };
+        unsafe { *(*raw).ext::<Option<core::ptr::NonNull<This>>>() = core::ptr::NonNull::new(this) };
         if let Some(set) = set_socket_field {
             // PORT NOTE: reshaped for borrowck — `Self` holds `&'a mut` (BORROW_PARAM)
             // so it isn't `Clone`; rebuild the `Connected(raw)` variant instead.
@@ -540,6 +543,11 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         let port: c_int = port.try_into().expect("infallible: size matches");
 
         let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
+        // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch
+        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
+        // write must match that layout — NOT `Option<*mut Owner>` (16 bytes,
+        // discriminant-first), which would hand the trampoline `1` instead of
+        // the owner pointer.
         match g.connect(
             kind,
             ssl_ctx_ptr,
@@ -547,17 +555,23 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
             unsafe { core::ffi::CStr::from_ptr(host_z.as_ptr()) },
             port,
             opts,
-            size_of::<Option<*mut Owner>>() as c_int,
+            size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int,
         ) {
             crate::ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             crate::ConnectResult::Socket(s) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-                unsafe { *(*s).ext::<Option<*mut Owner>>() = Some(owner) };
+                unsafe {
+                    *(*s).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                        core::ptr::NonNull::new(owner)
+                };
                 Ok(Self { socket: InternalSocket::Connected(s) })
             }
             crate::ConnectResult::Connecting(cs) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `cs` is live.
-                unsafe { *(*cs).ext::<Option<*mut Owner>>() = Some(owner) };
+                unsafe {
+                    *(*cs).ext::<Option<core::ptr::NonNull<Owner>>>() =
+                        core::ptr::NonNull::new(owner)
+                };
                 Ok(Self { socket: InternalSocket::Connecting(cs) })
             }
         }
@@ -573,18 +587,21 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     ) -> Result<Self, ConnectError> {
         let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
         let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
+        // Zig `?*Owner` — see connect_group above for layout rationale.
         let s = g.connect_unix(
             kind,
             ssl_ctx_ptr,
             path,
             opts,
-            size_of::<Option<*mut Owner>>() as c_int,
+            size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int,
         );
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }
         // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe { *(*s).ext::<Option<*mut Owner>>() = Some(owner) };
+        unsafe {
+            *(*s).ext::<Option<core::ptr::NonNull<Owner>>>() = core::ptr::NonNull::new(owner)
+        };
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 

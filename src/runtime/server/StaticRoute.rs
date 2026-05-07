@@ -220,7 +220,7 @@ impl StaticRoute {
             };
 
             if was_string && headers.get_content_type().is_none() {
-                headers.append(b"Content-Type", &bun_http_types::MimeType::TEXT.value);
+                headers.append(b"Content-Type", b"text/plain; charset=utf-8");
             }
 
             // Generate ETag if not already present

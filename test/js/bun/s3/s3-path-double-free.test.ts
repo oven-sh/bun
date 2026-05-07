@@ -22,4 +22,36 @@ describe("S3 path ownership on error", () => {
     expect(() => client.presign(path, badOptions)).toThrow();
     Bun.gc(true);
   });
+
+  // The constructor does fallible work (reading options.type) after initS3
+  // has already taken ownership of the path. A getter that throws on its
+  // second invocation triggers that error path.
+  test("S3Client.presign (static) throwing options.type getter", () => {
+    const path = ["some", "path", Math.random()].join("-");
+    let calls = 0;
+    expect(() =>
+      Bun.S3Client.presign(path, {
+        get type() {
+          if (++calls > 1) throw new Error("boom");
+          return undefined;
+        },
+      }),
+    ).toThrow("boom");
+    Bun.gc(true);
+  });
+
+  test("S3Client#presign (instance) throwing options.type getter", () => {
+    const client = new Bun.S3Client({});
+    const path = ["some", "path", Math.random()].join("-");
+    let calls = 0;
+    expect(() =>
+      client.presign(path, {
+        get type() {
+          if (++calls > 1) throw new Error("boom");
+          return undefined;
+        },
+      }),
+    ).toThrow("boom");
+    Bun.gc(true);
+  });
 });

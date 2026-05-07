@@ -738,7 +738,7 @@ impl<'a> UrlProtocolPair<'a> {
     fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
         // get rid of -- in theory, URL.zig could allocate once.
-        let new_str = strings::concat(parts).ok()?;
+        let new_str = bun_core::handle_oom(strings::concat(parts));
         // Drop handles `defer allocator.free(new_str)`.
         JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
     }

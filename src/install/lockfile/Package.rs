@@ -1377,10 +1377,10 @@ impl Diff {
                 // common case, dependency is present in both versions:
                 // - in the same position
                 // - shifted by a constant offset
-                while to_i < to_deps.len() {
-                    if from_dep.name_hash == to_deps[to_i].name_hash {
+                while to_i < to_deps!().len() {
+                    if from_dep.name_hash == to_deps!()[to_i].name_hash {
                         let from_behavior = from_dep.behavior;
-                        let to_behavior = to_deps[to_i].behavior;
+                        let to_behavior = to_deps!()[to_i].behavior;
 
                         if from_behavior != to_behavior {
                             to_i += 1;
@@ -1395,9 +1395,9 @@ impl Diff {
                 // less common, o(n^2) case
                 to_i = 0;
                 while to_i < prev_i {
-                    if from_dep.name_hash == to_deps[to_i].name_hash {
+                    if from_dep.name_hash == to_deps!()[to_i].name_hash {
                         let from_behavior = from_dep.behavior;
-                        let to_behavior = to_deps[to_i].behavior;
+                        let to_behavior = to_deps!()[to_i].behavior;
 
                         if from_behavior != to_behavior {
                             to_i += 1;
@@ -1424,7 +1424,7 @@ impl Diff {
             to_i += 1;
 
             if Dependency::eql(
-                &to_deps[cur_to_i],
+                &to_deps!()[cur_to_i],
                 from_dep,
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
@@ -1468,21 +1468,28 @@ impl Diff {
                         );
                         package_json_path.append(b"package.json");
 
-                        // TODO(port): `bun.sys.File.toSource` was removed from
+                        // PORT NOTE: `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `logger::Source` lives in T2.
                         // Route through the workspace cache's path-based getter
                         // instead, which both reads and parses.
                         let mut workspace_pkg = Package::default();
 
-                        let json_entry = match pm
+                        // The cache entry borrows `pm.workspace_package_json_cache`;
+                        // capture stable raw pointers to its fields so the
+                        // `&mut pm` reborrow below doesn't conflict. The entry
+                        // lives in a `StringHashMap` whose backing storage is
+                        // not touched by `parse_with_json`.
+                        let (source_ptr, json_root): (*const logger::Source, Expr) = match pm
                             .workspace_package_json_cache
-                            .get_with_path(log, package_json_path.slice(), Default::default())
+                            .get_with_path(&mut *log, package_json_path.slice(), Default::default())
                             .unwrap()
                         {
-                            Ok(entry) => entry,
+                            Ok(entry) => (&entry.source as *const _, entry.root),
                             Err(_) => break 'update_mapping false,
                         };
-                        let source = &json_entry.source;
+                        // SAFETY: see note above — entry storage is stable for
+                        // the remainder of this block.
+                        let source = unsafe { &*source_ptr };
 
                         let mut resolver: () = ();
                         workspace_pkg.parse_with_json::<()>(
@@ -1490,23 +1497,25 @@ impl Diff {
                             pm,
                             log,
                             source,
-                            json_entry.root,
+                            json_root,
                             &mut resolver,
                             Features::WORKSPACE,
                         )?;
 
+                        // `parse_with_json` may have grown `to_lockfile.buffers
+                        // .dependencies` — re-derive the slice (Zig did the same).
                         to_deps =
                             to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
 
-                        let mut from_pkg =
+                        let from_pkg =
                             from_lockfile.packages.get(from_resolutions[i] as usize);
                         let diff = Self::generate(
                             pm,
                             log,
                             from_lockfile,
                             to_lockfile,
-                            &mut from_pkg,
-                            &mut workspace_pkg,
+                            &from_pkg,
+                            &workspace_pkg,
                             update_requests,
                             None,
                         )?;
@@ -1542,7 +1551,7 @@ impl Diff {
         // Use saturating arithmetic here because a migrated
         // package-lock.json could be out of sync with the package.json, so the
         // number of from_deps could be greater than to_deps.
-        summary.add = (to_deps
+        summary.add = (to_deps!()
             .len()
             .saturating_sub(from_deps.len().saturating_sub(summary.remove as usize)))
             as u32;

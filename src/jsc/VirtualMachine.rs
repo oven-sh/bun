@@ -1330,11 +1330,12 @@ pub struct RuntimeHooks {
         opts: WorkerInitOptions,
     ) -> Result<*mut VirtualMachine, bun_core::Error>,
     /// `bun.bun_js.applyStandaloneRuntimeFlags(b, graph)` — spec
-    /// web_worker.zig:552. `graph` is the erased `*StandaloneModuleGraph`
-    /// (high-tier owned); applies `--compile`-baked runtime flags to the
-    /// worker's transpiler.
+    /// web_worker.zig:552. Applies `--compile`-baked runtime flags to the
+    /// worker's transpiler. `graph` is the same trait object stored in
+    /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
+    /// `bun_standalone::StandaloneModuleGraph`).
     pub apply_standalone_runtime_flags:
-        unsafe fn(transpiler: *mut Transpiler<'static>, graph: NonNull<c_void>),
+        unsafe fn(transpiler: *mut Transpiler<'static>, graph: &'static dyn bun_resolver::StandaloneModuleGraph),
     /// Spec web_worker.zig:445-476 — parse `execArgv` with the `RunCommand`
     /// param table and apply recognised flags to `transform_options`. The
     /// param table lives in `bun_runtime::cli` (forward-dep). Currently only

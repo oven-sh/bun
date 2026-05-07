@@ -273,7 +273,7 @@ impl<'a> Loader<'a> {
         true
     }
 
-    pub fn get_http_proxy_for(&mut self, url: &URL<'_>) -> Option<URL<'_>> {
+    pub fn get_http_proxy_for(&mut self, url: &URL<'_>) -> Option<URL<'a>> {
         self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
     }
 

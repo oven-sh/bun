@@ -1064,6 +1064,6 @@ impl JSCArrayBuffer {
 // PORT STATUS
 //   source:     src/jsc/array_buffer.zig (692 lines)
 //   confidence: medium
-//   todos:      16
-//   notes:      const-generic JSType KIND restored via adt_const_params; unaligned u16/u32 slices need a Rust strategy; ArrayBufferStrong.clear references nonexistent field upstream; MarkedArrayBuffer allocator field collapsed to owns_buffer bool
+//   todos:      7
+//   notes:      const-generic JSType KIND restored via adt_const_params; asU16/asU32 unaligned variants ported soundly via bun_core::Unaligned<T> (repr(packed)) with @alignCast debug_assert in slice_align_cast_mut; ArrayBufferStrong.clear references nonexistent field upstream; MarkedArrayBuffer allocator field collapsed to owns_buffer bool
 // ──────────────────────────────────────────────────────────────────────────

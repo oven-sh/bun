@@ -1369,10 +1369,10 @@ impl Expect {
                     } else {
                         bun_str::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
                     };
-                    return Err(global_this.throw_invalid_arguments2(
-                        "expect.extend: `{f}` is not a valid matcher. Must be a function, is \"{f}\"",
-                        format_args!("{} {}", matcher_name, type_name),
-                    ));
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "expect.extend: `{}` is not a valid matcher. Must be a function, is \"{}\"",
+                        matcher_name, type_name,
+                    )));
                 }
 
                 // Mutate the Expect/ExpectStatic prototypes/constructor with new instances of JSCustomExpectMatcherFunction.

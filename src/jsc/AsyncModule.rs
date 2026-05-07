@@ -129,7 +129,22 @@ impl Queue {
     }
 }
 
-impl<'a> AsyncModule<'a> {
+// Taskable: `Queue` is enqueued via `ConcurrentTask::create_from(this)` in
+// `on_wake_handler` and dispatched in `bun_runtime::dispatch::run_task` →
+// `vm.modules.on_poll()` (Zig: `PollPendingModulesTask`). The pointer is a
+// borrow into `VirtualMachine.modules`, never freed by the dispatcher.
+impl bun_event_loop::Taskable for Queue {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+}
+
+impl AsyncModule {
+    /// SAFETY: `global_this` is the per-thread `JSGlobalObject` (set in
+    /// `init`); outlives every `AsyncModule` (both are VM-lifetime).
+    #[inline]
+    fn global_this(&self) -> &JSGlobalObject {
+        unsafe { self.global_this.as_ref() }
+    }
+
     #[inline]
     pub fn referrer(&self) -> &[u8] {
         &self.string_buf[..self.referrer_len as usize]
@@ -219,7 +234,7 @@ impl<'a> AsyncModule<'a> {
 
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
-        jsc::from_js_host_call_generic(global_this, || {
+        jsc::from_js_host_call_generic(global_this, core::panic::Location::caller(), || {
             // SAFETY: C ABI — all pointers are valid for the call; `errorable`
             // / `specifier` / `referrer` outlive the FFI body.
             unsafe {

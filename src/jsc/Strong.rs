@@ -39,6 +39,16 @@ impl Strong {
         self.set(global, new_value);
         result
     }
+
+    /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
+    /// taking ownership. The handle will be destroyed on `Drop`.
+    ///
+    /// # Safety
+    /// `handle` must have been produced by `Bun__StrongRef__new` (or equivalent)
+    /// and must not be owned by any other `Strong`/`Optional`.
+    pub unsafe fn adopt(handle: NonNull<Impl>) -> Strong {
+        Strong { handle }
+    }
 }
 
 impl Drop for Strong {
@@ -70,6 +80,16 @@ impl Default for Optional {
 impl Optional {
     pub const fn empty() -> Optional {
         Optional { handle: None }
+    }
+
+    /// Adopt an `Impl` handle allocated externally (e.g. by C++ bindgen glue),
+    /// taking ownership if non-null. The handle will be destroyed on `Drop`.
+    ///
+    /// # Safety
+    /// If `Some`, `handle` must have been produced by `Bun__StrongRef__new`
+    /// (or equivalent) and must not be owned by any other `Strong`/`Optional`.
+    pub unsafe fn adopt(handle: Option<NonNull<Impl>>) -> Optional {
+        Optional { handle }
     }
 
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.

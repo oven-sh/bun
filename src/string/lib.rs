@@ -1261,6 +1261,104 @@ impl Drop for ZigStringSlice {
     }
 }
 
+impl ZigStringSlice {
+    /// `ZigString.Slice.length()` — byte length of the slice payload.
+    #[inline]
+    pub fn length(&self) -> usize {
+        match self {
+            Self::Static(_, l) => *l,
+            Self::Owned(v) => v.len(),
+            Self::WTF { len, .. } => *len,
+        }
+    }
+
+    /// True iff this slice owns a heap allocation that would be freed on
+    /// `Drop`. Replaces the Zig `slice.allocator.get().is_some()` idiom: in
+    /// Rust the allocator is implicit in the variant.
+    #[inline]
+    pub fn is_allocated(&self) -> bool {
+        matches!(self, Self::Owned(_) | Self::WTF { .. })
+    }
+
+    /// True iff this slice is backed by a `WTF::StringImpl` ref (the Zig
+    /// `String.isWTFAllocator(slice.allocator)` check).
+    #[inline]
+    pub fn is_wtf_allocated(&self) -> bool {
+        matches!(self, Self::WTF { .. })
+    }
+
+    /// Consume an `Owned` slice into the raw `(ptr, len)` pair without freeing,
+    /// for hand-off to a foreign owner (JSC external string). Any other
+    /// variant returns `None` and leaves `self` untouched.
+    pub fn take_owned_raw(&mut self) -> Option<(*const u8, usize)> {
+        if !matches!(self, Self::Owned(_)) {
+            return None;
+        }
+        let Self::Owned(v) = core::mem::take(self) else { unreachable!() };
+        let mut v = core::mem::ManuallyDrop::new(v);
+        // Shrink so the foreign `mi_free(ptr)` releases exactly this block.
+        v.shrink_to_fit();
+        Some((v.as_ptr(), v.len()))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SliceWithUnderlyingString
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.SliceWithUnderlyingString` — a UTF-8 byte view (`utf8`) optionally
+/// pinned by a refcounted `bun.String` (`underlying`). When `underlying` is
+/// live the bytes alias its storage; when dead the bytes are independently
+/// owned (or static). JSC bridge methods (`toJS`, `transferToJS`) live in
+/// `bun_jsc::bun_string_jsc` to keep this crate free of `JSValue`.
+pub struct SliceWithUnderlyingString {
+    pub utf8: ZigStringSlice,
+    pub underlying: String,
+
+    #[cfg(debug_assertions)]
+    pub did_report_extra_memory_debug: bool,
+}
+
+impl Default for SliceWithUnderlyingString {
+    fn default() -> Self {
+        Self {
+            utf8: ZigStringSlice::EMPTY,
+            underlying: String::DEAD,
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+}
+
+impl SliceWithUnderlyingString {
+    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
+        SliceWithUnderlyingString {
+            utf8: ZigStringSlice::EMPTY,
+            underlying: self.underlying.dupe_ref(),
+            #[cfg(debug_assertions)]
+            did_report_extra_memory_debug: false,
+        }
+    }
+
+    #[inline]
+    pub fn slice(&self) -> &[u8] {
+        self.utf8.slice()
+    }
+
+    #[inline]
+    pub fn is_wtf_allocated(&self) -> bool {
+        self.utf8.is_wtf_allocated()
+    }
+}
+
+impl Drop for SliceWithUnderlyingString {
+    fn drop(&mut self) {
+        // `utf8` has its own Drop; `underlying` carries an intrusive refcount
+        // that must be released explicitly (matching Zig's `deinit`).
+        self.underlying.deref();
+    }
+}
+
 // PORTING.md: ZStr/WStr are length-carrying NUL-terminated slices.
 // bun_core re-exports these; we are the canonical home.
 pub use bun_core::{ZStr, WStr};

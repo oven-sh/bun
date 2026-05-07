@@ -3032,7 +3032,7 @@ pub fn percent_encode_write(
 
 // B-2: unicode core re-exported at top of file. Remaining submodule re-exports
 // land when `unicode_draft`/`visible_draft`/`paths_draft`/`escape_html_draft` un-gate.
-pub use crate::escape_reg_exp::escape_reg_exp;
+pub use crate::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
 // TODO(b2-gated): full transcoding suite from unicode_draft —
 //   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
 // TODO(b2-gated): visible::{visible, visible_codepoint_width, ...}

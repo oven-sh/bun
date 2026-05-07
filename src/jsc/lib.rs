@@ -421,7 +421,9 @@ pub mod garbage_collection_controller;
 #[path = "ZigException.rs"] pub mod zig_exception;
 #[path = "JSPropertyIterator.rs"] pub mod js_property_iterator;
 #[path = "javascript_core_c_api.rs"] pub mod c_api;
-#[path = "generated_classes_list.rs"] pub mod generated_classes_list;
+// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
+// every aliased type lives in api/webcore/test_runner/bake, so mounting it
+// here would create a `bun_jsc → bun_runtime` cycle.
 #[path = "AsyncModule.rs"] pub mod async_module;
 #[path = "BunCPUProfiler.rs"] pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"] pub mod bun_heap_profiler;

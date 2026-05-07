@@ -603,56 +603,38 @@ impl CompileC {
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
         {
-            let mut which_buf = PathBuffer::uninit();
-
-            let process = match crate::api::process::spawn_sync(
-                &crate::api::process::SpawnOptions {
-                    stdout: crate::api::process::Stdio::Buffer,
-                    stdin: crate::api::process::Stdio::Ignore,
-                    stderr: crate::api::process::Stdio::Ignore,
-                    argv: &[
-                        bun_core::which(
-                            &mut which_buf,
-                            // SAFETY: getenv result valid for process lifetime
-                            unsafe {
-                                let p = libc::getenv(b"PATH\0".as_ptr() as *const c_char);
-                                if p.is_null() {
-                                    b""
-                                } else {
-                                    bun_str::slice_to_nul(core::slice::from_raw_parts(
-                                        p as *const u8,
-                                        usize::MAX,
-                                    ))
-                                }
-                            },
-                            Fs::FileSystem::instance().top_level_dir,
-                            b"xcrun",
-                        )
-                        .unwrap_or(b"/usr/bin/xcrun"),
-                        b"-sdk",
-                        b"macosx",
-                        b"-show-sdk-path",
-                    ],
-                    // SAFETY: environ is process-global
-                    envp: unsafe { libc::environ as _ },
-                    ..Default::default()
-                },
-            ) {
-                Ok(p) => p,
+            // Zig: `bun.spawnSync(&.{ argv = ["xcrun", "-sdk", "macosx",
+            // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
+            // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
+            // yet (see install/repository.rs TODO), so use std::process as a
+            // Phase-A shim — semantics match: inherit env, ignore stdin/stderr,
+            // capture stdout, treat any spawn/exit failure as "not found"
+            // (Zig: `catch return` / `if (process.result.isOK())`).
+            // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
+            // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            let out = match std::process::Command::new("xcrun")
+                .arg("-sdk")
+                .arg("macosx")
+                .arg("-show-sdk-path")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+            {
+                Ok(o) => o,
                 Err(_) => return,
             };
-            if let bun_sys::Result::Ok(result) = process {
-                if result.is_ok() {
-                    let stdout = result.stdout.as_slice();
-                    if !stdout.is_empty() {
-                        let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR.set(
-                            bun_core::ZBox::from_vec_with_nul(
-                                strings::trim(stdout, b"\n\r").to_vec(),
-                            ),
-                        );
-                    }
-                }
+            if !out.status.success() {
+                return;
             }
+            use bstr::ByteSlice as _;
+            let stdout = out.stdout.as_slice();
+            // Zig: `strings.trim(stdout, "\n\r")`
+            let trimmed: &[u8] = stdout.trim_with(|c| c == '\n' || c == '\r');
+            if trimmed.is_empty() {
+                return;
+            }
+            let _ = CACHED_DEFAULT_SYSTEM_INCLUDE_DIR
+                .set(bun_core::ZBox::from_bytes(trimmed));
         }
         #[cfg(target_os = "linux")]
         {
@@ -785,25 +767,19 @@ impl CompileC {
 
                 for sdkroot in dirs_to_try {
                     if !sdkroot.is_empty() {
-                        let include_dir = path::join_abs_string_buf_z(
-                            sdkroot,
-                            &mut pathbuf,
-                            &[b"usr", b"include"],
-                            path::Style::Auto,
-                        );
+                        let include_dir = path::resolve_path::join_abs_string_buf_z::<
+                            path::platform::Auto,
+                        >(sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]);
                         if state.add_sys_include_path(include_dir).is_err() {
-                            global_this.throw("TinyCC failed to add sysinclude path");
+                            global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(bun_core::err!("JSError"));
                         }
 
-                        let lib_dir = path::join_abs_string_buf_z(
-                            sdkroot,
-                            &mut pathbuf,
-                            &[b"usr", b"lib"],
-                            path::Style::Auto,
-                        );
+                        let lib_dir = path::resolve_path::join_abs_string_buf_z::<
+                            path::platform::Auto,
+                        >(sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]);
                         if state.add_library_path(lib_dir).is_err() {
-                            global_this.throw("TinyCC failed to add library path");
+                            global_this.throw(format_args!("TinyCC failed to add library path"));
                             return Err(bun_core::err!("JSError"));
                         }
 

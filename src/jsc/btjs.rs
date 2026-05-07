@@ -66,14 +66,13 @@ mod zig_std_debug {
             }
             #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
             {
-                // The libc crate only binds getcontext(3) on Linux/macOS;
-                // FreeBSD has it (sys/ucontext.h) but the binding is missing.
-                #[cfg(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd"))]
+                // The `libc` crate omits the getcontext(3) binding on Darwin
+                // and the BSDs (it exists in libSystem / libc); declare locally.
+                // On Linux/glibc the crate does provide it, but we use the same
+                // local decl for uniformity.
                 unsafe extern "C" {
                     fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
                 }
-                #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd")))]
-                use libc::getcontext;
                 // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
                 let result = unsafe { getcontext(context) } == 0;
                 // On aarch64-macos, the system getcontext doesn't write anything into the pc

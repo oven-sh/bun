@@ -1080,7 +1080,7 @@ pub mod get_addr_info_request {
             { unreachable!(); }
             #[cfg(target_os = "macos")]
             unsafe {
-                jsc::mark_binding(core::panic::Location::caller());
+                jsc::mark_binding();
                 if !getaddrinfo_send_reply(
                     (*this).backend.as_libinfo().machport,
                     lib_info::getaddrinfo_async_handle_reply().unwrap(),
@@ -2540,7 +2540,8 @@ pub mod internal {
                         (*req).libinfo.machport = machport;
                         // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
-                        poll.fd = sys::Fd::from_native(core::mem::transmute::<u32, i32>(machport));
+                        // Zig: `@bitCast(machport)` — `as i32` is the same-width bitcast.
+                        poll.fd = sys::Fd::from_native(machport as i32);
                         match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(dns, "libinfoCallback: failed to register poll");
@@ -2624,8 +2625,15 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         {
-            if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get() {
-                let res = lookup_libinfo(req, unsafe { (*loop_).internal_loop_data.get_parent() });
+            use bun_uws::InternalLoopDataExt as _;
+            if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get().unwrap_or(false) {
+                // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
+                // was set by `EventLoopHandle::set_as_parent_of` at startup.
+                let handle = unsafe {
+                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
+                    jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
+                };
+                let res = lookup_libinfo(req, handle);
                 bun_output::scoped_log!(dns, "getaddrinfo({}) = cache miss (libinfo)", bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b"")));
                 if res { return Some(req); }
                 // if we were not able to use libinfo, we fall back to the work pool

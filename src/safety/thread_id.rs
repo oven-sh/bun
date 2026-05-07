@@ -120,7 +120,7 @@ pub fn current() -> ThreadId {
     ))]
     {
         // Zig: `pthread_threadid_np(null, &thread_id)`.
-        extern "C" {
+        unsafe extern "C" {
             fn pthread_threadid_np(
                 thread: *mut core::ffi::c_void,
                 thread_id: *mut u64,
@@ -134,7 +134,7 @@ pub fn current() -> ThreadId {
     }
     #[cfg(target_os = "windows")]
     {
-        extern "system" {
+        unsafe extern "system" {
             fn GetCurrentThreadId() -> u32; // kernel32 DWORD
         }
         // SAFETY: infallible Win32 intrinsic.
@@ -150,21 +150,21 @@ pub fn current() -> ThreadId {
     }
     #[cfg(target_os = "netbsd")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn _lwp_self() -> core::ffi::c_int;
         }
         return unsafe { _lwp_self() } as u32;
     }
     #[cfg(target_os = "openbsd")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn getthrid() -> core::ffi::c_int;
         }
         return unsafe { getthrid() } as u32;
     }
     #[cfg(target_os = "dragonfly")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn lwp_gettid() -> core::ffi::c_int;
         }
         return unsafe { lwp_gettid() } as u32;
@@ -184,7 +184,7 @@ pub fn current() -> ThreadId {
     )))]
     {
         // Zig fallback: `@intFromPtr(c.pthread_self())`.
-        extern "C" {
+        unsafe extern "C" {
             fn pthread_self() -> usize;
         }
         return unsafe { pthread_self() } as ThreadId;

@@ -78,14 +78,16 @@ pub extern "C" fn Bun__WebViewHost__ensure(
             return -1; // C++ already holds the fd
         }
 
-        let fd = match spawn(global.bun_vm(), stdout_inherit, stderr_inherit) {
+        // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
+        // `*mut` because it threads through C ABI / event-loop dispatch.
+        let fd = match spawn(global.bun_vm() as *const _ as *mut _, stdout_inherit, stderr_inherit) {
             Ok(fd) => fd,
             Err(err) => {
                 scoped_log!(WebViewHost, "spawn failed: {}", err.name());
                 return -1;
             }
         };
-        fd.cast()
+        fd.native()
     }
 }
 
@@ -164,7 +166,7 @@ fn spawn(
         let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
         let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B.
-        env.extend(base_entries.iter().map(|p| p.unwrap_or(ptr::null())));
+        env.extend(base_entries.iter().copied());
         // PERF(port): was appendAssumeCapacity — profile in Phase B.
         env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
         env.push(ptr::null());

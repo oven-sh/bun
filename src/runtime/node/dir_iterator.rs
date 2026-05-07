@@ -177,7 +177,8 @@ mod platform {
                     libc::DT_LNK => EntryKind::SymLink,
                     libc::DT_REG => EntryKind::File,
                     libc::DT_SOCK => EntryKind::UnixDomainSocket,
-                    libc::DT_WHT => EntryKind::Whiteout,
+                    // DT_WHT (14) — Darwin/BSD whiteout; libc crate omits the const on Apple.
+                    14 /* DT_WHT */ => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
@@ -281,8 +282,9 @@ mod platform {
                     libc::DT_LNK => EntryKind::SymLink,
                     libc::DT_REG => EntryKind::File,
                     libc::DT_SOCK => EntryKind::UnixDomainSocket,
-                    // FreeBSD <sys/dirent.h> DT_WHT = 14; libc crate omits it.
-                    14 => EntryKind::Whiteout,
+                    // DT_WHT (14) — Darwin/BSD whiteout; the libc crate omits
+                    // the constant on Apple and FreeBSD targets.
+                    14 /* DT_WHT */ => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {

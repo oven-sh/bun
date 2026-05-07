@@ -218,12 +218,11 @@ pub mod dir_iterator {
             libc::DT_LNK  => EntryKind::SymLink,
             libc::DT_REG  => EntryKind::File,
             libc::DT_SOCK => EntryKind::UnixDomainSocket,
-            #[cfg(target_os = "macos")]
-            libc::DT_WHT  => EntryKind::Whiteout,
-            // FreeBSD's <sys/dirent.h> defines DT_WHT = 14 but the libc crate
-            // omits it (whiteouts only appear on unionfs).
-            #[cfg(target_os = "freebsd")]
-            14 => EntryKind::Whiteout,
+            // DT_WHT (14) — Darwin/FreeBSD union-mount whiteout. The `libc`
+            // crate omits this constant on both Apple and FreeBSD targets;
+            // literal matches <sys/dirent.h>.
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            14 /* DT_WHT */ => EntryKind::Whiteout,
             // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
             // provide d_type. Callers should lstatat() to resolve when needed.
             _ => EntryKind::Unknown,
@@ -1863,13 +1862,16 @@ mod posix_impl {
     }
     /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)` (sys.zig:434).
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
-        #[cfg(target_os = "macos")]
-        { check_p!(unsafe { libc::lchmod(path.as_ptr(), mode as libc::mode_t) }, Tag::lchmod, path); Ok(()) }
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            // FreeBSD libc has lchmod(2) since 3.0 but the `libc` crate omits the binding.
-            unsafe extern "C" { fn lchmod(path: *const core::ffi::c_char, mode: libc::mode_t) -> core::ffi::c_int; }
-            check_p!(unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) }, Tag::lchmod, path); Ok(())
+            // The `libc` crate omits the `lchmod` binding on both Darwin
+            // (libSystem since 10.5) and FreeBSD (libc since 3.0). Declare
+            // locally — matches sys.zig:434.
+            unsafe extern "C" {
+                fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
+            }
+            check_p!(unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) }, Tag::lchmod, path);
+            Ok(())
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         { fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW) }
@@ -1997,7 +1999,7 @@ mod posix_impl {
         // (macOS has had fdatasync(2) since 10.7). The libc crate omits the
         // Apple binding, so declare it locally.
         #[cfg(target_os = "macos")]
-        extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
+        unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
         #[cfg(not(target_os = "macos"))]
         use libc::fdatasync;
         check!(unsafe { fdatasync(fd.native()) }, Tag::fdatasync); Ok(())
@@ -2013,6 +2015,8 @@ mod posix_impl {
         check!(unsafe { libc::fchdir(fd.native()) }, Tag::fchdir); Ok(())
     }
     pub fn umask(mode: Mode) -> Mode {
+        // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
+        // Darwin/FreeBSD and u32 on Linux — cast at the boundary.
         unsafe { libc::umask(mode as libc::mode_t) as Mode }
     }
 
@@ -3327,6 +3331,10 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
 /// `bun.timespec` — re-exported from `bun_core` so `PosixStat.rs` can spell
 /// `crate::Timespec` (matching the Zig `bun.timespec` namespacing).
 pub use bun_core::Timespec;
+/// `std.time` shim — re-exported from `bun_core` so callers that wrote
+/// `bun_sys::time::timestamp()` (matching Zig's `std.time` import via bun.sys)
+/// resolve without an extra dep.
+pub use bun_core::time;
 
 /// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
 /// current process in bytes, or `None` on failure. Thin wrapper around the
@@ -3462,6 +3470,103 @@ pub mod c {
     /// libc `__errno_location()` / `__error()` — pointer to thread-local errno.
     #[inline]
     pub unsafe fn errno_location() -> *mut c_int { unsafe { super::errno_ptr() } }
+
+    // ── `bun.c` Darwin surface — translate-c symbols Zig picks up via
+    // `@cImport` of system headers. The `libc` crate already binds all of
+    // these; re-export so callers (`node_os.rs`, `node_fs.rs`, …) keep a
+    // single `bun_sys::c::*` import path matching the Zig namespacing.
+    #[cfg(target_os = "macos")]
+    pub use libc::{
+        // <copyfile.h> / <sys/clonefile.h>
+        clonefile, clonefileat, fclonefileat, copyfile, fcopyfile,
+        copyfile_state_t, copyfile_flags_t,
+        COPYFILE_ACL, COPYFILE_STAT, COPYFILE_XATTR, COPYFILE_DATA,
+        COPYFILE_SECURITY, COPYFILE_METADATA, COPYFILE_RECURSIVE,
+        COPYFILE_CHECK, COPYFILE_EXCL, COPYFILE_NOFOLLOW_SRC,
+        COPYFILE_NOFOLLOW_DST, COPYFILE_MOVE, COPYFILE_UNLINK,
+        COPYFILE_NOFOLLOW, COPYFILE_CLONE, COPYFILE_CLONE_FORCE,
+        // <sys/sysctl.h>
+        sysctl, sysctlbyname, sysctlnametomib,
+        // <mach/*.h> — host/processor/vm primitives for `os.cpus()` & memory stats
+        natural_t, integer_t, mach_port_t, mach_msg_type_number_t,
+        host_processor_info, host_statistics64,
+        vm_deallocate, vm_size_t, vm_statistics64, vm_statistics64_data_t,
+        processor_cpu_load_info, processor_cpu_load_info_data_t,
+        processor_info_array_t, processor_flavor_t,
+        PROCESSOR_CPU_LOAD_INFO, HOST_VM_INFO64, HOST_VM_INFO64_COUNT,
+        CPU_STATE_USER, CPU_STATE_SYSTEM, CPU_STATE_IDLE, CPU_STATE_NICE,
+        CPU_STATE_MAX,
+        // <net/if_dl.h>
+        sockaddr_dl,
+        // misc libc
+        truncate, _NSGetEnviron,
+        // <string.h> Apple extensions
+        memset_pattern4, memset_pattern8, memset_pattern16,
+    };
+    /// `UTIME_NOW` — `<sys/stat.h>` sentinel for `utimensat`/`futimens`.
+    /// libc crate omits it on Apple; value is `-1` per the header.
+    #[cfg(target_os = "macos")]
+    pub const UTIME_NOW: core::ffi::c_long = -1;
+    /// `UTIME_OMIT` — companion sentinel.
+    #[cfg(target_os = "macos")]
+    pub const UTIME_OMIT: core::ffi::c_long = -2;
+    /// `PROCESSOR_CPU_LOAD_INFO_COUNT` — sizeof(processor_cpu_load_info)/sizeof(natural_t).
+    /// Not bound by `libc`; <mach/processor_info.h>.
+    #[cfg(target_os = "macos")]
+    pub const PROCESSOR_CPU_LOAD_INFO_COUNT: u32 =
+        (core::mem::size_of::<libc::processor_cpu_load_info>() / core::mem::size_of::<libc::natural_t>()) as u32;
+    /// `<sys/sysctl.h> struct loadavg` — used by `os.loadavg()` via
+    /// `vm.loadavg` sysctl. Not bound by `libc`.
+    #[cfg(target_os = "macos")]
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    #[allow(non_camel_case_types)]
+    pub struct struct_loadavg {
+        pub ldavg: [u32; 3],
+        pub fscale: core::ffi::c_long,
+    }
+
+    // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
+    // `libc` crate has deprecated these in favour of the `mach2` crate. We
+    // bind the C symbols ourselves (as Zig's `std.c` does) so the workspace
+    // stays free of an extra dependency and of deprecation noise.
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" {
+        /// `extern mach_port_t mach_task_self_` — the task's send right,
+        /// cached by libsystem at startup. `mach_task_self()` in C is a macro
+        /// that just reads this global.
+        static mach_task_self_: libc::mach_port_t;
+        /// `mach_port_t mach_host_self(void)` — host privileged port.
+        pub safe fn mach_host_self() -> libc::mach_port_t;
+        /// `uint32_t _dyld_image_count(void)`
+        pub safe fn _dyld_image_count() -> u32;
+        /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
+        pub safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
+        /// `const struct mach_header* _dyld_get_image_header(uint32_t)`
+        #[link_name = "_dyld_get_image_header"]
+        fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+    }
+    /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub fn mach_task_self() -> libc::mach_port_t {
+        // SAFETY: `mach_task_self_` is a plain immutable global initialized by
+        // libsystem before any user code runs; reading it is always safe.
+        unsafe { mach_task_self_ }
+    }
+    /// `_dyld_get_image_header(i)` — on 64-bit Darwin every loaded image is
+    /// 64-bit, so present it as `*const mach_header_64` (Zig's std does the
+    /// same cast).
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub unsafe fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
+        unsafe { dyld_get_image_header_raw(image_index).cast() }
+    }
+
+    /// `bun.c.kqueue` — create a new kqueue fd.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[inline]
+    pub unsafe fn kqueue() -> c_int { unsafe { libc::kqueue() } }
 
     /// `bun.c.kevent` — raw BSD kqueue event syscall (Darwin/FreeBSD only).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -3858,6 +3963,116 @@ pub mod darwin {
         pub const RENAME:     u32 = libc::NOTE_RENAME;
         pub const REVOKE:     u32 = libc::NOTE_REVOKE;
     }
+    /// Re-export of the platform errno enum so `bun_threading::Futex` can
+    /// match `c::E::INTR` etc. against `__ulock_*` return codes.
+    pub use bun_errno::E;
+
+    /// Thin re-exports so `bun.darwin.ftruncate`/`bun.darwin.truncate` call
+    /// sites (blob/copy_file.rs) resolve without a direct `libc` dep.
+    pub use libc::{ftruncate, truncate};
+
+    /// `bun.darwin.COPYFILE` — Zig `packed struct(u32)` of <copyfile.h> flags.
+    /// Kept as a plain struct + `.bits()` so call sites can use field-init
+    /// syntax (matching the Zig); convert to `u32` at the FFI boundary.
+    #[derive(Clone, Copy, Default)]
+    #[allow(non_snake_case)]
+    pub struct COPYFILE {
+        pub acl: bool,
+        pub stat: bool,
+        pub xattr: bool,
+        pub data: bool,
+        pub excl: bool,
+        pub nofollow_src: bool,
+        pub nofollow_dst: bool,
+        pub move_: bool,
+        pub unlink: bool,
+        pub clone: bool,
+        pub clone_force: bool,
+    }
+    impl COPYFILE {
+        #[inline]
+        pub const fn bits(self) -> u32 {
+            (self.acl as u32) << 0
+                | (self.stat as u32) << 1
+                | (self.xattr as u32) << 2
+                | (self.data as u32) << 3
+                | (self.excl as u32) << 17
+                | (self.nofollow_src as u32) << 18
+                | (self.nofollow_dst as u32) << 19
+                | (self.move_ as u32) << 20
+                | (self.unlink as u32) << 21
+                | (self.clone as u32) << 24
+                | (self.clone_force as u32) << 25
+        }
+    }
+    impl From<COPYFILE> for u32 {
+        #[inline] fn from(f: COPYFILE) -> u32 { f.bits() }
+    }
+
+    // ── `std.c.UL` / `std.c.ULOp` — Darwin private __ulock_* flags ──
+    // <xnu/bsd/sys/ulock.h>. Zig models this as `packed struct(u32)`; we keep
+    // a plain struct + `.bits()` so Futex.rs can use field-init syntax (matching
+    // the Zig call sites) while the FFI boundary gets the packed u32.
+    #[repr(u8)]
+    #[derive(Clone, Copy, Default)]
+    pub enum ULOp {
+        #[default]
+        NONE = 0,
+        COMPARE_AND_WAIT = 1,
+        UNFAIR_LOCK = 2,
+        COMPARE_AND_WAIT_SHARED = 3,
+        UNFAIR_LOCK64_SHARED = 4,
+        COMPARE_AND_WAIT64 = 5,
+        COMPARE_AND_WAIT64_SHARED = 6,
+    }
+    #[derive(Clone, Copy, Default)]
+    pub struct UL {
+        pub op: ULOp,
+        /// `ULF_WAKE_ALL` (bit 8).
+        pub wake_all: bool,
+        /// `ULF_WAKE_THREAD` (bit 9).
+        pub wake_thread: bool,
+        /// `ULF_NO_ERRNO` (bit 24) — return `-errno` directly instead of
+        /// setting thread-local errno.
+        pub no_errno: bool,
+    }
+    impl UL {
+        #[inline]
+        pub const fn bits(self) -> u32 {
+            (self.op as u32)
+                | ((self.wake_all as u32) << 8)
+                | ((self.wake_thread as u32) << 9)
+                | ((self.no_errno as u32) << 24)
+        }
+    }
+    unsafe extern "C" {
+        // Private libSystem symbols (stable since 10.12; `__ulock_wait2` since 11.0).
+        #[link_name = "__ulock_wait"]
+        fn __ulock_wait_raw(operation: u32, addr: *const c_void, value: u64, timeout_us: u32) -> core::ffi::c_int;
+        #[link_name = "__ulock_wait2"]
+        fn __ulock_wait2_raw(operation: u32, addr: *const c_void, value: u64, timeout_ns: u64, value2: u64) -> core::ffi::c_int;
+        #[link_name = "__ulock_wake"]
+        fn __ulock_wake_raw(operation: u32, addr: *const c_void, wake_value: u64) -> core::ffi::c_int;
+    }
+    /// # Safety
+    /// `addr` must point to readable memory of at least 4 bytes (the futex word).
+    #[inline]
+    pub unsafe fn __ulock_wait(flags: UL, addr: *const c_void, value: u64, timeout_us: u32) -> i32 {
+        unsafe { __ulock_wait_raw(flags.bits(), addr, value, timeout_us) }
+    }
+    /// # Safety
+    /// See `__ulock_wait`.
+    #[inline]
+    pub unsafe fn __ulock_wait2(flags: UL, addr: *const c_void, value: u64, timeout_ns: u64, value2: u64) -> i32 {
+        unsafe { __ulock_wait2_raw(flags.bits(), addr, value, timeout_ns, value2) }
+    }
+    /// # Safety
+    /// See `__ulock_wait`.
+    #[inline]
+    pub unsafe fn __ulock_wake(flags: UL, addr: *const c_void, wake_value: u64) -> i32 {
+        unsafe { __ulock_wake_raw(flags.bits(), addr, wake_value) }
+    }
+
     /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
     pub use libc::kevent64_s;
     /// `kevent64()` — Darwin's wider kevent. Thin re-export so callers don't
@@ -3889,6 +4104,130 @@ pub mod darwin {
 }
 #[cfg(not(target_os = "macos"))]
 pub mod darwin {}
+
+// ── `std.macho` — Mach-O header parsing (subset). ────────────────────────
+// Port of the slice of Zig std/macho.zig that `crash_handler.zig` uses to
+// walk dyld load commands and resolve a stable (ASLR-unslid) address for
+// `addr2line`. Only the 64-bit forms are present; Bun does not ship 32-bit
+// Darwin binaries.
+#[cfg(target_os = "macos")]
+#[allow(non_camel_case_types, non_snake_case)]
+pub mod macho {
+    /// `LC_SEGMENT_64` — 64-bit segment load command.
+    pub const LC_SEGMENT_64: u32 = 0x19;
+
+    /// `<mach-o/loader.h> mach_header_64`. Layout matches libc's
+    /// `mach_header_64` and Zig std's `std.macho.mach_header_64`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct mach_header_64 {
+        pub magic: u32,
+        pub cputype: i32,
+        pub cpusubtype: i32,
+        pub filetype: u32,
+        pub ncmds: u32,
+        pub sizeofcmds: u32,
+        pub flags: u32,
+        pub reserved: u32,
+    }
+
+    /// `<mach-o/loader.h> load_command` — common header preceding every
+    /// load command.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct load_command {
+        pub cmd: u32,
+        pub cmdsize: u32,
+    }
+
+    /// `<mach-o/loader.h> segment_command_64`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct segment_command_64 {
+        pub cmd: u32,
+        pub cmdsize: u32,
+        pub segname: [u8; 16],
+        pub vmaddr: u64,
+        pub vmsize: u64,
+        pub fileoff: u64,
+        pub filesize: u64,
+        pub maxprot: i32,
+        pub initprot: i32,
+        pub nsects: u32,
+        pub flags: u32,
+    }
+    impl segment_command_64 {
+        /// Zig: `segName()` — segment name with trailing NULs trimmed.
+        #[inline]
+        pub fn seg_name(&self) -> &[u8] {
+            let end = self
+                .segname
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(self.segname.len());
+            &self.segname[..end]
+        }
+    }
+
+    /// One parsed load command: header + raw bytes (header included).
+    #[derive(Clone, Copy)]
+    pub struct LoadCommand<'a> {
+        hdr: load_command,
+        data: &'a [u8],
+    }
+    impl<'a> LoadCommand<'a> {
+        #[inline]
+        pub fn cmd(&self) -> u32 { self.hdr.cmd }
+        #[inline]
+        pub fn cmdsize(&self) -> u32 { self.hdr.cmdsize }
+        /// Zig: `cast(comptime T: type) ?T` — reinterpret the command bytes
+        /// as `T` if large enough. Returns a `&T` pointing into the image's
+        /// load-command buffer (which is mapped read-only for the image's
+        /// lifetime by dyld).
+        pub fn cast<T>(&self) -> Option<&'a T> {
+            if self.data.len() < core::mem::size_of::<T>() {
+                return None;
+            }
+            // SAFETY: `data` is a slice into the dyld-mapped Mach-O image.
+            // dyld maps each image at a page-aligned base; the 64-bit header
+            // is 32 bytes; and on MH_MAGIC_64 every `cmdsize` is required to
+            // be a multiple of 8. Hence each load command begins 8-byte
+            // aligned, satisfying `segment_command_64`'s 8-byte alignment
+            // (its `u64` fields). `T` is `#[repr(C)]` POD.
+            Some(unsafe { &*(self.data.as_ptr().cast::<T>()) })
+        }
+    }
+
+    /// Zig: `std.macho.LoadCommandIterator` — walks the load-command region
+    /// that immediately follows a `mach_header_64`.
+    pub struct LoadCommandIterator<'a> {
+        pub ncmds: u32,
+        pub buffer: &'a [u8],
+    }
+    impl<'a> LoadCommandIterator<'a> {
+        pub fn next(&mut self) -> Option<LoadCommand<'a>> {
+            if self.ncmds == 0 {
+                return None;
+            }
+            // SAFETY: `buffer` begins at a load_command boundary by construction
+            // (caller initializes it to `header + sizeof(mach_header_64)`, and
+            // each `cmdsize` is required by the format to be a multiple of 8).
+            let hdr = unsafe { core::ptr::read_unaligned(self.buffer.as_ptr().cast::<load_command>()) };
+            let cmdsize = hdr.cmdsize as usize;
+            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buffer.len() {
+                // Malformed header — stop iteration rather than UB.
+                self.ncmds = 0;
+                return None;
+            }
+            let data = &self.buffer[..cmdsize];
+            self.buffer = &self.buffer[cmdsize..];
+            self.ncmds -= 1;
+            Some(LoadCommand { hdr, data })
+        }
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub mod macho {}
 
 // ── `std.DynLib` — cross-platform dynamic library handle. ──
 pub struct DynLib {
@@ -4815,6 +5154,36 @@ pub fn kqueue() -> Maybe<Fd> {
     Ok(Fd::from_native(rc))
 }
 
+/// `kevent()` — slice-wrapped Maybe form (sys.zig:2278). Retries on EINTR.
+/// Returns the number of events written into `eventlist`.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+pub fn kevent(
+    fd: Fd,
+    changelist: &[libc::kevent],
+    eventlist: &mut [libc::kevent],
+    timeout: Option<&libc::timespec>,
+) -> Maybe<usize> {
+    loop {
+        // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
+        // is either null or a valid timespec.
+        let rc = unsafe {
+            libc::kevent(
+                fd.native(),
+                changelist.as_ptr(),
+                changelist.len() as c_int,
+                eventlist.as_mut_ptr(),
+                eventlist.len() as c_int,
+                timeout.map_or(core::ptr::null(), |t| t as *const _),
+            )
+        };
+        match get_errno(rc) {
+            E::SUCCESS => return Ok(rc as usize),
+            E::EINTR => continue,
+            e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+        }
+    }
+}
+
 /// `clonefile` — macOS-only CoW copy. On non-Darwin returns ENOTSUP so
 /// callers can fall back to `copy_file`.
 #[cfg(not(target_os = "macos"))]
@@ -5055,8 +5424,8 @@ pub mod posix {
     pub use libc::timeval;
 
     // ── stat mode-kind tests (Zig: `std.posix.S.ISLNK` etc.) ──
-    // `libc::S_IF*` is `mode_t` (u32 on Linux/macOS, u16 on FreeBSD); widen to
-    // u32 so callers can pass `Mode` uniformly.
+    // `libc::S_IF*` is `mode_t` (u32 on Linux, u16 on Darwin/FreeBSD); widen to
+    // `u32` so the `m: u32` (== `bun_core::Mode`) comparison is uniform.
     #[cfg(unix)]
     #[inline] pub const fn s_islnk(m: u32) -> bool { (m & libc::S_IFMT as u32) == libc::S_IFLNK as u32 }
     #[cfg(unix)]
@@ -5079,6 +5448,27 @@ pub mod posix {
 
     // ── time ──
     #[cfg(unix)] pub use libc::timespec;
+    #[cfg(unix)] pub use libc::timeval;
+
+    /// `std.posix.sysctlbynameZ` — Maybe-wrapped sysctl by name (Darwin/BSD).
+    /// `oldp`/`oldlenp` are out-params; `newp`/`newlen` set a new value (rare).
+    #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+    #[inline]
+    pub fn sysctlbyname(
+        name: &core::ffi::CStr,
+        oldp: *mut c_void,
+        oldlenp: *mut usize,
+        newp: *mut c_void,
+        newlen: usize,
+    ) -> super::Maybe<()> {
+        // SAFETY: name is NUL-terminated; oldp/oldlenp/newp validity is the
+        // caller's responsibility (matches Zig std.posix.sysctlbynameZ).
+        let rc = unsafe { libc::sysctlbyname(name.as_ptr(), oldp, oldlenp, newp, newlen) };
+        if rc != 0 {
+            return Err(super::Error::from_code(super::get_errno(rc), super::Tag::TODO));
+        }
+        Ok(())
+    }
     #[cfg(windows)]
     #[repr(C)] #[derive(Clone, Copy, Default)]
     pub struct timespec { pub tv_sec: i64, pub tv_nsec: i64 }
@@ -5340,24 +5730,8 @@ pub mod freebsd {
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
 
-/// `std.time` shims — wallclock timestamp without `std::time::SystemTime`
-/// (banned per PORTING.md). Used by uptime/process-start on BSD where the
-/// boot time comes from `sysctl(kern.boottime)` and we subtract "now".
-pub mod time {
-    /// Seconds since the Unix epoch (Zig: `std.time.timestamp()`).
-    #[cfg(unix)]
-    #[inline]
-    pub fn timestamp() -> i64 {
-        // SAFETY: time(NULL) is infallible on POSIX.
-        unsafe { libc::time(core::ptr::null_mut()) as i64 }
-    }
-    #[cfg(windows)]
-    #[inline]
-    pub fn timestamp() -> i64 {
-        // TODO(port): GetSystemTimeAsFileTime → epoch seconds.
-        0
-    }
-}
+// `std.time` shims live in `bun_core::time` and are re-exported above as
+// `pub use bun_core::time;` so callers can spell `bun_sys::time::timestamp()`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Dir` — `std.fs.Dir` replacement. Thin wrapper over `Fd`; close on Drop is

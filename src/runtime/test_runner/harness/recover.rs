@@ -143,15 +143,10 @@ unsafe fn get_context(ctx: *mut Context) {
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
-        // TODO(port): Zig called std.debug.getContext(ctx) which wraps
-        // getcontext(3). The libc crate only binds it on Linux/macOS; on the
-        // BSDs declare it directly (sys/ucontext.h).
-        #[cfg(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd"))]
-        unsafe extern "C" {
-            fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
-        }
-        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd")))]
-        use libc::getcontext;
+        // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
+        // The `libc` crate omits the binding on Darwin and the BSDs; declare
+        // locally (uniform across all unix targets).
+        unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
         let _ = unsafe { getcontext(ctx) };
     }

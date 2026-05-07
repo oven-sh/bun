@@ -834,9 +834,11 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // TODO(port): `pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);` — a struct with
 // one `bool` field per variant. Unused in this file; provide if external callers need it.
 
-// Passed at runtime (not as a const-generic) so the kqueue build does not
-// require the unstable `adt_const_params` feature. Three call sites, each
-// with a literal variant — trivially inlined.
+// PORT NOTE: Zig used a `comptime action: enum` const-generic. `adt_const_params`
+// is nightly-only and the body never uses ACTION in a type position — it just
+// `match`es on it — so demote to a runtime parameter (PORTING.md §Idiom-map).
+// Three call sites, each with a literal variant — trivially inlined; kqueue
+// registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ApplyAction {
@@ -936,7 +938,11 @@ impl Poll {
         };
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = unsafe { core::mem::zeroed() };
-        kqueue_event.ident = usize::try_from(fd.native()).expect("int cast");
+        // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
+        // Zig `@intCast` would trap on a negative fd in safe builds — keep that
+        // safety net so a stray -1 doesn't silently register ident=u64::MAX.
+        debug_assert!(fd.native() >= 0, "register: negative fd {:?}", fd);
+        kqueue_event.ident = fd.native() as _;
         kqueue_event.filter = filter;
         kqueue_event.flags = flags_;
         kqueue_event.udata = udata as _;
@@ -1476,7 +1482,7 @@ pub mod waker {
             // SAFETY: direct syscall wrapper.
             let kq = unsafe { libc::kqueue() };
             if kq < 0 {
-                return Err(bun_core::Error::last_os_error());
+                return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
             }
             Self::init_with_file_descriptor(kq)
         }

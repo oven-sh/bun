@@ -1184,15 +1184,28 @@ impl ThreadLock {
 #[cfg(debug_assertions)]
 #[inline]
 fn thread_id() -> u64 {
-    // TODO(port): std::thread::current().id() is not u64-convertible on stable.
-    // Use the OS tid via libc; matches Zig `Thread.getCurrentId()` semantics.
+    // Use the OS tid; matches Zig `Thread.getCurrentId()` semantics per-platform.
     #[cfg(target_os = "linux")]
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
+    #[cfg(target_os = "macos")]
+    unsafe {
+        // Darwin: pthread_threadid_np(NULL, &tid) — same call Zig std uses.
+        let mut tid: u64 = 0;
+        libc::pthread_threadid_np(0, &mut tid);
+        tid
+    }
     #[cfg(target_os = "freebsd")]
     // SAFETY: pthread_getthreadid_np() is infallible and returns the kernel LWP id.
     unsafe { libc::pthread_getthreadid_np() as u64 }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    { std::thread::current().id().as_u64().into() } // PERF(port): unstable; Phase B
+    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))))]
+    // Fallback: pthread_self() handle as u64 (opaque but stable per-thread).
+    // On the BSDs `pthread_t` is a raw pointer, which must route through usize.
+    unsafe { libc::pthread_self() as usize as u64 }
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "system" { fn GetCurrentThreadId() -> u32; }
+        GetCurrentThreadId() as u64
+    }
 }
 
 // ─── StackCheck (from bun.zig) ───────────────────────────────────────────

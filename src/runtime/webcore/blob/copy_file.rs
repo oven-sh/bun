@@ -512,7 +512,7 @@ impl<'a> CopyFile<'a> {
         match bun_sys::fcopyfile(
             self.source_fd,
             self.destination_fd,
-            bun_sys::darwin::COPYFILE { data: true, ..Default::default() },
+            bun_sys::darwin::COPYFILE { data: true, ..Default::default() }.bits(),
         ) {
             bun_sys::Result::Err(errno) => {
                 match errno.get_errno() {
@@ -557,11 +557,19 @@ impl<'a> CopyFile<'a> {
         let mut dest_buf = PathBuffer::uninit();
 
         loop {
-            let dest = self
+            // PORT NOTE: reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
+            // ties the returned `&ZStr` to `self`, which would conflict with
+            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
+            // bytes live in `dest_buf`, so capture the length and re-borrow
+            // from the buffer (not `self`) after dropping the first borrow.
+            let dest_len = self
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z(&mut dest_buf);
+                .slice_z(&mut dest_buf)
+                .len();
+            // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
+            let dest = unsafe { bun_str::ZStr::from_raw(dest_buf.as_ptr(), dest_len) };
             match bun_sys::clonefile(
                 self.source_file_store.pathlike.path().slice_z(&mut source_buf),
                 dest,
@@ -629,12 +637,12 @@ impl<'a> CopyFile<'a> {
                                 bun_sys::Result::Ok(result) => {
                                     stat_ = Some(result);
 
-                                    if bun_sys::S::ISDIR(result.st_mode) {
+                                    if bun_sys::S::ISDIR(result.st_mode as u32) {
                                         self.system_error = Some(unsupported_directory_error());
                                         return;
                                     }
 
-                                    if !bun_sys::S::ISREG(result.st_mode) {
+                                    if !bun_sys::S::ISREG(result.st_mode as u32) {
                                         break 'do_clonefile;
                                     }
                                 }
@@ -653,13 +661,17 @@ impl<'a> CopyFile<'a> {
                                             < SizeType::try_from(stat_size).expect("int cast")
                                     {
                                         // If this fails...well, there's not much we can do about it.
-                                        let _ = bun_sys::c::truncate(
-                                            self.destination_file_store
-                                                .pathlike
-                                                .path()
-                                                .slice_z(&mut path_buf),
-                                            i64::try_from(self.max_length).expect("int cast"),
-                                        );
+                                        // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
+                                        let _ = unsafe {
+                                            bun_sys::c::truncate(
+                                                self.destination_file_store
+                                                    .pathlike
+                                                    .path()
+                                                    .slice_z(&mut path_buf)
+                                                    .as_ptr(),
+                                                i64::try_from(self.max_length).expect("int cast"),
+                                            )
+                                        };
                                         self.read_len =
                                             SizeType::try_from(self.max_length).expect("int cast");
                                     } else {
@@ -827,10 +839,13 @@ impl<'a> CopyFile<'a> {
                 if stat.st_size != 0
                     && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                 {
-                    let _ = bun_sys::darwin::ftruncate(
-                        self.destination_fd.native(),
-                        i64::try_from(self.max_length).expect("int cast"),
-                    );
+                    // SAFETY: `destination_fd` is open; libc ftruncate(2).
+                    let _ = unsafe {
+                        bun_sys::darwin::ftruncate(
+                            self.destination_fd.native(),
+                            i64::try_from(self.max_length).expect("int cast"),
+                        )
+                    };
                 }
 
                 self.do_close();

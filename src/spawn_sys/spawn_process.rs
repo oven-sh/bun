@@ -534,19 +534,23 @@ pub fn spawn_process_posix(
                 || matches!(options.stdout, PosixStdio::Buffer)
                 || matches!(options.stderr, PosixStdio::Buffer)
             {
-                Output::panic(
+                Output::panic(format_args!(
                     "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                    &[],
-                );
+                ));
             }
         }
     }
 
     if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        // TODO(port): @hasDecl check — assume present on platforms that define it.
+        #[cfg(target_os = "linux")]
         {
             flags |= libc::POSIX_SPAWN_SETSID as i32;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+            flags |= 0x0400;
         }
         attr.detached = true;
     }
@@ -599,6 +603,8 @@ pub fn spawn_process_posix(
     // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
     let mut dup_stdout_to_stderr: bool = false;
 
+    // The label is only referenced from the Linux memfd fast-path below.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_labels))]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 { bun_sys::O::RDONLY } else { bun_sys::O::WRONLY }) as u32;
@@ -690,14 +696,14 @@ pub fn spawn_process_posix(
                     unsafe {
                         if i == 0 {
                             libc::setsockopt(
-                                fds[1].cast(),
+                                fds[1].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
                                 &so_recvbuf as *const _ as *const c_void,
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
-                                fds[0].cast(),
+                                fds[0].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
                                 &so_sendbuf as *const _ as *const c_void,
@@ -705,14 +711,14 @@ pub fn spawn_process_posix(
                             );
                         } else {
                             libc::setsockopt(
-                                fds[0].cast(),
+                                fds[0].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_RCVBUF,
                                 &so_recvbuf as *const _ as *const c_void,
                                 core::mem::size_of::<c_int>() as u32,
                             );
                             libc::setsockopt(
-                                fds[1].cast(),
+                                fds[1].native(),
                                 libc::SOL_SOCKET,
                                 libc::SO_SNDBUF,
                                 &so_sendbuf as *const _ as *const c_void,

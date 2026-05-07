@@ -452,6 +452,21 @@ impl EventLoopHandle {
         }
     }
 
+    /// Inverse of [`into_tag_ptr`] — recover from the `(tag, ptr)` pair stored
+    /// in `uws::InternalLoopData` (Zig: `loop.internal_loop_data.getParent()`).
+    ///
+    /// # Safety
+    /// `(tag, ptr)` must have been produced by [`into_tag_ptr`] on a still-live
+    /// event loop (i.e. read from `internal_loop_data` while the loop is alive).
+    #[inline]
+    pub unsafe fn from_tag_ptr(tag: core::ffi::c_char, ptr: *mut core::ffi::c_void) -> EventLoopHandle {
+        match tag {
+            1 => EventLoopHandle::Js { owner: ptr.cast() },
+            2 => EventLoopHandle::Mini(ptr.cast()),
+            _ => unreachable!("invalid parent event-loop tag {}", tag),
+        }
+    }
+
 }
 
 /// Carrier-trait impl so `bun_uws::InternalLoopDataExt::set_parent_event_loop`

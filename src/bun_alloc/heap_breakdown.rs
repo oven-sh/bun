@@ -3,7 +3,9 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;
 
-#[allow(non_camel_case_types)]
+// Only referenced from the Darwin `extern "C"` block below; rustc's
+// reachability analysis doesn't see uses inside dead `extern fn` signatures.
+#[allow(non_camel_case_types, dead_code)]
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
@@ -56,15 +58,10 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     get_zone_runtime(&prefixed).allocator()
 }
 
-/// Comptime-literal form of `named_allocator` — expands a per-name `OnceLock`.
-// (Not `#[macro_export]` — the crate-root `get_zone!` in lib.rs is the public one.)
-macro_rules! named_allocator {
-    ($name:literal) => {
-        $crate::get_zone!(concat!("Bun__", $name)).allocator()
-    };
-}
-#[allow(unused_imports)]
-pub(crate) use named_allocator;
+// Comptime-literal form of `named_allocator` lives at crate root as `get_zone!`
+// (see lib.rs). A local `macro_rules! named_allocator` re-export would collide
+// with the `pub fn named_allocator` above in the value namespace on macOS where
+// this module is actually compiled, so it is omitted here.
 
 /// Zig: `pub fn getZoneT(comptime T: type) *Zone`
 pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
@@ -74,29 +71,9 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
 ///
 /// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
-/// The faithful Rust translation is a macro that expands a fresh `OnceLock` per
-/// call site (per literal name).
-// (Not `#[macro_export]` — the crate-root `get_zone!` in lib.rs is the public one.)
-macro_rules! get_zone {
-    ($name:literal) => {{
-        debug_assert!($crate::heap_breakdown::ENABLED);
-        static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
-            ::std::sync::OnceLock::new();
-        *ZONE.get_or_init(|| {
-            // SAFETY: concat!($name, "\0") is a NUL-terminated string literal in
-            // static memory — valid for process lifetime.
-            // NOTE: no "Bun__" prefix here — Zig `getZone(name)` passes `name` verbatim;
-            // only `namedAllocator` prepends the prefix.
-            unsafe {
-                $crate::heap_breakdown::Zone::init(
-                    concat!($name, "\0").as_ptr() as *const ::core::ffi::c_char,
-                )
-            }
-        })
-    }};
-}
-#[allow(unused_imports)]
-pub(crate) use get_zone;
+/// The faithful Rust translation is the crate-root `get_zone!` macro in lib.rs
+/// that expands a fresh `OnceLock` per call site (per literal name). Not
+/// duplicated here to avoid path-export collisions on macOS.
 
 /// Runtime fallback for `getZone` when the name is not a literal at the Rust call site.
 // TODO(port): Zig had no runtime path here (every `name` was comptime). This exists

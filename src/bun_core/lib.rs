@@ -203,18 +203,6 @@ pub mod strings {
     pub use crate::fmt::strings::*; // pulls in fmt.rs's larger subset
     #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { ::bstr::ByteSlice::find(h, n).is_some() }
     #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
-    #[inline]
-    pub fn contains_case_insensitive_ascii(h: &[u8], n: &[u8]) -> bool {
-        if n.is_empty() { return true; }
-        let mut start: usize = 0;
-        while start + n.len() <= h.len() {
-            if eql_case_insensitive_ascii(&h[start..start + n.len()], n, false) {
-                return true;
-            }
-            start += 1;
-        }
-        false
-    }
     #[inline] pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> { h.iter().position(|&b| b == c) }
     #[inline] pub fn starts_with(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
     #[inline] pub fn ends_with(h: &[u8], p: &[u8]) -> bool { h.ends_with(p) }
@@ -244,6 +232,22 @@ pub mod strings {
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len && a.len() != b.len() { return false; }
         a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+    }
+    /// Zig: `strings.containsCaseInsensitiveASCII` — naive O(n·m) windowed
+    /// case-insensitive ASCII substring search (matches the Zig scalar impl;
+    /// callers are cold path-lookup on macOS/Windows where the FS is
+    /// case-insensitive).
+    #[inline]
+    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+        if needle.len() > haystack.len() { return false; }
+        let mut start = 0usize;
+        while start + needle.len() <= haystack.len() {
+            if eql_case_insensitive_ascii(&haystack[start..start + needle.len()], needle, false) {
+                return true;
+            }
+            start += 1;
+        }
+        false
     }
     /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
     /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig

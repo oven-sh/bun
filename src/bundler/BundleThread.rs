@@ -156,13 +156,23 @@ pub trait CompletionStruct: Node + Send + 'static {
 
 impl<C: CompletionStruct> BundleThread<C> {
     /// To initialize, put this somewhere in memory, and then call `spawn()`
-    // PORT NOTE: Zig `uninitialized` left `waker` as `undefined`; using a zeroed
-    // placeholder. `ready_event.wait()` in `spawn()` blocks until `thread_main`
-    // overwrites it, so the zeroed bytes are never observed.
+    // PORT NOTE: Zig `uninitialized` left `waker` as `undefined`. We can't use
+    // `mem::zeroed()` here — on macOS `Waker` holds a `Box<[u8]>` and on
+    // Windows a `&'static` loop, both of which have a NonNull validity
+    // invariant (zeroing them is *language-level* UB even if never read).
+    // `placeholder()` yields a fully-initialized inert value instead.
+    // `ready_event.wait()` in `spawn()` blocks until `thread_main` overwrites
+    // it via `ptr::write`, so the placeholder is never observed live.
     pub fn uninitialized() -> Self {
         Self {
-            // SAFETY: waker is overwritten in thread_main before any use; ready_event.wait()
-            // in spawn() blocks until that happens.
+            #[cfg(unix)]
+            waker: Async::Waker::placeholder(),
+            #[cfg(windows)]
+            // TODO(port,windows): `Waker { loop_: &'static _ }` is also
+            // NonNull; provide a `placeholder()` once the Windows event-loop
+            // port lands. Kept as-is here to avoid an untestable change.
+            // SAFETY: see TODO — this is technically invalid_value UB on
+            // Windows; the field is overwritten before any read.
             waker: unsafe { core::mem::zeroed() },
             queue: UnboundedQueue::new(),
             generation: 0,

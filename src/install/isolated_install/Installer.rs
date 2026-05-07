@@ -1113,11 +1113,17 @@ impl Task {
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
                                                 pkg_cache_dir_subpath.slice_z(),
-                                                bun_core::fmt::PathSep::Auto
+                                                bun_core::fmt::PathFormatOptions {
+                                                    path_sep: bun_core::fmt::PathSep::Auto,
+                                                    ..Default::default()
+                                                },
                                             ),
                                             bun_core::fmt::fmt_os_path(
                                                 dest_subpath.slice_z(),
-                                                bun_core::fmt::PathSep::Auto
+                                                bun_core::fmt::PathFormatOptions {
+                                                    path_sep: bun_core::fmt::PathSep::Auto,
+                                                    ..Default::default()
+                                                },
                                             ),
                                         ));
                                         Output::flush();
@@ -1137,7 +1143,7 @@ impl Task {
                                                 backend = InstallMethod::Copyfile;
                                                 continue 'backend;
                                             }
-                                            sys::Errno::OPNOTSUPP => {
+                                            sys::Errno::EOPNOTSUPP => {
                                                 installer.supported_backend.store(InstallMethod::Hardlink as u8, Ordering::Relaxed);
                                                 backend = InstallMethod::Hardlink;
                                                 continue 'backend;

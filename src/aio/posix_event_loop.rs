@@ -1652,6 +1652,13 @@ impl LinuxWaker {
         Self { fd }
     }
 
+    /// See [`KEventWaker::placeholder`]. `LinuxWaker` happens to be zero-safe
+    /// (`Fd` is a plain `c_int`), but providing this keeps the call sites
+    /// platform-agnostic and documents intent.
+    pub const fn placeholder() -> Self {
+        Self { fd: Fd::INVALID }
+    }
+
     pub fn wait(&self) {
         // eventfd counter is 8 bytes; the value is discarded.
         let mut buf = [0u8; 8];
@@ -1685,6 +1692,24 @@ type Kevent64 = bun_sys::darwin::kevent64_s;
 impl KEventWaker {
     // SAFETY: all-zero is a valid kevent64_s array
     const ZEROED: [Kevent64; 16] = unsafe { core::mem::zeroed() };
+
+    /// An inert, fully-initialized waker for use as a field placeholder before
+    /// `init()` overwrites it (e.g. `BundleThread::uninitialized`). Mirrors the
+    /// Zig field defaults `kq=undefined, machport=undefined, machport_buf=&.{}`
+    /// — but unlike Zig, Rust forbids a zeroed `Box<[u8]>` (NonNull invariant),
+    /// so callers MUST NOT use `mem::zeroed()` for this type.
+    ///
+    /// `kq = -1` makes `wait()` a no-op; `machport = 0` is `MACH_PORT_NULL`.
+    /// This value is meant to be overwritten via `ptr::write` (no Drop of the
+    /// empty `machport_buf` is required, but dropping it is also harmless).
+    pub fn placeholder() -> Self {
+        Self {
+            kq: -1,
+            machport: 0,
+            machport_buf: Box::default(),
+            has_pending_wake: AtomicBool::new(false),
+        }
+    }
 
     pub fn wake(&self) {
         bun_core::mark_binding!();

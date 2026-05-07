@@ -140,7 +140,7 @@ where
                     *pollable = true;
                 }
 
-                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as _);
+                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as u32);
 
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.

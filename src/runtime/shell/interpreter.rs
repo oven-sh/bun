@@ -2054,8 +2054,8 @@ pub fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     }
     #[cfg(unix)]
     {
-        // libc::S_IF* is mode_t (u16 on FreeBSD, u32 elsewhere); widen so the
-        // bit-ops type-check uniformly.
+        // `libc::S_IFMT` etc. are mode_t (u16 on Darwin/FreeBSD, u32 on Linux);
+        // widen so the `mode: u32` arg compares uniformly.
         let fmt = mode & libc::S_IFMT as u32;
         #[cfg(target_os = "macos")]
         {

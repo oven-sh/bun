@@ -15,7 +15,7 @@ use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{
     enqueue, resolution as pm_resolution, PackageManager, TaskCallbackList,
 };
-use crate::repository_real::Repository;
+use crate::repository_real::{Repository, RepositoryExt as _};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     initialize_store, DependencyID, ExtractData, Features, PackageID, Resolution,
@@ -109,7 +109,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
-        Ok(ResolutionType::init(match self.resolution.tag {
+        Ok(ResolutionType::<SemverIntType>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
                 TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
             }

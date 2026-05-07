@@ -1706,8 +1706,8 @@ impl Package<u64> {
             sliced.slice,
             tag,
             &sliced,
-            Some(log),
-            Some(pm),
+            Some(&mut *log),
+            Some(&mut *pm),
         )
         .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;

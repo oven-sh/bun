@@ -7,6 +7,7 @@
 // with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 
+#![warn(unreachable_pub)]
 use bun_collections::VecExt;
 use core::fmt;
 

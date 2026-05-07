@@ -1506,7 +1506,7 @@ unsafe extern "C" {
 
 /// Calculate visible width of UTF-8 string excluding ANSI escape codes
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__visibleWidthExcludeANSI_utf8(ptr: *const u8, len: usize, ambiguous_as_wide: bool) -> usize {
+pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf8(ptr: *const u8, len: usize, ambiguous_as_wide: bool) -> usize {
     let _ = ambiguous_as_wide; // UTF-8 version doesn't use this parameter
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
     let input = unsafe { core::slice::from_raw_parts(ptr, len) };
@@ -1515,7 +1515,7 @@ pub extern "C" fn Bun__visibleWidthExcludeANSI_utf8(ptr: *const u8, len: usize, 
 
 /// Calculate visible width of UTF-16 string excluding ANSI escape codes
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__visibleWidthExcludeANSI_utf16(ptr: *const u16, len: usize, ambiguous_as_wide: bool) -> usize {
+pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_utf16(ptr: *const u16, len: usize, ambiguous_as_wide: bool) -> usize {
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
     let input = unsafe { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::utf16(input, ambiguous_as_wide)
@@ -1523,7 +1523,7 @@ pub extern "C" fn Bun__visibleWidthExcludeANSI_utf16(ptr: *const u16, len: usize
 
 /// Calculate visible width of Latin-1 string excluding ANSI escape codes
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len: usize) -> usize {
+pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len: usize) -> usize {
     // SAFETY: caller (wrapAnsi.cpp) guarantees ptr[0..len] is valid.
     let input = unsafe { core::slice::from_raw_parts(ptr, len) };
     visible::width::exclude_ansi_colors::latin1(input)
@@ -1531,7 +1531,7 @@ pub extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len: usize
 
 /// Calculate visible width of a single codepoint
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -> u8 {
+pub(super) extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -> u8 {
     u8::try_from(visible_codepoint_width(cp, ambiguous_as_wide)).expect("int cast")
 }
 
@@ -1539,7 +1539,7 @@ pub extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -> u8 {
 /// Returns true if there should be a grapheme break between cp1 and cp2.
 /// `state` is an opaque u8 that must be initialized to 0 and passed between calls.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *mut u8) -> bool {
+pub(super) extern "C" fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *mut u8) -> bool {
     // SAFETY: state_ptr is non-null per C++ caller contract; BreakState is #[repr(u8)].
     let mut state: grapheme::BreakState = unsafe { core::mem::transmute::<u8, grapheme::BreakState>(*state_ptr) };
     let result = grapheme::grapheme_break(cp1, cp2, &mut state);
@@ -1550,7 +1550,7 @@ pub extern "C" fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *mut u8) -> 
 
 /// Check if a codepoint has the Emoji property (using ICU).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__isEmojiPresentation(cp: u32) -> bool {
+pub(super) extern "C" fn Bun__isEmojiPresentation(cp: u32) -> bool {
     if cp < 0x203C {
         return false;
     }

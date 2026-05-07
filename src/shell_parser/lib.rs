@@ -6,6 +6,7 @@
 // ─── B-2 un-gate ────────────────────────────────────────────────────────────
 // Phase-A draft of `braces` is now wired up. Remaining lower-tier gaps are
 // flagged inline with `// TODO(b2-blocked): bun_X::Y` and reported upstream.
+#![warn(unreachable_pub)]
 #[path = "braces.rs"]
 pub mod braces;
 

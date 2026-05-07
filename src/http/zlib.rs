@@ -11,7 +11,7 @@ mod buffer_pool {
     use bun_collections::ObjectPoolType;
 
     #[repr(transparent)]
-    pub struct PooledMutableString(pub MutableString);
+    pub(super) struct PooledMutableString(pub MutableString);
 
     impl ObjectPoolType for PooledMutableString {
         const INIT: Option<fn() -> Result<Self, bun_core::Error>> =

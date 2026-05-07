@@ -42,7 +42,7 @@ pub use unicode_draft::{
     u16_is_lead, u16_is_trail, wtf8_sequence, BOM,
 };
 
-mod escape_reg_exp { pub use crate::escape_reg_exp::*; }
+mod escape_reg_exp { pub(super) use crate::escape_reg_exp::*; }
 
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` for B-2).

@@ -281,12 +281,12 @@ pub(crate) mod kind {
     pub(crate) mod string {
         use super::*;
 
-        pub type ValueType = &'static [u8];
-        pub type Input = CacheConfiguration<CtorOptions>;
-        pub type Output = CacheOutput<ValueType>;
+        pub(crate) type ValueType = &'static [u8];
+        pub(crate) type Input = CacheConfiguration<CtorOptions>;
+        pub(crate) type Output = CacheOutput<ValueType>;
 
         #[derive(Clone, Copy)]
-        pub struct CtorOptions {
+        pub(crate) struct CtorOptions {
             pub default: Option<ValueType>,
         }
         impl Default for CtorOptions {
@@ -298,7 +298,7 @@ pub(crate) mod kind {
         // Zig: `fn Cache(comptime ip: Input) type` — `ip` is unused (`_ = ip;`).
         // Rust: a single Cache struct; per-var uniqueness comes from each var owning its own
         // `static CACHE: Cache`.
-        pub struct Cache {
+        pub(crate) struct Cache {
             ptr_value: AtomicPtr<u8>,
             len_value: AtomicUsize,
         }
@@ -313,14 +313,14 @@ pub(crate) mod kind {
         const NOT_SET_LEN: LenType = LenType::MAX - 1;
 
         impl Cache {
-            pub const fn new() -> Self {
+            pub(crate) const fn new() -> Self {
                 Self {
                     ptr_value: AtomicPtr::new(NOT_LOADED_PTR),
                     len_value: AtomicUsize::new(NOT_LOADED_LEN),
                 }
             }
 
-            pub fn get_cached(&self) -> Output {
+            pub(crate) fn get_cached(&self) -> Output {
                 let len = self.len_value.load(Ordering::Acquire);
 
                 if len == NOT_LOADED_LEN {
@@ -339,7 +339,7 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub fn deser_and_invalidate(&self, raw_env: Option<&'static [u8]>) -> Option<ValueType> {
+            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&'static [u8]>) -> Option<ValueType> {
                 // The implementation is racy and allows two threads to both set the value at
                 // the same time, as long as the value they are setting is the same. This is
                 // difficult to write an assertion for since it requires the DEV path take a
@@ -361,12 +361,12 @@ pub(crate) mod kind {
     pub(crate) mod boolean {
         use super::*;
 
-        pub type ValueType = bool;
-        pub type Input = CacheConfiguration<CtorOptions>;
-        pub type Output = CacheOutput<ValueType>;
+        pub(crate) type ValueType = bool;
+        pub(crate) type Input = CacheConfiguration<CtorOptions>;
+        pub(crate) type Output = CacheOutput<ValueType>;
 
         #[derive(Clone, Copy)]
-        pub struct CtorOptions {
+        pub(crate) struct CtorOptions {
             pub default: Option<ValueType>,
         }
         impl Default for CtorOptions {
@@ -375,7 +375,7 @@ pub(crate) mod kind {
             }
         }
 
-        pub fn string_is_truthy(s: &[u8]) -> bool {
+        pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
             const FALSE_VALUES: [&[u8]; 5] = [b"", b"0", b"false", b"no", b"off"];
 
@@ -391,13 +391,13 @@ pub(crate) mod kind {
         // This is a template which ignores its parameter, but is necessary so that a separate
         // Cache type is emitted for every environment variable.
         // (In Rust, per-var statics give us per-var caches without distinct types.)
-        pub struct Cache {
+        pub(crate) struct Cache {
             value: AtomicU8, // StoredType
         }
 
         #[repr(u8)]
         #[derive(Clone, Copy, PartialEq, Eq)]
-        pub enum StoredType {
+        pub(crate) enum StoredType {
             Unknown = 0,
             NotSet = 1,
             No = 2,
@@ -405,12 +405,12 @@ pub(crate) mod kind {
         }
 
         impl Cache {
-            pub const fn new() -> Self {
+            pub(crate) const fn new() -> Self {
                 Self { value: AtomicU8::new(StoredType::Unknown as u8) }
             }
 
             #[inline]
-            pub fn get_cached(&self) -> Output {
+            pub(crate) fn get_cached(&self) -> Output {
                 let cached = self.value.load(Ordering::Relaxed);
                 // SAFETY: only ever stored from StoredType discriminants.
                 let cached: StoredType = unsafe { core::mem::transmute::<u8, StoredType>(cached) };
@@ -428,7 +428,7 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
+            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
                 let Some(raw_env) = raw_env else {
                     self.value.store(StoredType::NotSet as u8, Ordering::Relaxed);
                     return None;
@@ -447,17 +447,17 @@ pub(crate) mod kind {
     pub(crate) mod unsigned {
         use super::*;
 
-        pub type ValueType = u64;
-        pub type Input = CacheConfiguration<CtorOptions>;
-        pub type Output = CacheOutput<ValueType>;
+        pub(crate) type ValueType = u64;
+        pub(crate) type Input = CacheConfiguration<CtorOptions>;
+        pub(crate) type Output = CacheOutput<ValueType>;
 
         #[derive(Clone, Copy)]
-        pub struct CtorOptions {
+        pub(crate) struct CtorOptions {
             pub default: Option<ValueType>,
             pub deser: DeserOpts,
         }
         impl CtorOptions {
-            pub const DEFAULT: Self = Self { default: None, deser: DeserOpts::DEFAULT };
+            pub(crate) const DEFAULT: Self = Self { default: None, deser: DeserOpts::DEFAULT };
         }
         impl Default for CtorOptions {
             fn default() -> Self {
@@ -470,7 +470,7 @@ pub(crate) mod kind {
         /// Note that deserialization errors cannot panic. If you need more robust means of
         /// handling inputs, consider not using environment variables.
         #[derive(Clone, Copy, PartialEq, Eq)]
-        pub enum ErrorHandling {
+        pub(crate) enum ErrorHandling {
             /// debug_warn on deserialization errors.
             DebugWarn,
             /// Ignore deserialization errors and treat the variable as not set.
@@ -489,7 +489,7 @@ pub(crate) mod kind {
 
         /// Control what empty strings are treated as.
         #[derive(Clone, Copy)]
-        pub enum EmptyStringAs {
+        pub(crate) enum EmptyStringAs {
             /// Empty strings are handled as the given value.
             Value(ValueType),
             /// Empty strings are treated as deserialization errors.
@@ -497,12 +497,12 @@ pub(crate) mod kind {
         }
 
         #[derive(Clone, Copy)]
-        pub struct DeserOpts {
+        pub(crate) struct DeserOpts {
             pub error_handling: ErrorHandling,
             pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
-            pub const DEFAULT: Self = Self {
+            pub(crate) const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
@@ -516,7 +516,7 @@ pub(crate) mod kind {
         // Zig: `fn Cache(comptime ip: Input) type` — Rust: store `ip` (var_name + opts) on the
         // struct so handle_error can read it. Zig passes it as a comptime param; we pass it at
         // `const fn new()` time.
-        pub struct Cache {
+        pub(crate) struct Cache {
             value: AtomicU64,
             // TODO(port): in Zig `ip` is a comptime param baked into the type; here it lives as
             // runtime data on the static. The `default_fallback` arm in handle_error was a
@@ -532,12 +532,12 @@ pub(crate) mod kind {
         const NOT_SET_SENTINEL: StoredType = StoredType::MAX - 1;
 
         impl Cache {
-            pub const fn new(ip: Input) -> Self {
+            pub(crate) const fn new(ip: Input) -> Self {
                 Self { value: AtomicU64::new(UNKNOWN_SENTINEL), ip }
             }
 
             #[inline]
-            pub fn get_cached(&self) -> Output {
+            pub(crate) fn get_cached(&self) -> Output {
                 match self.value.load(Ordering::Relaxed) {
                     UNKNOWN_SENTINEL => {
                         #[cold]
@@ -551,7 +551,7 @@ pub(crate) mod kind {
             }
 
             #[inline]
-            pub fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
+            pub(crate) fn deser_and_invalidate(&self, raw_env: Option<&[u8]>) -> Option<ValueType> {
                 let Some(raw_env) = raw_env else {
                     self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                     return None;

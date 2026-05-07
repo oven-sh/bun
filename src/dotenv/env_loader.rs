@@ -1510,7 +1510,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    pub(crate) fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         source: &logger::Source,
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1523,7 +1523,7 @@ impl<'a> Parser<'a> {
     /// `logger::Source` (whose `contents` field is currently `&'static [u8]`).
     // PORT NOTE: Zig built a `logger.Source` and passed `&source` — the only
     // field `Parser` reads is `.contents`, so this is observationally identical.
-    pub fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,

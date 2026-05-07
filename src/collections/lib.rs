@@ -12,6 +12,7 @@
 )]
 #![allow(incomplete_features, internal_features)]
 #![allow(unused, non_snake_case, clippy::all)]
+#![warn(unreachable_pub)]
 
 extern crate self as bun_collections;
 

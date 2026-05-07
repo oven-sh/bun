@@ -326,55 +326,55 @@ fn free_named(ptr: *mut u8, name: &'static core::ffi::CStr) {
 mod tracy_fns {
     use super::*;
 
-    pub type emit_frame_mark_start = unsafe extern "C" fn(name: *const c_char);
-    pub type emit_frame_mark_end = unsafe extern "C" fn(name: *const c_char);
-    pub type emit_zone_begin = unsafe extern "C" fn(
+    pub(super) type emit_frame_mark_start = unsafe extern "C" fn(name: *const c_char);
+    pub(super) type emit_frame_mark_end = unsafe extern "C" fn(name: *const c_char);
+    pub(super) type emit_zone_begin = unsafe extern "C" fn(
         srcloc: *const ___tracy_source_location_data,
         active: c_int,
     ) -> ___tracy_c_zone_context;
-    pub type emit_zone_begin_callstack = unsafe extern "C" fn(
+    pub(super) type emit_zone_begin_callstack = unsafe extern "C" fn(
         srcloc: *const ___tracy_source_location_data,
         depth: c_int,
         active: c_int,
     ) -> ___tracy_c_zone_context;
-    pub type emit_zone_text =
+    pub(super) type emit_zone_text =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
-    pub type emit_zone_name =
+    pub(super) type emit_zone_name =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize);
-    pub type emit_zone_color = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, color: u32);
-    pub type emit_zone_value = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
-    pub type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
-    pub type emit_memory_alloc =
+    pub(super) type emit_zone_color = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, color: u32);
+    pub(super) type emit_zone_value = unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
+    pub(super) type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
+    pub(super) type emit_memory_alloc =
         unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int);
-    pub type emit_memory_alloc_callstack =
+    pub(super) type emit_memory_alloc_callstack =
         unsafe extern "C" fn(ptr: *const c_void, size: usize, depth: c_int, secure: c_int);
-    pub type emit_memory_free = unsafe extern "C" fn(ptr: *const c_void, secure: c_int);
-    pub type emit_memory_free_callstack =
+    pub(super) type emit_memory_free = unsafe extern "C" fn(ptr: *const c_void, secure: c_int);
+    pub(super) type emit_memory_free_callstack =
         unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int);
-    pub type emit_memory_alloc_named =
+    pub(super) type emit_memory_alloc_named =
         unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int, name: *const c_char);
-    pub type emit_memory_alloc_callstack_named = unsafe extern "C" fn(
+    pub(super) type emit_memory_alloc_callstack_named = unsafe extern "C" fn(
         ptr: *const c_void,
         size: usize,
         depth: c_int,
         secure: c_int,
         name: *const c_char,
     );
-    pub type emit_memory_free_named =
+    pub(super) type emit_memory_free_named =
         unsafe extern "C" fn(ptr: *const c_void, secure: c_int, name: *const c_char);
-    pub type emit_memory_free_callstack_named =
+    pub(super) type emit_memory_free_callstack_named =
         unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int, name: *const c_char);
-    pub type emit_message = unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
-    pub type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
-    pub type emit_message_c =
+    pub(super) type emit_message = unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
+    pub(super) type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
+    pub(super) type emit_message_c =
         unsafe extern "C" fn(txt: *const u8, size: usize, color: u32, callstack: c_int);
-    pub type emit_message_lc =
+    pub(super) type emit_message_lc =
         unsafe extern "C" fn(txt: *const c_char, color: u32, callstack: c_int);
-    pub type emit_frame_mark = unsafe extern "C" fn(name: *const c_char);
-    pub type connected = unsafe extern "C" fn() -> c_int;
-    pub type set_thread_name = unsafe extern "C" fn(name: *const c_char);
-    pub type startup_profiler = unsafe extern "C" fn();
-    pub type shutdown_profiler = unsafe extern "C" fn();
+    pub(super) type emit_frame_mark = unsafe extern "C" fn(name: *const c_char);
+    pub(super) type connected = unsafe extern "C" fn() -> c_int;
+    pub(super) type set_thread_name = unsafe extern "C" fn(name: *const c_char);
+    pub(super) type startup_profiler = unsafe extern "C" fn();
+    pub(super) type shutdown_profiler = unsafe extern "C" fn();
 }
 
 #[allow(non_snake_case)]

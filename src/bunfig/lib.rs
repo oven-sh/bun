@@ -10,6 +10,7 @@
 
 #![allow(non_snake_case)]
 
+#![warn(unreachable_pub)]
 pub mod bunfig;
 pub mod arguments;
 

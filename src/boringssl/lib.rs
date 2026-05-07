@@ -3,6 +3,7 @@
 
 #![allow(unused, static_mut_refs)]
 
+#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ffi::CStr;
 use core::ptr;

@@ -5,6 +5,7 @@
 // It does not handle the framework parts of rendering pages.
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 
+#![warn(unreachable_pub)]
 use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
@@ -30,7 +31,7 @@ fn wyhash(input: &[u8]) -> u64 {
 }
 
 mod logger {
-    pub use bun_logger::{Loc, Log, Source};
+    pub(crate) use bun_logger::{Loc, Log, Source};
 }
 
 // `bun.fs` namespace — `bun_router` depends on `bun_resolver` directly, so
@@ -41,8 +42,8 @@ use bun_resolver::fs::FileSystem;
 // peechy schema types: `StringPointer` lives in `bun_core::schema::api` (T0);
 // the route-config pair lives in `bun_options_types::schema::api`.
 mod api {
-    pub use bun_core::schema::api::StringPointer;
-    pub use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
+    pub(crate) use bun_core::schema::api::StringPointer;
+    pub(crate) use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
 }
 
 type CoreError = bun_core::Error;
@@ -634,7 +635,7 @@ struct RouteLoader<'a> {
 }
 
 impl<'a> RouteLoader<'a> {
-    pub fn append_route(&mut self, route: Route) {
+    pub(crate) fn append_route(&mut self, route: Route) {
         use bun_collections::hash_map::Entry;
 
         // /index.js
@@ -736,7 +737,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub fn load_all<R: ResolverLike>(
+    pub(crate) fn load_all<R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut logger::Log,
         resolver: &mut R,
@@ -841,7 +842,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub fn load<R: ResolverLike>(
+    pub(crate) fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: DirInfoRef,

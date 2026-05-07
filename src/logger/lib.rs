@@ -10,6 +10,7 @@
 //! Phase B must decide on a real ownership story (likely `bun_str::String` or a
 //! `'source` lifetime threaded through `Location`/`Data`/`Msg`).
 
+#![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
 

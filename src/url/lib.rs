@@ -6,6 +6,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 #![allow(unused, non_snake_case, clippy::all)]
 
+#![warn(unreachable_pub)]
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{num_masks_for, ArrayBitSet};
@@ -41,7 +42,7 @@ mod bun_io {
         }
     }
     /// Fixed-buffer writer for `decode_into` — mirrors Zig's `std.io.fixedBufferStream`.
-    pub struct FixedBufferWriter<'a> {
+    pub(crate) struct FixedBufferWriter<'a> {
         pub buf: &'a mut [u8],
         pub pos: usize,
     }

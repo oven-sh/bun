@@ -1,6 +1,7 @@
 // Port of src/glob/glob.zig
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 
+#![warn(unreachable_pub)]
 pub mod matcher;
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;

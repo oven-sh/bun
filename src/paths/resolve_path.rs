@@ -1717,7 +1717,7 @@ struct JoinScratch {
 }
 
 impl JoinScratch {
-    pub fn init(base: usize, parts: &[&[u8]]) -> Self {
+    pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;

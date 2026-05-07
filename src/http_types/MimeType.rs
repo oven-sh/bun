@@ -10,12 +10,12 @@ use bun_string::strings;
 // of variants `by_loader` actually inspects as local `u8` constants and accept
 // the raw discriminant. Callers pass `loader as u8`.
 mod loader_disc {
-    pub const JSX: u8 = 0;
-    pub const JS: u8 = 1;
-    pub const TS: u8 = 2;
-    pub const TSX: u8 = 3;
-    pub const CSS: u8 = 4;
-    pub const JSON: u8 = 6;
+    pub(super) const JSX: u8 = 0;
+    pub(super) const JS: u8 = 1;
+    pub(super) const TS: u8 = 2;
+    pub(super) const TSX: u8 = 3;
+    pub(super) const CSS: u8 = 4;
+    pub(super) const JSON: u8 = 6;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

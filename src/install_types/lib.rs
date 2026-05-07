@@ -1,6 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 
+#![warn(unreachable_pub)]
 pub mod NodeLinker;
 pub mod resolver_hooks;
 
@@ -28,12 +29,12 @@ pub use resolver_hooks::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod ExternalString {
-    pub use bun_semver::external_string::*;
+    pub(crate) use bun_semver::external_string::*;
     pub use bun_semver::ExternalString;
 }
 
 pub mod SlicedString {
-    pub use bun_semver::sliced_string::*;
+    pub(crate) use bun_semver::sliced_string::*;
     pub use bun_semver::SlicedString;
 }
 

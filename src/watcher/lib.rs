@@ -17,6 +17,7 @@
 // `bun_windows_sys::FILE_OPEN`); see the `TODO(b2-blocked)` marker in
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
+#![warn(unreachable_pub)]
 #[cfg(target_os = "linux")]
 #[path = "INotifyWatcher.rs"]
 pub mod inotify_watcher;

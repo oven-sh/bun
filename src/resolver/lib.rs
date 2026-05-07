@@ -18,6 +18,7 @@
 // EntriesOption, Implementation) until the body switches to `fs_full::*`
 // wholesale. `fs_full` compiles to validate the port and is link-dead until
 // re-exported.
+#![warn(unreachable_pub)]
 pub mod data_url;
 pub mod dir_info;
 #[path = "fs.rs"] mod fs_full;
@@ -3164,18 +3165,18 @@ pub mod Dependency {
 /// still spell these paths via `__forward_decls`; the items are now real
 /// re-exports of `bun_install_types` (no local stubs).
 pub(crate) mod __forward_decls {
-    pub use ::bun_install_types::resolver_hooks as Install;
-    pub use ::bun_install_types::resolver_hooks::Resolution;
-    pub use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
+    pub(crate) use ::bun_install_types::resolver_hooks as Install;
+    pub(crate) use ::bun_install_types::resolver_hooks::Resolution;
+    pub(crate) use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
 }
 // bun_paths shim — value-dispatched join helpers over `resolve_path::Platform`.
 // `dirname` (`Option`-returning, `std.fs.path.dirname` semantics) and
 // `PosixToWinNormalizer` are the real `::bun_paths` items — brought in by the
 // glob / explicit re-export below, no local re-implementation.
 mod bun_paths {
-    pub use ::bun_paths::*;
-    pub use ::bun_paths::resolve_path::is_sep_any;
-    pub use ::bun_paths::resolve_path::PosixToWinNormalizer;
+    pub(super) use ::bun_paths::*;
+    pub(super) use ::bun_paths::resolve_path::is_sep_any;
+    pub(super) use ::bun_paths::resolve_path::PosixToWinNormalizer;
 
     /// Value-dispatch over `Platform` to the const-generic `PlatformT`
     /// monomorphizations in `resolve_path`. The resolver body threads
@@ -3192,14 +3193,14 @@ mod bun_paths {
             }
         }};
     }
-    pub fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
+    pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
     }
     /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
-    pub fn join_abs_string_buf<'b>(cwd: &'b [u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
+    pub(super) fn join_abs_string_buf<'b>(cwd: &'b [u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts))
     }
-    pub fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
+    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
         // PORT NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
         // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
         // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
@@ -3209,10 +3210,10 @@ mod bun_paths {
         // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
         unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
     }
-    pub fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
+    pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
-    pub fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
+    pub(super) fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts))
     }
     /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Zig
@@ -3239,8 +3240,8 @@ mod bun_paths {
             &__OUT
         }};
     }
-    pub use __resolver_path_literal as path_literal;
-    pub fn windows_filesystem_root(p: &[u8]) -> &[u8] {
+    pub(super) use __resolver_path_literal as path_literal;
+    pub(super) fn windows_filesystem_root(p: &[u8]) -> &[u8] {
         ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
 }
@@ -3250,13 +3251,13 @@ mod bun_paths {
 // re-implementing them. The previous local copies diverged from the spec
 // (single-strip vs. while-loop, `is_sep_any` vs. platform `SEP`).
 mod strings {
-    pub use bun_string::strings::*;
-    pub use bun_string::strings::paths::{
+    pub(super) use bun_string::strings::*;
+    pub(super) use bun_string::strings::paths::{
         char_is_any_slash, path_contains_node_modules_folder,
         without_leading_path_separator, without_trailing_slash_windows_path,
     };
     #[inline]
-    pub fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
+    pub(super) fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
         bun_string::strings::index_of_any(slice, chars).map(|v| v as usize)
     }
 }
@@ -3265,12 +3266,12 @@ mod strings {
 // `open` / `open_dir_for_iteration` / `get_fd_path` / `OpenDirOptions` /
 // `iterate_dir` are now provided by the `pub use ::bun_sys::*` glob.
 mod bun_sys {
-    pub use ::bun_sys::*;
+    pub(super) use ::bun_sys::*;
 
     /// Port of `std.fs.openDirAbsoluteZ` — `open(path, O_DIRECTORY|O_RDONLY|O_CLOEXEC[|O_NOFOLLOW])`.
     /// `opts.iterate` is a no-op on POSIX (Zig only used it to pick `iterate=true`
     /// on `IterableDir`, which is just an open mode hint).
-    pub fn open_dir_absolute_z(path: &::bun_core::ZStr, opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+    pub(super) fn open_dir_absolute_z(path: &::bun_core::ZStr, opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
         #[cfg(unix)]
         let nofollow = if opts.no_follow { libc::O_NOFOLLOW } else { 0 };
         #[cfg(not(unix))]
@@ -3278,7 +3279,7 @@ mod bun_sys {
         ::bun_sys::open(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY | nofollow, 0).map_err(Into::into)
     }
     /// Port of `std.fs.Dir.openDirZ` — `openat(dir, path, O_DIRECTORY|O_RDONLY|O_CLOEXEC)`.
-    pub fn open_dir_z(dir: Fd, path: &[u8], _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
+    pub(super) fn open_dir_z(dir: Fd, path: &[u8], _opts: OpenDirOptions) -> core::result::Result<Fd, ::bun_core::Error> {
         // PORT NOTE: callers pass either a `&'static [u8]` literal or a NUL-terminated
         // slice; `open_dir_at` builds its own ZStr internally so we strip the sentinel.
         let path = if path.last() == Some(&0) { &path[..path.len() - 1] } else { path };
@@ -3287,7 +3288,7 @@ mod bun_sys {
     // `iterate_dir` / `dir_iterator::WrappedIterator` are real ports in
     // `::bun_sys::dir_iterator` (POSIX getdents / Windows NtQueryDirectoryFile)
     // and reach this module via the `pub use ::bun_sys::*` glob above.
-    pub use ::bun_sys::RawFd;
+    pub(super) use ::bun_sys::RawFd;
 }
 
 /// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the

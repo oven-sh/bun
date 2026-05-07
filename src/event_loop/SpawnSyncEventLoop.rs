@@ -114,22 +114,22 @@ pub struct SpawnSyncEventLoop {
 mod handler {
     use super::uws;
 
-    pub unsafe extern "C" fn wakeup(_loop: *mut uws::Loop) {
+    pub(super) unsafe extern "C" fn wakeup(_loop: *mut uws::Loop) {
         // No-op: we don't need to wake up from another thread for spawnSync
     }
 
-    pub unsafe extern "C" fn pre(_loop: *mut uws::Loop) {
+    pub(super) unsafe extern "C" fn pre(_loop: *mut uws::Loop) {
         // No-op: no pre-tick work needed for spawnSync
     }
 
-    pub unsafe extern "C" fn post(_loop: *mut uws::Loop) {
+    pub(super) unsafe extern "C" fn post(_loop: *mut uws::Loop) {
         // No-op: no post-tick work needed for spawnSync
     }
 
     /// Adapter for `uws::Loop::create<H: LoopHandler>()` — Zig's
     /// `comptime Handler` with `wakeup`/`pre`/`post` decls maps to a trait
     /// with associated `const fn`-ptr slots.
-    pub struct Handler;
+    pub(super) struct Handler;
     impl uws::LoopHandler for Handler {
         const WAKEUP: unsafe extern "C" fn(*mut uws::Loop) = wakeup;
         const PRE: Option<unsafe extern "C" fn(*mut uws::Loop)> = Some(pre);

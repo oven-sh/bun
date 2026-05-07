@@ -1,6 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 
 // Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
+#![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 
 #[path = "StandaloneModuleGraph.rs"]

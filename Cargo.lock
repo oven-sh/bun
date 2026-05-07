@@ -481,21 +481,12 @@ dependencies = [
 name = "bun_collections"
 version = "0.0.0"
 dependencies = [
- "bitflags",
- "bstr",
  "bun_alloc",
  "bun_core",
  "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "parking_lot",
  "paste",
- "phf",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -504,18 +495,14 @@ dependencies = [
 name = "bun_core"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core_macros",
  "bun_simdutf_sys",
  "const_format",
- "enum-map",
- "enumset",
  "libc",
  "parking_lot",
  "phf",
- "scopeguard",
  "strum",
 ]
 
@@ -2182,7 +2169,6 @@ dependencies = [
 name = "bun_string"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_collections",
@@ -2193,12 +2179,8 @@ dependencies = [
  "bun_simdutf_sys",
  "bun_wyhash",
  "const_format",
- "enum-map",
- "enumset",
  "libc",
- "parking_lot",
  "phf",
- "scopeguard",
  "strum",
  "thiserror",
 ]

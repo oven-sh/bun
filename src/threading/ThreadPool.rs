@@ -1120,7 +1120,7 @@ impl Default for Event {
 impl Event {
     const EMPTY: u32 = 0;
     const WAITING: u32 = 1;
-    pub const NOTIFIED: u32 = 2;
+    pub(crate) const NOTIFIED: u32 = 2;
     const SHUTDOWN: u32 = 3;
 
     /// Wait for and consume a notification

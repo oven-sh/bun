@@ -1418,7 +1418,7 @@ impl CanonicalRequest {
     // PERF(port): Zig generates 128 monomorphized format strings and dispatches via
     // `switch (bits) { inline 0..127 => |idx| ... }`. We build the canonical request at
     // runtime with conditional writes. Same output bytes; profile in Phase B.
-    pub fn format<'b>(
+    pub(crate) fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,
         method: &[u8],

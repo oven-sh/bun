@@ -276,14 +276,14 @@ pub enum ModuleFormat {
 mod macho {
     // TODO(port): move to standalone_graph_sys
     unsafe extern "C" {
-        pub fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
+        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
     /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
-    pub fn get_data() -> Option<(*mut u8, usize)> {
+    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call returns pointer to embedded section header or null.
         let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
         if length_ptr.is_null() {
@@ -305,15 +305,15 @@ mod macho {
 mod pe {
     // TODO(port): move to standalone_graph_sys
     unsafe extern "C" {
-        pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
-        pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
+        pub(super) fn Bun__getStandaloneModuleGraphPELength() -> u64;
+        pub(super) fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
     }
 
     /// Returns `(base, len)` for the embedded `.bun` PE section data. Kept as a
     /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
-    pub fn get_data() -> Option<(*mut u8, usize)> {
+    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI calls.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
@@ -331,14 +331,14 @@ mod pe {
 mod elf {
     // TODO(port): move to standalone_graph_sys
     unsafe extern "C" {
-        pub fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
     /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
     /// `&[u8]` here would freeze it to read-only and make the later
     /// `from_bytes` writable subslices UB under Stacked Borrows.
-    pub fn get_data() -> Option<(*mut u8, usize)> {
+    pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call.
         let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
         if vaddr_ptr.is_null() {

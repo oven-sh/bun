@@ -9,6 +9,7 @@
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
+#![warn(unreachable_pub)]
 pub mod w_path_buffer_pool {
     use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
     use super::WPathBuffer;

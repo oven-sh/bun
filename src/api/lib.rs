@@ -25,6 +25,7 @@
 // Re-exports — canonical definitions live in `bun_options_types::schema::api`.
 // ──────────────────────────────────────────────────────────────────────────
 
+#![warn(unreachable_pub)]
 pub use bun_options_types::schema::api::{
     BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryMap, PnpmMatcher,
 };

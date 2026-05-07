@@ -234,8 +234,19 @@ fn create_parsed_shell_script_impl(
 
     // PERF(port): was std.heap.stackFallback(@sizeOf(bun.String) * 4, arena) — profile in Phase B
     let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-    // defer { for bunstr in jsstrings { bunstr.deref() }; jsstrings.deinit() } — handled by
-    // BunString's Drop on Vec drop.
+    // Zig: `defer { for jsstrings |s| s.deref(); jsstrings.deinit() }`. `bun.String` is
+    // `Copy` (no `Drop`) so the per-element `deref` is explicit; the guard's pointer
+    // capture sidesteps the `&mut` borrow `shell_cmd_from_js` takes below.
+    let _jsstrings_guard = scopeguard::guard((), {
+        let p = &mut jsstrings as *mut Vec<BunString>;
+        move |()| {
+            // SAFETY: `jsstrings` is a stack local that outlives this guard
+            // (guard drops first); no other borrow is live at scope exit.
+            for s in unsafe { (*p).iter() } {
+                s.deref();
+            }
+        }
+    });
 
     // PORT NOTE: in Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
     // Shell is an AST crate (arena-backed); Phase A uses global Vec to sidestep the

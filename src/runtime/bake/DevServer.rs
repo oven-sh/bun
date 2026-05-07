@@ -2974,7 +2974,10 @@ impl DevServer {
             )),
             heap,
         )?;
-        bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>());
+        bv2.bun_watcher = Some(bun_bundler::dispatch::WatcherHandle {
+            owner: ::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>(),
+            vtable: &BAKE_WATCHER_VTABLE,
+        });
         bv2.asynchronous = true;
 
         {

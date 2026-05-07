@@ -1177,7 +1177,15 @@ pub mod testing_apis {
         }
     }
 
-    pub const SHELL_LEX: jsc::JSHostFnZig = bun_jsc::marked_argument_buffer_wrap!(shell_lex_impl);
+    /// Spec shell.zig `TestingAPIs.shellLex` (`MarkedArgumentBuffer.wrap(_shellLex)`).
+    /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
+    /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
+    pub fn shell_lex(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
+    }
 
     fn shell_lex_impl(
         global: &JSGlobalObject,
@@ -1262,7 +1270,13 @@ pub mod testing_apis {
         bun_str.to_js(global)
     }
 
-    pub const SHELL_PARSE: jsc::JSHostFnZig = bun_jsc::marked_argument_buffer_wrap!(shell_parse_impl);
+    /// Spec shell.zig `TestingAPIs.shellParse` (`MarkedArgumentBuffer.wrap(_shellParse)`).
+    pub fn shell_parse(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
+    }
 
     fn shell_parse_impl(
         global: &JSGlobalObject,
@@ -1353,6 +1367,9 @@ pub mod testing_apis {
     }
 }
 pub use testing_apis as TestingAPIs;
+// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// (the codegen splits on capitalisation runs).
+pub use testing_apis as testing_ap_is;
 
 pub use subproc::ShellSubprocess;
 

@@ -601,6 +601,11 @@ pub struct Request {
 }
 
 impl Request {
+    #[inline]
+    pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
+        Self { next: AtomicPtr::new(ptr::null_mut()), callback, scheduled: false }
+    }
+
     /// Atomic-ordered store of `callback` — mirrors Zig
     /// `@atomicStore(?*const fn, &this.io_request.callback, cb, .seq_cst)`.
     ///

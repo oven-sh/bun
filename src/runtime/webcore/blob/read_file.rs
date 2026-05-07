@@ -13,17 +13,19 @@ use core::mem::{offset_of, MaybeUninit};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_core::{self, Error};
-use bun_io::{self as io, Action, Loop, Poll, Request};
+use bun_io::{self as io, Action, FileAction, Loop, Poll, Request};
 use bun_jsc::{
-    self as jsc, AnyPromise, EventLoop, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError,
-    WorkTask,
+    self as jsc, AnyPromise, EventLoop, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue,
+    JsResult, SystemError, WorkTask,
 };
 use crate::webcore::blob::{
     Blob, ClosingState, FileCloser, FileOpener, SizeType, Store, StoreRef,
 };
 use crate::webcore::blob::store::{Bytes as ByteStore, File as FileStore};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_str::String as BunString;
 use bun_sys::{self, Fd, Stat};
+#[cfg(windows)]
 use bun_sys::windows::libuv;
 use bun_threading::{self, ThreadPool, WorkPool, WorkPoolTask};
 

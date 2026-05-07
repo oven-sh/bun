@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, ObjectPool, StringSet};
+use bun_collections::{HashMap, StringSet};
 use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClient};
@@ -275,12 +275,12 @@ pub mod registry {
         std::sync::LazyLock::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
     pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
 
-    // TODO(b2): ObjectPool<T, THREADSAFE, MAX, S> — Zig passes init fn as a
-    // type-level param; Rust ObjectPool routes init via `ObjectPoolType` trait.
-    // Wire `MutableString: ObjectPoolType` (init = MutableString::init2048) then
-    // drop the `S = UnwiredStorage` default. Gated until that lands.
-    
-    pub type BodyPool = ObjectPool<MutableString, true, 8>;
+    // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
+    // `MutableString: ObjectPoolType` (init = init2048) is provided in
+    // bun_string; the `object_pool!` macro generates the per-monomorphization
+    // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
+    // `unreachable!()`.
+    bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
     #[derive(Default, Clone)]
     pub struct Scope {

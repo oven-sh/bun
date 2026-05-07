@@ -1,3 +1,4 @@
+use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
@@ -45,7 +46,18 @@ pub fn filename_store_appender() -> FilenameStoreAppender<'static> {
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.
-    pub unsafe_http_client: AsyncHTTP<'static>,
+    //
+    // PORT NOTE: `ManuallyDrop` because the slot comes from `HiveArrayFallback`
+    // as uninitialized memory and is overwritten by plain `=` in
+    // `for_manifest`/`for_tarball`. Without `ManuallyDrop`, that assignment
+    // would drop a zeroed `AsyncHTTP` → zeroed `Decompressor` (discriminant 0
+    // = `Zlib(null Box)`) → SEGFAULT at null+0x88. Zig has no destructors so
+    // the `= undefined` field was simply overwritten; `ManuallyDrop` matches
+    // that semantic. The HTTP-thread bitwise copy in `notify`
+    // (`ptr::write(real, ptr::read(async_http))`) targets the inner `AsyncHTTP`
+    // directly via `*mut AsyncHTTP`, which is sound because `ManuallyDrop<T>`
+    // is `#[repr(transparent)]`.
+    pub unsafe_http_client: ManuallyDrop<AsyncHTTP<'static>>,
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
     // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
@@ -568,7 +580,10 @@ impl NetworkTask {
         core::mem::forget(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
         // TODO(port): narrow error set
-        self.unsafe_http_client = AsyncHTTP::init(
+        // PORT NOTE: ManuallyDrop overwrite — see field doc; old slot value is
+        // either uninitialized (fresh hive slot) or a stale bitwise copy from
+        // `notify`, neither of which is safe/meaningful to drop.
+        self.unsafe_http_client = ManuallyDrop::new(AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
@@ -581,7 +596,7 @@ impl NetworkTask {
                 http_proxy,
                 ..Default::default()
             },
-        );
+        ));
         self.unsafe_http_client.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
 
         if PackageManager::verbose_install() {
@@ -786,7 +801,10 @@ impl NetworkTask {
         }
 
         let completion_callback = self.get_completion_callback();
-        self.unsafe_http_client = AsyncHTTP::init(
+        // PORT NOTE: ManuallyDrop overwrite — see field doc; old slot value is
+        // either uninitialized (fresh hive slot) or a stale bitwise copy from
+        // `notify`, neither of which is safe/meaningful to drop.
+        self.unsafe_http_client = ManuallyDrop::new(AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
@@ -796,7 +814,7 @@ impl NetworkTask {
             completion_callback,
             http::FetchRedirect::Follow,
             http_options,
-        );
+        ));
         self.unsafe_http_client.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         if PackageManager::verbose_install() {
             self.unsafe_http_client.client.verbose = HTTPVerboseLevel::Headers;
@@ -843,9 +861,11 @@ impl NetworkTask {
     /// `addr_of_mut!().write()` without dropping the previous value.
     ///
     /// Fields that are `= undefined` in Zig (`unsafe_http_client`, `callback`,
-    /// `request_buffer`, `response_buffer`) are left untouched — callers MUST
-    /// overwrite `callback` (via `for_manifest`/`for_tarball`) before the task
-    /// is observed; the buffers are populated by `schedule()`.
+    /// `request_buffer`, `response_buffer`) are written here with drop-safe
+    /// placeholders so subsequent `=` assignments in `for_manifest`/
+    /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
+    /// stays bitwise-untouched (it is `ManuallyDrop` and overwritten without
+    /// drop by the caller).
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
@@ -871,6 +891,12 @@ impl NetworkTask {
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
             addr_of_mut!((*slot).streaming_committed).write(false);
             addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
+            // Zig-`undefined` fields: write drop-safe placeholders so the
+            // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
+            // (`unsafe_http_client` is `ManuallyDrop` — left as-is.)
+            addr_of_mut!((*slot).request_buffer).write(MutableString::init_empty());
+            addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
+            addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
         }
     }
 }

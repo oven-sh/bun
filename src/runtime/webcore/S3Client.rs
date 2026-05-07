@@ -696,26 +696,31 @@ pub fn static_list_objects(global: &JSGlobalObject, callframe: &CallFrame) -> Js
     let options = opt_js(args[1]);
 
     // get credentials from env
-    // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-    let vm = unsafe { &*global.bun_vm() };
-    let _ = vm; // env creds reached via S3File::construct_s3_file_with_s3_credentials below
+    // SAFETY: `bun_vm()` returns the live per-global VM raw pointer (JS thread);
+    // `transpiler.env` is the process-singleton dotenv loader, set during init
+    // and live for the VM lifetime.
+    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(unsafe {
+        (*(*global.bun_vm()).transpiler.env).get_s3_credentials()
+    });
 
-    let blob = scopeguard::guard(
-        {
-            let existing_credentials = todo!("blocked_on: bun_jsc::VirtualMachine::transpiler.env.get_s3_credentials() (mutable env access)");
-            S3File::construct_s3_file_with_s3_credentials(
-                global,
-                PathLike::default(),
-                options,
-                existing_credentials,
-            )?
-        },
-        // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-        |_b: Blob| {},
-    );
+    // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+    let blob = S3File::construct_s3_file_with_s3_credentials(
+        global,
+        PathLike::default(),
+        options,
+        existing_credentials,
+    )?;
 
-    let _ = (&*blob, object_keys);
-    todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
+    // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
+    let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+    // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`;
+    // Zig-semantics shared-mutable interior on the JS event-loop thread.
+    unsafe {
+        (*store_ptr)
+            .data
+            .as_s3_mut()
+            .list_objects(&*store_ptr, global, object_keys, options)
+    }
 }
 
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums

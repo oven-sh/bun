@@ -496,6 +496,27 @@ impl AsyncTaskTracker {
         }
         did_dispatch_async_call(global_object, AsyncCallType::EventListener, self.id);
     }
+
+    /// RAII pair for `will_dispatch` / `did_dispatch`. Calls `will_dispatch`
+    /// now and `did_dispatch` when the returned guard is dropped — the Rust
+    /// spelling of Zig's `tracker.willDispatch(); defer tracker.didDispatch();`.
+    #[must_use]
+    pub fn dispatch(self, global_object: &JSGlobalObject) -> DispatchScope<'_> {
+        self.will_dispatch(global_object);
+        DispatchScope { tracker: self, global_object }
+    }
+}
+
+/// Drop guard returned by [`AsyncTaskTracker::dispatch`].
+pub struct DispatchScope<'a> {
+    tracker: AsyncTaskTracker,
+    global_object: &'a JSGlobalObject,
+}
+
+impl Drop for DispatchScope<'_> {
+    fn drop(&mut self) {
+        self.tracker.did_dispatch(self.global_object);
+    }
 }
 
 #[repr(u8)]

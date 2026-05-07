@@ -1257,11 +1257,12 @@ impl<'a> SecurityScanSubprocess<'a> {
             .start(ipc_read_fd, true)
             .map_err(|e| e.to_zig_err())?;
 
-        // PORT NOTE: `to_process` consumes `SpawnResult` by value in the
-        // bun_spawn shape; reconstruct from the pid since the only field we
-        // need has already been read above (`extra_pipes`).
+        // PORT NOTE: `to_process` consumes `SpawnResult` by value on POSIX (and
+        // `&mut self` on Windows); take ownership of the result and let the
+        // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process = std::mem::take(spawned).to_process(event_loop, false);
+        let mut spawned_owned = std::mem::take(spawned);
+        let process: *mut Process = spawned_owned.to_process(event_loop, false);
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1269,9 +1270,12 @@ impl<'a> SecurityScanSubprocess<'a> {
         // inside this frame, so from here on we touch `*self` only through
         // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
-        process.set_exit_handler(parent);
-        // SAFETY: `parent` was just derived from `&mut self`; sole access path.
-        unsafe { (*parent).process = Some(process) };
+        // SAFETY: `process` is the freshly-allocated intrusive `*mut Process`
+        // (refcount == 1, owned by us); `parent` was just derived from `&mut self`.
+        unsafe {
+            (*process).set_exit_handler(parent.cast(), &SECURITY_SCAN_EXIT_VTABLE);
+            (*parent).process = Some(process);
+        }
 
         // Zig: `this.json_writer = StaticPipeWriter.create(...)` — assign the
         // field BEFORE `start()`. `start()` may complete the write synchronously
@@ -1285,9 +1289,9 @@ impl<'a> SecurityScanSubprocess<'a> {
             json_stdio_result,
             json_source,
         );
-        // Keep an `Rc` clone locally so no borrow on `(*parent).json_writer` is
+        // Keep a duped ref locally so no borrow on `(*parent).json_writer` is
         // held across `start()` — `on_close_io` may `.take()` the field.
-        let writer_local = writer.clone();
+        let writer_local = writer.dupe_ref();
         // SAFETY: see `parent` note above.
         unsafe { (*parent).json_writer = Some(writer) };
 
@@ -1299,13 +1303,17 @@ impl<'a> SecurityScanSubprocess<'a> {
             // SAFETY: `parent` points at the live `self` of `finish_spawn`; the
             // guard only fires on early return inside this fn.
             if let Some(w) = unsafe { (*parent).json_writer.take() } {
-                w.source.detach();
-                // Rc drop → `StaticPipeWriter::drop` → runtime `deref()`
+                // SAFETY: `w` holds the field's ref; sole live access path.
+                unsafe { (*w.as_ptr()).source.detach() };
+                w.deref();
             }
         });
 
-        match writer_local.start() {
+        // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
+        // in place (raw intrusive object — no Rust aliasing across the RefPtr).
+        match unsafe { (*writer_local.as_ptr()).start() } {
             Err(e) => {
+                writer_local.deref();
                 Output::err_generic(
                     "Failed to start security scanner JSON pipe writer: {}",
                     (e,),
@@ -1314,11 +1322,12 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
             Ok(()) => {}
         }
-        drop(writer_local);
+        writer_local.deref();
 
-        // SAFETY: `process` was set just above; reached via `parent` per the
-        // single-provenance note.
-        match unsafe { (*parent).process.as_ref() }.unwrap().watch_or_reap() {
+        // SAFETY: `process` is live (we hold a ref); reached via the local raw
+        // ptr per the single-provenance note. `watch_or_reap` may re-enter
+        // `on_process_exit` synchronously (already-exited child).
+        match unsafe { (*process).watch_or_reap() } {
             Err(_) => return Err(err!("ProcessWatchFailed")),
             Ok(_) => {}
         }
@@ -1329,8 +1338,10 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub fn on_close_io(&mut self, _: subprocess::StdioKind) {
         if let Some(writer) = self.json_writer.take() {
-            writer.source.detach();
-            // Rc::drop handles deref()
+            // SAFETY: `writer` holds the field's intrusive ref; sole access path
+            // (single-threaded event loop callback).
+            unsafe { (*writer.as_ptr()).source.detach() };
+            writer.deref();
             self.remaining_fds -= 1;
         }
     }

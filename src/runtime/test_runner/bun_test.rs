@@ -193,8 +193,7 @@ pub mod js_fns {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         {
-            group_begin!();
-            let _g = scopeguard::guard((), |_| debug::group::end());
+            let _g = group_begin!();
             // errdefer group.log("ended in error", .{}) — handled by ? paths implicitly logging
             // TODO(port): errdefer side-effect log on error path
 

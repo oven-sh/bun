@@ -1,16 +1,21 @@
+use bun_paths::path_options::{Kind, PathSeparators};
 use bun_paths::{AutoRelPath, Path};
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
 // PORT NOTE: reshaped — Zig owns `cache_dir_subpath: bun.AutoRelPath` by struct
-// copy; Rust borrows so the caller's path survives a clonefile→hardlink
-// fallback (`continue 'backend` in `Installer::Task::run`).
+// copy; Rust borrows mutably so the caller's path survives a clonefile→hardlink
+// fallback (`continue 'backend` in `Installer::Task::run`). The borrow must be
+// `&mut` because `Path::slice_z` writes the NUL terminator into the pooled buf.
 pub struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a AutoRelPath,
-    // TODO(port): bun.Path(.{ .sep = .auto, .unit = .os }) — const-generic options on bun_paths::Path
-    pub dest_subpath: Path,
+    pub cache_dir_subpath: &'a mut AutoRelPath,
+    /// `bun.Path(.{ .sep = .auto, .unit = .os })` — `.unit = .os` is `u8` on
+    /// macOS (the only platform `clonefileat` exists on), so the unit param is
+    /// spelled `u8` to keep this module compiling on Windows where `OSPathChar`
+    /// would be `u16` and `slice_z()` would yield a `WStr`.
+    pub dest_subpath: Path<u8, { Kind::ANY }, { PathSeparators::AUTO }>,
 }
 
 impl FileCloner<'_> {
@@ -55,7 +60,6 @@ impl FileCloner<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/isolated_install/FileCloner.zig (47 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      bun.Path/bun.AutoRelPath const-generic shape undefined; make_path drops comptime u8 type param
+//   confidence: high
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

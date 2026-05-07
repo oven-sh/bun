@@ -1200,7 +1200,7 @@ impl Kqueue {
                     watcher: watcher as *mut PathWatcher,
                     fd,
                     subpath: ZStr::from_bytes(subpath),
-                    r#gen,
+                    generation,
                     is_file,
                 },
             );

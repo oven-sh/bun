@@ -32,6 +32,7 @@ pub use bun_jsc::{
     ExternColumnIdentifier, ExternColumnIdentifierValue,
     StrongOptional, JsRef, CoerceTo, ThrowFmtArgs,
     StringJsc, ZigStringJsc, bun_string_jsc, host_fn,
+    ArrayBuffer,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -91,7 +92,6 @@ fn from_js_host_call_generic<R>(global: &JSGlobalObject, r: R) -> JsResult<R> {
 
 /// SQL-side helpers on `JSValue` not (yet) provided by `bun_jsc`.
 pub trait JSValueSqlExt: Sized + Copy {
-    fn create_buffer_copy(global: &JSGlobalObject, slice: &[u8]) -> JSValue;
     fn js_double_number(n: f64) -> JSValue;
     fn to_uint64_no_truncate(self) -> u64;
     fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool;
@@ -101,42 +101,6 @@ pub trait JSValueSqlExt: Sized + Copy {
 const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
 
 impl JSValueSqlExt for JSValue {
-    /// `JSValue.createBuffer(global, slice, null)` — Zig passes a `[]const u8`
-    /// and `null` allocator, meaning JSC must not free the pointer. The SQL
-    /// callsite (`bytea.zig`) passes a slice into a transient decode buffer, so
-    /// the bytes are duplicated into a mimalloc allocation here and handed to
-    /// JSC with the standard deallocator.
-    fn create_buffer_copy(global: &JSGlobalObject, slice: &[u8]) -> JSValue {
-        if slice.is_empty() {
-            // SAFETY: `global` is live; null deallocator for empty.
-            return unsafe {
-                JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                    global.as_mut_ptr(),
-                    core::ptr::NonNull::dangling().as_ptr(),
-                    0,
-                    core::ptr::null_mut(),
-                    None,
-                )
-            };
-        }
-        // Dup into a mimalloc allocation so `MarkedArrayBuffer_deallocator`
-        // (which calls `mi_free`) is the correct destructor.
-        let mut owned: Vec<u8> = slice.to_vec();
-        let ptr = owned.as_mut_ptr();
-        let len = owned.len();
-        core::mem::forget(owned);
-        // SAFETY: `ptr[..len]` is a fresh mimalloc allocation; ownership
-        // transfers to JSC (freed via `MarkedArrayBuffer_deallocator`).
-        unsafe {
-            JSBuffer__bufferFromPointerAndLengthAndDeinit(
-                global.as_mut_ptr(),
-                ptr,
-                len,
-                core::ptr::null_mut(),
-                Some(MarkedArrayBuffer_deallocator),
-            )
-        }
-    }
     /// `JSValue::jsDoubleNumber` — boxes an f64 (always double-encoded; no
     /// int32 fast path). FFI.zig: `DOUBLE_TO_JSVALUE`.
     fn js_double_number(n: f64) -> JSValue {
@@ -1113,12 +1077,6 @@ impl SslCtxCache {
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     // JSValue
-    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
-        global: *mut JSGlobalObject, ptr: *mut u8, len: usize,
-        ctx: *mut c_void,
-        deallocator: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
-    ) -> JSValue;
-    fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, ctx: *mut c_void);
     fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
     fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
     fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;

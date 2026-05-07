@@ -214,6 +214,16 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.buf.len()
     }
 
+    /// Allocated capacity of the backing buffer (Zig: `fifo.buf.len`).
+    /// Distinct from [`readable_length`] (live items) and
+    /// [`writable_length`] (free slots) — `capacity == readable + writable`.
+    /// Used by GC `memoryCost` reporting where the *allocation* size, not the
+    /// occupancy, is what matters.
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.buf.len()
+    }
+
     /// Rewind `head` to 0 when the queue is empty so the next `write` can use
     /// the full contiguous buffer without wrapping. Perf-only micro-opt; a
     /// no-op when items remain. Mirrors the `head = 0` post-drain idiom in

@@ -30,8 +30,12 @@ impl Opcode {
         (self as u8) & 0x8 != 0
     }
 
+    /// Zig `@enumFromInt(@as(u4, n))`. Caller must guarantee `n <= 0xF`;
+    /// debug-asserted. Public so call sites that already range-check the raw
+    /// nibble (e.g. the WS client's extern-C `op: u8` entry points) don't have
+    /// to repeat the `unsafe` transmute.
     #[inline]
-    const fn from_raw(n: u8) -> Opcode {
+    pub const fn from_raw(n: u8) -> Opcode {
         debug_assert!(n <= 0xF);
         // SAFETY: Opcode is #[repr(u8)] and exhaustively covers 0x0..=0xF.
         unsafe { core::mem::transmute::<u8, Opcode>(n) }

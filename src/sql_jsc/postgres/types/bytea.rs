@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JSValueSqlExt};
+use crate::jsc::{js_error_to_postgres, ArrayBuffer, JSGlobalObject, JSValue};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;
@@ -21,9 +21,11 @@ impl ByteaToJs for Data {
         // var slice = value.slice()[@min(1, value.len)..];
         // _ = slice;
         //
-        // Zig passed `null` allocator → C++ copies; map to the copying overload
-        // (`create_buffer_copy` takes `&[u8]`).
-        Ok(JSValue::create_buffer_copy(global, self.slice()))
+        // Zig's `JSValue.createBuffer(global, slice, null)` with a null
+        // allocator maps to the copying Buffer constructor: `self.slice()`
+        // borrows a transient decode buffer that `Drop` frees on return, so
+        // JSC must own its own copy.
+        ArrayBuffer::create_buffer(global, self.slice()).map_err(js_error_to_postgres)
     }
 }
 

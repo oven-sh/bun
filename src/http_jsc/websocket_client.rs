@@ -1410,15 +1410,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
-        // PORT NOTE: Zig `socket.socket.eq(this.tcp.socket)` — `InternalSocket`
-        // has no `PartialEq` in bun_uws yet. Compare the connected raw handle,
-        // which is the only variant the WS client ever holds.
-        match (&socket.socket, &self.tcp.socket) {
-            (uws::InternalSocket::Connected(a), uws::InternalSocket::Connected(b)) => core::ptr::eq(*a, *b),
-            (uws::InternalSocket::Detached, uws::InternalSocket::Detached) => true,
-            // TODO(port): once bun_uws::InternalSocket impls PartialEq, replace with `==`.
-            _ => false,
-        }
+        socket.socket == self.tcp.socket
     }
 
     pub fn handle_end(&mut self, socket: Socket<SSL>) {
@@ -1479,8 +1471,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // SAFETY: op <= 0xF checked above; Opcode is #[repr(u4)]-equivalent
-        let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
+        let opcode = Opcode::from_raw(op);
         // SAFETY: ptr/len from C++; caller guarantees valid slice
         let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
         let bytes = Copy::Bytes(slice);
@@ -1524,8 +1515,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // SAFETY: op <= 0xF checked above
-        let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op) };
+        let opcode = Opcode::from_raw(op);
 
         // Cast the JSValue to a Blob.
         // PORT NOTE: `bun_jsc::webcore::Blob` is an opaque C-ABI shim (real
@@ -1587,8 +1577,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // Note: 0 is valid
 
-        // SAFETY: u4 truncate of op fits in Opcode repr
-        let opcode: Opcode = unsafe { core::mem::transmute::<u8, Opcode>(op & 0x0F) };
+        let opcode = Opcode::from_raw(op & 0x0F);
         {
             let mut inline_buf = [0u8; STACK_FRAME_SIZE];
 
@@ -1815,8 +1804,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             return core::ptr::null_mut();
         }
 
-        ws_ref.send_buffer.ensure_total_capacity(2048);
-        ws_ref.receive_buffer.ensure_total_capacity(2048);
+        bun_core::handle_oom(ws_ref.send_buffer.ensure_total_capacity(2048));
+        bun_core::handle_oom(ws_ref.receive_buffer.ensure_total_capacity(2048));
         ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
         if buffered_data_len > 0 {
@@ -1932,8 +1921,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
-        ws_ref.send_buffer.ensure_total_capacity(2048);
-        ws_ref.receive_buffer.ensure_total_capacity(2048);
+        bun_core::handle_oom(ws_ref.send_buffer.ensure_total_capacity(2048));
+        bun_core::handle_oom(ws_ref.receive_buffer.ensure_total_capacity(2048));
         ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
         if buffered_data_len > 0 {
@@ -2065,12 +2054,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };
         let mut cost: usize = size_of::<Self>();
-        // PORT NOTE: Zig read `buf.len` (allocated capacity). LinearFifo's
-        // `buf_len()` is private; `readable_length()` (live bytes) is the
-        // closest public surface. PERF(port): under-reports — add a public
-        // `capacity()` to LinearFifo in Phase B and switch back.
-        cost += this.send_buffer.readable_length();
-        cost += this.receive_buffer.readable_length();
+        cost += this.send_buffer.capacity();
+        cost += this.receive_buffer.capacity();
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
@@ -2338,12 +2323,7 @@ impl Mask {
             cold();
             return;
         }
-        // PORT NOTE: Zig fed output==input to highway. The Rust safe wrapper
-        // takes `&mut [u8], &[u8]` (no alias); fall back to a temp copy.
-        // PERF(port): was in-place SIMD mask — profile in Phase B and add a
-        // raw-ptr `fill_with_skip_mask_raw` to bun_highway if it matters.
-        let tmp: Box<[u8]> = buf.to_vec().into_boxed_slice();
-        bun_highway::fill_with_skip_mask(mask, buf, &tmp, skip_mask);
+        bun_highway::fill_with_skip_mask_inplace(mask, buf, skip_mask);
     }
 
     fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
@@ -2562,10 +2542,7 @@ impl<'a> Copy<'a> {
         match self {
             Copy::Utf16(utf16) => {
                 header.set_len(WebsocketHeader::pack_length(content_byte_len));
-                // PORT NOTE: Zig called `copyUTF16IntoUTF8Impl(.., true)` (allow_invalid=true);
-                // bun_string only exposes the non-`_impl` wrapper. Phase-B: surface the
-                // allow-invalid variant if behavior diverges.
-                let encode_into_result = strings::copy_utf16_into_utf8(to_mask, utf16);
+                let encode_into_result = strings::copy_utf16_into_utf8_impl::<true>(to_mask, utf16);
                 debug_assert_eq!(encode_into_result.written as usize, content_byte_len);
                 debug_assert_eq!(encode_into_result.read as usize, utf16.len());
                 header.set_len(WebsocketHeader::pack_length(encode_into_result.written as usize));

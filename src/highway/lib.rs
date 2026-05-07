@@ -268,6 +268,33 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
     }
 }
 
+/// In-place variant of [`fill_with_skip_mask`] for `output == input`.
+///
+/// The Zig caller (`Mask.fill`) routinely passes the same buffer for both;
+/// the safe wrapper above can't express that without violating `&mut`/`&`
+/// aliasing. The C++ kernel reads-before-writes per lane (it's `dst[i] =
+/// src[i] ^ mask[i&3]`), so feeding it `src == dst` is sound — that's exactly
+/// what the Zig build does.
+pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: bool) {
+    if buf.is_empty() {
+        return;
+    }
+
+    // SAFETY: mask is 4 readable bytes; `buf` is exclusively borrowed so its
+    // range is both readable and writable for `buf.len()` bytes. The FFI
+    // kernel tolerates `output == input` (load-xor-store per element).
+    unsafe {
+        highway_fill_with_skip_mask(
+            mask.as_ptr(),
+            4,
+            buf.as_mut_ptr(),
+            buf.as_ptr(),
+            buf.len(),
+            skip_mask,
+        );
+    }
+}
+
 /// Useful for single-line JavaScript comments.
 /// Scans for:
 /// - `\n`, `\r`

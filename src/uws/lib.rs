@@ -1549,6 +1549,29 @@ pub enum InternalSocket {
     Pipe,
 }
 
+// Zig `InternalSocket.eq` — variant + pointer-identity equality.
+// PORT NOTE: Zig's `.pipe` arm returns `false` even for `(pipe, pipe)` on
+// non-Windows (the variant carries no payload there, so identity is
+// meaningless). Mirrored exactly so debug-asserts that compare sockets behave
+// identically to the Zig build.
+impl PartialEq for InternalSocket {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (InternalSocket::Connected(a), InternalSocket::Connected(b)) => core::ptr::eq(a, b),
+            (InternalSocket::Connecting(a), InternalSocket::Connecting(b)) => core::ptr::eq(a, b),
+            (InternalSocket::Detached, InternalSocket::Detached) => true,
+            (InternalSocket::UpgradedDuplex(a), InternalSocket::UpgradedDuplex(b)) => {
+                core::ptr::eq(a, b)
+            }
+            #[cfg(windows)]
+            (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
+            #[cfg(not(windows))]
+            (InternalSocket::Pipe, InternalSocket::Pipe) => false,
+            _ => false,
+        }
+    }
+}
+
 /// Zig `NewSocketHandler(comptime is_ssl: bool)`. The const generic only
 /// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C.
 #[derive(Copy, Clone)]

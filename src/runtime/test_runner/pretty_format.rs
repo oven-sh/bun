@@ -885,13 +885,13 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct WrappedWriter<'w, W: bun_io::Write + ?Sized> {
+pub struct WrappedWriter<'w, W: bun_io::Write> {
     pub ctx: &'w mut W,
     pub failed: bool,
     pub estimated_line_length: Option<&'w mut usize>,
 }
 
-impl<'w, W: bun_io::Write + ?Sized> WrappedWriter<'w, W> {
+impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     pub fn new(ctx: &'w mut W) -> Self {
         Self { ctx, failed: false, estimated_line_length: None }
     }
@@ -1965,10 +1965,8 @@ impl<'a> Formatter<'a> {
                             .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
-                        // TODO(port): printAsymmetricMatcher takes name_buf by value [512]u8;
-                        // borrowck conflict with `writer`. Phase B: pass &mut [u8; 512].
-                        JestPrettyFormat::print_asymmetric_matcher::<W, FORMAT, ENABLE_ANSI_COLORS>(
-                            self, &mut writer, *name_buf, value,
+                        JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
+                            self, &mut writer, name_buf, value,
                         )
                     })? {
                         return Ok(());
@@ -3066,7 +3064,7 @@ impl JestPrettyFormat {
         writer: &mut WrappedWriter<'_, W>,
     ) where
         M: AsymmetricMatcherFormatter,
-        W: bun_io::Write + ?Sized,
+        W: bun_io::Write,
     {
         match flags.promise() {
             expect::Promise::Resolves => {
@@ -3092,7 +3090,7 @@ impl JestPrettyFormat {
     ) -> JsResult<bool>
     where
         M: AsymmetricMatcherFormatter,
-        W: bun_io::Write + ?Sized,
+        W: bun_io::Write,
     {
         // PORT NOTE: Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
         // writer, which alias. In Rust that would be two live `&mut W` to the same target

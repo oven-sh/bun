@@ -54,15 +54,18 @@ impl BuildMessage {
         str.set_output_encoding();
         if str.is_utf8() {
             let out = str.to_js(global);
-            // default_allocator.free(text) → `text` drops at scope end.
+            // default_allocator.free(text) → `text` drops on return.
             return out;
         }
 
-        // toExternalValue: JSC takes ownership of the backing buffer and frees it later.
-        // TODO(port): ZigString::to_external_value must adopt `text`'s allocation; leak it here so
-        // the external-string finalizer (mimalloc-backed) can free it.
-        let leaked: &'static mut [u8] = Box::leak(text.into_boxed_slice());
-        let mut str = ZigString::init(leaked);
+        // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
+        // Ownership transfers via `Box::into_raw`; the external-string finalizer
+        // calls `mi_free` on the block (global allocator is mimalloc).
+        let len = text.len();
+        let ptr = Box::into_raw(text.into_boxed_slice()).cast::<u8>();
+        // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
+        // released by `Box::into_raw`; it stays live until JSC frees it.
+        let mut str = ZigString::init(unsafe { core::slice::from_raw_parts(ptr, len) });
         str.set_output_encoding();
         str.to_external_value(global)
     }
@@ -198,7 +201,7 @@ impl BuildMessage {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/BuildMessage.zig (203 lines)
-//   confidence: medium
-//   todos:      1
-//   notes:      .classes.ts m_ctx payload; allocator field dropped; to_string_fn external-value path leaks Vec for JSC finalizer to free
+//   confidence: high
+//   todos:      0
+//   notes:      .classes.ts m_ctx payload; allocator field dropped; to_string_fn external-value path transfers ownership via Box::into_raw → mi_free
 // ──────────────────────────────────────────────────────────────────────────

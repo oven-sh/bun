@@ -1170,9 +1170,8 @@ impl Drop for DevServer {
     }
 }
 
-// LAYERING: `bun_alloc::AllocationScope` is a CYCLEBREAK unit-stub; the real
-// tracker lives in `crate::allocators::allocation_scope` (moved to T6 because
-// it pulls in `bun_core`/`bun_collections`). Use the runtime-local type.
+// `AllocationScope` lives in `crate::allocators::allocation_scope` (moved out of
+// `bun_alloc` per CYCLEBREAK because it pulls in `bun_core`/`bun_collections`).
 pub type AllocationScope = crate::allocators::allocation_scope::AllocationScope;
 /// Zig: `pub const DevAllocator = AllocationScope.Borrowed;`
 pub type DevAllocator<'a> =
@@ -4945,7 +4944,7 @@ impl DevServer {
 // Phase-A draft body and the keystone struct module agree on identity.
 pub use crate::bake::dev_server::FileKind;
 
-pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = bun_alloc::AllocationScope::ENABLED;
+pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = crate::allocators::allocation_scope::ENABLED;
 
 pub use crate::bake::dev_server::IncrementalResult;
 

@@ -136,19 +136,9 @@ pub struct Entry {
     pub overlapping_memory_cost: u32,
 }
 
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            // `DevAllocator` is a unit-struct stub (`bun_alloc::AllocationScope`); construct
-            // it directly since the upstream crate doesn't derive `Default`.
-            dev_allocator: bun_alloc::AllocationScope,
-            ref_count: 0,
-            paths: Box::default(),
-            files: Vec::new(),
-            overlapping_memory_cost: 0,
-        }
-    }
-}
+// `Entry` has no `Default` — `dev_allocator` is a borrowed `AllocationScope`
+// that must come from the owning `DevServer`; `put_or_increment_ref_count`
+// constructs it explicitly.
 
 impl Entry {
     // PORT NOTE: Zig `sourceContents()` was dead code — it indexed `entry.source_contents` and

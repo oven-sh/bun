@@ -9,11 +9,10 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use bun_core::Fd;
 
 // Zig: `pub const MemFdAllocator = bun.allocators.LinuxMemFdAllocator;`
-// TODO(b2): bun_alloc::LinuxMemFdAllocator is currently a CYCLEBREAK ZST stub; the real
-// implementation lives in bun_runtime::allocators::LinuxMemFdAllocator (higher tier). Once
-// that type is hoisted into bun_alloc this re-export becomes the real thing. Not a defect
-// of this file — it mirrors the Zig alias verbatim.
-pub use bun_alloc::LinuxMemFdAllocator as MemFdAllocator;
+// LAYERING: `LinuxMemFdAllocator` lives in `bun_runtime::allocators` (it pulls in
+// `bun_core`/`bun_sys`/`bun_ptr`); `bun_platform` is below `bun_runtime` so cannot
+// re-export it. The alias has no consumers — `Blob`/`Store` already path through
+// `crate::allocators::linux_mem_fd_allocator` directly.
 
 /// Re-encode a glibc `syscall(2)` wrapper return into the raw-kernel convention used by
 /// Zig's `std.os.linux.syscallN`: on error the kernel returns `-errno` in the result

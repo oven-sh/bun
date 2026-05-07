@@ -2393,9 +2393,8 @@ pub mod IPCHandlers {
             // as the VM); reborrow per use so `&mut EventLoop` isn't held
             // across `on_data2`.
             unsafe { (*loop_).enter() };
-            // TODO(port): errdefer — scopeguard for loop.exit()
+            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
             on_data2(send_queue, all_data);
-            unsafe { (*loop_).exit() };
         }
 
         pub fn on_fd(send_queue: &mut SendQueue, _: Socket, fd: c_int) {
@@ -2424,10 +2423,9 @@ pub mod IPCHandlers {
             let loop_ = global_this.bun_vm().event_loop();
             // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
             unsafe { (*loop_).enter() };
-            // TODO(port): errdefer — scopeguard for loop.exit()
+            let _exit = scopeguard::guard((), |()| unsafe { (*loop_).exit() });
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(global_this, ContinueSendReason::OnWritable);
-            unsafe { (*loop_).exit() };
         }
 
         pub fn on_timeout(_: &mut SendQueue, _: Socket) {

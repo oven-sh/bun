@@ -2,7 +2,7 @@ use core::fmt;
 use std::cell::{Cell, UnsafeCell};
 use std::rc::{Rc, Weak};
 
-use bun_alloc::AllocationScope;
+use crate::allocators::allocation_scope::AllocationScope;
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};

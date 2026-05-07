@@ -748,6 +748,29 @@ impl<T> BabyList<T> {
         ManuallyDrop::new(this)
     }
 
+    /// Returns a non-owning header copy of this list pointing at the same
+    /// backing buffer (Zig struct value-copy semantics).
+    ///
+    /// `Drop` on the returned list is a no-op (`Origin::Borrowed`). Growing or
+    /// freeing methods on the copy will panic via `assert_owned`. The original
+    /// must outlive every dereference of the copy and must not reallocate its
+    /// buffer while the copy is live.
+    pub fn shallow_copy(&self) -> Self {
+        Self {
+            ptr: self.ptr,
+            len: self.len,
+            cap: self.cap,
+            origin: Origin::Borrowed {
+                #[cfg(debug_assertions)]
+                trace: if TRACES_ENABLED {
+                    Some(bun_core::StoredTrace::capture(None))
+                } else {
+                    None
+                },
+            },
+        }
+    }
+
     /// Transfers ownership of this `BabyList` to a new allocator.
     ///
     /// This method is valid only if both the old allocator and new allocator are

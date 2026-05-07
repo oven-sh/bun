@@ -134,61 +134,6 @@ mod hardcoded_module {
     }
 }
 
-// ── PluginRunner shim ───────────────────────────────────────────────────
-// CYCLEBREAK: `crate::transpiler::PluginRunner` carries a type-erased
-// `global_object: *mut c_void` (real `*mut JSGlobalObject` lives in `bun_jsc`,
-// which depends back on `bun_bundler`). The linker only needs the cheap
-// pre-filter `could_be_plugin` (pure, no JSC) and the `on_resolve` hook. Port
-// the pre-filter body from `PluginRunner.zig:22`; `on_resolve` returns `None`
-// here because dispatching `runOnResolvePlugins` requires the JSC vtable —
-// `bundler_jsc::plugin_runner` casts `global_object` back and provides the
-// real body. The legacy linker (Bun.Transpiler) never wires a plugin_runner
-// when `is_bun`, so this path is effectively dead.
-#[derive(Clone, Copy)]
-pub enum PluginTarget {
-    Bun,
-    Browser,
-    Node,
-}
-impl PluginRunner {
-    /// Spec PluginRunner.zig:22 `couldBePlugin` — cheap pre-filter that rules
-    /// out `./` / `../` / absolute paths before hitting the resolve hook.
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        if let Some(last_dot) = strings::last_index_of_char(specifier, b'.') {
-            let ext = &specifier[last_dot + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && (ext[0].is_ascii_lowercase()
-                    || ext[0].is_ascii_uppercase()
-                    || ext[0] > 127)
-            {
-                return true;
-            }
-        }
-        !bun_paths::is_absolute(specifier) && strings::contains_char(specifier, b':')
-    }
-
-    /// Spec PluginRunner.zig:34 `onResolve`. CYCLEBREAK: the real body calls
-    /// `JSGlobalObject.runOnResolvePlugins` (JSC-side, `bundler_jsc` crate);
-    /// the FORWARD_DECL struct here is field-less, so there is no global to
-    /// dispatch through. Return `None` ("no plugin matched") — the
-    /// `bundler_jsc` runner overrides this via its own `on_resolve` and casts
-    /// `*mut PluginRunner` back before calling.
-    #[allow(unused_variables)]
-    pub fn on_resolve(
-        &mut self,
-        specifier: &[u8],
-        importer: &[u8],
-        log: &mut Log,
-        loc: bun_logger::Loc,
-        target: PluginTarget,
-    ) -> Result<Option<PFs::Path<'static>>, bun_core::Error> {
-        Ok(None)
-    }
-}
-
 // ── ExternalModules::is_node_builtin ────────────────────────────────────
 // Spec (linker.zig:229) routes the browser-target diagnostic through
 // `Options.ExternalModules.isNodeBuiltin`; that lives in `options.rs` and
@@ -485,10 +430,12 @@ impl Linker {
                             // SAFETY: `plugin_runner` is `Some` only when set
                             // by the owning `Transpiler` to a live JSC-heap
                             // `PluginRunner`; the transpiler is single-threaded
-                            // and holds no other `&mut` to it for the duration
-                            // of `on_resolve`. Exclusive access here matches
-                            // Zig `*PluginRunner` (linker.zig:176-193).
-                            if let Some(path) = unsafe { &mut *runner }.on_resolve(
+                            // and holds no other borrow of it for the duration
+                            // of `on_resolve`. Shared access here matches Zig
+                            // `*PluginRunner` (linker.zig:176-193).
+                            let runner = unsafe { &*runner };
+                            if let Some(path) = (runner.on_resolve)(
+                                runner.global_object,
                                 import_record.path.text,
                                 file_path.text,
                                 log,
@@ -571,7 +518,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    to_logger_import_kind(import_record.kind),
+                    import_record.kind.into(),
                     bun_core::err!("ModuleNotFound"),
                 )?;
             } else {
@@ -583,7 +530,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    to_logger_import_kind(import_record.kind),
+                    import_record.kind.into(),
                     bun_core::err!("ModuleNotFound"),
                 )?;
             }

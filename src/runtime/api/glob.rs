@@ -190,6 +190,7 @@ impl WalkTaskErr {
 pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
 
 impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
     fn run(&mut self) {
         WalkTask::run(self)
     }
@@ -220,6 +221,7 @@ impl<'a> WalkTask<'a> {
 }
 
 impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
     fn run(&mut self) {
         // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
         let guard = scopeguard::guard(self.has_pending_activity, |hpa| {

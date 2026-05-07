@@ -1,25 +1,22 @@
 //! `jsc.Debugger` — inspector / test-reporter / lifecycle-agent surface.
 //!
-//! B-2 un-gate: the type surface (`Debugger`, `AsyncTaskTracker`, `DebuggerId`,
+//! Type surface (`Debugger`, `AsyncTaskTracker`, `DebuggerId`,
 //! `TestReporterAgent`, `LifecycleAgent`, `AsyncCallType`) is real and
-//! compiles against the `bun_jsc` crate's available dependency set. The heavy
-//! `wait_for_debugger_if_necessary` / `start_js_debugger_thread` /
-//! retroactive-jest-reporting bodies reach into forward-dep crates
-//! (`bun_runtime`, `bun_schema`, the gated `http_server_agent` /
-//! `BunFrontendDevServerAgent`) and into `VirtualMachine.debugger`'s real
-//! field type — those are dispatched through `RuntimeHooks` (see
-//! VirtualMachine.rs §Dispatch) by the high tier, so the public fns here
-//! delegate to the hook table with `TODO(b2)` markers.
+//! compiles against the `bun_jsc` crate's available dependency set.
+//! `retroactively_report_discovered_tests` reaches into the `bun:test` runner
+//! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
+//! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use bun_aio::posix_event_loop::{get_vm_ctx, AllocatorType};
 use bun_aio::KeepAlive;
 use bun_string::String as BunString;
 
-use crate::virtual_machine::VirtualMachine;
+use crate::virtual_machine::{runtime_hooks, RuntimeHooks, VirtualMachine};
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
@@ -53,7 +50,7 @@ impl BunFrontendDevServerAgent {
     pub fn notify_bundle_start(
         &self,
         dev_server_id: DebuggerId,
-        trigger_files: &mut [crate::String],
+        trigger_files: &mut [BunString],
     ) {
         if let Some(handle) = core::ptr::NonNull::new(self.handle) {
             // SAFETY: handle is non-null (agent enabled); slice valid for the call.
@@ -86,7 +83,7 @@ impl BunFrontendDevServerAgent {
     pub fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
-        build_errors_payload_base64: &mut crate::String,
+        build_errors_payload_base64: &mut BunString,
     ) {
         if let Some(handle) = core::ptr::NonNull::new(self.handle) {
             // SAFETY: handle is non-null (agent enabled); payload valid for the call.
@@ -106,7 +103,7 @@ mod ffi {
         pub fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
             agent: *mut core::ffi::c_void,
             dev_server_id: i32,
-            trigger_files: *mut crate::String,
+            trigger_files: *mut bun_string::String,
             trigger_files_len: usize,
         );
         pub fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(

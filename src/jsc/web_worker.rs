@@ -952,8 +952,16 @@ impl WebWorker {
                 unsafe { (*vm).exit_handler.exit_code = 1 };
                 if unsafe { (*log_ptr).errors } == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
+                    // PORT NOTE: `Log::add_error` stores `&'static [u8]`; the
+                    // Zig spec passed a heap slice it then freed (the log was
+                    // consumed by `flushLogs` first). Use the `_fmt` variant
+                    // here so the log owns its copy.
                     bun_core::handle_oom(unsafe {
-                        (*log_ptr).add_error(None, bun_logger::Loc::EMPTY, err.slice())
+                        (*log_ptr).add_error_fmt(
+                            None,
+                            bun_logger::Loc::EMPTY,
+                            format_args!("{}", bstr::BStr::new(err.slice())),
+                        )
                     });
                 }
                 resolve_error.deref();
@@ -1232,12 +1240,10 @@ impl WebWorker {
         // WTF ref on scope exit, including across the `?`-free error arm below.
         let str = bun_string::OwnedString::new(str);
         let cpp_worker = self.cpp_worker;
-        let dispatch = jsc::from_js_host_call_generic(
-            global,
-            core::panic::Location::caller(),
-            // SAFETY: cpp_worker / global valid; `str` borrowed by value.
-            || unsafe { WebWorker__dispatchError(global, cpp_worker, str.get(), err) },
-        );
+        // SAFETY: cpp_worker / global valid; `str` borrowed by value.
+        let dispatch = jsc::from_js_host_call_generic(global, || unsafe {
+            WebWorker__dispatchError(global, cpp_worker, str.get(), err)
+        });
         if let Err(e) = dispatch {
             let exc = global.take_exception(e);
             if let Some(exc) = exc.as_exception(vm_ref.jsc_vm) {

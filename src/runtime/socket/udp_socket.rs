@@ -112,8 +112,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
         return;
     }
 
-    // SAFETY: VM singleton is live for the JS thread.
-    let event_loop = unsafe { &mut *VirtualMachine::get().as_mut().event_loop() };
+    let event_loop = VirtualMachine::get().event_loop_ref();
     event_loop.enter();
     // SAFETY: globalThis stored at construction; VM outlives socket.
     let global_this = unsafe { &*this.global_this };

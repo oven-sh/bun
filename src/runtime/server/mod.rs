@@ -2426,7 +2426,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             // SAFETY: event_loop() returns the VM's owned `*mut EventLoop`;
             // non-null while the VM is alive.
-            unsafe { (*vm.event_loop()).perform_gc() };
+            vm.event_loop_ref().perform_gc();
         }
 
         route_list_value

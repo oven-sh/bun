@@ -97,8 +97,7 @@ impl<'a> Coordinator<'a> {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
                 return self.abort_all();
             }
-            // SAFETY: vm.event_loop() returns a live *mut EventLoop for the VM lifetime.
-            unsafe { (*self.vm.event_loop()).tick() };
+            self.vm.event_loop_ref().tick();
             self.maybe_scale_up();
             if self.is_done() {
                 break;
@@ -123,8 +122,7 @@ impl<'a> Coordinator<'a> {
                     (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
                 }
             } else {
-                // SAFETY: vm.event_loop() returns a live *mut EventLoop for the VM lifetime.
-                unsafe { (*self.vm.event_loop()).auto_tick() };
+                self.vm.event_loop_ref().auto_tick();
             }
         }
     }

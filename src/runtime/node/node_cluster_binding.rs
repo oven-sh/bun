@@ -232,8 +232,7 @@ pub fn handle_internal_message_primary(
         return Ok(());
     };
 
-    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
+    let event_loop = global.bun_vm().event_loop_ref();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {

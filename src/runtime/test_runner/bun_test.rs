@@ -868,8 +868,7 @@ impl BunTest {
         let this: *mut BunTest = this_strong.as_ptr();
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
-        // SAFETY: `vm.global` is the live per-thread global; non-null after VM init.
-        let global = unsafe { &*vm.global };
+        let global = vm.global();
         unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;

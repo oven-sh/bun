@@ -691,7 +691,7 @@ impl Pending {
         // no reader observes it after this.
         // SAFETY: VM event loop is a singleton; temporary `&mut` is the sole
         // borrow for the duration of `enqueue_task` (no re-entry into Rust).
-        unsafe { &mut *vm.event_loop() }
+        vm.event_loop_ref()
             .enqueue_task(bun_event_loop::Task::init(Box::into_raw(clone)));
     }
 

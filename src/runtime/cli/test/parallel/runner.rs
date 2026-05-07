@@ -570,13 +570,11 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
-                // SAFETY: event_loop pointer is valid while vm lives.
-                unsafe { (*vm.event_loop()).tick() };
+                vm.event_loop_ref().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
                     break;
                 }
-                // SAFETY: event_loop pointer is valid while vm lives.
-                unsafe { (*vm.event_loop()).auto_tick() };
+                vm.event_loop_ref().auto_tick();
             }
             let Some(idx) = self.cmds.pending_idx else { break };
             self.cmds.pending_idx = None;

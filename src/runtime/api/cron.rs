@@ -1545,7 +1545,7 @@ impl CronJob {
         // SAFETY: per-thread VM; `event_loop()` returns the live VM-owned
         // pointer. `enter_scope` calls `enter()` now and `exit()` on drop, and
         // holds the raw pointer (not `&mut`) so re-entrant JS can re-borrow.
-        let _ev_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire = true;
         let result = match cb.call(this_ref.global, js_this, &[]) {
@@ -1565,8 +1565,7 @@ impl CronJob {
                         Self::self_stop(this, vm);
                         return;
                     }
-                    // SAFETY: `vm.global` is the live per-VM global.
-                    let global_ref = unsafe { &*vm.global };
+                    let global_ref = vm.global();
                     // SAFETY: single JS thread; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
                     let _ = VirtualMachine::get().as_mut()
@@ -1619,7 +1618,7 @@ impl CronJob {
                     };
                     // SAFETY: `vm.global` is live; `&mut` derived via the thread-local
                     // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let global_ref = unsafe { &*vm.global };
+                    let global_ref = vm.global();
                     VirtualMachine::get().as_mut()
                         .unhandled_rejection(global_ref, reason, result);
                 }
@@ -1771,7 +1770,8 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
     }
-    // SAFETY: `vm.global` is live for the per-thread VM.
+    // SAFETY: `vm.global` is live for the per-thread VM; raw deref decouples
+    // the borrow from `vm` so `unhandled_rejection(&mut self, ...)` can reborrow.
     let global_ref = unsafe { &*vm.global };
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);

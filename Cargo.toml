@@ -107,6 +107,10 @@ members = [
   "src/bunfig",
   "src/bun_bin",
 ]
+# Vendored cargo deps (e.g. lolhtml) are built standalone by
+# `scripts/build/deps/*.ts` with `cargo build --cwd vendor/...`; without an
+# exclude, cargo walks up and tries to attach them to this workspace.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.0.0"

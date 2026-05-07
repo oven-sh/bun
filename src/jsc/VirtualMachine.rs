@@ -652,6 +652,42 @@ impl VirtualMachine {
         self.event_loop
     }
 
+    /// Safe `&mut EventLoop` projection. Same single-JS-thread soundness
+    /// contract as [`Self::as_mut`] / [`JsCell::get_mut`]: the event loop is a
+    /// per-VM singleton touched only from the owning JS thread, so a
+    /// short-lived `&mut` is sound provided the borrow is not held across
+    /// re-entrant JS that itself reborrows (use [`Self::event_loop`] for the
+    /// raw pointer in those cases). Exists so the ~80 host-fn call sites that
+    /// previously open-coded `unsafe { &mut *vm.event_loop() }` collapse into
+    /// one audited `unsafe` here.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn event_loop_ref(&self) -> &mut EventLoop {
+        // SAFETY: `event_loop` is set in `init()` to `&mut self.regular_event_loop`
+        // (or `macro_event_loop`) and remains valid for the VM lifetime;
+        // single-JS-thread invariant — see `unsafe impl Sync` above.
+        unsafe { &mut *self.event_loop }
+    }
+
+    /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
+    /// [`EventLoop::enter_scope`] for the common `vm.event_loop()` case.
+    #[inline]
+    pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard {
+        // SAFETY: `self.event_loop` is the live VM-owned event-loop pointer and
+        // remains valid for the VM (and thus the guard's) lifetime.
+        unsafe { EventLoop::enter_scope(self.event_loop) }
+    }
+
+    /// Safe shared-reference accessor for the process-lifetime dotenv loader
+    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
+    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    #[inline]
+    pub fn env_loader(&self) -> &'static bun_dotenv::Loader<'static> {
+        // SAFETY: `transpiler.env` is set during `Transpiler::init` to a
+        // process-lifetime allocation and never null while a VM is installed.
+        unsafe { &*self.transpiler.env }
+    }
+
     #[inline]
     pub fn transpiler(&mut self) -> &mut Transpiler<'static> {
         &mut self.transpiler

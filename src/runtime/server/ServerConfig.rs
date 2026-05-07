@@ -651,8 +651,7 @@ impl ServerConfig {
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
         let vm = arguments.vm;
-        // SAFETY: `vm.transpiler.env` is the long-lived dotenv loader owned by the VM.
-        let env = unsafe { &*vm.transpiler.env };
+        let env = vm.env_loader();
 
         let mut args = ServerConfig {
             address: Address::Tcp {

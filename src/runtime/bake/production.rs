@@ -132,8 +132,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
     vm.regular_event_loop.global = NonNull::new(vm.global);
-    // SAFETY: event_loop is a self-ptr into vm; unique access here.
-    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.event_loop_ref().ensure_waker();
     {
         let b = &mut vm.transpiler;
         // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
@@ -177,8 +176,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // resolver.opts is dropped (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
     }
-    // SAFETY: event_loop is a self-ptr into vm; unique access here.
-    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.event_loop_ref().ensure_waker();
     match &ctx.debug.macros {
         MacroOptions::Disable => {
             vm.transpiler.options.no_macros = true;
@@ -206,7 +204,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         fail_with_build_error(vm);
     }
     // SAFETY: vm.log was set from ctx.log above (non-null process-lifetime).
-    bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, unsafe { &*vm.transpiler.env });
+    bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
     vm.load_extra_env_and_source_code_printer();
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
@@ -307,7 +305,8 @@ pub fn build_with_vm(
     // exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *vm_ptr };
     // Load and evaluate the configuration module
-    // SAFETY: vm.global is set in init_bake and live for VM lifetime.
+    // SAFETY: vm.global is set in init_bake and live for VM lifetime; raw deref
+    // decouples the borrow from `vm` so later `&mut vm` reborrows are allowed.
     let global = unsafe { &*vm.global };
     // allocator = bun.default_allocator — dropped per §Allocators
 

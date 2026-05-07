@@ -2365,7 +2365,7 @@ where
 
         if let Some(promise) = response_value.as_any_promise() {
             // If we immediately have the value available, we can skip the extra event loop tick
-            match promise.unwrap(unsafe { (*vm.global).vm() }, jsc::PromiseUnwrapMode::MarkHandled) {
+            match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
                     ctx.ref_();
                     let cell = NativePromiseContext::create(this.global_this(), ctx);
@@ -3061,7 +3061,7 @@ where
         let server = unsafe { &*ctx.server.unwrap() };
         let vm = server.vm();
 
-        match promise.unwrap(unsafe { (*vm.global).vm() }, jsc::PromiseUnwrapMode::MarkHandled) {
+        match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
                 ctx.ref_();
@@ -3405,8 +3405,7 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
-            // SAFETY: event_loop() returns a live raw ptr.
-            let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+            let _exit = vm.enter_event_loop_scope();
 
             // SAFETY: from_borrowed_slice_dangerous returns a ManuallyDrop
             // wrapper; ownership of `chunk` stays with the caller.
@@ -3459,8 +3458,7 @@ where
                 unsafe { this.resp.unwrap().clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
-                // SAFETY: event_loop() returns a live raw ptr.
-                let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+                let _exit = vm.enter_event_loop_scope();
                 // Reject the pending body first so endRequestStreaming()
                 // below (via this.endWithoutBody) doesn't substitute a
                 // generic ConnectionClosed. toErrorInstance handles
@@ -3526,8 +3524,7 @@ where
                 this.request_body_buf = Vec::new();
 
                 if matches!(old, Body::Value::Locked(_)) {
-                    // SAFETY: event_loop() returns a live raw ptr.
-                    let _exit = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+                    let _exit = vm.enter_event_loop_scope();
 
                     let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
                 }

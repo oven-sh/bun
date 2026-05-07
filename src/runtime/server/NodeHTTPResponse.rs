@@ -803,8 +803,7 @@ impl NodeHTTPResponse {
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
             let vm = vm_get();
             let global_this = vm.global();
-            // SAFETY: event_loop() returns the live VM event-loop pointer.
-            let event_loop = unsafe { &mut *vm.event_loop() };
+            let event_loop = vm.event_loop_ref();
 
             event_loop.run_callback(
                 on_aborted,
@@ -1125,8 +1124,7 @@ impl NodeHTTPResponse {
             if !callback.is_undefined() {
                 let vm = vm_get();
                 let global_this = vm.global();
-                // SAFETY: event_loop() returns the live VM event-loop pointer.
-                let event_loop = unsafe { &mut *vm.event_loop() };
+                let event_loop = vm.event_loop_ref();
 
                 let bytes = self.get_bytes(global_this, chunk);
 
@@ -1180,8 +1178,7 @@ impl NodeHTTPResponse {
         let global_this = vm.global();
         js::on_writable_set_cached(this_value, global_this, JSValue::UNDEFINED); // TODO(@heimskr): is this necessary?
 
-        // SAFETY: event_loop() returns the live VM event-loop pointer.
-        unsafe { &mut *vm.event_loop() }.run_callback(
+        vm.event_loop_ref().run_callback(
             on_writable,
             global_this,
             JSValue::UNDEFINED,

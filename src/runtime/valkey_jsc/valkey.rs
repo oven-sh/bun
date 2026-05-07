@@ -367,7 +367,7 @@ impl DeferredFailure {
         // SAFETY: `VirtualMachine::get()` returns the live thread-local VM; `event_loop()` is a
         // self-pointer set at init. Short-lived `&mut *p` formed at the use site per
         // VirtualMachine.rs guidance.
-        unsafe { (*VirtualMachine::get().as_mut().event_loop()).enqueue_task(managed_task) };
+        VirtualMachine::get().event_loop_ref().enqueue_task(managed_task);
     }
 }
 
@@ -625,7 +625,7 @@ impl ValkeyClient {
                     err,
                     // SAFETY: `vm.global` is set at VM init and remains valid for the
                     // VM's lifetime; we only need a `&'static` view.
-                    global_this: unsafe { &*vm.global },
+                    global_this: vm.global(),
                     in_flight: core::mem::replace(
                         &mut self.in_flight,
                         command::promise_pair::Queue::init(),
@@ -904,7 +904,7 @@ impl ValkeyClient {
         debug!("Handling a subscribe response: {}", value);
         // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
         // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
-        let _exit = unsafe { EventLoop::enter_scope(self.vm.event_loop()) };
+        let _exit = self.vm.enter_event_loop_scope();
 
         match value {
             RESPValue::Error(_) => {
@@ -1184,8 +1184,7 @@ impl ValkeyClient {
         let promise_ptr = &mut pair.promise;
         let global_this = self.global_object();
 
-        // SAFETY: see `handle_subscribe_response`.
-        let _exit = unsafe { EventLoop::enter_scope(self.vm.event_loop()) };
+        let _exit = self.vm.enter_event_loop_scope();
 
         if matches!(value, RESPValue::Error(_)) {
             let js_err = match resp_value_to_js(value, global_this) {

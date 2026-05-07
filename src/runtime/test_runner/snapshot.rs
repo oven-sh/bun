@@ -482,8 +482,7 @@ impl<'a> Snapshots<'a> {
                                 DiffFormatter {
                                     received_string: Some(&ils.value),
                                     expected_string: Some(last_value),
-                                    // SAFETY: VM-global JSGlobalObject; valid for VM lifetime.
-                                    global_this: Some(unsafe { &*vm.global }),
+                                    global_this: Some(vm.global()),
                                     received: None,
                                     expected: None,
                                     not: false,

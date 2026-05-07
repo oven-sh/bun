@@ -219,8 +219,7 @@ impl ServerWebSocket {
         let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         let args = [this_value];
 
-        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _loop_guard = vm.enter_event_loop_scope();
 
         let mut corker = Corker {
             args: &args,
@@ -269,8 +268,7 @@ impl ServerWebSocket {
             return;
         }
 
-        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _loop_guard = vm.enter_event_loop_scope();
 
         let arguments = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -344,8 +342,7 @@ impl ServerWebSocket {
                 callback: handler.on_drain,
                 result: JSValue::ZERO,
             };
-            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+            let _loop_guard = vm.enter_event_loop_scope();
             self.websocket().cork(&mut corker, Corker::run);
             let result = corker.result;
 
@@ -375,8 +372,7 @@ impl ServerWebSocket {
         let global_this = handler.global_object();
 
         // This is the start of a task.
-        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _loop_guard = vm.enter_event_loop_scope();
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -406,8 +402,7 @@ impl ServerWebSocket {
         }
 
         // This is the start of a task.
-        // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-        let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+        let _loop_guard = vm.enter_event_loop_scope();
 
         let args = [
             self.this_value.try_get().unwrap_or(JSValue::UNDEFINED),
@@ -465,8 +460,7 @@ impl ServerWebSocket {
         if !handler.on_close.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
 
-            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+            let _loop_guard = vm.enter_event_loop_scope();
 
             if let Some(sig) = signal {
                 // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
@@ -501,8 +495,7 @@ impl ServerWebSocket {
                 return;
             }
         } else if let Some(sig) = signal {
-            // SAFETY: event_loop() returns a live raw ptr owned by the VM.
-            let _loop_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
+            let _loop_guard = vm.enter_event_loop_scope();
 
             // SAFETY: `sig` is held alive by the +1 ref released in `_cleanup`.
             let sig = unsafe { sig.as_ref() };

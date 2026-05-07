@@ -1105,7 +1105,7 @@ impl CryptoJobCtx for Scrypt {
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global; `event_loop()` is
         // a self-ptr live for the VM lifetime. Short-lived `&mut` formed at use site
         // per VirtualMachine.rs §event_loop contract.
-        let event_loop = unsafe { &mut *global.bun_vm().as_mut().event_loop() };
+        let event_loop = global.bun_vm().event_loop_ref();
 
         if let Some(err) = self.err {
             if err != 0 {

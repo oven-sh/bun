@@ -4930,7 +4930,8 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
-        use crate::console_object::{self, Colon, TagOptions, TagPayload};
+        use crate::console_object::formatter::TagOptions;
+        use crate::console_object::{self, Colon, Tag, TagPayload};
         use crate::JSType;
 
         let prev_had_errors = self.had_errors;
@@ -5003,9 +5004,16 @@ impl VirtualMachine {
         }
         #[inline]
         fn count_digits(n: i32) -> u64 {
-            // `std.fmt.count("{d}", .{n})`
-            let mut buf = itoa::Buffer::new();
-            buf.format(n).len() as u64
+            // `std.fmt.count("{d}", .{n})` — decimal width incl. sign.
+            let mut len = if n < 0 { 1u64 } else { 0u64 };
+            let mut v = (n as i64).unsigned_abs();
+            loop {
+                len += 1;
+                v /= 10;
+                if v == 0 {
+                    break len;
+                }
+            }
         }
 
         // This is a longer number than necessary because we don't handle this
@@ -5328,7 +5336,7 @@ impl VirtualMachine {
                         global_ref.clear_exception();
                     }
 
-                    let tag = console_object::TagPayload::get_advanced(
+                    let tag = Tag::get_advanced(
                         value,
                         global_ref,
                         TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
@@ -5381,7 +5389,7 @@ impl VirtualMachine {
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
-            let tag = console_object::TagPayload::get_advanced(
+            let tag = Tag::get_advanced(
                 error_instance,
                 global_ref,
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
@@ -5414,7 +5422,7 @@ impl VirtualMachine {
                 // SAFETY: `get_node()` always returns a valid heap node;
                 // `data` is initialized because `Map::INIT` is `Some`.
                 let mut node = unsafe {
-                    NonNull::new_unchecked(console_object::visited::Pool::get_node())
+                    NonNull::new_unchecked(console_object::formatter::visited::Pool::get_node())
                 };
                 unsafe { node.as_mut().data.assume_init_mut().clear() };
                 formatter.map = core::mem::take(unsafe {
@@ -5439,7 +5447,7 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             )?;
-            let _ = formatter.map.remove(err);
+            let _ = formatter.map.remove(&err);
         }
 
         drop(code_string_guard);

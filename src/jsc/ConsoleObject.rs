@@ -1526,7 +1526,7 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagPayload};
+pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 
 pub mod formatter {
     use super::*;
@@ -1966,6 +1966,22 @@ pub mod formatter {
     }
 
     impl TagPayload {
+        /// Zig `Formatter.Tag.get` — `TagPayload` is the Rust spelling of the
+        /// Zig union, so the constructor lives here as well as on the bare
+        /// discriminant `Tag`. Callers in sibling modules use either name.
+        #[inline]
+        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
+            Tag::get(value, global_this)
+        }
+        /// Zig `Formatter.Tag.getAdvanced`.
+        #[inline]
+        pub fn get_advanced(
+            value: JSValue,
+            global_this: &JSGlobalObject,
+            opts: TagOptions,
+        ) -> JsResult<TagResult> {
+            Tag::get_advanced(value, global_this, opts)
+        }
         pub fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }

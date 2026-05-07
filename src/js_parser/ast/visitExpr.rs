@@ -685,8 +685,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                         }
 
-                        // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
-                        
                         if p.source.path.is_node_module() {
                             p.log()
                                 .add_error(
@@ -713,17 +711,23 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // passed to one call (Zig held two raw `*Log`).
                         // SAFETY: see `P::log()` — pointee outlives `'a`.
                         let log = unsafe { &mut *p.log.as_ptr() };
-                        let macro_result = match macro_context_call(
-                            p.options.macro_context.as_deref_mut(),
-                            record_path_text,
-                            log,
-                            p.source,
-                            record_range,
-                            expr,
-                            name,
-                        ) {
-                            Ok(r) => r,
-                            Err(_) => return expr,
+                        let source = p.source;
+                        let Ok(macro_result) = p
+                            .options
+                            .macro_context
+                            .as_deref_mut()
+                            .expect("macro_context")
+                            .call(
+                                record_path_text,
+                                source.path.source_dir(),
+                                log,
+                                source,
+                                record_range,
+                                expr,
+                                name,
+                            )
+                        else {
+                            return expr;
                         };
 
                         if !matches!(macro_result.data, Data::ETemplate(..)) {
@@ -760,15 +764,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //
         // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `StoreRef<E::Binary>` wraps a
         // `NonNull` but its `DerefMut` borrows the *handle*, not the arena, so the
-        // resulting `&mut` is tied to a stack local. Detach via raw ptr → `&'static mut`
+        // resulting `&mut` is tied to a stack local. Detach via raw ptr → `&'a mut`
         // (the actual lifetime is the AST arena, same contract as Zig's `*E.Binary`).
         macro_rules! arena_mut {
             ($store:expr) => {{
                 let mut __h = $store;
-                unsafe { &mut *(&mut *__h as *mut E::Binary) }
+                let __p: *mut E::Binary = &mut *__h;
+                // SAFETY: arena-owned node; outlives `'a`. No outstanding `&mut`
+                // alias for this node during the visit pass.
+                unsafe { &mut *__p }
             }};
         }
-        let mut v = BinaryExpressionVisitor {
+        let mut v: BinaryExpressionVisitor<'a> = BinaryExpressionVisitor {
             e: arena_mut!(e_),
             loc: expr.loc,
             in_,
@@ -779,14 +786,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Everything uses a single stack to reduce allocation overhead. This stack
         // should almost always be very small, and almost all visits should reuse
         // existing memory without allocating anything.
-        //
-        // PORT NOTE: `P::binary_expression_stack` is currently typed against the
-        // placeholder `p::BinaryExpressionVisitor` (P.rs:179) — distinct from
-        // `visit_binary_expression::BinaryExpressionVisitor<'_>`. Until that field
-        // is retyped, fall back to a function-local stack so the iterative descent
-        // is structurally correct (loses cross-call buffer reuse only).
-        let mut local_stack: Vec<BinaryExpressionVisitor<'static>> = Vec::new();
-        let stack_bottom = local_stack.len();
+        let stack_bottom = p.binary_expression_stack.len();
 
         let mut current = expr;
 
@@ -821,7 +821,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Note that we only append to the stack (and therefore allocate memory
             // on the heap) when there are nested binary expressions. A single binary
             // expression doesn't add anything to the stack.
-            local_stack.push(v);
+            p.binary_expression_stack.push(v);
             v = BinaryExpressionVisitor {
                 e: arena_mut!(left_binary.unwrap()),
                 loc: left.loc,
@@ -833,8 +833,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Process all binary operations from the deepest-visited node back toward
         // our original top-level binary operation.
-        while local_stack.len() > stack_bottom {
-            v = local_stack.pop().unwrap();
+        while p.binary_expression_stack.len() > stack_bottom {
+            v = p.binary_expression_stack.pop().unwrap();
             v.e.left = current;
             current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
         }
@@ -1139,10 +1139,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .kind
                         == js_ast::symbol::Kind::Unbound
                 {
-                    e_.value = join_with_comma(
-                        Expr { loc: e_.value.loc, data: prefill::data::ZERO },
-                        e_.value,
-                    );
+                    e_.value = Expr { loc: e_.value.loc, data: prefill::data::ZERO }
+                        .join_with_comma(e_.value);
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
@@ -1182,8 +1180,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         if p.options.features.minify_syntax {
-                            // blocked_on: Expr::maybe_simplify_not (Expr.rs `` impl @1481).
-                            
                             if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.allocator) {
                                 return exp;
                             }
@@ -1240,17 +1236,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                return join_with_comma(
-                                    comma.left,
-                                    p.new_expr(
-                                        E::Unary {
-                                            op: e_.op,
-                                            value: comma.right,
-                                            flags: e_.flags,
-                                        },
-                                        comma.right.loc,
-                                    ),
-                                );
+                                return comma.left.join_with_comma(p.new_expr(
+                                    E::Unary {
+                                        op: e_.op,
+                                        value: comma.right,
+                                        flags: e_.flags,
+                                    },
+                                    comma.right.loc,
+                                ));
                             }
                         }
                     }
@@ -1401,21 +1394,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 p.is_control_flow_dead = old;
 
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return join_with_comma(
-                        SideEffects::simplify_unused_expr(p, e_.test_)
-                            .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
-                        e_.yes,
-                    );
+                    return SideEffects::simplify_unused_expr(p, e_.test_)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
+                        .join_with_comma(e_.yes);
                 }
 
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && has_value_for_this_in_call(&e_.yes) {
-                    return join_with_comma(
-                        p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
-                        e_.yes,
-                    );
+                if is_call_target && e_.yes.has_value_for_this_in_call() {
+                    return p
+                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .join_with_comma(e_.yes);
                 }
 
                 return e_.yes;
@@ -1429,21 +1419,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // "(a, false) ? b : c" => "a, c"
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    return join_with_comma(
-                        SideEffects::simplify_unused_expr(p, e_.test_)
-                            .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc)),
-                        e_.no,
-                    );
+                    return SideEffects::simplify_unused_expr(p, e_.test_)
+                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
+                        .join_with_comma(e_.no);
                 }
 
                 // "(1 ? fn : 2)()" => "fn()"
                 // "(1 ? this.fn : 2)" => "this.fn"
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && has_value_for_this_in_call(&e_.no) {
-                    return join_with_comma(
-                        p.new_expr(E::Number { value: 0.0 }, e_.test_.loc),
-                        e_.no,
-                    );
+                if is_call_target && e_.no.has_value_for_this_in_call() {
+                    return p
+                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .join_with_comma(e_.no);
                 }
                 return e_.no;
             }
@@ -1921,7 +1908,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require")
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require()")
                     .expect("unreachable");
             }
 
@@ -1958,7 +1945,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require.resolve")
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, "require.resolve()")
                     .expect("unreachable");
             }
 
@@ -1999,8 +1986,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     return p.new_expr(E::Undefined {}, expr.loc);
                 }
 
-                // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
-                
                 if p.source.path.is_node_module() {
                     p.log()
                         .add_error(
@@ -2021,32 +2006,43 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     (record.path.text, record.range)
                 };
                 let copied = Expr { loc: expr.loc, data: expr.data };
-                let start_error_count = p.log().errors;
+                let start_error_count = p.log().msgs.len();
                 p.macro_call_count += 1;
                 // Hoist the `Log` reborrow before the disjoint
                 // `&mut p.options.macro_context` borrow so both can be passed
                 // to one call (Zig held two raw `*Log`).
                 // SAFETY: see `P::log()` — pointee outlives `'a`.
                 let log = unsafe { &mut *p.log.as_ptr() };
-                let macro_result = match macro_context_call(
-                    p.options.macro_context.as_deref_mut(),
-                    record_path_text,
-                    log,
-                    p.source,
-                    record_range,
-                    copied,
-                    name,
-                ) {
+                let source = p.source;
+                let macro_result = match p
+                    .options
+                    .macro_context
+                    .as_deref_mut()
+                    .expect("macro_context")
+                    .call(
+                        record_path_text,
+                        source.path.source_dir(),
+                        log,
+                        source,
+                        record_range,
+                        copied,
+                        name,
+                    ) {
                     Ok(r) => r,
-                    Err(_err) => {
-                        // Zig distinguishes `error.MacroFailed` (silent if a
-                        // message was already logged) from other errors. The
-                        // cross-crate `MacroError` enum lives in `_jsc`; until
-                        // it's threaded through, treat every failure as
-                        // `MacroFailed` and log only if nothing was logged yet.
-                        if p.log().errors == start_error_count {
+                    Err(err) => {
+                        if err == bun_core::err!("MacroFailed") {
+                            if p.log().msgs.len() == start_error_count {
+                                p.log()
+                                    .add_error(Some(p.source), expr.loc, b"macro threw exception")
+                                    .expect("unreachable");
+                            }
+                        } else {
                             p.log()
-                                .add_error(Some(p.source), expr.loc, b"macro threw exception")
+                                .add_error_fmt(
+                                    Some(p.source),
+                                    expr.loc,
+                                    format_args!("\"{}\" error in macro", err.name()),
+                                )
                                 .expect("unreachable");
                         }
                         return expr;
@@ -2117,8 +2113,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     break 'check_for_usestate false;
                 } {
                     debug_assert!(p.options.features.server_components.is_server_side());
-                    // blocked_on: bun_logger::fs::Path::pretty field/accessor.
-                    
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && original_name == b"useState"
                     {
@@ -2170,10 +2164,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         if p.options.features.minify_syntax {
-            // blocked_on: KnownGlobal::minify_global_constructor body gated
-            // (KnownGlobal.rs `` impl). Signature matches; un-gate
-            // there to light this up.
-            
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.allocator,
                 &mut *e_,

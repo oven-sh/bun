@@ -8,7 +8,7 @@
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
 use core::cell::UnsafeCell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

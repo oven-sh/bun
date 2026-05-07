@@ -31,44 +31,10 @@ pub use line_offset_table::{LineOffsetTable, ListExt as LineOffsetTableListExt};
 pub use mapping::{Mapping, Lookup as MappingLookup};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
-// ── local shim: `bun.Ordinal` ─────────────────────────────────────────────
-// TODO(b2-blocked): bun_core::Ordinal — Zig `bun.Ordinal = OrdinalT(c_int)` is
-// not yet ported to bun_core. Local definition here so dependent modules
-// compile; move to bun_core (and re-export) once available.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Ordinal(core::ffi::c_int);
-
-impl Default for Ordinal {
-    #[inline]
-    fn default() -> Self { Self::START }
-}
-
-impl Ordinal {
-    pub const INVALID: Ordinal = Ordinal(-1);
-    pub const START: Ordinal = Ordinal(0);
-
-    #[inline]
-    pub const fn from_zero_based(int: core::ffi::c_int) -> Self {
-        debug_assert!(int >= 0);
-        Self(int)
-    }
-    #[inline]
-    pub const fn from_one_based(int: core::ffi::c_int) -> Self {
-        debug_assert!(int > 0);
-        Self(int - 1)
-    }
-    #[inline]
-    pub const fn zero_based(self) -> core::ffi::c_int { self.0 }
-    #[inline]
-    pub const fn one_based(self) -> core::ffi::c_int { self.0 + 1 }
-    #[inline]
-    pub const fn add(self, b: Self) -> Self { Self(self.0 + b.0) }
-    #[inline]
-    pub const fn add_scalar(self, inc: core::ffi::c_int) -> Self { Self(self.0 + inc) }
-    #[inline]
-    pub const fn is_valid(self) -> bool { self.0 >= 0 }
-}
+// `bun.Ordinal = OrdinalT(c_int)` lives in bun_core (lower tier). Re-export so
+// `bun_sourcemap::Ordinal` and `bun_core::Ordinal` are the same type — callers
+// in higher tiers (bun_jsc) pass values straight through without conversion.
+pub use bun_core::Ordinal;
 
 pub use chunk::Chunk;
 pub use internal_source_map::InternalSourceMap;
@@ -189,12 +155,21 @@ pub struct SourceContent {
 }
 
 /// The sourcemap spec says line and column offsets are zero-based.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct LineColumnOffset {
     /// The zero-based line offset
     pub lines: Ordinal,
     /// The zero-based column offset
     pub columns: Ordinal,
+}
+
+// Spec sourcemap.zig:548 — Zig field defaults are `.start`, not `.invalid`
+// (bun_core::Ordinal::default() is INVALID, so derive(Default) would be wrong).
+impl Default for LineColumnOffset {
+    #[inline]
+    fn default() -> Self {
+        Self { lines: Ordinal::START, columns: Ordinal::START }
+    }
 }
 
 impl LineColumnOffset {

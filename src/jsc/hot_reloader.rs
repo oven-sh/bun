@@ -425,9 +425,7 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub main: MainFile,
 
-    // TODO(b2-blocked): bun_resolver::fs::real_fs::EntriesOption — type path unconfirmed.
-    // Stored as `*mut c_void` until the EntriesOption type is exported with a stable path.
-    pub tombstones: StringHashMap<*mut core::ffi::c_void>,
+    pub tombstones: StringHashMap<*mut Fs::EntriesOption>,
 
     _event_loop: PhantomData<*mut EventLoopType>,
 }
@@ -731,28 +729,19 @@ where
         }
     }
 
-    fn put_tombstone(
-        &mut self,
-        key: &[u8],
-        value: *mut core::ffi::c_void,
-    ) {
+    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
-    fn get_tombstone(
-        &mut self,
-        key: &[u8],
-    ) -> Option<*mut core::ffi::c_void> {
+    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
         self.tombstones.get(key).copied()
     }
 
     pub fn on_error(_: &mut Self, err: bun_sys::Error) {
-        // TODO(port): Zig passed `@as(bun.sys.E, @enumFromInt(err.errno))` as
-        // the error name. `bun_sys::E::from_raw` is private and `ErrName` isn't
-        // yet impl'd for `bun_sys::Error`; fall back to a fixed label until the
-        // sys-side ErrName impl lands.
-        let _ = err.errno;
-        Output::err("WatcherError", "Watcher crashed", ());
+        // Zig: `Output.err(@as(bun.sys.E, @enumFromInt(err.errno)), ...)`.
+        // `bun_sys::Error::name()` does the same errno→tag-name lookup
+        // (with the unchecked-@enumFromInt UB folded into a checked path).
+        Output::err(err.name(), "Watcher crashed", ());
         if cfg!(debug_assertions) {
             panic!("Watcher crash");
         }
@@ -894,9 +883,7 @@ where
                     {
                         let mut affected_buf: [&[u8]; 128] =
                             [b"".as_slice(); 128];
-                        let mut entries_option: Option<
-                            *mut Fs::file_system::real_fs::EntriesOption,
-                        > = None;
+                        let mut entries_option: Option<*mut Fs::EntriesOption> = None;
 
                         // PORT NOTE: the Zig labeled block produced a slice whose
                         // element type differs by platform (`[]const u8` on kqueue,

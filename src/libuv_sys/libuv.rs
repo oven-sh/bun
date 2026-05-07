@@ -543,6 +543,71 @@ unsafe extern "C" {
     pub fn uv_accept(server: *mut uv_stream_t, client: *mut uv_stream_t) -> ReturnCode;
     pub fn uv_pipe_init(loop_: *mut uv_loop_t, handle: *mut Pipe, ipc: c_int) -> ReturnCode;
     pub fn uv_pipe_bind2(handle: *mut Pipe, name: *const u8, namelen: usize, flags: c_uint) -> ReturnCode;
+
+    pub fn uv_ref(handle: *mut uv_handle_t);
+    pub fn uv_unref(handle: *mut uv_handle_t);
+    pub fn uv_update_time(loop_: *mut uv_loop_t);
+    pub fn uv_handle_get_loop(handle: *const uv_handle_t) -> *mut uv_loop_t;
+
+    pub fn uv_timer_init(loop_: *mut uv_loop_t, handle: *mut Timer) -> c_int;
+    pub fn uv_timer_start(handle: *mut Timer, cb: uv_timer_cb, timeout: u64, repeat: u64) -> c_int;
+    pub fn uv_timer_stop(handle: *mut Timer) -> c_int;
+}
+
+/// `uv_timer_cb` (libuv.zig:1255).
+pub type uv_timer_cb = Option<unsafe extern "C" fn(*mut Timer)>;
+
+/// `uv_timer_t` (libuv.zig:1256). Only `data` is touched from Rust; the tail
+/// is opaque storage written by libuv. Conservative tail sizing follows the
+/// `Pipe`/`Handle` pattern above — `sizeof(uv_timer_t)` on Windows x64 is
+/// ~160 bytes (`uv_handle_t` header ≈ 96 + 3 ptrs + int + 3×u64 + cb ≈ 64);
+/// 32 ptr-words = 256 bytes comfortably covers it. Instances are always
+/// heap-boxed (`Box<Timer>`), so over-allocation is harmless.
+#[repr(C)]
+pub struct Timer {
+    pub data: *mut c_void,
+    _opaque: [*mut c_void; 32],
+}
+
+impl Timer {
+    /// `Timer.init` (libuv.zig:1272).
+    pub fn init(&mut self, loop_: *mut uv_loop_t) {
+        // SAFETY: `self` is a valid `uv_timer_t`-sized allocation; `loop_` is a
+        // live `uv_loop_t` (caller contract).
+        if unsafe { uv_timer_init(loop_, self) } != 0 {
+            panic!("internal error: uv_timer_init failed");
+        }
+    }
+
+    /// `Timer.start` (libuv.zig:1278).
+    pub fn start(&mut self, timeout: u64, repeat: u64, callback: uv_timer_cb) {
+        // SAFETY: `self` was `uv_timer_init`ed (caller contract).
+        if unsafe { uv_timer_start(self, callback, timeout, repeat) } != 0 {
+            panic!("internal error: uv_timer_start failed");
+        }
+    }
+
+    /// `Timer.stop` (libuv.zig:1284).
+    pub fn stop(&mut self) {
+        // SAFETY: `self` was `uv_timer_init`ed (caller contract).
+        if unsafe { uv_timer_stop(self) } != 0 {
+            panic!("internal error: uv_timer_stop failed");
+        }
+    }
+
+    /// `Timer.ref` (libuv.zig:1294). Named `ref_` because `ref` is a Rust keyword.
+    #[inline]
+    pub fn ref_(&mut self) {
+        // SAFETY: `Timer` embeds `uv_handle_t` at offset 0.
+        unsafe { uv_ref((self as *mut Timer).cast()) }
+    }
+
+    /// `Timer.unref` (libuv.zig:1290).
+    #[inline]
+    pub fn unref(&mut self) {
+        // SAFETY: `Timer` embeds `uv_handle_t` at offset 0.
+        unsafe { uv_unref((self as *mut Timer).cast()) }
+    }
 }
 
 impl ReturnCode {

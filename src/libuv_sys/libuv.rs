@@ -287,7 +287,11 @@ impl Loop {
                 unsafe { uv_walk(loop_, Some(close_walk_cb), core::ptr::null_mut()) };
                 // SAFETY: `loop_` valid; `UV_RUN_DEFAULT` runs to quiescence.
                 let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                debug_assert_eq!(unsafe { uv_loop_close(loop_) }, ReturnCode::ZERO);
+                // SAFETY: handles closed above; close must succeed now. NOTE
+                // the call is unconditional (Zig `bun.debugAssert` evaluates
+                // its argument in release too) — only the check is debug-only.
+                let rc = unsafe { uv_loop_close(loop_) };
+                debug_assert_eq!(rc, ReturnCode::ZERO);
             }
             // SAFETY: matches the `alloc` in `get()`.
             let size = unsafe { uv_loop_size() };

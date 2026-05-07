@@ -1,15 +1,18 @@
-//! Local signature-compatible mirror of `bun_jsc` for the SQL bindings.
+//! `bun_jsc` re-export façade for the SQL bindings.
 //!
-//! Core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
-//! `JsResult`, `JSObject`, `JSCell`, `JSType`, …) are **re-exported from
-//! `bun_jsc`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
-//! see identical types. SQL-specific helpers that `bun_jsc` doesn't yet expose
-//! are provided as extension traits ([`JSValueSqlExt`], [`JSGlobalObjectSqlExt`]).
+//! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
+//! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
+//! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
+//! `bun_aio`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
+//! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
+//! this tier are provided as extension traits ([`JSValueSqlExt`],
+//! [`JSGlobalObjectSqlExt`], [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
 //!
-//! Types that must embed `crate::mysql` / `crate::postgres` state
-//! ([`VirtualMachine`], [`RareData`], [`EventLoop`], …) stay local — `bun_jsc`'s
-//! own `RareData.mysql_context` is an opaque placeholder, so the SQL state
-//! machines need their own concrete view.
+//! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
+//! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
+//! value — it is *not* a view of `bun_jsc::rare_data::RareData` (which holds
+//! the per-protocol `SocketGroup`s and is reached via the inherent
+//! `VirtualMachine::rare_data()`).
 
 #![allow(unused_variables, non_snake_case, dead_code, unused_imports)]
 

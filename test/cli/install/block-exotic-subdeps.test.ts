@@ -330,17 +330,16 @@ blockExoticSubdeps = true
     expect(exitCode).toBe(0);
   });
 
-  test("does NOT block when root has an overrides entry redirecting the exotic transitive", async () => {
-    // Regression: overrides are the canonical mitigation for a
-    // blockExoticSubdeps violation. A transitive folder dep of a
-    // folder-dep parent should NOT be flagged if root overrides it.
-    using dir = tempDir("block-exotic-override", {
+  test("still blocks when root override is also exotic, and reports the override literal", async () => {
+    // An exotic-to-exotic override still trips the flag — and crucially the
+    // error message names the OVERRIDE's literal (not the transitive
+    // parent's), proving `enforceBlockExoticSubdeps` consulted the
+    // override map rather than the stale transitive spec.
+    using dir = tempDir("block-exotic-override-still-exotic", {
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
         dependencies: { "parent-pkg": "file:./parent-pkg" },
-        // Root redirects `inner` away from the exotic folder spec
-        // that parent-pkg would otherwise pull in.
         overrides: { inner: "file:./inner-override" },
       }),
       "bunfig.toml": `[install]
@@ -349,7 +348,6 @@ blockExoticSubdeps = true
       "parent-pkg/package.json": JSON.stringify({
         name: "parent-pkg",
         version: "1.0.0",
-        // Without the override, this folder specifier would trip the block.
         dependencies: { inner: "file:../inner" },
       }),
       "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
@@ -366,31 +364,27 @@ blockExoticSubdeps = true
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // Override's literal is still `file:./inner-override` (also a folder
-    // spec), so the block still fires — but the message should now name the
-    // OVERRIDE's source, proving we consulted the override rather than the
-    // transitive literal. When the override points at a registry version
-    // (real-world remediation), the block will disappear.
     expect(stderr).toContain("blockExoticSubdeps");
+    // The override's literal — NOT the transitive parent's `file:../inner` —
+    // is what must appear, proving we routed through the override.
     expect(stderr).toContain("inner-override");
     expect(exitCode).not.toBe(0);
   });
 
   test("does NOT block when root override redirects an exotic transitive to a registry version", async () => {
-    // The canonical mitigation: overrides to a registry spec make the
-    // block disappear entirely.
+    // The canonical mitigation path: override `inner` from its exotic
+    // folder specifier to a plain semver. With `linkWorkspacePackages`
+    // (default true) and a matching workspace member, the semver resolves
+    // locally — no network, no registry required — and the block does not
+    // fire because the override's literal (`^1.0.0`) is non-exotic.
     using dir = tempDir("block-exotic-override-registry", {
       "package.json": JSON.stringify({
         name: "root",
         version: "1.0.0",
+        workspaces: ["pkgs/*"],
         dependencies: { "parent-pkg": "file:./parent-pkg" },
-        // Redirect `inner` from a folder spec to a workspace-local pkg.
-        // (We use workspace:* here because it's still resolvable offline;
-        // the point is that the root override's literal is NOT exotic in
-        // the folder/git/tarball sense, so the block should not fire.)
-        overrides: { inner: "1.0.0" },
+        overrides: { inner: "^1.0.0" },
       }),
-      workspaces: ["pkgs/*"],
       "bunfig.toml": `[install]
 blockExoticSubdeps = true
 `,
@@ -399,6 +393,11 @@ blockExoticSubdeps = true
         version: "1.0.0",
         dependencies: { inner: "file:../inner" },
       }),
+      // Workspace member that `^1.0.0` satisfies. linkWorkspacePackages
+      // redirects the semver here offline.
+      "pkgs/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+      // Original exotic target — left in place to prove that even though
+      // parent-pkg's literal still points here, the override wins.
       "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
     });
 
@@ -410,10 +409,11 @@ blockExoticSubdeps = true
       stderr: "pipe",
     });
 
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // The override's literal `1.0.0` is plain npm semver, not exotic, so
+    // The override's literal `^1.0.0` is plain npm semver, not exotic, so
     // the block must NOT fire regardless of what parent-pkg wrote.
     expect(stderr).not.toContain("blockExoticSubdeps");
+    expect(exitCode).toBe(0);
   });
 });

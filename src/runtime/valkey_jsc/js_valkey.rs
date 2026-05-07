@@ -1509,7 +1509,7 @@ impl JSValkeyClient {
         message: &[u8],
         err: protocol::RedisError,
     ) -> JsTerminatedResult<()> {
-        self.client.fail(message, err)
+        narrow_terminated(self.client.fail(message, err))
     }
 
     pub fn fail_with_js_value(&mut self, value: JSValue) {
@@ -1572,7 +1572,10 @@ impl JSValkeyClient {
             };
         }
 
-        self.vm().enqueue_task(jsc::Task::init(unsafe { &mut (*holder).task }));
+        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
+        unsafe {
+            (*self.vm().event_loop()).enqueue_task(jsc::Task::init(&mut (*holder).task));
+        }
     }
 
     pub fn finalize(this: *mut Self) {

@@ -235,7 +235,7 @@ impl HTMLRewriter {
             // is on the stack, conservatively scanned).
             let body_value = unsafe { (*response).get_body_value() };
             if matches!(*body_value, webcore::body::Value::Used) {
-                return Err(global.throw_invalid_arguments("Response body already used"));
+                return Err(global.throw_invalid_arguments(format_args!("Response body already used")));
             }
             let out = self.begin_transform(global, response)?;
             // Check if the returned value is an error and throw it properly
@@ -310,7 +310,7 @@ impl HTMLRewriter {
             };
         }
 
-        Err(global.throw_invalid_arguments("Expected Response or Body"))
+        Err(global.throw_invalid_arguments(format_args!("Expected Response or Body")))
     }
 
     // TODO(port): host_fn.wrapInstanceMethod codegen — `on`, `onDocument`,
@@ -997,7 +997,7 @@ impl DocumentHandler {
 
     pub fn init(global: &JSGlobalObject, this_object: JSValue) -> JsResult<DocumentHandler> {
         if !this_object.is_object() {
-            return Err(global.throw_invalid_arguments("Expected object"));
+            return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         // SAFETY: JSC_BORROW — JSGlobalObject outlives every handler (VM-lifetime).
@@ -1026,7 +1026,7 @@ impl DocumentHandler {
 
         if let Some(val) = this_object.get(global, "doctype")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("doctype must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("doctype must be a function")));
             }
             val.protect();
             guard.on_doc_type_callback = Some(val);
@@ -1034,7 +1034,7 @@ impl DocumentHandler {
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("comments must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
             }
             val.protect();
             guard.on_comment_callback = Some(val);
@@ -1042,7 +1042,7 @@ impl DocumentHandler {
 
         if let Some(val) = this_object.get(global, "text")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("text must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("text must be a function")));
             }
             val.protect();
             guard.on_text_callback = Some(val);
@@ -1050,7 +1050,7 @@ impl DocumentHandler {
 
         if let Some(val) = this_object.get(global, "end")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("end must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("end must be a function")));
             }
             val.protect();
             guard.on_end_callback = Some(val);
@@ -1279,12 +1279,12 @@ impl ElementHandler {
         });
 
         if !this_object.is_object() {
-            return Err(global.throw_invalid_arguments("Expected object"));
+            return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         if let Some(val) = this_object.get(global, "element")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("element must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("element must be a function")));
             }
             val.protect();
             guard.on_element_callback = Some(val);
@@ -1292,7 +1292,7 @@ impl ElementHandler {
 
         if let Some(val) = this_object.get(global, "comments")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("comments must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("comments must be a function")));
             }
             val.protect();
             guard.on_comment_callback = Some(val);
@@ -1300,7 +1300,7 @@ impl ElementHandler {
 
         if let Some(val) = this_object.get(global, "text")? {
             if val.is_undefined_or_null() || !val.is_cell() || !val.is_callable() {
-                return Err(global.throw_invalid_arguments("text must be a function"));
+                return Err(global.throw_invalid_arguments(format_args!("text must be a function")));
             }
             val.protect();
             guard.on_text_callback = Some(val);

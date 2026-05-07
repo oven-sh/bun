@@ -847,12 +847,7 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        // PORT NOTE: `Run::run_binary` takes `&[Box<[u8]>]` (matching
-        // `ctx.passthrough`); bunx builds its list from borrowed argv slices,
-        // so box them once here.
-        let passthrough_owned: Vec<Box<[u8]>> =
-            opts.passthrough_list.iter().map(|s| Box::<[u8]>::from(*s)).collect();
-        let passthrough: &[Box<[u8]>] = &passthrough_owned;
+        let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
         let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
         let look_for_existing_bin =

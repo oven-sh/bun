@@ -1780,9 +1780,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         is_slice_in_buffer(value, &self.backing_buf)
     }
 
-    pub fn editable_slice(slice: &[u8]) -> &mut [u8] {
-        // SAFETY: caller contract — slice was returned from `append*` and points into our
-        // owned backing storage. Matches Zig `@constCast`.
+    /// # Safety
+    /// `slice` must have been returned from `append*` on this instance and point into our
+    /// owned backing storage with no other live `&` borrow. Matches Zig `@constCast`.
+    pub unsafe fn editable_slice(slice: &[u8]) -> &mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(slice.as_ptr() as *mut u8, slice.len()) }
     }
 
@@ -1791,7 +1792,9 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: A,
     ) -> core::result::Result<&mut [u8], AllocError> {
         let appended = self.append(value)?;
-        Ok(Self::editable_slice(appended))
+        // SAFETY: `appended` was just returned from `append` and borrows storage owned by
+        // `*self`; we hold `&mut self` so no other borrow of that region exists.
+        Ok(unsafe { Self::editable_slice(appended) })
     }
 
     pub fn get_mutable(&mut self, len: usize) -> core::result::Result<&mut [u8], AllocError> {

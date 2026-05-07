@@ -868,6 +868,19 @@ impl core::fmt::Display for StringGithubActionFormatter<'_> {
     }
 }
 
+/// `Display` adapter for [`ZigString::github_action`]. Converts to UTF-8 on
+/// the fly (handles 16-bit / latin-1 encodings) and delegates to
+/// `bun_core::fmt::github_action_writer`.
+pub struct ZigStringGithubActionFormatter {
+    text: ZigString,
+}
+impl core::fmt::Display for ZigStringGithubActionFormatter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let utf8 = self.text.to_slice();
+        bun_core::fmt::github_action_writer(f, utf8.slice())
+    }
+}
+
 impl core::fmt::Display for ZigString {
     // ZigString.zig `format()` — encoding-aware `{f}` formatter.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -1022,6 +1035,14 @@ impl ZigString {
         let s = self.slice();
         // SAFETY: s describes a valid byte slice.
         unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
+    }
+
+    /// Port of `ZigString.githubAction` (ZigString.zig). Returns a `Display`
+    /// formatter that escapes the string for GitHub Actions annotation output
+    /// (`%0A` for newlines, ANSI stripped). Encoding-aware via `to_slice`.
+    #[inline]
+    pub fn github_action(self) -> ZigStringGithubActionFormatter {
+        ZigStringGithubActionFormatter { text: self }
     }
 
     /// `ZigString.toOwnedSliceZ` — allocate a NUL-terminated UTF-8 copy.
@@ -1470,63 +1491,6 @@ impl ZigStringSlice {
         // Shrink so the foreign `mi_free(ptr)` releases exactly this block.
         v.shrink_to_fit();
         Some((v.as_ptr(), v.len()))
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// SliceWithUnderlyingString
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `bun.SliceWithUnderlyingString` — a UTF-8 byte view (`utf8`) optionally
-/// pinned by a refcounted `bun.String` (`underlying`). When `underlying` is
-/// live the bytes alias its storage; when dead the bytes are independently
-/// owned (or static). JSC bridge methods (`toJS`, `transferToJS`) live in
-/// `bun_jsc::bun_string_jsc` to keep this crate free of `JSValue`.
-pub struct SliceWithUnderlyingString {
-    pub utf8: ZigStringSlice,
-    pub underlying: String,
-
-    #[cfg(debug_assertions)]
-    pub did_report_extra_memory_debug: bool,
-}
-
-impl Default for SliceWithUnderlyingString {
-    fn default() -> Self {
-        Self {
-            utf8: ZigStringSlice::EMPTY,
-            underlying: String::DEAD,
-            #[cfg(debug_assertions)]
-            did_report_extra_memory_debug: false,
-        }
-    }
-}
-
-impl SliceWithUnderlyingString {
-    pub fn dupe_ref(&self) -> SliceWithUnderlyingString {
-        SliceWithUnderlyingString {
-            utf8: ZigStringSlice::EMPTY,
-            underlying: self.underlying.dupe_ref(),
-            #[cfg(debug_assertions)]
-            did_report_extra_memory_debug: false,
-        }
-    }
-
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        self.utf8.slice()
-    }
-
-    #[inline]
-    pub fn is_wtf_allocated(&self) -> bool {
-        self.utf8.is_wtf_allocated()
-    }
-}
-
-impl Drop for SliceWithUnderlyingString {
-    fn drop(&mut self) {
-        // `utf8` has its own Drop; `underlying` carries an intrusive refcount
-        // that must be released explicitly (matching Zig's `deinit`).
-        self.underlying.deref();
     }
 }
 

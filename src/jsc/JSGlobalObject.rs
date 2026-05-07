@@ -1061,9 +1061,12 @@ impl JSGlobalObject {
     }
 
     /// Returns the raw `*mut NapiEnv` (mirrors Zig `*napi.NapiEnv`).
-    /// Conjuring a `&mut` here would permit aliased exclusive references
-    /// across two calls (resolver-style audit). Callers deref locally.
-    pub fn make_napi_env_for_ffi(&self) -> *mut NapiEnv {
+    ///
+    /// LAYERING: `NapiEnv` is defined in `bun_runtime::napi` (a higher-tier crate
+    /// that depends on `bun_jsc`), so this returns the opaque `*mut c_void` and
+    /// runtime-tier callers cast to `*mut NapiEnv` themselves. The struct is never
+    /// dereferenced at this tier.
+    pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         // SAFETY: C++ returns a non-null, freshly-created NapiEnv owned by the global.
         unsafe { ZigGlobalObject__makeNapiEnvForFFI(self) }
     }
@@ -1082,7 +1085,7 @@ impl JSGlobalObject {
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        if (!opts.nullable && value.is_null())
+        if (!opts.allow_nullable && value.is_null())
             || (!opts.allow_array && value.is_array())
             || (!value.is_object() && (!opts.allow_function || !value.is_function()))
         {

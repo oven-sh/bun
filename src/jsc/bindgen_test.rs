@@ -1,36 +1,45 @@
 //! This namespace is used to test binding generator
 
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use crate::js_object::PojoFields;
+use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 
-// TODO(port): generated bindgen module path (`bun.gen.bindgen_test` in Zig)
 use crate::gen::bindgen_test as gen;
 
 pub fn get_bindgen_test_functions(global: &JSGlobalObject) -> JsResult<JSValue> {
-    // TODO(port): Zig `JSObject.create(.{ .field = val, ... }, global)` uses comptime
-    // field reflection; Phase B needs a builder/macro on `bun_jsc::JSObject`.
-    Ok(JSObject::create(
-        &[
-            ("add", gen::create_add_callback(global)),
-            (
-                "requiredAndOptionalArg",
-                gen::create_required_and_optional_arg_callback(global),
-            ),
-        ],
-        global,
-    )?
-    .to_js())
+    // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust has no
+    // field reflection, so a local `PojoFields` impl enumerates the fields.
+    struct Fns {
+        add: JSValue,
+        required_and_optional_arg: JSValue,
+    }
+    impl PojoFields for Fns {
+        const FIELD_COUNT: usize = 2;
+        fn put_fields(
+            &self,
+            _global: &JSGlobalObject,
+            mut put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>,
+        ) -> JsResult<()> {
+            put(b"add", self.add)?;
+            put(b"requiredAndOptionalArg", self.required_and_optional_arg)?;
+            Ok(())
+        }
+    }
+    let pojo = Fns {
+        add: gen::create_add_callback(global),
+        required_and_optional_arg: gen::create_required_and_optional_arg_callback(global),
+    };
+    Ok(JSObject::create(&pojo, global)?.to_js())
 }
 
 // This example should be kept in sync with bindgen's documentation
 pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
-    // TODO(port): narrow error set
     match a.checked_add(b) {
         Some(v) => Ok(v),
         None => {
             // Binding functions can return `error.OutOfMemory` and `error.JSError`.
             // Others like `error.Overflow` from `std.math.add` must be converted.
             // Remember to be descriptive.
-            global.throw_pretty(format_args!("Integer overflow while adding"))
+            Err(global.throw_pretty("Integer overflow while adding", format_args!("")))
         }
     }
 }
@@ -59,7 +68,7 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/bindgen_test.zig (37 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `gen` is codegen output (bun.gen.bindgen_test); JSObject::create anon-struct API needs a Rust-side builder/macro in Phase B.
+//   confidence: high
+//   todos:      0
+//   notes:      `gen` is codegen output (bun.gen.bindgen_test) hand-ported in src/jsc/bindings/GeneratedBindings.rs.
 // ──────────────────────────────────────────────────────────────────────────

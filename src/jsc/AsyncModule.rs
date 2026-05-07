@@ -1361,19 +1361,21 @@ impl AsyncModule {
                     let watcher = unsafe {
                         &mut *((*jsc_vm).bun_watcher as *mut crate::hot_reloader::ImportWatcher)
                     };
+                    // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
+                    // forward-decl of `bun_resolver::PackageJSON` (CYCLEBREAK);
+                    // the watcher only stores the pointer, so cast through.
+                    // SAFETY: `package_json` (when set) is a VM-lifetime
+                    // backref — outlives the watcher entry.
+                    let package_json = self
+                        .package_json
+                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
                     let _ = watcher.add_file::<true>(
                         fd_,
                         path.text,
                         self.hash,
                         options::Loader::from_api(self.loader),
                         Fd::INVALID,
-                        // TODO(port): `&PackageJSON` → `&mut PackageJSON`
-                        // mismatch — `ImportWatcher::add_file` takes
-                        // `Option<&mut>` but `self.package_json` is
-                        // `Option<&>`. Zig passed a `*const`-ish slice
-                        // through; the watcher only reads it. Phase B:
-                        // relax `add_file`'s param to `Option<&>`.
-                        None,
+                        package_json,
                     );
                 }
             }

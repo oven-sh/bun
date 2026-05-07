@@ -1471,26 +1471,38 @@ pub struct Writer {
     pub connection: *mut MySQLConnection,
 }
 
+impl Writer {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn write_buffer(&self) -> &mut OffsetByteList {
+        // SAFETY: `self.connection` is never null — `Writer` is only ever
+        // constructed by `MySQLConnection::writer(&mut self)` from a live
+        // `&mut MySQLConnection`, and the `NewWriter<Writer>` is consumed
+        // before that connection is dropped (it is never stored).
+        //
+        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
+        // an intermediate `&mut MySQLConnection`, which could alias the
+        // caller's own `&mut self` (see the PORT NOTE on `Reader` below).
+        // Callers never touch `write_buffer` through `&mut self` while a
+        // `Writer` is live, so no two `&mut OffsetByteList` coexist.
+        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
+    }
+}
+
 impl WriterContext for Writer {
     fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        // SAFETY: self.connection points at a live MySQLConnection for the
-        // duration of the write call (NewWriter is constructed by
-        // `MySQLConnection::writer(&mut self)` and not stored).
-        let buffer = unsafe { &mut (*self.connection).write_buffer };
-        buffer.write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
+        self.write_buffer().write(data).map_err(|_| AnyMySQLError::OutOfMemory)?;
         Ok(())
     }
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyMySQLError> {
-        // SAFETY: see `write`.
-        let byte_list = unsafe { &mut (*self.connection).write_buffer.byte_list };
+        let byte_list = &mut self.write_buffer().byte_list;
         byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     fn offset(self) -> usize {
-        // SAFETY: see `write`.
-        unsafe { (*self.connection).write_buffer.len() as usize }
+        self.write_buffer().len() as usize
     }
 }
 

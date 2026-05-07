@@ -185,10 +185,13 @@ pub(crate) struct Offsets {
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     // Populated once by C++ via `Bun__FFI__ensureOffsetsAreLoaded`; Rust only
-    // reads after the `Once` below fires. `Offsets` is four `u32`s, so it is
-    // auto-`Sync` and can appear as a non-`mut` extern static.
+    // reads after the `Once` below fires. C++ mutates these bytes, so a plain
+    // non-`mut` extern static would assert immutability to the optimizer (UB
+    // per the Rust reference). `RacyCell<T>` is `#[repr(transparent)]` over
+    // `UnsafeCell<T>`, so the linker sees the same `Offsets` layout while Rust
+    // sees interior mutability.
     #[link_name = "Bun__FFI__offsets"]
-    static BUN_FFI_OFFSETS: Offsets;
+    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }
@@ -202,7 +205,7 @@ impl Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*core::ptr::addr_of!(BUN_FFI_OFFSETS) }
+        unsafe { &*BUN_FFI_OFFSETS.get() }
     }
 }
 

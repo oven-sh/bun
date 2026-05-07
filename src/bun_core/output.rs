@@ -688,22 +688,26 @@ pub mod stdio {
     // TODO(port): move to bun_core_sys
     unsafe extern "C" {
         // Written once by C at process startup before threads; Rust only reads.
-        pub static bun_is_stdio_null: [i32; 3];
+        // C mutates these bytes, so a plain non-`mut` extern static would
+        // assert immutability to the optimizer (UB). `RacyCell` is
+        // `#[repr(transparent)]` over `UnsafeCell<[i32; 3]>`, so the extern
+        // layout is unchanged while Rust sees interior mutability.
+        pub static bun_is_stdio_null: crate::RacyCell<[i32; 3]>;
         pub fn bun_initialize_process();
         pub fn bun_restore_stdio();
     }
 
     pub fn is_stderr_null() -> bool {
         // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { bun_is_stdio_null[2] == 1 }
+        unsafe { (*bun_is_stdio_null.get())[2] == 1 }
     }
     pub fn is_stdout_null() -> bool {
         // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { bun_is_stdio_null[1] == 1 }
+        unsafe { (*bun_is_stdio_null.get())[1] == 1 }
     }
     pub fn is_stdin_null() -> bool {
         // SAFETY: bun_is_stdio_null is plain data written once by C at startup before threads.
-        unsafe { bun_is_stdio_null[0] == 1 }
+        unsafe { (*bun_is_stdio_null.get())[0] == 1 }
     }
 
     pub fn init() {

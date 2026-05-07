@@ -129,6 +129,7 @@ const_format = "0.2"
 enum-map = "2"
 enumset = "1"
 libc = "0.2"
+rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
 crossbeam = "0.8"

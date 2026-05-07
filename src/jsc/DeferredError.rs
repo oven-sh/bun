@@ -1,6 +1,6 @@
 use crate::node::ErrorCode;
-use crate::{JSGlobalObject, JSValue};
-use bun_str::{String as BunString, ZigString};
+use crate::{JSGlobalObject, JSValue, StringJsc, ZigStringJsc};
+use bun_string::{String as BunString, ZigString};
 
 // Error's cannot be created off of the main thread. So we use this to store the
 // information until its ready to be materialized later.

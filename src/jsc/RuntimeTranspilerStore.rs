@@ -696,11 +696,11 @@ impl TranspilerJob {
             // has no nested `Clone` impl (the inherent `clone()` requires
             // `V: Clone`); the Zig copied it by value. Re-key shallowly here
             // matching the build-command conversion (transpiler.rs:2616).
+            // Spec (Zig l.363) is an infallible value-copy, so OOM during the
+            // inner `clone()` must abort — never silently drop a remapping.
             let mut m = MacroRemap::default();
             for (k, v) in transpiler.options.macro_remap.iter() {
-                if let Ok(inner) = v.clone() {
-                    m.insert(k, inner);
-                }
+                m.insert(k, bun_core::handle_oom(v.clone()));
             }
             m
         };

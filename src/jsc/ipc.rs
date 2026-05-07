@@ -2424,7 +2424,7 @@ pub mod IPCHandlers {
             // `event_loop()` takes `&self`; never materialize
             // `&mut VirtualMachine` from the shared `bun_vm()` borrow
             // (Stacked-Borrows UB).
-            let loop_ = unsafe { (*global_this.bun_vm()).event_loop() };
+            let loop_ = global_this.bun_vm().event_loop();
             // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
             // as the VM); reborrow per use so `&mut EventLoop` isn't held
             // across `on_data2`.

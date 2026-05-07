@@ -572,10 +572,9 @@ impl ThrowFmtArgs for () {
     #[inline]
     fn dispatch_throw(self, global: &JSGlobalObject, fmt: &'static str) -> JsError {
         // Zig `.{}` — no interpolation; the literal IS the message. Route
-        // through `throw` with the fallback `fmt` and an `Arguments` whose
-        // `as_str()` is `Some(fmt)` so `create_error_instance` hits its
-        // static-string fast path.
-        global.throw(fmt, format_args!("{fmt}"))
+        // through `throw` with an `Arguments` whose `as_str()` is `Some(fmt)`
+        // so `create_error_instance` hits its static-string fast path.
+        global.throw(format_args!("{fmt}"))
     }
     #[inline]
     fn dispatch_throw_invalid_arguments(

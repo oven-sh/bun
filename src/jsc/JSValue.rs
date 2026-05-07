@@ -1582,7 +1582,14 @@ impl JSValue {
         unsafe { JSC__JSValue__eqlValue(self, other) }
     }
     /// `JSValue.isSameValue` (Object.is semantics).
+    ///
+    /// Differs from IsStrictlyEqual by treating all NaN values as equivalent
+    /// and by differentiating +0 from -0. Can throw (rope-string resolution).
     pub fn is_same_value(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // Identity fast-path (JSValue.zig:1949): same encoded bits ⇒ same value.
+        if self == other {
+            return Ok(true);
+        }
         // SAFETY: `global` is live; FFI may set an exception.
         host_fn::from_js_host_call_generic(global, || unsafe {
             JSC__JSValue__isSameValue(self, other, global)
@@ -1869,9 +1876,9 @@ impl JSValue {
         })
     }
     /// `JSValue.isBuffer` (JSValue.zig:492) — `instanceof Buffer` check via
-    /// the C++ `JSBuffer__isBuffer` shim. Asserts `self` is a cell.
+    /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
+    /// handles non-cells (returns false), so no precondition is asserted.
     pub fn is_buffer(self, global: &JSGlobalObject) -> bool {
-        debug_assert!(self.is_cell());
         unsafe extern "C" {
             fn JSBuffer__isBuffer(global: *const JSGlobalObject, value: JSValue) -> bool;
         }

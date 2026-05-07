@@ -288,7 +288,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // ever formed.
             let mut v = ManuallyDrop::new(unmanaged);
             let mut storage_ptr: *mut u8 = v.as_mut_ptr().cast::<u8>();
-            let mut storage_len = v.capacity() * size_of::<Child::ExternType>();
+            let storage_len = v.capacity() * size_of::<Child::ExternType>();
 
             // Convert the elements.
             for i in 0..length {
@@ -338,9 +338,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                     storage_ptr = bun_core::handle_oom(unsafe {
                         bun_alloc::realloc_raw(storage_ptr, new_alloc_size)
                     });
-                    storage_len = new_alloc_size;
                 }
-                let _ = storage_len;
                 new_capacity
             };
 

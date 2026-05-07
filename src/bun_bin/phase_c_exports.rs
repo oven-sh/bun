@@ -306,10 +306,11 @@ pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> J
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
 
-// `JSGlobalObject.rs::get_body_stream_or_bytes_for_wasm_streaming` carries the
-// real `#[host_fn(export = ...)]` body, but the whole module is gated. The
-// caller (`WebAssembly.instantiateStreaming`) is unreachable until webcore Body
-// streams un-gate, so satisfy the link name and crash loudly if hit early.
+// LAYERING: this body lives in `bun_runtime::webcore` (it touches Response/
+// Body/ReadableStream/Blob — types unavailable to `bun_jsc`). It was removed
+// from `bun_jsc::JSGlobalObject` to break a dep cycle. Port the real body in
+// `bun_runtime::webcore::wasm_streaming` once `Response::get_body_used` /
+// `Body::Value::use_as_any_blob` land, then drop this link stub.
 #[unsafe(no_mangle)]
 pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     _global: *mut JSGlobalObject,

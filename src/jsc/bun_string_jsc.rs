@@ -292,7 +292,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
     let input_value = call_frame.argument(0);
 
     if !input_value.is_string() {
-        return Err(global.throw("expected string argument", format_args!("expected string argument")));
+        return Err(global.throw(format_args!("expected string argument")));
     }
 
     let input = input_value.to_slice(global)?;
@@ -319,7 +319,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
     let input_value = call_frame.argument(0);
 
     if !input_value.is_string() {
-        return Err(global.throw("expected string argument", format_args!("expected string argument")));
+        return Err(global.throw(format_args!("expected string argument")));
     }
 
     let input = input_value.to_slice(global)?;

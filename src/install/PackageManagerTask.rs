@@ -687,7 +687,7 @@ pub struct LocalTarballRequest {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManagerTask.zig (385 lines)
-//   confidence: medium
-//   todos:      14
-//   notes:      bare Zig unions kept as Rust `union` + ManuallyDrop; BORROW_PARAM `&'a mut NetworkTask` per TSV is unsound across intrusive queue — Phase B should use *mut; defer-reshaped via labeled 'body block
+//   confidence: medium-high
+//   todos:      5
+//   notes:      bare Zig unions kept as Rust `union` + ManuallyDrop; BORROW_PARAM `&'a mut NetworkTask` per TSV is unsound across intrusive queue — Phase B should use *mut; defer-reshaped via labeled 'body block; `manager` kept as raw `*mut` (worker-thread BACKREF)
 // ──────────────────────────────────────────────────────────────────────────

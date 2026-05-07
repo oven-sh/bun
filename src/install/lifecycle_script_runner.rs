@@ -396,24 +396,28 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let _ = fd;
     }
 
-    fn ensure_not_in_heap(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `manager_mut()` borrows `&self`,
-        // which would conflict with the `self as *mut Self` reborrow below.
-        // Capture the raw `*mut PackageManager` and deref it inside the unsafe
-        // block instead (Zig: `this.manager.*` is a non-exclusive pointer).
-        let manager: *mut PackageManager = self.manager;
-        // SAFETY: `manager` is non-null and outlives every subprocess (see
-        // `Self::manager`); the install loop is single-threaded here.
-        let active = unsafe { &mut (*manager).active_lifecycle_scripts };
-        if !self.heap.child.is_null()
-            || !self.heap.next.is_null()
-            || !self.heap.prev.is_null()
-            || core::ptr::eq(active.root, self as *const _ as *const _)
-        {
-            // SAFETY: `self` was inserted via `insert(this)` with allocation-rooted
-            // provenance; the heap holds no other live `&mut` to it here.
-            unsafe {
-                active.remove(self as *mut Self as *mut LifecycleScriptSubprocess<'static>);
+    /// # Safety
+    /// `this` must be a live `*mut Self` (allocation-rooted or derived from a
+    /// caller-held `&mut Self`). Only the `manager` and `heap` fields are
+    /// touched via raw-pointer projection — no whole-struct `&mut Self` is
+    /// materialized — so callers may hold disjoint shared borrows into other
+    /// fields across this call (see `spawn_next_script_inner`).
+    unsafe fn ensure_not_in_heap(this: *mut Self) {
+        // SAFETY: caller contract — `this` is non-null and live.
+        unsafe {
+            let manager: *mut PackageManager = (*this).manager;
+            let heap = core::ptr::addr_of_mut!((*this).heap);
+            // SAFETY: `manager` is non-null and outlives every subprocess (see
+            // `Self::manager`); the install loop is single-threaded here.
+            let active = &mut (*manager).active_lifecycle_scripts;
+            if !(*heap).child.is_null()
+                || !(*heap).next.is_null()
+                || !(*heap).prev.is_null()
+                || core::ptr::eq(active.root, this as *const _)
+            {
+                // SAFETY: `this` was inserted via `insert(this)` with allocation-
+                // rooted provenance; the heap holds no other live `&mut` to it here.
+                active.remove(this as *mut LifecycleScriptSubprocess<'static>);
             }
         }
     }
@@ -464,7 +468,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     // .monotonic is okay because because this value is only used by hoisted installs.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
-                (*this).ensure_not_in_heap();
+                Self::ensure_not_in_heap(this);
             }
         }
         result
@@ -490,7 +494,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         (*this).stdout.set_parent(this as *mut c_void);
         (*this).stderr.set_parent(this as *mut c_void);
 
-        (*this).ensure_not_in_heap();
+        // Raw-ptr receiver: touches only `heap`/`manager`, so the shared
+        // borrows `original_script`/`cwd` (into `(*this).scripts`) survive.
+        Self::ensure_not_in_heap(this);
 
         (*this).current_script_index = next_script_index;
         (*this).has_called_process_exit = false;

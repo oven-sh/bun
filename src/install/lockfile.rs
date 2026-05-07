@@ -534,9 +534,9 @@ impl Lockfile {
 
         let mut lockfile_format = LockfileFormat::Text;
         let file: File = 'file: {
-            match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0) {
-                Ok(f) => break 'file f,
-                Err(text_open_err) => {
+            match File::openat(dir, zstr!("bun.lock"), sys::O::RDONLY, 0) {
+                sys::Result::Ok(f) => break 'file f,
+                sys::Result::Err(text_open_err) => {
                     if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                         return LoadResult::Err(LoadResultErr {
                             step: LoadStep::OpenFile,
@@ -548,9 +548,9 @@ impl Lockfile {
 
                     lockfile_format = LockfileFormat::Binary;
 
-                    match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0) {
-                        Ok(f) => break 'file f,
-                        Err(binary_open_err) => {
+                    match File::openat(dir, zstr!("bun.lockb"), sys::O::RDONLY, 0) {
+                        sys::Result::Ok(f) => break 'file f,
+                        sys::Result::Err(binary_open_err) => {
                             if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                                 return LoadResult::Err(LoadResultErr {
                                     step: LoadStep::OpenFile,
@@ -578,21 +578,24 @@ impl Lockfile {
             }
         };
 
-        let buf = match file.read_to_end() {
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ReadFile,
-                    value: BunError::from(e),
-                    lockfile_path: if lockfile_format == LockfileFormat::Text {
-                        zstr!("bun.lock")
-                    } else {
-                        zstr!("bun.lockb")
-                    },
-                    format: lockfile_format,
-                });
-            }
-            Ok(bytes) => bytes,
-        };
+        // Zig: `file.readToEnd(allocator).unwrap() catch |err| ...`.
+        // `bun_sys::File::read_to_end` returns a `ReadToEndResult { bytes, err }`
+        // (NOT `Result<Vec<u8>, _>`); honor the `.unwrap()` step by checking
+        // `.err` before consuming `.bytes`.
+        let read_result = file.read_to_end();
+        if let Some(e) = read_result.err {
+            return LoadResult::Err(LoadResultErr {
+                step: LoadStep::ReadFile,
+                value: BunError::from(e),
+                lockfile_path: if lockfile_format == LockfileFormat::Text {
+                    zstr!("bun.lock")
+                } else {
+                    zstr!("bun.lockb")
+                },
+                format: lockfile_format,
+            });
+        }
+        let buf = read_result.bytes;
 
         if lockfile_format == LockfileFormat::Text {
             let source = logger::Source::init_path_string(b"bun.lock", buf.as_slice());
@@ -1224,15 +1227,17 @@ impl Lockfile {
 
         // Don't allow invalid memory to happen
         if !updates.is_empty() {
-            // `UpdateRequest.version_buf` is `&'static [u8]` (PORTING.md
-            // §`[]const u8` struct-field — Zig stores raw `[]const u8`). The
-            // slice points into `new.buffers.string_bytes`, and `new` is
-            // *returned* to the caller below, so the storage outlives every
-            // `UpdateRequest` the caller threads it through. Erase the
-            // `&'_` → `&'static` step here; SAFETY: `new` (Box<Lockfile>) is
-            // moved to the caller and never freed before `updates` is consumed.
-            let string_buf: &'static [u8] =
-                unsafe { &*(new.buffers.string_bytes.as_slice() as *const [u8]) };
+            // `UpdateRequest.version_buf` is a raw `*const [u8]` (PORTING.md
+            // type-map: `[]const u8` struct-field, ARENA-class). The slice
+            // points into `new.buffers.string_bytes`; `new` is *returned* to
+            // the caller below and `string_bytes` is finalized at this point
+            // (cloner.flush() and the patched-dep StringBuilder have both
+            // run), so the storage outlives every `UpdateRequest` the caller
+            // threads it through. No lifetime extension — store the raw
+            // (ptr, len) and let `UpdateRequest::version_buf()` reborrow at
+            // each read site.
+            let string_buf = new.buffers.string_bytes.as_slice();
+            let string_buf_ptr: *const [u8] = core::ptr::from_ref(string_buf);
             let slice = new.packages.slice();
 
             // updates might be applied to the root package.json or one
@@ -1254,7 +1259,7 @@ impl Lockfile {
                             if package_id as usize > new.packages.len() {
                                 continue;
                             }
-                            update.version_buf = string_buf;
+                            update.version_buf = string_buf_ptr;
                             update.version = dep.version.clone();
                             update.package_id = package_id;
 

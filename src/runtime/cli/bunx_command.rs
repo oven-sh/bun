@@ -48,17 +48,6 @@ fn stat_mtime_sec(s: &bun_sys::Stat) -> i64 {
     { s.st_mtimespec.tv_sec as i64 }
 }
 
-/// Process-lifetime bump arena for the package.json parser. Matches the
-/// `dummy_bump()` shim in `pm_pkg_command.rs`. `bumpalo::Bump` is `!Sync`,
-/// so a `static OnceLock` is out; the CLI is single-threaded one-shot, so we
-/// cache a leaked arena per thread instead.
-fn bunx_bump() -> &'static bun_alloc::Arena {
-    thread_local! {
-        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
-    }
-    BUMP.with(|b| *b)
-}
-
 /// bunx-specific options parsed from argv.
 //
 // PORT NOTE: string fields borrow from `argv` (process-lifetime). Phase A forbids

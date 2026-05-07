@@ -479,7 +479,7 @@ pub struct DevServer {
     /// those are temporaried here. When the current bundle is finished, it
     /// will immediately enqueue this.
     pub next_bundle: NextBundle,
-    pub deferred_request_pool: HiveArray<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
+    pub deferred_request_pool: HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 
@@ -680,7 +680,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(has_tailwind_plugin_hack, None);
         w!(configuration_hash_key, [0; 16]);
         w!(log, Log::init());
-        w!(deferred_request_pool, HiveArray::init());
+        w!(deferred_request_pool, HiveArrayFallback::init());
 
         // `.router = undefined` — placeholder until the real router is built below
         // (after transpilers + framework.resolve). Constructed empty so the field

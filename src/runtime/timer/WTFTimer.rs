@@ -72,17 +72,17 @@ impl WTFTimer {
     ///
     /// # Safety
     /// `this` was published by [`WTFTimer::update`] into
-    /// `imminent_gc_timer` and remains live; `_vm` is the live per-thread VM
-    /// (unused at this tier — `vm.timer` resolved via `runtime_state()`).
-    pub unsafe fn run(this: *mut Self, _vm: *mut VirtualMachine) {
+    /// `imminent_gc_timer` and remains live; `vm` is the live VM that owns
+    /// this timer.
+    pub unsafe fn run(this: *mut Self, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` is live; per-field raw deref so we
         // don't hold `&mut *this` across `All::remove` (which `&mut`-derefs
         // `event_loop_timer`).
         if unsafe { (*this).event_loop_timer.state } == EventLoopTimerState::ACTIVE {
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `state` is the live per-thread `RuntimeState`;
+            // SAFETY: `vm` is the live VM that owns this timer's heap;
             // `event_loop_timer` is an embedded field of a live allocation.
             unsafe {
+                let state = crate::jsc_hooks::runtime_state_of(vm);
                 (*state).timer.remove(ptr::addr_of_mut!((*this).event_loop_timer));
             }
         }
@@ -164,10 +164,12 @@ impl WTFTimer {
             interval.nsec -= NS_PER_S;
         }
 
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `event_loop_timer`
-        // is an embedded field of a live allocation.
+        // SAFETY: `(*this).vm` is the VM that owns this timer's heap (captured
+        // at `WTFTimer__create`); `event_loop_timer` is an embedded field of a
+        // live allocation. May be called off the JS thread — `All::update`
+        // takes its own lock.
         unsafe {
+            let state = crate::jsc_hooks::runtime_state_of((*this).vm.as_ptr());
             (*state)
                 .timer
                 .update(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
@@ -198,9 +200,10 @@ impl WTFTimer {
 
             // SAFETY: per fn contract.
             if unsafe { (*this).event_loop_timer.state } == EventLoopTimerState::ACTIVE {
-                let state = crate::jsc_hooks::runtime_state();
-                // SAFETY: `state` is the live per-thread `RuntimeState`.
+                // SAFETY: `(*this).vm` is the VM that owns this timer's heap;
+                // may be called off the JS thread — `All::remove` locks.
                 unsafe {
+                    let state = crate::jsc_hooks::runtime_state_of((*this).vm.as_ptr());
                     (*state)
                         .timer
                         .remove(ptr::addr_of_mut!((*this).event_loop_timer));

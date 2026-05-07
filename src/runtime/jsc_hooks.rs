@@ -116,6 +116,20 @@ pub fn runtime_state() -> *mut RuntimeState {
     RUNTIME_STATE.with(Cell::get)
 }
 
+/// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
+/// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
+/// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
+/// that), so they must reach the heap through `vm.runtime_state` rather than
+/// the thread-local cache.
+///
+/// # Safety
+/// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
+/// `init_runtime_state`.
+#[inline]
+pub unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
+    unsafe { (*vm).runtime_state.cast::<RuntimeState>() }
+}
+
 /// `RareData.defaultClientSslCtx()` (Spec rare_data.zig:741) — lazy
 /// default-trust-store client `SSL_CTX*`, shared by every `tls: true` outbound
 /// connection that didn't supply explicit options.
@@ -920,13 +934,14 @@ unsafe fn print_exception(
 /// through this slot.
 ///
 /// # Safety
-/// `_vm` is the live per-thread VM (unused — `runtime_state()` recovers the
-/// same thread's `Timer::All`); `t` points at a live unlinked `EventLoopTimer`.
+/// `vm` is a live `VirtualMachine`; `t` points at a live unlinked
+/// `EventLoopTimer`.
 unsafe fn timer_insert(
-    _vm: *mut VirtualMachine,
+    vm: *mut VirtualMachine,
     t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
 ) {
-    let state = runtime_state();
+    // SAFETY: per fn contract.
+    let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
     // SAFETY: per fn contract; `Timer::All::insert` takes its own lock and
     // re-derefs `t` per-field (no aliased `&mut` held across the call).
@@ -938,10 +953,11 @@ unsafe fn timer_insert(
 /// # Safety
 /// `t` points at a live `EventLoopTimer` currently linked into the heap.
 unsafe fn timer_remove(
-    _vm: *mut VirtualMachine,
+    vm: *mut VirtualMachine,
     t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
 ) {
-    let state = runtime_state();
+    // SAFETY: per fn contract.
+    let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_remove before init_runtime_state");
     // SAFETY: per fn contract.
     unsafe { (*state).timer.remove(t) };

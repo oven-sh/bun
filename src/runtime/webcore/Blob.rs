@@ -5496,22 +5496,18 @@ impl Blob {
         check_s3: bool,
     ) -> Blob {
         // ─── S3 (`s3://…`) branch ──────────────────────────────────────────
-        // TODO(b2-blocked): bun_s3 / Store::init_s3 — `Store::init_s3` is gated
-        // in `blob/Store.rs` and `transpiler.env.get_s3_credentials()` is not
-        // yet on the VM surface. Re-gated until both land; this only short-
-        // circuits the `s3://` prefix, the file path below is unaffected.
-        
-        // TODO(b2-blocked): the s3:// branch is gated until
-        // `bun_dotenv::Loader::get_s3_credentials` returns an owned/cloneable
-        // value (`Store::init_s3` consumes `S3Credentials` by value, env loader
-        // hands back `&S3Credentials`). Falls through to the file path below.
         if check_s3 {
             if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
                 if p.slice().starts_with(b"s3://") {
                     // SAFETY: bun_vm() is live for the duration of a host call.
                     let vm = unsafe { &mut *global_this.bun_vm() };
+                    // `bun_dotenv::Loader` (T2) returns its local POD mirror by
+                    // reference; lift it into the refcounted
+                    // `bun_s3_signing::S3Credentials` here at the T6 call site
+                    // (dotenv cannot name the s3_signing type — upward dep).
                     // SAFETY: transpiler.env is set during VM init and outlives the VM.
-                    let credentials = unsafe { &mut *vm.transpiler.env }.get_s3_credentials();
+                    let env_creds = unsafe { &mut *vm.transpiler.env }.get_s3_credentials();
+                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
@@ -5520,13 +5516,12 @@ impl Blob {
                     );
                     let PathOrFileDescriptor::Path(path) = copy else { unreachable!() };
                     return Blob::init_with_store(
-                        Store::init_s3(path, None, credentials).expect("oom"),
+                        bun_core::handle_oom(Store::init_s3(path, None, credentials)),
                         global_this,
                     );
                 }
             }
         }
-        let _ = check_s3;
 
         let path: PathOrFileDescriptor = match path_or_fd {
             PathOrFileDescriptor::Path(_) => {

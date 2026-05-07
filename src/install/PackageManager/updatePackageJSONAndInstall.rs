@@ -268,8 +268,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                                             new_len = 0;
                                         }
 
-                                            any_changes = true;
-                                        }
+                                        any_changes = true;
                                     }
                                 }
                                 i += 1;

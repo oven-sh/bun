@@ -19,26 +19,6 @@ use crate::node::StringOrBuffer;
 use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{Algorithm, AlgorithmExt as _};
 
-// Local shim for `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
-// `bun_jsc::comptime_string_map_jsc::from_js_case_insensitive` is currently gated
-// ASCII, so lower the probe and do a direct phf lookup.
-fn algorithm_from_js_case_insensitive(
-    global_this: &JSGlobalObject,
-    input: JSValue,
-) -> JsResult<Option<Algorithm>> {
-    let slice = input.to_slice(global_this)?;
-    let bytes = slice.slice();
-    // Longest key is "sha-512/224" (11 bytes); 32 bytes is a comfortable upper bound.
-    if bytes.len() > 32 {
-        return Ok(None);
-    }
-    let mut buf = [0u8; 32];
-    for (i, b) in bytes.iter().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    Ok(Algorithm::map().get(&buf[..bytes.len()]).copied())
-}
-
 // BoringSSL error code; not yet exported by `bun_boringssl_sys`
 // (Zig: src/boringssl_sys/boringssl.zig:6422).
 const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
@@ -192,7 +172,11 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                match algorithm_from_js_case_insensitive(global_this, arg4)? {
+                match bun_jsc::comptime_string_map_jsc::from_js_case_insensitive(
+                    Algorithm::map(),
+                    global_this,
+                    arg4,
+                )? {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
                         other => break 'brk other,

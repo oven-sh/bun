@@ -256,6 +256,15 @@ impl JSValue {
         // immediates (JSValue.zig:1076 — no `isCell()` guard).
         unsafe { JSC__JSValue__isBigInt(self) }
     }
+    /// `JSValue.isBigInt32()` (JSValue.zig:1073) — true iff this value uses
+    /// JSC's packed BigInt32 immediate representation (vs heap `JSBigInt`).
+    #[inline] pub fn is_big_int32(self) -> bool {
+        unsafe extern "C" {
+            fn JSC__JSValue__isBigInt32(this: JSValue) -> bool;
+        }
+        // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
+        unsafe { JSC__JSValue__isBigInt32(self) }
+    }
     /// `JSValue.isBigIntInInt64Range` (JSValue.zig:40) — `self` must already be
     /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline] pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {

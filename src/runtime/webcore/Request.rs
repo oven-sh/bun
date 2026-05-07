@@ -677,7 +677,9 @@ impl Request {
             formatter.write_indent(writer)?;
             writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref())?;
 
-            write!(writer, "{:?}", self.method)?;
+            // Zig: `bun.asByteSlice(@tagName(this.method))` — wire-form token
+            // (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
+            writer.write_str(self.method.as_str())?;
             writer.write_str("\"")?;
             formatter
                 .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
@@ -1297,7 +1299,13 @@ impl Request {
                                     req.headers = Some(unsafe { HeadersRef::adopt(h) });
                                     fields.insert(Fields::Headers);
                                 }
-                                Ok(None) => {}
+                                Ok(None) => {
+                                    // Zig assigns `req.#headers = try headers.cloneThis(...)`
+                                    // then *unconditionally* `fields.insert(.headers)`, even
+                                    // when the clone yields null. Mirror that here so a later
+                                    // arg can't repopulate headers from a different source.
+                                    fields.insert(Fields::Headers);
+                                }
                                 Err(e) => bail!(Err(e)),
                             }
                         }

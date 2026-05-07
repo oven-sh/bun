@@ -1,5 +1,4 @@
 use core::ffi::c_int;
-use core::fmt;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _};
@@ -8,7 +7,6 @@ use bun_str::{self, strings, ZStr, WStr, ZigString};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use bun_sys::{self, Fd, Mode, O};
 use bun_core::{self, fmt as bun_fmt};
-use bun_wyhash::hash;
 
 use crate::webcore::{Blob, Request, Response};
 use crate::webcore::BlobExt as _;

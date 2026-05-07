@@ -417,9 +417,7 @@ pub fn migrate_npm_lockfile<'a>(
             let pkg_name = package_name_from_path(pkg_path);
             if version_prop.is_some() && !pkg_name.is_empty() {
                 // construct registry url
-                let href: &[u8] = manager.options.scope.url.href;
-                // TODO(port): blocked_on: PackageManager::scope_for_package_name disambiguation
-                // (two impls in scope until package_manager_real un-gates).
+                let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href;
                 let mut count: usize = 0;
                 count += href.len() + pkg_name.len() + b"/-/".len();
                 if pkg_name[0] == b'@' {
@@ -463,7 +461,7 @@ pub fn migrate_npm_lockfile<'a>(
                 remain = &mut remain[version_str.len()..];
                 remain[..4].copy_from_slice(b".tgz");
 
-                resolved_urls.put_assume_capacity(pkg_path, resolved_url);
+                resolved_urls.put(pkg_path, resolved_url)?;
             }
         }
     }
@@ -577,7 +575,7 @@ pub fn migrate_npm_lockfile<'a>(
             continue;
         }
 
-        let workspace_entry = workspace_map.as_ref().and_then(|map| workspace_map_get(map, pkg_path));
+        let workspace_entry = workspace_map.as_ref().and_then(|map| map.get(pkg_path));
         let is_workspace = workspace_entry.is_some();
 
         let pkg_name: &[u8] = if let Some(e) = workspace_entry {

@@ -2818,6 +2818,51 @@ pub struct AnyServer {
     pub ptr: *mut (),
 }
 
+impl AnyServer {
+    // ─── tag-checked downcasts ───────────────────────────────────────────────
+    // Centralize the `unsafe { &*self.ptr.cast() }` pattern that the dispatch
+    // macro and `h3_alt_svc` open-coded. Each accessor debug-asserts the tag
+    // so a mismatched call trips in debug builds rather than silently aliasing
+    // the wrong monomorphization.
+    //
+    // No `&mut`-returning variants: dispatch-mut bodies re-enter JS
+    // (`on_request`, `get_or_load_plugins`, `stop`, …) which can observe the
+    // same server through another `AnyServer` handle, so a safe
+    // `fn(&self) -> &mut NewServer` accessor would invite overlapping `&mut`
+    // under Stacked Borrows. `any_server_dispatch_mut!` keeps its inline
+    // `unsafe` with the existing caller-upheld exclusivity contract.
+
+    #[inline]
+    fn as_http(&self) -> &HTTPServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::HTTPServer));
+        // SAFETY: `ptr` was produced by `AnyServer::from::<false, false>` and
+        // is non-null while the server is alive (heap-allocated `NewServer`,
+        // freed only after all `AnyServer` handles are dropped).
+        unsafe { &*self.ptr.cast::<HTTPServer>() }
+    }
+
+    #[inline]
+    fn as_https(&self) -> &HTTPSServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::HTTPSServer));
+        // SAFETY: tag-matched non-null `NewServer<true, false>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<HTTPSServer>() }
+    }
+
+    #[inline]
+    fn as_debug_http(&self) -> &DebugHTTPServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPServer));
+        // SAFETY: tag-matched non-null `NewServer<false, true>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<DebugHTTPServer>() }
+    }
+
+    #[inline]
+    fn as_debug_https(&self) -> &DebugHTTPSServer {
+        debug_assert!(matches!(self.tag, AnyServerTag::DebugHTTPSServer));
+        // SAFETY: tag-matched non-null `NewServer<true, true>`; see `as_http`.
+        unsafe { &*self.ptr.cast::<DebugHTTPSServer>() }
+    }
+}
+
 /// Dispatch over the four `NewServer` monomorphizations (shared `&` borrow).
 /// Mirrors Zig's `inline switch (ptr.tag()) { inline else => |s| s.method() }`.
 /// Read-only accessors MUST use this form so holding the returned reference
@@ -2826,13 +2871,11 @@ pub struct AnyServer {
 macro_rules! any_server_dispatch {
     ($self:expr, |$s:ident| $body:expr) => {{
         let this = $self;
-        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
-        // and is non-null while the server is alive.
         match this.tag {
-            AnyServerTag::HTTPServer => { let $s = unsafe { &*this.ptr.cast::<HTTPServer>() }; $body }
-            AnyServerTag::HTTPSServer => { let $s = unsafe { &*this.ptr.cast::<HTTPSServer>() }; $body }
-            AnyServerTag::DebugHTTPServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPServer>() }; $body }
-            AnyServerTag::DebugHTTPSServer => { let $s = unsafe { &*this.ptr.cast::<DebugHTTPSServer>() }; $body }
+            AnyServerTag::HTTPServer => { let $s = this.as_http(); $body }
+            AnyServerTag::HTTPSServer => { let $s = this.as_https(); $body }
+            AnyServerTag::DebugHTTPServer => { let $s = this.as_debug_http(); $body }
+            AnyServerTag::DebugHTTPSServer => { let $s = this.as_debug_https(); $body }
         }
     }};
 }
@@ -2896,9 +2939,8 @@ impl AnyServer {
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
         match self.tag {
-            // SAFETY: tag matches; ptr is a live server while AnyServer is held.
-            AnyServerTag::HTTPSServer => unsafe { &*self.ptr.cast::<HTTPSServer>() }.h3_alt_svc(),
-            AnyServerTag::DebugHTTPSServer => unsafe { &*self.ptr.cast::<DebugHTTPSServer>() }.h3_alt_svc(),
+            AnyServerTag::HTTPSServer => self.as_https().h3_alt_svc(),
+            AnyServerTag::DebugHTTPSServer => self.as_debug_https().h3_alt_svc(),
             _ => None,
         }
     }

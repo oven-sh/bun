@@ -2191,21 +2191,32 @@ pub fn install_isolated_packages(
                     }
 
                     let cache_subpath_z: &bun_str::ZStr = match pkg_res_tag {
-                        ResolutionTag::Npm => manager.cached_npm_package_folder_name(
+                        ResolutionTag::Npm => package_manager::cached_npm_package_folder_name(
+                            manager,
                             pkg_name.slice(string_buf),
                             pkg_res.value.npm.version,
                             patch_info.contents_hash(),
                         ),
-                        ResolutionTag::Git => {
-                            manager.cached_git_folder_name(&pkg_res.value.git, patch_info.contents_hash())
-                        }
-                        ResolutionTag::Github => {
-                            manager.cached_github_folder_name(&pkg_res.value.github, patch_info.contents_hash())
-                        }
-                        ResolutionTag::LocalTarball => manager
-                            .cached_tarball_folder_name(pkg_res.value.local_tarball, patch_info.contents_hash()),
-                        ResolutionTag::RemoteTarball => manager
-                            .cached_tarball_folder_name(pkg_res.value.remote_tarball, patch_info.contents_hash()),
+                        ResolutionTag::Git => package_manager::cached_git_folder_name(
+                            manager,
+                            &pkg_res.value.git,
+                            patch_info.contents_hash(),
+                        ),
+                        ResolutionTag::Github => package_manager::cached_github_folder_name(
+                            manager,
+                            &pkg_res.value.github,
+                            patch_info.contents_hash(),
+                        ),
+                        ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
+                            manager,
+                            pkg_res.value.local_tarball,
+                            patch_info.contents_hash(),
+                        ),
+                        ResolutionTag::RemoteTarball => package_manager::cached_tarball_folder_name(
+                            manager,
+                            pkg_res.value.remote_tarball,
+                            patch_info.contents_hash(),
+                        ),
 
                         _ => unreachable!(),
                     };
@@ -2288,7 +2299,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early {
+                                    if manager.options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2331,7 +2342,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early {
+                                    if manager.options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2372,7 +2383,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early {
+                                    if manager.options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't

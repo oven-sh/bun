@@ -118,7 +118,10 @@ pub mod inspector_bun_frontend_dev_server_agent;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{AnyUserRouteList, GetOrStartLoadResult, ServePluginsCallback};
+pub use server_body::{
+    AnyUserRouteList, BunInfo, GetOrStartLoadResult, PluginsResult, PreparedRequestFor,
+    ServePlugins, ServePluginsCallback, ServePluginsState, ServerInitContext,
+};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {

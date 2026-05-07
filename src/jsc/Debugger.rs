@@ -222,31 +222,220 @@ impl Debugger {
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.
     ///
-    /// B-2: body reaches into `vm.debugger: Option<Debugger>` (still
-    /// `Option<()>` in VirtualMachine.rs), `bun_runtime::cli::start_time()`,
-    /// `bun_core::Timespec`, and the libuv timer shim — dispatched through
-    /// `RuntimeHooks::ensure_debugger` by the high tier instead.
-    pub fn wait_for_debugger_if_necessary(this: &mut VirtualMachine) {
-        let _ = this;
-        // TODO(b2): RuntimeHooks dispatch — `ensure_debugger` covers this path.
+    /// Spec `Debugger.zig:31` `waitForDebuggerIfNecessary`.
+    ///
+    /// PORT NOTE — aliasing: `this.debugger` is read through a raw pointer
+    /// with fresh short-lived borrows because `event_loop().tick()` /
+    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
+    /// and may form independent `&mut VirtualMachine` borrows. Holding a
+    /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
+    /// across those calls is UB.
+    pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
+        // SAFETY: `this` is the live per-thread VM; short-lived `&mut`.
+        let Some(debugger) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+            return;
+        };
+        bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
+        if !debugger.must_block_until_connected {
+            return;
+        }
+        // Spec: `defer debugger.must_block_until_connected = false;`
+        let _reset = scopeguard::guard(this, |this| {
+            // SAFETY: `this` is the live per-thread VM; deferred to scope exit.
+            if let Some(d) = unsafe { (*this).debugger.as_deref_mut() } {
+                d.must_block_until_connected = false;
+            }
+        });
+
+        bun_core::scoped_log!(debugger, "spin");
+        // PORT NOTE: spec `var futex_atomic = .init(0)` and nothing ever
+        // stores `1` before this load, so this loop is a no-op on first call
+        // — ported faithfully.
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+        if bun_core::Environment::ENABLE_LOGS {
+            bun_core::scoped_log!(
+                debugger,
+                "waitForDebugger: {}",
+                bun_core::Output::ElapsedFormatter {
+                    colors: bun_core::Output::enable_ansi_colors_stderr(),
+                    duration_ns: (bun_core::nano_timestamp() - bun_core::start_time()) as u64,
+                }
+            );
+        }
+
+        let ctx_id = debugger.script_execution_context_id;
+        let wait = debugger.wait_for_connection;
+        // SAFETY: `Bun__ensureDebugger` is the C++ inspector setup hook;
+        // `ctx_id` was returned by `Bun__createJSDebugger` in `create()`.
+        unsafe { Bun__ensureDebugger(ctx_id, wait != Wait::Off) };
+
+        // Sleep up to 30ms for automatic inspection.
+        const WAIT_FOR_CONNECTION_DELAY_MS: i64 = 30;
+
+        let deadline: bun_core::Timespec = if wait == Wait::Shortly {
+            bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                .add_ms(WAIT_FOR_CONNECTION_DELAY_MS)
+        } else {
+            // Spec: `else undefined` — never read on the `.forever` path.
+            bun_core::Timespec { sec: 0, nsec: 0 }
+        };
+
+        #[cfg(windows)]
+        {
+            // Spec Debugger.zig:56-77: arm a one-shot libuv timer that unrefs
+            // `poll_ref` after the delay (Windows lacks a working
+            // `tickWithTimeout`). The Zig body uses `bun.windows.libuv.Timer`
+            // directly — those bindings live in `bun_sys::windows::libuv`,
+            // which is not yet ported. `tick_with_timeout` below is a no-op on
+            // the Windows `Loop` impl, so without this timer the `.shortly`
+            // path may busy-spin until the deadline check trips. Tracked as a
+            // TODO(port) per the original Zig comment ("TODO: remove this when
+            // tickWithTimeout actually works properly on Windows").
+            // TODO(port): wire `bun_sys::windows::libuv::Timer` once ported.
+            let _ = WAIT_FOR_CONNECTION_DELAY_MS;
+        }
+
+        // Drop the long-lived `&mut Debugger` before re-entering JS — see
+        // PORT NOTE above.
+        loop {
+            // SAFETY: `this` is the live per-thread VM; fresh short-lived borrow.
+            let wait = match unsafe { (*this).debugger.as_deref() } {
+                Some(d) => d.wait_for_connection,
+                None => break,
+            };
+            if wait == Wait::Off {
+                break;
+            }
+            // SAFETY: `event_loop()` slot stable for VM lifetime; fresh `&mut`.
+            unsafe { (*(*this).event_loop()).tick() };
+            // Re-read after `tick()` — `Debugger__didConnect` may have flipped it.
+            // SAFETY: see above.
+            let wait = match unsafe { (*this).debugger.as_deref() } {
+                Some(d) => d.wait_for_connection,
+                None => break,
+            };
+            match wait {
+                Wait::Forever => {
+                    // SAFETY: see above.
+                    unsafe { (*(*this).event_loop()).auto_tick_active() };
+
+                    if bun_core::Environment::ENABLE_LOGS {
+                        bun_core::scoped_log!(
+                            debugger,
+                            "waited: {}ns",
+                            (bun_core::nano_timestamp() - bun_core::start_time()) as i64
+                        );
+                    }
+                }
+                Wait::Shortly => {
+                    // Handle .incrementRefConcurrently
+                    #[cfg(unix)]
+                    {
+                        // SAFETY: `this` is the live per-thread VM.
+                        let pending_unref = unsafe { (*this).pending_unref_counter };
+                        if pending_unref > 0 {
+                            // SAFETY: see above.
+                            unsafe { (*this).pending_unref_counter = 0 };
+                            // SAFETY: `uws_loop()` returns the per-VM loop;
+                            // non-null on the JS thread once `init()` ran.
+                            unsafe { (*(*this).uws_loop()).unref_count(pending_unref) };
+                        }
+                    }
+
+                    // SAFETY: `bun_core::Timespec` and `bun_uws::Timespec` are
+                    // both `#[repr(C)] { sec: i64, nsec: i64 }` — layout-
+                    // identical. `uws_loop()` non-null on JS thread.
+                    let deadline_uws: &bun_uws::Timespec =
+                        unsafe { &*(&deadline as *const bun_core::Timespec).cast() };
+                    // SAFETY: see above.
+                    unsafe { (*(*this).uws_loop()).tick_with_timeout(Some(deadline_uws)) };
+
+                    if bun_core::Environment::ENABLE_LOGS {
+                        bun_core::scoped_log!(
+                            debugger,
+                            "waited: {}ns",
+                            (bun_core::nano_timestamp() - bun_core::start_time()) as i64
+                        );
+                    }
+
+                    let elapsed =
+                        bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+                    if elapsed.order(&deadline) != core::cmp::Ordering::Less {
+                        // SAFETY: `this` is the live per-thread VM; debugger
+                        // checked Some above (re-check defensively).
+                        if let Some(d) = unsafe { (*this).debugger.as_deref_mut() } {
+                            d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                        }
+                        bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
+                        break;
+                    }
+                }
+                Wait::Off => break,
+            }
+        }
     }
 
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
     ///
-    /// B-2: same gating story as `wait_for_debugger_if_necessary` — touches
-    /// `vm.debugger` as `&mut Debugger` and spawns a thread that calls
-    /// `start_js_debugger_thread` (which itself needs `bun_runtime`).
+    /// Spec `Debugger.zig:118` `create`.
     pub fn create(
-        this: &mut VirtualMachine,
+        this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> Result<(), bun_core::Error> {
-        let _ = (this, global_object);
         bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding();
-        // TODO(b2): RuntimeHooks dispatch — `init_runtime_state` calls
-        // `configureDebugger()` which subsumes this.
+        if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
+            return Ok(());
+        }
+        // Spec: `std.mem.doNotOptimizeAway(&Bun__*Agent*)` — Rust
+        // `#[unsafe(no_mangle)]` already prevents the linker from stripping
+        // these exported symbols, so the keep-alive references are unnecessary.
+
+        // SAFETY: `this` is the live per-thread VM; caller (high-tier
+        // `ensure_debugger`) populated `debugger` before calling.
+        let debugger = unsafe { (*this).debugger.as_deref_mut() }
+            .expect("Debugger::create: vm.debugger is None");
+        // SAFETY: `global_object` is a live opaque JSC handle.
+        debugger.script_execution_context_id =
+            unsafe { Bun__createJSDebugger(global_object as *const _ as *mut _) };
+
+        // SAFETY: `this` is the live per-thread VM; short-lived borrow.
+        if !unsafe { (*this).has_started_debugger } {
+            // SAFETY: see above.
+            unsafe { (*this).has_started_debugger = true };
+            // PORT NOTE: `std::thread::spawn` requires `Send`; raw `*mut
+            // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
+            // pointer is only ever dereferenced on the debugger thread under
+            // `holdAPILock` (see `start_js_debugger_thread` doc), and the VM
+            // outlives the process.
+            struct SendVmPtr(*mut VirtualMachine);
+            // SAFETY: see PORT NOTE above — cross-thread access is mediated
+            // by `holdAPILock` / the futex; the VM allocation is `'static`.
+            unsafe impl Send for SendVmPtr {}
+            let send_vm = SendVmPtr(this);
+            std::thread::Builder::new()
+                .name("Debugger".to_string())
+                .spawn(move || {
+                    let send_vm = send_vm;
+                    Debugger::start_js_debugger_thread(send_vm.0);
+                })
+                .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
+            // Spec: `thread.detach()` — Rust `JoinHandle` detaches on drop.
+        }
+        // SAFETY: `event_loop()` slot stable for VM lifetime.
+        unsafe { (*(*this).event_loop()).ensure_waker() };
+
+        // Re-borrow after `ensure_waker` (which may touch `*this`).
+        // SAFETY: `this` is the live per-thread VM.
+        let debugger = unsafe { (*this).debugger.as_deref_mut() }.unwrap();
+        if debugger.wait_for_connection != Wait::Off {
+            debugger.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            debugger.must_block_until_connected = true;
+        }
         Ok(())
     }
 

@@ -109,7 +109,7 @@ typedef struct bun_spawn_request_t {
 // as _exit() may try to acquire locks held by threads that don't exist in the child.
 static inline void rawExit(int status)
 {
-#if OS(LINUX)
+#if defined(__NR_exit_group)
     syscall(__NR_exit_group, status);
 #else
     _exit(status);
@@ -152,8 +152,13 @@ extern "C" ssize_t posix_spawn_bun(
     // While POSIX restricts vfork children to only calling _exit() or exec*(),
     // Linux's vfork() is more permissive and allows the setup we need
     // (setsid, ioctl, dup2, etc.) before exec.
+    // If vfork() fails (e.g. blocked by seccomp on some platforms), fall back
+    // to fork().
     volatile int child_errno = 0;
     pid_t child = vfork();
+    if (child == -1) {
+        child = fork();
+    }
 #else
     // On macOS, we must use fork() because vfork() is more strictly enforced.
     // This code path should only be used for PTY spawns on macOS.

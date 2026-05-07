@@ -146,15 +146,34 @@ describe("generated class construction", () => {
     });
   });
 
-  test("prototype @@symbol properties are still installed", () => {
-    // @@dispose on Bun.listen() Listener
-    expect(typeof (Bun.SHA256 as any).hash).toBe("function");
+  test("prototype @@symbol properties are still installed after finishGeneratedPrototype", () => {
+    // Timeout declares @@dispose and @@toPrimitive in its proto:, which
+    // generatePrototype emits as putDirect(vm.propertyNames->disposeSymbol, ...)
+    // after finishGeneratedPrototype runs.
+    const t = setTimeout(() => {}, 0);
+    try {
+      expect(typeof t[Symbol.dispose]).toBe("function");
+      expect(typeof t[Symbol.toPrimitive]).toBe("function");
+      const proto = Object.getPrototypeOf(t);
+      expect(Object.getOwnPropertyDescriptor(proto, Symbol.dispose)).toBeDefined();
+      expect(Object.getOwnPropertyDescriptor(proto, Symbol.toPrimitive)).toBeDefined();
+    } finally {
+      clearTimeout(t);
+    }
 
-    // @@iterator on AttributeIterator (via HTMLRewriter)
-    // verify by checking a class with special symbols in proto
-    const glob = new Bun.Glob("*.ts");
-    expect(glob[Symbol.toStringTag]).toBe("Glob");
-    expect(glob.match("a.ts")).toBe(true);
+    // AttributeIterator declares @@iterator in its proto:.
+    let sawIterator = false;
+    new HTMLRewriter()
+      .on("a", {
+        element(el) {
+          const attrs = el.attributes;
+          expect(typeof attrs[Symbol.iterator]).toBe("function");
+          expect([...attrs]).toEqual([["href", "/"]]);
+          sawIterator = true;
+        },
+      })
+      .transform('<a href="/"></a>');
+    expect(sawIterator).toBe(true);
   });
 
   test("exception from Zig construct propagates", () => {

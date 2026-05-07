@@ -225,14 +225,8 @@ pub extern "C" fn Bun__VM__useIsolationSourceProviderCache(vm: *mut VirtualMachi
 
 // ── WebView process control ─────────────────────────────────────────────────
 // REAL: src/runtime/webview/{ChromeProcess,HostProcess}.rs (`mod webview` not
-// declared in src/runtime/lib.rs yet).
-// No-op pre-runtime: there is no spawned browser/host process to kill.
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__kill() {}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebViewHost__kill() {}
+// (Bun__Chrome__kill / Bun__WebViewHost__kill now defined in
+//  src/runtime/webview/{ChromeProcess,HostProcess}.rs.)
 
 // ── napi ────────────────────────────────────────────────────────────────────
 // REAL: src/runtime/napi/napi_body.rs
@@ -306,19 +300,7 @@ pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> J
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
 
-// `bundler_jsc::analyze_jsc` defines these but the crate is not in `bun_bin`'s
-// dep graph yet (it pulls `bun_bundler` test-only surface). Park the link names
-// here; the real bodies move once `bun_bundler_jsc` is linked.
-#[unsafe(no_mangle)]
-pub extern "C" fn zig__renderDiff(
-    _expected_ptr: *const u8,
-    _expected_len: usize,
-    _received_ptr: *const u8,
-    _received_len: usize,
-    _global: *mut JSGlobalObject,
-) {
-    unreachable!("zig__renderDiff: bun_bundler_jsc not yet in bun_bin dep graph")
-}
+// (zig__renderDiff now defined in src/runtime/test_runner/diff_format.rs.)
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(

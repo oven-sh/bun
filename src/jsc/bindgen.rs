@@ -46,6 +46,7 @@ pub struct BindgenTrivial<T>(PhantomData<T>);
 impl<T> Bindgen for BindgenTrivial<T> {
     type ZigType = T;
     type ExternType = T;
+    const SAME_REPR: bool = true;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         extern_value
@@ -345,17 +346,6 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         }
         result
     }
-}
-
-/// Compile-time hint set by `BindgenTrivial` (and any other adapter where
-/// `ZigType == ExternType`) so `BindgenArray` can reuse the allocation without
-/// per-element conversion. Stands in for Zig's `Child.ZigType == Child.ExternType`.
-pub trait BindgenSameRepr {
-    const SAME_REPR: bool;
-}
-
-impl<B: Bindgen> BindgenSameRepr for B {
-    default const SAME_REPR: bool = false;
 }
 
 #[repr(C)]

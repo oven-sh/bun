@@ -3,116 +3,119 @@
 //! This file is a thin namespace of type re-exports — the Zig `Classes` struct
 //! holds no fields, only `pub const X = path.to.Y;` aliases. It is consumed by
 //! the `.classes.ts` codegen to map class names to their Rust payload types.
+//!
+//! LAYERING: although the `.zig` lives under `src/jsc/`, every aliased type
+//! is defined in `bun_runtime` (api / webcore / test_runner / bake) or one of
+//! its same-tier deps (`bun_sql_jsc`, `bun_sourcemap_jsc`). Mounting it in
+//! `bun_jsc` would create a `bun_jsc → bun_runtime` cycle, so the module is
+//! `#[path]`-mounted from `bun_runtime/lib.rs` instead and resolves all paths
+//! via `crate::`. `bun_jsc::GeneratedClassesList` is intentionally NOT
+//! provided — the only Zig consumer outside codegen is BlockList.zig, which
+//! the Rust port reaches `SocketAddress` through `crate::socket` directly.
 
-use bun_runtime::api;
-use bun_runtime::api::node;
-use bun_runtime::webcore;
-
-#[allow(non_snake_case)]
+#[allow(non_snake_case, unused_imports)]
 pub mod Classes {
-    use super::*;
-
-    pub use api::Archive;
-    pub use webcore::Blob;
-    pub use api::HTMLRewriter::HTMLRewriter;
-    pub use api::HTMLRewriter::Element;
-    pub use api::HTMLRewriter::Comment;
-    pub use api::HTMLRewriter::TextChunk;
-    pub use api::HTMLRewriter::DocType;
-    pub use api::HTMLRewriter::DocEnd;
-    pub use api::HTMLRewriter::EndTag;
-    pub use api::HTMLRewriter::AttributeIterator;
-    pub use api::Bun::Crypto::CryptoHasher;
-    pub use bun_runtime::test_runner::expect::Expect;
-    pub use bun_runtime::test_runner::expect::ExpectAny;
-    pub use bun_runtime::test_runner::expect::ExpectAnything;
-    pub use bun_runtime::test_runner::expect::ExpectCustomAsymmetricMatcher;
-    pub use bun_runtime::test_runner::expect::ExpectMatcherContext;
-    pub use bun_runtime::test_runner::expect::ExpectMatcherUtils;
-    pub use bun_runtime::test_runner::expect::ExpectStatic;
-    pub use bun_runtime::test_runner::expect::ExpectCloseTo;
-    pub use bun_runtime::test_runner::expect::ExpectObjectContaining;
-    pub use bun_runtime::test_runner::expect::ExpectStringContaining;
-    pub use bun_runtime::test_runner::expect::ExpectStringMatching;
-    pub use bun_runtime::test_runner::expect::ExpectArrayContaining;
-    pub use bun_runtime::test_runner::expect::ExpectTypeOf;
-    pub use bun_runtime::test_runner::jest::bun_test::ScopeFunctions;
-    pub use bun_runtime::test_runner::jest::bun_test::DoneCallback;
-    pub use api::FileSystemRouter;
-    pub use api::Glob;
-    pub use api::Image;
-    pub use api::SecureContext;
-    pub use api::Shell::Interpreter as ShellInterpreter;
-    pub use api::Shell::ParsedShellScript;
-    pub use api::JSBundler as Bundler;
+    pub use crate::api::archive as Archive;
+    pub use crate::webcore::Blob;
+    pub use crate::api::html_rewriter::HTMLRewriter;
+    pub use crate::api::html_rewriter::Element;
+    pub use crate::api::html_rewriter::Comment;
+    pub use crate::api::html_rewriter::TextChunk;
+    pub use crate::api::html_rewriter::DocType;
+    pub use crate::api::html_rewriter::DocEnd;
+    pub use crate::api::html_rewriter::EndTag;
+    pub use crate::api::html_rewriter::AttributeIterator;
+    pub use crate::crypto::CryptoHasher;
+    pub use crate::test_runner::expect::Expect;
+    pub use crate::test_runner::expect::ExpectAny;
+    pub use crate::test_runner::expect::ExpectAnything;
+    pub use crate::test_runner::expect::ExpectCustomAsymmetricMatcher;
+    pub use crate::test_runner::expect::ExpectMatcherContext;
+    pub use crate::test_runner::expect::ExpectMatcherUtils;
+    pub use crate::test_runner::expect::ExpectStatic;
+    pub use crate::test_runner::expect::ExpectCloseTo;
+    pub use crate::test_runner::expect::ExpectObjectContaining;
+    pub use crate::test_runner::expect::ExpectStringContaining;
+    pub use crate::test_runner::expect::ExpectStringMatching;
+    pub use crate::test_runner::expect::ExpectArrayContaining;
+    pub use crate::test_runner::expect::ExpectTypeOf;
+    pub use crate::test_runner::scope_functions::ScopeFunctions;
+    pub use crate::test_runner::done_callback::DoneCallback;
+    pub use crate::api::filesystem_router::FileSystemRouter;
+    pub use crate::api::glob as Glob;
+    pub use crate::image as Image;
+    pub use crate::api::bun::secure_context as SecureContext;
+    pub use crate::shell::Interpreter as ShellInterpreter;
+    pub use crate::shell::ParsedShellScript;
+    pub use crate::api::js_bundler::JSBundler as Bundler;
     pub use Bundler as JSBundler;
-    pub use api::JSTranspiler as Transpiler;
+    pub use crate::api::js_transpiler as Transpiler;
     pub use Transpiler as JSTranspiler;
-    pub use api::Listener;
-    pub use api::MatchedRoute;
-    pub use node::fs::Binding as NodeJSFS;
-    pub use webcore::Request;
-    pub use webcore::Response;
-    pub use api::Bun::Crypto::MD4;
-    pub use api::Bun::Crypto::MD5;
-    pub use api::Bun::Crypto::SHA1;
-    pub use api::Bun::Crypto::SHA224;
-    pub use api::Bun::Crypto::SHA256;
-    pub use api::Bun::Crypto::SHA384;
-    pub use api::Bun::Crypto::SHA512;
-    pub use api::Bun::Crypto::SHA512_256;
-    pub use api::ServerWebSocket;
-    pub use api::Subprocess;
-    pub use api::Subprocess::ResourceUsage;
-    pub use api::cron::CronJob;
-    pub use api::Terminal;
-    pub use api::TCPSocket;
-    pub use api::TLSSocket;
-    pub use api::UDPSocket;
-    pub use api::SocketAddress;
-    pub use webcore::TextDecoder;
-    pub use api::Timer::TimeoutObject as Timeout;
-    pub use api::Timer::ImmediateObject as Immediate;
-    pub use api::BuildArtifact;
-    pub use api::BuildMessage;
-    pub use api::ResolveMessage;
-    pub use node::fs::Watcher as FSWatcher;
-    pub use api::node::fs::StatWatcher;
-    pub use api::HTTPServer;
-    pub use api::HTTPSServer;
-    pub use api::DebugHTTPServer;
-    pub use api::DebugHTTPSServer;
-    pub use webcore::Crypto;
-    pub use api::FFI;
-    pub use api::H2FrameParser;
-    pub use webcore::FileReader::Source as FileInternalReadableStreamSource;
-    pub use webcore::ByteBlobLoader::Source as BlobInternalReadableStreamSource;
-    pub use webcore::ByteStream::Source as BytesInternalReadableStreamSource;
-    pub use api::Postgres::PostgresSQLConnection;
-    pub use api::MySQL::MySQLConnection;
-    pub use api::Postgres::PostgresSQLQuery;
-    pub use api::MySQL::MySQLQuery;
-    pub use webcore::TextEncoderStreamEncoder;
-    pub use api::NativeZlib;
-    pub use api::NativeBrotli;
-    pub use api::NodeHTTPResponse;
-    pub use bun_runtime::bake::FrameworkRouter::JSFrameworkRouter as FrameworkFileSystemRouter;
-    pub use api::dns::Resolver as DNSResolver;
-    pub use webcore::S3Client;
-    pub use webcore::S3Stat;
-    pub use webcore::ResumableFetchSink;
-    pub use webcore::ResumableS3UploadSink;
-    pub use api::HTMLBundle;
-    pub use api::Valkey as RedisClient;
-    pub use api::BlockList;
-    pub use api::NativeZstd;
-    pub use bun_sourcemap::JSSourceMap as SourceMap;
+    pub use crate::socket::Listener;
+    pub use crate::api::filesystem_router::MatchedRoute;
+    pub use crate::node::node_fs_binding::Binding as NodeJSFS;
+    pub use crate::webcore::Request;
+    pub use crate::webcore::Response;
+    pub use crate::crypto::MD4;
+    pub use crate::crypto::MD5;
+    pub use crate::crypto::SHA1;
+    pub use crate::crypto::SHA224;
+    pub use crate::crypto::SHA256;
+    pub use crate::crypto::SHA384;
+    pub use crate::crypto::SHA512;
+    pub use crate::crypto::SHA512_256;
+    pub use crate::server::ServerWebSocket;
+    pub use crate::api::bun::subprocess as Subprocess;
+    pub use crate::api::bun::subprocess::ResourceUsage;
+    pub use crate::api::cron::CronJob;
+    pub use crate::api::bun::terminal as Terminal;
+    pub use crate::socket::TCPSocket;
+    pub use crate::socket::TLSSocket;
+    pub use crate::socket::udp_socket::UDPSocket;
+    pub use crate::socket::SocketAddress;
+    pub use crate::webcore::TextDecoder;
+    pub use crate::timer::TimeoutObject as Timeout;
+    pub use crate::timer::ImmediateObject as Immediate;
+    pub use crate::api::js_bundler::BuildArtifact;
+    pub use bun_jsc::BuildMessage;
+    pub use bun_jsc::ResolveMessage;
+    pub use crate::node::node_fs_watcher::FSWatcher;
+    pub use crate::node::node_fs_stat_watcher::StatWatcher;
+    pub use crate::server::HTTPServer;
+    pub use crate::server::HTTPSServer;
+    pub use crate::server::DebugHTTPServer;
+    pub use crate::server::DebugHTTPSServer;
+    pub use crate::webcore::crypto::Crypto;
+    pub use crate::ffi::FFI;
+    pub use crate::api::bun::h2_frame_parser::H2FrameParser;
+    pub use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
+    pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
+    pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
+    pub use bun_sql_jsc::postgres::PostgresSQLConnection;
+    pub use bun_sql_jsc::mysql::MySQLConnection;
+    pub use bun_sql_jsc::postgres::PostgresSQLQuery;
+    pub use bun_sql_jsc::mysql::MySQLQuery;
+    pub use crate::webcore::text_encoder_stream_encoder::TextEncoderStreamEncoder;
+    pub use crate::node::zlib::native_zlib as NativeZlib;
+    pub use crate::node::zlib::native_brotli as NativeBrotli;
+    pub use crate::server::NodeHTTPResponse;
+    pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
+    pub use crate::dns_jsc::Resolver as DNSResolver;
+    pub use crate::webcore::S3Client;
+    pub use crate::webcore::S3Stat;
+    pub use crate::webcore::ResumableFetchSink;
+    pub use crate::webcore::ResumableS3UploadSink;
+    pub use crate::server::HTMLBundle;
+    pub use crate::valkey_jsc::js_valkey::JSValkeyClient as RedisClient;
+    pub use crate::node::net::block_list as BlockList;
+    pub use crate::node::zlib::native_zstd as NativeZstd;
+    pub use bun_sourcemap_jsc::JSSourceMap as SourceMap;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/generated_classes_list.zig (104 lines)
-//   confidence: medium
+//   confidence: high
 //   todos:      0
-//   notes:      pure re-export namespace; module paths (bun_runtime::api, bun_jsc::Expect/Jest, bun_bake, bun_sourcemap) need Phase B verification
+//   notes:      pure re-export namespace; mounted in bun_runtime (not bun_jsc) to break dep cycle
 // ──────────────────────────────────────────────────────────────────────────

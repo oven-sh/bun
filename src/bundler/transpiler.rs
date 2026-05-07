@@ -143,7 +143,7 @@ impl<'a> Transpiler<'a> {
     #[inline]
     pub fn get_package_manager(
         &mut self,
-    ) -> *mut dyn bun_resolver::PackageManagerTrait {
+    ) -> *mut dyn bun_resolver::install_types::AutoInstaller {
         self.resolver.get_package_manager()
     }
 

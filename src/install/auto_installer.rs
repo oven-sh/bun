@@ -207,9 +207,10 @@ impl hooks::AutoInstaller for PackageManager {
 
         package.meta.arch = package_json.arch();
         package.meta.os = package_json.os();
-        // `set_has_install_script` only accepts `bool` per the Zig spec; assigning
-        // `.Old` (so `needs_update()` fires later) requires a direct field write.
-        package.meta.has_install_script = crate::lockfile::HasInstallScript::Old;
+        // Zig: `package.meta.setHasInstallScript(package.scripts.hasAny())`
+        // (resolver.zig:2390). `fromPackageJSON` leaves `scripts` zero-init, so
+        // `hasAny()` is always false here.
+        package.meta.set_has_install_script(false);
 
         package.dependencies = crate::lockfile::DependencySlice::new(
             dep_start as u32,
@@ -333,7 +334,7 @@ impl hooks::AutoInstaller for PackageManager {
     // ── Dependency parsing ────────────────────────────────────────────────
 
     fn parse_dependency(
-        &self,
+        &mut self,
         name: SemverString,
         name_hash: Option<u64>,
         version: &[u8],
@@ -343,11 +344,13 @@ impl hooks::AutoInstaller for PackageManager {
         // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
         // null is also accepted (Zig: `?*logger.Log`).
         let log = unsafe { log.as_mut() };
-        dependency::parse(name, name_hash, version, sliced, log, None)
+        // Zig threads `pm` so `parse_with_tag` can record `npm:` aliases into
+        // `pm.known_npm_aliases` (dependency.zig:905).
+        dependency::parse(name, name_hash, version, sliced, log, Some(self))
     }
 
     fn parse_dependency_with_tag(
-        &self,
+        &mut self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -364,7 +367,7 @@ impl hooks::AutoInstaller for PackageManager {
             tag_from_hooks(tag),
             sliced,
             log,
-            None,
+            Some(self as &mut dyn dependency::NpmAliasRegistry),
         )
     }
 

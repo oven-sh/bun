@@ -435,7 +435,7 @@ pub fn new_runtime_function(
     add_ptr_property: bool,
     input_function_ptr: Option<*mut c_void>,
 ) -> JSValue {
-    jsc::mark_binding(Location::caller());
+    jsc::mark_binding();
     // SAFETY: thin FFI wrapper; arguments forwarded as-is from caller-validated values.
     // `JSGlobalObject` is an `UnsafeCell`-backed opaque handle, so `as_mut_ptr()`
     // yields a `*mut` with write provenance from `&self` (C++ mutates VM/global state).
@@ -452,14 +452,14 @@ pub fn new_runtime_function(
 }
 
 pub fn get_function_data(function: JSValue) -> Option<*mut c_void> {
-    jsc::mark_binding(Location::caller());
+    jsc::mark_binding();
     // SAFETY: thin FFI wrapper.
     let p = unsafe { private::Bun__FFIFunction_getDataPtr(function) };
     if p.is_null() { None } else { Some(p) }
 }
 
 pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
-    jsc::mark_binding(Location::caller());
+    jsc::mark_binding();
     // SAFETY: thin FFI wrapper.
     unsafe {
         private::Bun__FFIFunction_setDataPtr(function, value.unwrap_or(core::ptr::null_mut()))
@@ -473,7 +473,7 @@ pub fn new_function_with_data(
     function: JsHostFn,
     data: *mut c_void,
 ) -> JSValue {
-    jsc::mark_binding(Location::caller());
+    jsc::mark_binding();
     // Zig: `toJSHostFn(function)` wrapped a `comptime JSHostFnZig` here. In Rust the
     // caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
     // TODO(port): proc-macro — callers must apply `#[bun_jsc::host_fn]` themselves.

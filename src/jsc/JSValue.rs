@@ -285,21 +285,6 @@ impl JSValue {
             None
         }
     }
-    /// `JSValue.isError` (JSValue.zig:999) — true if this is a `JSC::ErrorInstance`
-    /// cell (i.e. constructed via `new Error()` or a subclass).
-    #[inline] pub fn is_error(self) -> bool {
-        self.is_cell() && self.js_type() == JSType::ErrorInstance
-    }
-    /// `JSValue.isAggregateError` (JSValue.zig:2194) — true if this is an
-    /// `AggregateError` instance (has an own `errors` array property per the
-    /// ES spec). Routes through C++ `JSC__JSValue__isAggregateError`.
-    #[inline] pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {
-        unsafe extern "C" {
-            fn JSC__JSValue__isAggregateError(this: JSValue, global: *mut JSGlobalObject) -> bool;
-        }
-        // SAFETY: pure FFI predicate; `global` is live.
-        unsafe { JSC__JSValue__isAggregateError(self, global.as_ptr()) }
-    }
     #[inline] pub fn is_falsey(self) -> bool { !self.to_boolean() }
     #[inline] pub fn is_truthy(self) -> bool { self.to_boolean() }
 
@@ -595,38 +580,6 @@ impl JSValue {
         property_name: &'static str,
     ) -> JsResult<E> {
         E::from_js_value(self, global, property_name)
-    }
-    /// `JSValue.getOptionalEnum` (JSValue.zig:1748) — fetch `property_name`
-    /// from `self`, return `None` if missing/undefined/null, else map the
-    /// string value to `E` via [`FromJsEnum`]. Uses [`fast_get`] when the
-    /// property is one of the C++-side `BuiltinName`s.
-    pub fn get_optional_enum<E: FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-    ) -> JsResult<Option<E>> {
-        let prop = if let Some(builtin) = BuiltinName::get(property_name.as_bytes()) {
-            self.fast_get(global, builtin)?
-        } else {
-            self.get(global, property_name)?
-        };
-        match prop {
-            Some(v) if !v.is_empty_or_undefined_or_null() => {
-                Ok(Some(E::from_js_value(v, global, property_name)?))
-            }
-            _ => Ok(None),
-        }
-    }
-    /// `JSValue.implementsToString` (JSValue.zig:1608) — true iff `self` is an
-    /// object with a callable `toString` property. Safe on any `JSValue`.
-    pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
-        if !self.is_object() {
-            return Ok(false);
-        }
-        let Some(function) = self.fast_get(global, BuiltinName::toString)? else {
-            return Ok(false);
-        };
-        Ok(function.is_cell() && function.is_callable())
     }
     pub fn as_string(self) -> *mut JSString {
         debug_assert!(self.is_string());

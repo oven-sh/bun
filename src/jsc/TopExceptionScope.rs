@@ -54,6 +54,16 @@ impl TopExceptionScope {
     /// PORT NOTE: the underlying C++ object is placement-constructed into `bytes`, so the
     /// returned value MUST NOT be moved again after binding (Rust does not guarantee NRVO).
     /// Phase B should replace this with a Pin-based RAII guard / stack-allocating macro.
+    /// Convenience alias of [`init`](Self::init) accepting an explicit caller
+    /// `Location`. The inner C++ scope only consumes file/line, which `init`
+    /// already recovers via `#[track_caller]`; `_src` is accepted for API
+    /// symmetry with `ExceptionValidationScope::new` so call sites can pass
+    /// `Location::caller()` uniformly.
+    #[track_caller]
+    pub fn new(global: &JSGlobalObject, _src: &'static core::panic::Location<'static>) -> Self {
+        Self::init(global)
+    }
+
     #[track_caller]
     pub fn init(global: &JSGlobalObject) -> Self {
         let loc = core::panic::Location::caller();
@@ -241,6 +251,19 @@ pub struct ExceptionValidationScope {
 }
 
 impl ExceptionValidationScope {
+    /// Value-returning convenience constructor — see [`TopExceptionScope::init`].
+    /// When `ci_assert` is off this is a no-op ZST, so the move-after-init caveat
+    /// does not apply; with `ci_assert` on, the same Pin caveat as `TopExceptionScope` holds.
+    ///
+    /// `src` is currently advisory (forwarded to the C++ scope when `ci_assert`
+    /// is enabled via `init_in_place` callers); kept in the signature so call
+    /// sites can pass `core::panic::Location::caller()` today and the value
+    /// flows through once the C++ side consumes it.
+    #[track_caller]
+    pub fn new(global: &JSGlobalObject, _src: &'static core::panic::Location<'static>) -> Self {
+        Self::init(global)
+    }
+
     /// Value-returning convenience constructor — see [`TopExceptionScope::init`].
     /// When `ci_assert` is off this is a no-op ZST, so the move-after-init caveat
     /// does not apply; with `ci_assert` on, the same Pin caveat as `TopExceptionScope` holds.

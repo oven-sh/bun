@@ -161,7 +161,8 @@ impl AnyPromise {
             let f = wrap_.f.take().expect("AnyPromise::wrap called twice");
             // Zig: `jsc.toJSHostCall(global, @src(), Fn, wrap_.args)` — installs the
             // host-call exception/return-value validation around the invocation.
-            to_js_host_call(global, core::panic::Location::caller(), move || f(global))
+            // `to_js_host_call` is `#[track_caller]`, so `@src()` is propagated.
+            to_js_host_call(global, move || f(global))
         }
 
         // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`

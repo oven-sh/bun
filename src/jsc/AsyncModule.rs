@@ -29,7 +29,7 @@ use bun_sys::Fd;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
-    JsResult, ResolvedSource, StrongOptional,
+    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
 };
 
 #[allow(non_upper_case_globals)]

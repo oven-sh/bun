@@ -322,7 +322,7 @@ impl JSPromise {
             let f = this.f.take().unwrap();
             // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to
             // `Location::caller()` (resolves to this trampoline's call site).
-            crate::to_js_host_call(g, core::panic::Location::caller(), move || f(g))
+            crate::to_js_host_call(g, move || f(g))
         }
 
         // TODO(port): @src() source-location plumbing — provide a `src!()` macro in Phase B.

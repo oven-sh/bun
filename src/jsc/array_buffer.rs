@@ -273,12 +273,12 @@ impl ArrayBuffer {
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
             }),
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes
             // ptr/len come from a live slice, copied by callee.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global, bytes.as_ptr().cast(), bytes.len())
             }),
             _ => panic!("ArrayBuffer::create: KIND not implemented"), // Zig: @compileError
@@ -290,12 +290,12 @@ impl ArrayBuffer {
         match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
             // with len 0 is the documented empty case.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global, ptr::null(), 0, false)
             }),
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); null ptr
             // with len 0 is the documented empty case.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global, ptr::null(), 0)
             }),
             _ => panic!("ArrayBuffer::create_empty: KIND not implemented"), // Zig: @compileError
@@ -306,7 +306,7 @@ impl ArrayBuffer {
         crate::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+        crate::host_fn::from_js_host_call(global, || unsafe {
             Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), true)
         })
     }
@@ -315,7 +315,7 @@ impl ArrayBuffer {
         crate::mark_binding!();
         // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
         // come from a live slice, copied by callee.
-        crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+        crate::host_fn::from_js_host_call(global, || unsafe {
             Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), false)
         })
     }
@@ -325,12 +325,12 @@ impl ArrayBuffer {
         let buf = match KIND {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
             // is a valid out-param written by callee on success.
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__allocUint8ArrayForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
             })?,
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `ptr_out`
             // is a valid out-param written by callee on success.
-            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__allocArrayBufferForCopy(global, len as usize, (&mut ptr_out as *mut *mut u8).cast())
             })?,
             _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
@@ -994,7 +994,7 @@ pub fn make_array_buffer_with_bytes_no_copy(
 ) -> JsResult<JSValue> {
     // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
     // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
-    crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+    crate::host_fn::from_js_host_call(global, || unsafe {
         Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
     })
 }
@@ -1009,7 +1009,7 @@ pub fn make_typed_array_with_bytes_no_copy(
 ) -> JsResult<JSValue> {
     // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
     // ptr/len/deallocator are forwarded as-is to JSC which adopts ownership.
-    crate::host_fn::from_js_host_call(global, core::panic::Location::caller(), || unsafe {
+    crate::host_fn::from_js_host_call(global, || unsafe {
         Bun__makeTypedArrayWithBytesNoCopy(global, array_type, ptr, len, deallocator, deallocator_context)
     })
 }

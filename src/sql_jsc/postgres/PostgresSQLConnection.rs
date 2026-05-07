@@ -441,12 +441,13 @@ impl PostgresSQLConnection {
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
         // reached (Zig: `this.secure.?`).
         let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before setupTLS") };
-        let sni = if self.tls_config.server_name.is_null() {
+        let server_name = self.tls_config.server_name();
+        let sni = if server_name.is_null() {
             None
         } else {
             // SAFETY: `server_name` is a NUL-terminated C string owned by
             // `tls_config` for the connection lifetime.
-            Some(unsafe { core::ffi::CStr::from_ptr(self.tls_config.server_name) })
+            Some(unsafe { core::ffi::CStr::from_ptr(server_name) })
         };
         let ext_size = core::mem::size_of::<Option<*mut PostgresSQLConnection>>() as i32;
 
@@ -795,7 +796,7 @@ impl PostgresSQLConnection {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
         let handshake_success = success == 1;
         if handshake_success {
-            if self.tls_config.reject_unauthorized != 0 {
+            if self.tls_config.reject_unauthorized() != 0 {
                 // only reject the connection if reject_unauthorized == true
                 match self.ssl_mode {
                     // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279

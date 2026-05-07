@@ -58,108 +58,30 @@ mod b1_stubs {
 
     // bun_core::Error landed in T0; alias kept for churn-free callers.
     pub type CoreError = bun_core::Error;
-
-    // TODO(b1): bun_string::HashedString stub lacks init/eql/EMPTY/Copy; local
-    // shim with the surface this crate needs.
-    #[derive(Clone, Copy)]
-    pub struct HashedString {
-        pub hash: u32,
-        pub ptr: *const u8,
-        pub len: usize,
-    }
-    // SAFETY: HashedString is a view into 'static-ish DirnameStore buffers (Phase A).
-    unsafe impl Send for HashedString {}
-    unsafe impl Sync for HashedString {}
-    impl HashedString {
-        pub const EMPTY: HashedString = HashedString { hash: 0, ptr: b"".as_ptr(), len: 0 };
-        #[inline]
-        pub fn init(s: &[u8]) -> HashedString {
-            HashedString { hash: super::wyhash(s) as u32, ptr: s.as_ptr(), len: s.len() }
-        }
-        #[inline]
-        pub fn init_no_hash(s: &[u8]) -> HashedString {
-            HashedString { hash: 0, ptr: s.as_ptr(), len: s.len() }
-        }
-        #[inline]
-        pub fn slice(&self) -> &[u8] {
-            // SAFETY: ptr+len always come from a valid &[u8] in init/init_no_hash.
-            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
-        }
-        #[inline]
-        pub fn eql(self, other: &[u8]) -> bool {
-            self.slice() == other
-        }
-        #[inline]
-        pub fn eql_hashed(a: HashedString, b: HashedString) -> bool {
-            a.hash == b.hash && a.slice() == b.slice()
-        }
-    }
-
-    // TODO(b1): bun_string::PathString stub lacks init/slice; local shim.
-    #[derive(Clone, Copy, Default)]
-    pub struct PathString {
-        pub ptr: *const u8,
-        pub len: usize,
-    }
-    unsafe impl Send for PathString {}
-    unsafe impl Sync for PathString {}
-    impl PathString {
-        #[inline]
-        pub fn init(s: &[u8]) -> PathString {
-            PathString { ptr: s.as_ptr(), len: s.len() }
-        }
-        #[inline]
-        pub fn slice(&self) -> &'static [u8] {
-            // SAFETY: ptr+len always come from a valid &[u8] in init; in this
-            // crate every PathString is backed by FileSystem::dirname_store
-            // (process-lifetime arena), so 'static is sound for Phase A. Phase
-            // B threads a real lifetime once bun_string::PathString lands.
-            unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
-        }
-        #[inline]
-        pub fn is_empty(&self) -> bool {
-            self.len == 0
-        }
-    }
-
-    // TODO(b1): bun_string::strings::CodepointIterator missing
-    pub struct CodepointIterator;
-    impl CodepointIterator {
-        #[inline]
-        pub fn needs_utf8_decoding(s: &[u8]) -> bool {
-            s.iter().any(|&b| b >= 0x80)
-        }
-    }
-
-    // TODO(b1): bun_string::strings::{trim, trim_left, trim_right} missing
-    pub mod strings_ext {
-        #[inline]
-        pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-            trim_left(trim_right(s, chars), chars)
-        }
-        #[inline]
-        pub fn trim_left<'a>(mut s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-            while let Some(&b) = s.first() {
-                if !chars.contains(&b) {
-                    break;
-                }
-                s = &s[1..];
-            }
-            s
-        }
-        #[inline]
-        pub fn trim_right<'a>(mut s: &'a [u8], chars: &[u8]) -> &'a [u8] {
-            while let Some(&b) = s.last() {
-                if !chars.contains(&b) {
-                    break;
-                }
-                s = &s[..s.len() - 1];
-            }
-            s
-        }
-    }
 }
-use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs, HashedString, PathString};
+use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs};
+use bun_string::{HashedString, PathString};
+
+/// Every `PathString` stored on a [`Route`] wraps bytes interned in
+/// `FileSystem::dirname_store()` (process-lifetime arena — `append` returns
+/// `&'static [u8]`). `PathString::slice()` conservatively ties the borrow to
+/// `&self`; this re-widens it to the true `'static` lifetime so the slice can
+/// outlive the (Copy) `PathString` carrier and be stored in the SoA columns of
+/// [`RouteIndexList`] / `dedupe_dynamic`.
+///
+/// # Safety
+/// `ps` MUST have been constructed via `PathString::init(s)` where `s` was
+/// returned by `DirnameStore::append`/`append_lower_case` (or is a `'static`
+/// literal). All `Route` path fields satisfy this by construction in
+/// [`Route::parse`].
+#[inline]
+unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
+    let s = ps.slice();
+    // SAFETY: caller contract — backing storage is the process-lifetime
+    // DirnameStore singleton; the `&'_ self` lifetime on `slice()` is an
+    // artificially-short reborrow.
+    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+}
 
 // `load_routes` takes the real `bun_logger::Log`. Kept as a re-export so
 // out-of-crate callers don't need a direct `bun_logger` import for the type.

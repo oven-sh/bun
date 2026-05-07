@@ -732,12 +732,14 @@ impl BinaryType {
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
                 let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
-                // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const);
-                // `buffer` is a fresh ArrayBuffer JSValue (cell pointer), so
-                // `as_object_ref` yields a valid `JSObjectRef`.
+                // SAFETY: FFI — `global` is a live opaque ZST handle; `JSGlobalObject` is
+                // a ZST on the Rust side so the `*const` → `*mut` cast launders no
+                // provenance (see PORT NOTE on the extern block above). `buffer` is a
+                // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
+                // valid `JSObjectRef`.
                 let obj = unsafe {
-                    JSObjectMakeTypedArrayWithArrayBuffer(
-                        global,
+                    jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
+                        global as *const JSGlobalObject as *mut JSGlobalObject,
                         self.to_typed_array_type().to_c(),
                         buffer.as_object_ref(),
                         ptr::null_mut(),

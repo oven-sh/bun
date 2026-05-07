@@ -26,6 +26,7 @@ use bun_uws as uws;
 use bun_boringssl_sys as boringssl_sys;
 use bun_event_loop::AnyTask::AnyTask;
 use crate::node::{StringOrBuffer, BlobOrStringOrBuffer};
+use crate::webcore::blob::BlobExt;
 use crate::socket::SSLConfig;
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use super::upgraded_duplex::{UpgradedDuplex, Handlers as UpgradedDuplexHandlers};
@@ -369,7 +370,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
     // dispatch, so these hand-roll the `if (ssl) TLSSocket__* else TCPSocket__*`
     // split and call the C++ externs directly.
-    pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue
+    where
+        Self: JsClass,
+    {
         jsc::mark_binding!();
         let ptr = self as *mut Self as *mut c_void;
         // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes

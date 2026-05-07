@@ -282,7 +282,8 @@ impl Stringifier {
                 workspace_sort_buf.sort_by(|&l, &r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
-                    l_res.value.workspace.order(&r_res.value.workspace, buf, buf)
+                    // SAFETY: both resolutions were filtered to `tag == Workspace` above.
+                    unsafe { l_res.value.workspace.order(&r_res.value.workspace, buf, buf) }
                 });
                 // PERF(port): std.sort.pdq — Rust sort_by is also pattern-defeating quicksort
 

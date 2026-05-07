@@ -1261,7 +1261,7 @@ impl PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }
-        if cfg!(windows) && bun_str::contains_any(argument, b"node_modules\\") {
+        if cfg!(windows) && strings::contains(argument, b"node_modules\\") {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion

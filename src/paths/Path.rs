@@ -1315,9 +1315,40 @@ pub struct ResetScope<
 impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     ResetScope<'a, U, KIND, SEP_OPT, CHECK>
 {
+    /// Explicit early restore. The guard also restores on `Drop`, so this is
+    /// only needed when you want to truncate before the guard goes out of
+    /// scope (Zig callers wrote `save.restore()` mid-block).
     pub fn restore(&mut self) {
         // PORT NOTE: reshaped for borrowck — Zig takes `*const ResetScope` and
         // mutates through the stored `*Path`; in Rust the reborrow is `&mut self`.
+        self.path._buf.set_length(self.saved_len);
+    }
+}
+
+impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::Deref
+    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
+{
+    type Target = Path<U, KIND, SEP_OPT, CHECK>;
+    fn deref(&self) -> &Self::Target {
+        self.path
+    }
+}
+
+impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> core::ops::DerefMut
+    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.path
+    }
+}
+
+impl<'a, U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
+    for ResetScope<'a, U, KIND, SEP_OPT, CHECK>
+{
+    /// Mirrors Zig `defer save.restore()` — truncate the path back to its
+    /// length at `save()` time on every scope exit (including `?` early
+    /// returns).
+    fn drop(&mut self) {
         self.path._buf.set_length(self.saved_len);
     }
 }

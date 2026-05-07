@@ -2218,15 +2218,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: JsClass::from_js returns a live *mut Request.
             unsafe { (*request_).clone_into(ctx, &mut existing_request)? };
         } else {
-            // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
-            // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
-            // the upstream module path. `JSValueRef` is an opaque pointer; use `*const c_void`
-            // to avoid the deprecated `jsc::c_api` re-export.
-            unsafe extern "C" {
-                fn JSValueGetType(ctx: *mut JSGlobalObject, value: *const c_void) -> c_int;
-            }
-            // SAFETY: FFI call into JSC C API; ctx is a live JSGlobalObject and first_arg is a valid JSValueRef
-            let js_type = unsafe { JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref() as *const c_void) } as usize;
+            // SAFETY: FFI call into JSC C API; `ctx` is a live JSGlobalObject and
+            // `first_arg.as_ref()` produces a valid `JSValueRef`.
+            let js_type = unsafe { jsc::c_api::JSValueGetType(ctx.as_ptr(), first_arg.as_ref()) } as usize;
             let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
                 .get(js_type)
                 .copied()

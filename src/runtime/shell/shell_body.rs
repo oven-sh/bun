@@ -82,13 +82,16 @@ pub enum ShellErr {
 }
 
 impl ShellErr {
-    pub fn new_sys_from_syscall(e: sys::Error) -> Self {
+    /// Spec `ShellErr.newSys(bun.sys.Error)` — wrap a low-level syscall error.
+    pub fn new_sys(e: sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
-    pub fn new_sys(e: SystemError) -> Self {
+    /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
+    /// (Zig `newSys(e: anytype)` dispatched on `@TypeOf(e)`; Rust splits the
+    /// two arms into `new_sys` / `from_system`.)
+    pub fn from_system(e: SystemError) -> Self {
         ShellErr::Sys(e)
     }
-    // TODO(port): Zig `newSys(e: anytype)` dispatched on @TypeOf(e); split into two ctors above.
 
     pub fn throw_js(&self, global: &JSGlobalObject) -> bun_jsc::JsError {
         // basically `transferToJS`. don't want to double deref the sys error

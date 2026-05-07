@@ -99,6 +99,10 @@ it("importing empty file with type wasm throws a magic-header error", async () =
     err = e;
   }
   expect(err).toBeDefined();
+  // The Zig side raises "Invalid wasm file ... (missing magic header)"
+  // before JSC ever sees the bytes. Assert on that phrase so unrelated
+  // throws (filesystem errors, etc.) don't satisfy the test.
+  expect(String(err?.message ?? "")).toMatch(/magic header/i);
 });
 
 // MARK: - sqlite

@@ -650,9 +650,9 @@ impl S3Client {
     /// mutator thread during lazy sweep — do not touch JS values here.
     pub fn finalize(this: *mut Self) {
         // SAFETY: `this` was produced by `Box::into_raw` in the codegen'd
-        // constructor path; we are the unique owner at finalize time.
+        // constructor path; we are the unique owner at finalize time. Field
+        // cleanup (the `credentials` deref) happens in `<S3Client as Drop>`.
         drop(unsafe { Box::from_raw(this) });
-        // `IntrusiveRc<S3Credentials>` deref happens via Drop — matches Zig `credentials.deref()`.
     }
 
     // ── Static methods ────────────────────────────────────────────────────

@@ -391,7 +391,7 @@ pub fn install_hoisted_packages(
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath_buf: bun_paths::PathBuffer::uninit(),
                 folder_path_buf: bun_paths::PathBuffer::uninit(),
-                current_tree_id: 0,
+                current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
             };
         };

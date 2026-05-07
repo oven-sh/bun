@@ -545,9 +545,8 @@ impl Writable {
     pub fn fulfill_promise(result: Writable, promise: *mut JSPromise, global_this: &JSGlobalObject) {
         // SAFETY: promise is a valid GC-rooted JSPromise (protected by caller)
         let promise = unsafe { &mut *promise };
-        let promise_value = promise.to_js();
-        let _guard = scopeguard::guard((), |_| promise_value.unprotect());
-        // PORT NOTE: defer promise.toJS().unprotect() — runs on all paths
+        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
+        let _guard = jsc::Protected::adopt(promise.to_js());
         match result {
             Writable::Err(err) => {
                 let _ = promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)));
@@ -786,8 +785,8 @@ impl StreamResult {
         // call so no two `&mut` are live at once.
         let event_loop = vm.event_loop();
         // SAFETY: promise is GC-rooted via protect(); sole `&` for this read-only call.
-        let promise_value = unsafe { &*promise }.to_js();
-        let _unprotect = scopeguard::guard((), |_| promise_value.unprotect());
+        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
+        let _unprotect = jsc::Protected::adopt(unsafe { &*promise }.to_js());
 
         // SAFETY: event_loop is the VM's singleton loop; sole `&mut` for this call.
         unsafe { &mut *event_loop }.enter();

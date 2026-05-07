@@ -6,8 +6,8 @@ use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::{err, Error, Output};
 use bun_js_parser::{
     self as js_ast,
-    ast::expr::{data::Store as ExprStore, BlobRef, BlobVTable},
-    ast::stmt::data::Store as StmtStore,
+    ast::expr::{BlobRef, BlobVTable},
+    ast::DisableStoreReset,
     Expr, ExprData, ExprNodeList, ToJSError, E, G, S,
 };
 use bun_logger::{self as logger, Log, Range, Source};
@@ -28,7 +28,9 @@ use bun_jsc::{
     JSValue, JsError, ModuleLoader, WebCore,
 };
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
-use bun_jsc::virtual_machine::{InitOptions as VirtualMachineInitOptions, VirtualMachine};
+use bun_jsc::virtual_machine::{
+    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine,
+};
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::{BuildMessage, ResolveMessage};
 use bun_resolver::Result as ResolveResult;
@@ -105,12 +107,7 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> Result<Expr, Error> {
-        ExprStore::set_disable_reset(true);
-        StmtStore::set_disable_reset(true);
-        scopeguard::defer! {
-            ExprStore::set_disable_reset(false);
-            StmtStore::set_disable_reset(false);
-        }
+        let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
             &import_record_path[NAMESPACE_WITH_COLON.len()..]

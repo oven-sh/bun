@@ -297,10 +297,8 @@ impl FileExt for File {
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
                 };
                 // Zig passes `undefined` for the `*Binding` arg (it is unused in
-                // `AsyncFSTask::create`). `Binding` is an opaque ZST in
-                // `node_fs.rs`; zero-init a local stand-in.
-                // SAFETY: ZST — `zeroed()` produces a valid value.
-                let mut binding: node_fs::Binding = unsafe { core::mem::zeroed() };
+                // `AsyncFSTask::create`).
+                let mut binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
                 Ok(node_fs::async_::Unlink::create(

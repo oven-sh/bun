@@ -1475,11 +1475,16 @@ impl CommandLineReporter {
                 let mut base64_bytes = [0u8; 8];
                 let mut shortname_buf = [0u8; 512];
                 bun::csprng(&mut base64_bytes);
-                // TODO(port): std.fmt.bufPrintZ with hex bytes
+                // Spec: `std.fmt.bufPrintZ(..., ".lcov.info.{x}.tmp", .{&base64_bytes})`
+                // — Zig `{x}` on `*[8]u8` prints contiguous lowercase hex.
                 let tmpname = {
                     use std::io::Write as _;
                     let mut cursor = &mut shortname_buf[..];
-                    let _ = write!(cursor, ".lcov.info.{:x?}.tmp\0", &base64_bytes);
+                    let _ = cursor.write_all(b".lcov.info.");
+                    for b in base64_bytes {
+                        let _ = write!(cursor, "{:02x}", b);
+                    }
+                    let _ = cursor.write_all(b".tmp\0");
                     let len = shortname_buf.iter().position(|&b| b == 0).unwrap();
                     // SAFETY: NUL written above
                     unsafe { bun_str::ZStr::from_raw(shortname_buf.as_ptr(), len) }

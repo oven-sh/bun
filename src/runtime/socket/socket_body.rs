@@ -589,7 +589,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
     // constructor link name, so the placeholder shim isn't needed.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw("Cannot construct Socket"))
+        Err(global.throw(format_args!("Cannot construct Socket")))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1592,11 +1592,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
         if args.len == 0 {
-            return Err(global.throw("Expected 1 argument, got 0"));
+            return Err(global.throw(format_args!("Expected 1 argument, got 0")));
         }
         let t = args.ptr[0].coerce::<i32>(global)?;
         if t < 0 {
-            return Err(global.throw("Timeout must be a positive integer"));
+            return Err(global.throw(format_args!("Timeout must be a positive integer")));
         }
         log!("timeout({})", t);
 
@@ -2083,7 +2083,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         // `buffer` Drop frees.
         if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
-            let _ = global.throw("File blob not supported yet in this function.");
+            let _ = global.throw(format_args!("File blob not supported yet in this function."));
             return WriteResult::Fail;
         }
 
@@ -2489,7 +2489,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let args = callframe.arguments_old::<1>();
 
         if args.len < 1 {
-            return Err(global.throw("Expected 1 argument"));
+            return Err(global.throw(format_args!("Expected 1 argument")));
         }
 
         if this.socket.is_detached() {
@@ -2498,7 +2498,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(global.throw("Expected options object"));
+            return Err(global.throw(format_args!("Expected options object")));
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
@@ -2588,19 +2588,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `bun_uws::InternalSocket` lacks `get()`.
         let uws::InternalSocket::Connected(raw_socket) = this.socket.socket else {
             return Err(global
-                .throw_invalid_arguments("upgradeTLS requires an established socket"));
+                .throw_invalid_arguments(format_args!("upgradeTLS requires an established socket")));
         };
         if this.is_server() {
-            return Err(global.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead."));
+            return Err(global.throw(format_args!("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead.")));
         }
 
         let args = callframe.arguments_old::<1>();
         if args.len < 1 {
-            return Err(global.throw("Expected 1 arguments"));
+            return Err(global.throw(format_args!("Expected 1 arguments")));
         }
         let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(global.throw("Expected options object"));
+            return Err(global.throw(format_args!("Expected options object")));
         }
 
         let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
@@ -3518,17 +3518,17 @@ pub fn js_upgrade_duplex_to_tls(
 
     let args = callframe.arguments_old::<2>();
     if args.len < 2 {
-        return Err(global.throw("Expected 2 arguments"));
+        return Err(global.throw(format_args!("Expected 2 arguments")));
     }
     let duplex = args.ptr[0];
     // TODO: do better type checking
     if duplex.is_empty_or_undefined_or_null() {
-        return Err(global.throw("Expected a Duplex instance"));
+        return Err(global.throw(format_args!("Expected a Duplex instance")));
     }
 
     let opts = args.ptr[1];
     if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-        return Err(global.throw("Expected options object"));
+        return Err(global.throw(format_args!("Expected options object")));
     }
 
     let socket_obj = opts.get(global, "socket")?.ok_or_else(|| {
@@ -3833,7 +3833,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
     }
 
     let Some(socket) = arguments[0].as_::<TCPSocket>() else {
-        return Err(global.throw("Expected a SocketTCP instance"));
+        return Err(global.throw(format_args!("Expected a SocketTCP instance")));
     };
     // SAFETY: `as_` returned a non-null `*mut TCPSocket` owned by the JS wrapper.
     let socket: &TCPSocket = unsafe { &*socket };

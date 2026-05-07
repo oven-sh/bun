@@ -253,12 +253,15 @@ impl HTMLRewriterBuilder {
     // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
     // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
     // is unrepresentable here.
+    // PORT NOTE: see `add_document_content_handlers` — `Option<NonNull<H>>` to
+    // permit the same handler allocation in multiple slots without aliased
+    // `&mut`.
     pub fn add_element_content_handlers<EL, CM, TX>(
         &mut self,
         selector: &mut HTMLSelector,
-        element_handler_data: Option<&mut EL>,
-        comment_handler_data: Option<&mut CM>,
-        text_chunk_handler_data: Option<&mut TX>,
+        element_handler_data: Option<NonNull<EL>>,
+        comment_handler_data: Option<NonNull<CM>>,
+        text_chunk_handler_data: Option<NonNull<TX>>,
     ) -> Result<(), Error>
     where
         EL: DirectiveCallback<Element>,
@@ -272,24 +275,12 @@ impl HTMLRewriterBuilder {
             lol_html_rewriter_builder_add_element_content_handlers(
                 self,
                 selector,
-                if element_handler_data.is_some() {
-                    Some(directive_handler::<Element, EL>)
-                } else {
-                    None
-                },
-                element_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut EL as *mut c_void),
-                if comment_handler_data.is_some() {
-                    Some(directive_handler::<Comment, CM>)
-                } else {
-                    None
-                },
-                comment_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut CM as *mut c_void),
-                if text_chunk_handler_data.is_some() {
-                    Some(directive_handler::<TextChunk, TX>)
-                } else {
-                    None
-                },
-                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p as *mut TX as *mut c_void),
+                element_handler_data.map(|_| directive_handler::<Element, EL> as _),
+                element_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                comment_handler_data.map(|_| directive_handler::<Comment, CM> as _),
+                comment_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
+                text_chunk_handler_data.map(|_| directive_handler::<TextChunk, TX> as _),
+                text_chunk_handler_data.map_or(core::ptr::null_mut(), |p| p.as_ptr() as *mut c_void),
             )
         };
         match rc {

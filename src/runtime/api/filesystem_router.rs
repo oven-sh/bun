@@ -19,7 +19,18 @@ pub mod kind_enum {
     }
 }
 
+<<<<<<< Updated upstream
 use core::cell::{RefCell, UnsafeCell};
+||||||| Stash base
+// TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn]/JsClass proc-macros
+
+mod _jsc_gated {
+use core::cell::RefCell;
+use core::ffi::c_void;
+=======
+use core::cell::RefCell;
+use core::ffi::c_void;
+>>>>>>> Stashed changes
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_jsc::{

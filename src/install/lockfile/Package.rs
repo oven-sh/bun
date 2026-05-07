@@ -1747,15 +1747,26 @@ impl Package<u64> {
 
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
+                // SAFETY: tag == Folder selects the `folder` union member.
+                let folder = unsafe { dependency_version.value.folder };
                 let relative = resolve_path::relative(
                     FileSystem::instance().top_level_dir(),
                     resolve_path::join_abs_string::<path::platform::Auto>(
                         FileSystem::instance().top_level_dir(),
+<<<<<<< Updated upstream
                         &[
                             source.path.name.dir,
                             // SAFETY: tag == Folder selects the `folder` union member.
                             unsafe { dependency_version.value.folder }.slice(buf),
                         ],
+||||||| Stash base
+                        &[
+                            source.path.name.dir,
+                            dependency_version.value.folder.slice(buf),
+                        ],
+=======
+                        &[source.path.name.dir, folder.slice(buf)],
+>>>>>>> Stashed changes
                     ),
                 );
                 // if relative is empty, we are linking the package to itself
@@ -1763,6 +1774,13 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
+<<<<<<< Updated upstream
+||||||| Stash base
+                let npm = dependency_version.value.npm;
+=======
+                // SAFETY: tag == Npm selects the `npm` union member.
+                let npm = unsafe { &*dependency_version.value.npm };
+>>>>>>> Stashed changes
                 if workspace_version.is_some() {
                     // SAFETY: tag == Npm selects the `npm` union member.
                     let satisfies = unsafe {

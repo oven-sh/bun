@@ -52,7 +52,7 @@ pub use internal_state::InternalState;
 pub use http_request_body::HTTPRequestBody;
 pub use certificate_info::CertificateInfo;
 pub use http_cert_error::HTTPCertError;
-pub use headers::Headers;
+pub use headers::{Headers, HeadersExt};
 pub use header_builder::HeaderBuilder;
 pub use decompressor::Decompressor;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;

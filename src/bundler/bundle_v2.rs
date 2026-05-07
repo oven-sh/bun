@@ -5904,6 +5904,7 @@ impl<'a> BundleV2<'a> {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
+<<<<<<< Updated upstream
                     let separate_ssr_graph = this
                         .framework
                         .as_ref()
@@ -5994,6 +5995,108 @@ impl<'a> BundleV2<'a> {
                             ssr_index,
                         )
                         .expect("oom");
+||||||| Stash base
+                    // blocked_on: `Logger::Source.path` is `bun_logger::fs::Path` but
+                    // `path_with_pretty_initialized` takes/returns `Fs::Path`
+                    // (`bun_resolver::Path<'_>`) — types not yet unified. Additionally
+                    // `result.ast` / `result.source` were consumed above (moved into
+                    // `graph.ast` / swapped into `graph.input_files`), so the Zig data
+                    // flow that builds `ReferenceProxy { other_source, named_exports }`
+                    // from `result` needs re-threading from `graph` once unified.
+                    let _ = (result_ast_target, &source_path_owned, result_source_index);
+                    todo!("blocked_on: Logger::fs::Path vs Fs::Path unification + ServerComponentParseTask::ReferenceProxy data flow");
+=======
+                    let separate_ssr_graph = this
+                        .framework
+                        .as_ref()
+                        .unwrap()
+                        .server_components
+                        .as_ref()
+                        .unwrap()
+                        .separate_ssr_graph;
+
+                    // PORT NOTE: `result.source` was swapped into
+                    // `graph.input_files` earlier; re-borrow it from the SoA.
+                    // `dup_source` materializes the value-copy Zig got for free.
+                    let source_loader: Loader =
+                        this.graph.input_files.items_loader()[result_source_index];
+
+                    let (reference_source_index, ssr_index) = if separate_ssr_graph {
+                        // Enqueue two files, one in server graph, one in ssr graph.
+                        let other_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        let scb_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        let reference_source_index = this
+                            .enqueue_server_component_generated_file(
+                                crate::ServerComponentParseTask::Data::ClientReferenceProxy(
+                                    crate::ServerComponentParseTask::ReferenceProxy {
+                                        other_source,
+                                        named_exports: named_exports_for_scb.unwrap(),
+                                    },
+                                ),
+                                scb_source,
+                            )
+                            .expect("oom");
+
+                        let mut ssr_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        // PORT NOTE: `path_with_pretty_initialized` takes/returns
+                        // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
+                        // `fs_path_from_logger`/`fs_path_to_logger` until the
+                        // three `Path` mirrors unify.
+                        ssr_source.path.pretty = ssr_source.path.text;
+                        ssr_source.path = fs_path_to_logger(
+                            this.path_with_pretty_initialized(
+                                fs_path_from_logger(&ssr_source.path),
+                                Target::BakeServerComponentsSsr,
+                            )
+                            .expect("oom"),
+                        );
+                        let ssr_index = this
+                            .enqueue_parse_task2(
+                                &mut ssr_source,
+                                source_loader,
+                                Target::BakeServerComponentsSsr,
+                            )
+                            .expect("oom");
+
+                        (reference_source_index, ssr_index)
+                    } else {
+                        // Enqueue only one file
+                        let mut server_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        server_source.path.pretty = server_source.path.text;
+                        let server_target = this.transpiler.options.target;
+                        server_source.path = fs_path_to_logger(
+                            this.path_with_pretty_initialized(
+                                fs_path_from_logger(&server_source.path),
+                                server_target,
+                            )
+                            .expect("oom"),
+                        );
+                        let server_index = this
+                            .enqueue_parse_task2(&mut server_source, source_loader, Target::Browser)
+                            .expect("oom");
+
+                        (server_index, Index::invalid().get())
+                    };
+
+                    this.graph
+                        .path_to_source_index_map(result_ast_target)
+                        .put(source_path_text, reference_source_index)
+                        .expect("oom");
+
+                    this.graph
+                        .server_component_boundaries
+                        .put(
+                            result_source_index as IndexInt,
+                            result.use_directive,
+                            reference_source_index,
+                            ssr_index,
+                        )
+                        .expect("oom");
+>>>>>>> Stashed changes
                 }
                 let _ = source_path_owned;
             }

@@ -191,11 +191,13 @@ impl PackageManager {
                 // zero-initialised (`Value::zero()`) so even a stale tag yields
                 // POD bytes, never uninit.
                 let folder_path: &ZStr = match pkg.resolution.tag {
-                    ResolutionTag::Git => self.cached_git_folder_name_print_auto(
+                    ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
+                        self,
                         unsafe { &pkg.resolution.value.git },
                         patch_hash,
                     ),
-                    ResolutionTag::Github => self.cached_github_folder_name_print_auto(
+                    ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
+                        self,
                         unsafe { &pkg.resolution.value.github },
                         patch_hash,
                     ),
@@ -203,17 +205,20 @@ impl PackageManager {
                         let name = pkg
                             .name
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
-                        self.cached_npm_package_folder_name(
+                        directories::cached_npm_package_folder_name(
+                            self,
                             name,
                             unsafe { pkg.resolution.value.npm.version },
                             patch_hash,
                         )
                     }
-                    ResolutionTag::LocalTarball => self.cached_tarball_folder_name(
+                    ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
+                        self,
                         unsafe { pkg.resolution.value.local_tarball },
                         patch_hash,
                     ),
-                    ResolutionTag::RemoteTarball => self.cached_tarball_folder_name(
+                    ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
+                        self,
                         unsafe { pkg.resolution.value.remote_tarball },
                         patch_hash,
                     ),
@@ -225,7 +230,7 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if self.is_folder_in_cache(folder_path) {
+                if directories::is_folder_in_cache(self, folder_path) {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
@@ -248,7 +253,7 @@ impl PackageManager {
                         });
                     // Zig: `allocator.dupeZ(u8, folder_path[..idx])` — owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if self.is_folder_in_cache(&non_patched_path) {
+                    if directories::is_folder_in_cache(self, &non_patched_path) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;
@@ -511,7 +516,7 @@ impl PackageManager {
     ) -> ArrayHashMap<TruncatedPackageNameHash, ()> {
         // find all deps originating from --trust packages from cli
         let mut set: ArrayHashMap<TruncatedPackageNameHash, ()> = ArrayHashMap::default();
-        if self.options.do_.trust_dependencies_from_args && self.lockfile.packages.len() > 0 {
+        if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id =
                 self.root_package_id.get(&self.lockfile, self.workspace_name_hash) as usize;
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];

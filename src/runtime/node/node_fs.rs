@@ -204,6 +204,7 @@ fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
     }
 }
 
+<<<<<<< Updated upstream
 /// Local extension shim: `JSValue::get_boolean_strict` (Zig
 /// `getBooleanStrict`) is not yet on the upstream `bun_jsc::JSValue`. Mirrors
 /// the spec: missing/undefined → `None`; non-boolean → throw
@@ -235,6 +236,103 @@ impl JSValueBooleanStrict for JSValue {
     }
 }
 
+||||||| Stash base
+/// Local extension over the opaque `bun_jsc::AbortSignal` stub: the real
+/// methods live in the gated `AbortSignal.rs` module (back-depends on this
+/// crate). Declare the C ABI directly and wrap, mirroring
+/// `src/jsc/AbortSignal.rs` so call sites keep the Zig-spec spelling.
+unsafe extern "C" {
+    fn WebCore__AbortSignal__aborted(arg0: *mut AbortSignal) -> bool;
+    fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__ref(arg0: *mut AbortSignal) -> *mut AbortSignal;
+    fn WebCore__AbortSignal__unref(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__incrementPendingActivity(arg0: *mut AbortSignal);
+    fn WebCore__AbortSignal__decrementPendingActivity(arg0: *mut AbortSignal);
+}
+pub(super) trait AbortSignalFsExt {
+    fn reason_if_aborted_js(&self, global: &JSGlobalObject) -> Option<JSValue>;
+    fn pending_activity_ref(&self);
+    fn pending_activity_unref(&self);
+    fn aborted(&self) -> bool;
+    fn ref_(&self) -> *mut AbortSignal;
+    fn unref(&self);
+    fn from_js(value: JSValue) -> Option<*mut AbortSignal>;
+}
+impl AbortSignalFsExt for AbortSignal {
+    #[inline]
+    fn reason_if_aborted_js(&self, _global: &JSGlobalObject) -> Option<JSValue> {
+        // TODO(b2-blocked): blocked_on bun_jsc::AbortSignal::reason_if_aborted
+        // (gated behind `_gated` module in src/jsc/lib.rs). Returning `None`
+        // skips the abort-reason rejection, which is the pre-signal behaviour.
+        let _ = _global;
+        None
+    }
+    #[inline]
+    fn pending_activity_ref(&self) {
+        // SAFETY: `self` aliases a live WebCore::AbortSignal (see AbortSignalRef).
+        unsafe { WebCore__AbortSignal__incrementPendingActivity((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn pending_activity_unref(&self) {
+        // SAFETY: thin FFI forward.
+        unsafe { WebCore__AbortSignal__decrementPendingActivity((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn aborted(&self) -> bool {
+        // SAFETY: thin FFI forward; not threadsafe (bool, not atomic).
+        unsafe { WebCore__AbortSignal__aborted((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn ref_(&self) -> *mut AbortSignal {
+        // SAFETY: increments C++ intrusive refcount, returns self.
+        unsafe { WebCore__AbortSignal__ref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn unref(&self) {
+        // SAFETY: decrements C++ intrusive refcount.
+        unsafe { WebCore__AbortSignal__unref((self as *const Self).cast_mut()) }
+    }
+    #[inline]
+    fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
+        // SAFETY: thin FFI forward; ptr borrowed from the JS wrapper.
+        let ptr = unsafe { WebCore__AbortSignal__fromJS(value) };
+        if ptr.is_null() { None } else { Some(ptr) }
+    }
+}
+
+/// Local extension shim: `JSValue::get_boolean_strict` (Zig
+/// `getBooleanStrict`) is not yet on the upstream `bun_jsc::JSValue`. Mirrors
+/// the spec: missing/undefined → `None`; non-boolean → throw
+/// `ERR_INVALID_ARG_TYPE`; boolean → `Some(v)`.
+pub(super) trait JSValueBooleanStrict: Sized {
+    fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<bool>>;
+}
+impl JSValueBooleanStrict for JSValue {
+    fn get_boolean_strict(
+        self,
+        global: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<bool>> {
+        let Some(v) = self.get(global, property)? else { return Ok(None) };
+        if v.is_undefined() { return Ok(None); }
+        if !v.is_boolean() {
+            return Err(validators::throw_err_invalid_arg_type(
+                global,
+                format_args!("options.{}", property),
+                "boolean",
+                v,
+            ));
+        }
+        Ok(Some(v.to_boolean()))
+    }
+}
+
+=======
+>>>>>>> Stashed changes
 pub use super::node_fs_constant as constants;
 // `Watcher` / `StatWatcher` mirror Zig's `pub const Watcher = @import(
 // "./node_fs_watcher.zig");` / `pub const StatWatcher = @import(
@@ -299,6 +397,7 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
     { ZStr::EMPTY }
 }
 
+<<<<<<< Updated upstream
 /// `bun.StandaloneModuleGraph::get()` — singleton accessor. The real type
 /// lives in `bun_standalone_graph` (a dependency of this crate). Zig uses it
 /// to short-circuit `stat`/`exists`/`readFile` for embedded files in compiled
@@ -307,7 +406,24 @@ fn os_path_literal_empty() -> &'static OSPathSliceZ {
 /// borrow `&mut` through the raw singleton pointer — same shape as the Zig
 /// `?*StandaloneModuleGraph`.
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
+||||||| Stash base
+/// `bun.StandaloneModuleGraph::get()` — singleton accessor. The graph type
+/// lives in the `bun_standalone_graph` crate which is not a dependency of
+/// `bun_runtime` (it sits above us in the link order). The Zig source only
+/// uses it to short-circuit `stat`/`exists`/`readFile` for embedded files in
+/// compiled binaries; returning `None` here is the correct behaviour for the
+/// non-standalone case and keeps the rest of the body live.
+=======
+/// `bun.StandaloneModuleGraph::get()` — singleton accessor. Short-circuits
+/// `stat`/`exists`/`readFile` for files embedded in `bun build --compile`
+/// binaries (under `/$bunfs/` / `B:\~BUN\`). Returns `None` outside a
+/// standalone executable. The graph stores per-`File` lazy fields under
+/// interior mutability, so `get()` hands out a raw `*mut`; we re-borrow it
+/// `&mut` for the duration of each lookup (single-threaded JS / workpool
+/// callers never overlap on the same `File`).
+>>>>>>> Stashed changes
 #[inline]
+<<<<<<< Updated upstream
 fn standalone_module_graph_get() -> Option<&'static mut StandaloneModuleGraph> {
     // SAFETY: `get()` returns the process-static singleton (set once at
     // startup, never freed). All FS access happens on a single thread per
@@ -315,6 +431,46 @@ fn standalone_module_graph_get() -> Option<&'static mut StandaloneModuleGraph> {
     // (`find`/`stat` only mutate the per-file WTF cache, which `node_fs`
     // never reaches), so the `&mut` is unique for the call duration.
     StandaloneModuleGraph::get().map(|p| unsafe { &mut *p })
+||||||| Stash base
+fn standalone_module_graph_get() -> Option<&'static StandaloneModuleGraphStub> { None }
+struct StandaloneModuleGraphStub;
+struct StandaloneFileStub;
+impl StandaloneFileStub {
+    #[inline] fn contents(&self) -> &[u8] { &[] }
+}
+impl StandaloneModuleGraphStub {
+    fn find(&self, _: &[u8]) -> Option<&StandaloneFileStub> { None }
+    fn stat(&self, _: &ZStr) -> Option<sys::Stat> { None }
+}
+
+/// `bun.getTotalMemorySize()` — Zig (bun.zig:3498) forwards to the linked C++
+/// `Bun__ramSize()` (src/jsc/bindings/c-bindings.cpp), which is cgroup/jetsam
+/// aware. PORTING.md §Forbidden: never hand-roll a Rust equivalent for linked
+/// C/C++ — declare the extern and forward.
+#[inline]
+fn get_total_memory_size() -> u64 {
+    unsafe extern "C" {
+        fn Bun__ramSize() -> usize;
+    }
+    // SAFETY: FFI into bun's C++ bindings; no invariants required.
+    unsafe { Bun__ramSize() as u64 }
+=======
+fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::StandaloneModuleGraph> {
+    bun_standalone_graph::StandaloneModuleGraph::get()
+}
+
+/// `bun.getTotalMemorySize()` — Zig (bun.zig:3498) forwards to the linked C++
+/// `Bun__ramSize()` (src/jsc/bindings/c-bindings.cpp), which is cgroup/jetsam
+/// aware. PORTING.md §Forbidden: never hand-roll a Rust equivalent for linked
+/// C/C++ — declare the extern and forward.
+#[inline]
+fn get_total_memory_size() -> u64 {
+    unsafe extern "C" {
+        fn Bun__ramSize() -> usize;
+    }
+    // SAFETY: FFI into bun's C++ bindings; no invariants required.
+    unsafe { Bun__ramSize() as u64 }
+>>>>>>> Stashed changes
 }
 
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
@@ -4285,7 +4441,10 @@ impl NodeFS {
         let Some(path) = &args.path else { return Maybe::Ok(false) };
 
         if let Some(graph) = standalone_module_graph_get() {
-            if graph.find(path.slice()).is_some() {
+            // SAFETY: see `standalone_module_graph_get` — exclusive lookup on
+            // the per-process singleton; `find` only mutates lazy per-`File`
+            // fields.
+            if unsafe { &mut *graph }.find(path.slice()).is_some() {
                 return Maybe::Ok(true);
             }
         }
@@ -5384,8 +5543,17 @@ impl NodeFS {
                 let path = p.slice_z(&mut self.sync_error_buf);
 
                 if let Some(graph) = standalone_module_graph_get() {
+<<<<<<< Updated upstream
                     if let Some(file) = graph.find(path.as_bytes()) {
                         let contents: &[u8] = file.contents.as_bytes();
+||||||| Stash base
+                    if let Some(file) = graph.find(path.as_bytes()) {
+                        let contents: &[u8] = file.contents();
+=======
+                    // SAFETY: see `standalone_module_graph_get`.
+                    if let Some(file) = unsafe { &mut *graph }.find(path.as_bytes()) {
+                        let contents: &[u8] = file.contents.as_bytes();
+>>>>>>> Stashed changes
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with

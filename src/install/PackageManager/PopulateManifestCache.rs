@@ -57,7 +57,14 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    if run_tasks::has_created_network_task(manager, task_id, dep.behavior.is_optional()) {
+    // PORT NOTE: Zig passes the *raw packed-struct bit* `dep.behavior.optional`
+    // — not `Behavior.isOptional()` (which is `optional && !peer`). For
+    // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
+    // which would flip both the dedupe-map `is_required` bookkeeping and
+    // `for_manifest`'s error-suppression branch. Mirror runTasks.rs and read
+    // the raw flag.
+    let is_optional = dep.behavior.contains(Behavior::OPTIONAL);
+    if run_tasks::has_created_network_task(manager, task_id, is_optional) {
         return Ok(());
     }
     manager.start_progress_bar_if_none();
@@ -93,7 +100,7 @@ fn start_manifest_task(
         pkg_name,
         unsafe { &*scope },
         None,
-        dep.behavior.is_optional(),
+        is_optional,
         needs_extended_manifest,
     )?;
 

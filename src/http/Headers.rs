@@ -1,5 +1,4 @@
 use bun_picohttp as picohttp;
-use bun_core::strings;
 
 // `bun.schema.api.StringPointer` lives in bun_http_types (inlined there to
 // avoid a cross-tier dep on options_types). Same #[repr(C)] u32×2 layout.
@@ -88,83 +87,28 @@ impl<'a> AnyBlobRef<'a> {
     }
 }
 
-// PORT NOTE: `Entry` + its `MultiArrayElement` impl live in bun_http_types
-// (T3) because the column layout is shared with ETag matching. Re-export
-// here so callers can keep writing `headers::Entry` / `headers::EntryList`.
-pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList};
+// LAYERING: `Headers` (and its tier-safe inherent methods: `memory_cost`,
+// `get`, `append`, `get_content_*`, `as_str`, `Clone`) is owned by
+// `bun_http_types` (T3) so the ETag matcher and bake DevServer can name the
+// same type. This crate adds the constructors that pull in T5 deps
+// (`picohttp`, `FetchHeadersRef`).
+pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 use bun_http_types::ETag::HeaderEntryField;
 
-#[derive(Default)]
-pub struct Headers {
-    pub entries: EntryList,
-    pub buf: Vec<u8>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; non-AST crate → global mimalloc, field dropped.
+// PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
+// deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
+
+/// Extension constructors for `Headers` that depend on T5 crates
+/// (`bun_picohttp`, the FetchHeaders/Blob vtables). Kept as a trait so
+/// callers can keep writing `Headers::from(...)`.
+pub trait HeadersExt {
+    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers;
+    fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers;
 }
 
-impl Headers {
-    pub fn memory_cost(&self) -> usize {
-        self.buf.len() + self.entries.memory_cost()
-    }
-
-    // PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
-    // deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
-
-    pub fn get(&self, name: &[u8]) -> Option<&[u8]> {
-        // PORT NOTE: Zig used `.items(.name)` / `.items(.value)` column slices.
-        // The Rust `MultiArrayList` lacks typed column accessors yet, so iterate
-        // by index via `.get(i)` (gathers both fields; same result, slightly
-        // more loads). // PERF(port): was column-slice iteration.
-        for i in 0..self.entries.len() {
-            let entry = self.entries.get(i);
-            if strings::eql_case_insensitive_ascii(self.as_str(entry.name), name, true) {
-                return Some(self.as_str(entry.value));
-            }
-        }
-        None
-    }
-
-    // PORT NOTE: was `!void`; only `try` sites were allocations — Vec/MultiArrayList abort on OOM.
-    pub fn append(&mut self, name: &[u8], value: &[u8]) {
-        let mut offset: u32 = self.buf.len() as u32;
-        self.buf.reserve(name.len() + value.len());
-        let name_ptr = api::StringPointer {
-            offset,
-            length: name.len() as u32,
-        };
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-        self.buf.extend_from_slice(name);
-        offset = self.buf.len() as u32;
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-        self.buf.extend_from_slice(value);
-
-        let value_ptr = api::StringPointer {
-            offset,
-            length: value.len() as u32,
-        };
-        self.entries
-            .append(Entry { name: name_ptr, value: value_ptr })
-            .expect("OOM"); // Zig: `try` propagated to bun.handleOom — crash on OOM, don't drop.
-    }
-
-    pub fn get_content_disposition(&self) -> Option<&[u8]> {
-        self.get(b"content-disposition")
-    }
-    pub fn get_content_encoding(&self) -> Option<&[u8]> {
-        self.get(b"content-encoding")
-    }
-    pub fn get_content_type(&self) -> Option<&[u8]> {
-        self.get(b"content-type")
-    }
-    pub fn as_str(&self, ptr: api::StringPointer) -> &[u8] {
-        if (ptr.offset + ptr.length) as usize <= self.buf.len() {
-            &self.buf[ptr.offset as usize..][..ptr.length as usize]
-        } else {
-            b""
-        }
-    }
-
+impl HeadersExt for Headers {
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
-    pub fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
+    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
         let header_count = headers.len();
         let mut result = Headers {
             entries: EntryList::default(),
@@ -208,7 +152,7 @@ impl Headers {
     }
 
     // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
-    pub fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
+    fn from(fetch_headers_ref: Option<FetchHeadersRef<'_>>, options: Options<'_>) -> Headers {
         let mut header_count: u32 = 0;
         let mut buf_len: u32 = 0;
         if let Some(headers_ref) = fetch_headers_ref {
@@ -285,37 +229,14 @@ impl Headers {
     }
 }
 
-impl Clone for Headers {
-    fn clone(&self) -> Self {
-        Headers {
-            // PORT NOTE: MultiArrayList::clone is fallible (Result<_, AllocError>);
-            // Zig used `bun.handleOom(self.entries.clone(allocator))`.
-            entries: self.entries.clone().unwrap_or_else(|_| bun_alloc::out_of_memory()),
-            buf: self.buf.clone(),
-        }
-    }
-}
-
 // PORT NOTE: `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
 
 /// Compute the ETag for `bytes` (xxhash64, hex-lowered, quoted) and append it as
-/// an `etag` header. Mirrors `bun.http.ETag.appendToHeaders`.
-///
-/// LAYERING: `bun_http_types::ETag::append_to_headers` is typed against the
-/// duplicate `http_types::ETag::Headers`. This crate owns the canonical
-/// `Headers`, so the helper lives here so callers in `bun_runtime` (StaticRoute,
-/// DevServer) don't each inline the hash+format.
+/// an `etag` header. Re-exported from `bun_http_types` now that `Headers` is
+/// the same type in both crates.
+#[inline]
 pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
-    let hash: u64 = bun_core::hash::xxhash64(0, bytes);
-    let mut etag_buf = [0u8; 40];
-    let len = {
-        use std::io::Write as _;
-        let mut cursor = &mut etag_buf[..];
-        // Zig `bun.fmt.hexIntLower(u64)` is fixed-width 16 hex chars.
-        write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
-        40 - cursor.len()
-    };
-    headers.append(b"etag", &etag_buf[..len]);
+    let _ = bun_http_types::ETag::append_to_headers(bytes, headers);
 }
 
 pub struct Options<'a> {

@@ -1744,10 +1744,18 @@ impl WrapperLike for DocEnd {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
+<<<<<<< Updated upstream
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
         unsafe { Self::to_js_ptr(this, g) }
+||||||| Stash base
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+=======
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("DocEnd", this, g)
+>>>>>>> Stashed changes
     }
 }
 
@@ -1895,10 +1903,18 @@ impl WrapperLike for Comment {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
+<<<<<<< Updated upstream
     fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
         // SAFETY: `this` is a live `Box::into_raw` allocation (refcount >= 1);
         // ownership is shared with the GC wrapper via the intrusive refcount.
         unsafe { Self::to_js_ptr(this, g) }
+||||||| Stash base
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+=======
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("Comment", this, g)
+>>>>>>> Stashed changes
     }
 }
 

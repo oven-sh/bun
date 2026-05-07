@@ -612,24 +612,27 @@ impl TranspilerJob {
 
         // PORT NOTE: Zig copies the whole Transpiler by value (`transpiler = vm.transpiler`).
         // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
-        // a bytewise copy mirroring the Zig value-copy. SAFETY: every internal raw pointer in
-        // the copy still targets memory owned by `vm.transpiler` (resolver caches, define, env)
-        // which outlives this stack frame; `vm.transpiler` is not concurrently mutated.
-        let mut transpiler: Transpiler<'static> =
-            unsafe { core::ptr::read(&vm.transpiler as *const Transpiler<'static>) };
-        let _no_drop_transpiler = scopeguard::guard((), |_| {
-            // PORT NOTE: Zig did not deinit the by-value copy; suppress Drop on ours so
-            // owned fields aren't double-freed against `vm.transpiler`.
+        // a bytewise copy mirroring the Zig value-copy. SAFETY: `vm.transpiler` is read via
+        // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
+        // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
+        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
+        // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
+        // fields aren't double-freed against `vm.transpiler`.
+        let mut transpiler = core::mem::ManuallyDrop::new(unsafe {
+            ptr::read(ptr::addr_of!((*vm).transpiler))
         });
-        let transpiler = &mut *core::mem::ManuallyDrop::new(transpiler);
+        let transpiler: &mut Transpiler<'static> = &mut *transpiler;
         transpiler.set_allocator(allocator);
         transpiler.set_log(&mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
         // (BundleOptions value copy). The Rust resolver already shares opts with the parent
         // Transpiler via raw pointer; set_allocator/set_log keep them in sync.
         transpiler.macro_context = None;
-        // TODO(port): transpiler.linker.resolver = &transpiler.resolver — Linker holds a raw
-        // *mut Resolver; rewire it at the local copy. Left to Phase B once Linker is wired.
+        // Zig: `transpiler.linker.resolver = &transpiler.resolver` — the bytewise copy left
+        // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
+        // it at the local copy so `print_with_source_map` resolves through the arena-backed
+        // resolver.
+        transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver);
 
         let mut fd: Option<Fd> = None;
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;

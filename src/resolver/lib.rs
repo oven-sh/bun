@@ -459,6 +459,9 @@ pub mod fs {
     // ── Path ─────────────────────────────────────────────────────────────
 
     /// Port of `Path` in `fs.zig`. Lifetime-generic over the backing buffers.
+    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
+    // `fs::Path` mirrors until they unify.
+    #[repr(C)]
     #[derive(Clone)]
     pub struct Path<'a> {
         /// The display path. In the bundler, this is relative to the current

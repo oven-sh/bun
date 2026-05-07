@@ -550,6 +550,10 @@ pub mod fs {
     /// Port of `PathName` in `src/resolver/fs.zig:1582` — parsed (dir, base, ext,
     /// filename) view over a borrowed path slice. All four fields point into the
     /// same backing allocation.
+    // `#[repr(C)]`: field-identical mirror of `bun_logger::fs::PathName` /
+    // `bun_resolver::fs::PathName`; `bun_bundler::bundle_v2` bit-casts between
+    // them pending unification, so layout must be pinned.
+    #[repr(C)]
     #[derive(Debug, Clone, Copy)]
     pub struct PathName<'a> {
         pub base: &'a [u8],
@@ -689,6 +693,9 @@ pub mod fs {
     ///
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
+    // `#[repr(C)]`: see note on `PathName` — bit-cast target across the three
+    // `fs::Path` mirrors until they unify.
+    #[repr(C)]
     #[derive(Debug, Clone)]
     pub struct Path<'a> {
         /// Display path — relative to cwd in the bundler; forward-slash on Windows.

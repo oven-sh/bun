@@ -3578,25 +3578,41 @@ unsafe fn resolve_hook(
     let specifier_utf8 = specifier.to_utf8();
     let source_utf8 = source.to_utf8();
 
-    // Spec :1913-1925 — `PluginRunner.onResolveJSC`. The `plugin_runner` field
-    // is `Option<()>` on the low-tier VM (TODO(b2-cycle) in VirtualMachine.rs:
-    // gated `bun_bundler::transpiler::PluginRunner`); skip until it widens.
-    // PORT NOTE: NOT silently dropping — `Zig__GlobalObject__resolve` already
-    // short-circuits plugin namespaces in C++ (ZigGlobalObject.cpp:3299-3331),
-    // and `Bun__resolveSync` callers go through `PluginRunner` only when a
-    // plugin is registered (which Phase B doesn't yet do).
-    
-    {
-        // SAFETY: `vm` is the live per-thread VM.
-        if let Some(plugin_runner) = unsafe { (*vm).plugin_runner.as_mut() } {
-            // `vm.plugin_runner` is `Option<()>` (TODO(b2-cycle) placeholder in
-            // VirtualMachine.rs) and `bun_bundler_jsc::PluginRunner` is not a
-            // `bun_runtime` dep, so `extract_namespace`/`on_resolve_jsc` are
-            // unreachable here. The branch is dead until the field widens.
-            let _ = plugin_runner;
-            let _ = &specifier_utf8;
-            let _ = &source;
-            todo!("blocked_on: bun_bundler_jsc::PluginRunner::on_resolve_jsc (vm.plugin_runner is Option<()>)");
+    // Spec :1913-1925 — `PluginRunner.onResolveJSC`.
+    // PORT NOTE: `vm.plugin_runner` is the low-tier data record
+    // (`bun_bundler::transpiler::PluginRunner`, type-erased `global_object`);
+    // the JSC-aware behaviour lives on `bun_bundler_jsc::PluginRunner`. We
+    // rebuild the latter from the live global here — `on_resolve_jsc` only
+    // reads `self.global_object`, so a stack temporary is exact.
+    // SAFETY: `vm` is the live per-thread VM.
+    if unsafe { (*vm).plugin_runner.is_some() } {
+        use bun_bundler_jsc::PluginRunner::PluginRunner as JscPluginRunner;
+        if JscPluginRunner::could_be_plugin(specifier_utf8.slice()) {
+            let namespace = JscPluginRunner::extract_namespace(specifier_utf8.slice());
+            let after_namespace = if namespace.is_empty() {
+                specifier_utf8.slice()
+            } else {
+                &specifier_utf8.slice()[namespace.len() + 1..]
+            };
+            let runner = JscPluginRunner { global_object: global_ref };
+            match runner.on_resolve_jsc(
+                bun_string::String::init(namespace),
+                bun_string::String::borrow_utf8(after_namespace),
+                source,
+                bun_jsc::BunPluginTarget::Bun,
+            ) {
+                Ok(Some(resolved_path)) => {
+                    // SAFETY: per fn contract.
+                    unsafe { *res = resolved_path };
+                    return true;
+                }
+                Ok(None) => {}
+                // Spec: `try` — JS exception was thrown; caller observes it
+                // via the global's exception state, so bail without writing
+                // `res` (matches the `catch return false` contract on every
+                // other `try` in this fn).
+                Err(_) => return false,
+            }
         }
     }
 

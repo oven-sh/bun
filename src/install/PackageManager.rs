@@ -1310,12 +1310,12 @@ pub fn init(
         bun_sys::fchdir(global_dir)?;
     }
 
-    // Zig: `Fs.FileSystem.init(null)` — registers the resolver-tier singleton.
-    // The `bun_sys::fs` opaque handle exposes no `init`; route through
-    // `bun_paths::fs::FileSystem::init` (cwd-seeded) which is what
-    // `bun_resolver::fs::install_sys_fs_vtable` reflects.
-    // TODO(port): once `bun_resolver::fs::FileSystem::init(None)` is reachable
-    // from this tier without a cycle, call it directly.
+    // Zig: `Fs.FileSystem.init(null)` — registers the resolver-tier singleton
+    // and seeds `top_level_dir` from `getcwd`. `bun_resolver` is a lower tier
+    // than `bun_install` (transitive dep via `bun_transpiler` → `bun_bundler`),
+    // so call the real `init` directly; this also installs the `bun_sys::fs`
+    // vtable so the `crate::bun_fs` shim used below sees the same instance.
+    bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
     let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread
@@ -1634,12 +1634,13 @@ pub fn init(
     let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
     bun_sys::chdir(&top_level_dir_z)?;
     // Zig: `try bun.cli.Arguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);`
-    // The bunfig loader lives in tier-6 (`bun_runtime::cli::Arguments`); install
-    // can't name it without a cycle. Route through the same hook pattern as
-    // `Command::get` — bun_cli registers the loader at startup.
-    if let Some(load_config) = LOAD_CONFIG_HOOK.get() {
-        load_config(cli.config.as_deref(), ctx)?;
-    }
+    // (PackageManager.zig:801). `loadConfig` was moved down into `bun_bunfig`
+    // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
+    bun_bunfig::arguments::load_config(
+        bun_options_types::CommandTag::Tag::InstallCommand,
+        cli.config.as_deref(),
+        ctx,
+    )?;
     // SAFETY: main-thread global
     unsafe {
         let tld = fs.top_level_dir();

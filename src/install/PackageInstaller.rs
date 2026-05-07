@@ -2078,8 +2078,10 @@ impl<'a> PackageInstaller<'a> {
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile.packages.items_scripts()[package_id as usize];
+        // SAFETY: `manager.log` is a borrowed `*mut Log` set in `init()`; never null.
+        let log = unsafe { &mut *self.manager.log };
         let scripts_list = match scripts.get_list(
-            &mut self.manager.log,
+            log,
             self.lockfile,
             package_path,
             folder_name,

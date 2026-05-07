@@ -6071,7 +6071,9 @@ pub fn get_deinit_count_for_testing() -> usize {
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {
-    dev: &'a mut DevServer<'a>,
+    // PORT NOTE: raw ptr — the Zig code freely re-borrowed `dev` across the ctx
+    // while also passing `&mut dev` into `ensure_route_is_bundled`.
+    dev: *mut DevServer,
     global: &'a JSGlobalObject,
     promise: Option<jsc::JSPromiseStrong>,
     p: Option<*mut jsc::JSPromise>, // BORROW_FIELD: from sibling self.promise
@@ -6213,10 +6215,10 @@ impl<'a> EnsureRouteCtx for PromiseEnsureRouteBundledCtx<'a> {
     fn to_dev_response(&mut self) -> DevResponse<'_> {
         PromiseEnsureRouteBundledCtx::to_dev_response(self)
     }
-    fn dev(&mut self) -> &mut DevServer<'_> {
-        // SAFETY: lifetime erased to satisfy the trait's invariant signature;
-        // borrow does not outlive `self`.
-        unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
+    fn dev(&mut self) -> &mut DevServer {
+        // SAFETY: `self.dev` set from a live `&mut DevServer` at ctx construction;
+        // ctx is stack-local in the request handler scope.
+        unsafe { &mut *self.dev }
     }
     fn route_bundle_index(&self) -> route_bundle::Index {
         self.route_bundle_index
@@ -6269,16 +6271,13 @@ fn bundle_new_route_js_function_impl(
     unsafe { (*vm.event_loop()).enter() };
     let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
 
-    // LAYERING: `AnyRequestContext::dev_server()` returns the keystone
-    // `dev_server::DevServer`; this file's `DevServer<'_>` is the full-port
-    // replacement. Bridge via `*mut ()` pending unification (see
-    // `new_route_params_for_bundle_promise_for_js` for the full SAFETY note).
     let _ = dev;
     let Some(dev_ptr) = request.request_context.dev_server_mut() else {
         return Err(global.throw("Request context does not belong to dev server"));
     };
-    // SAFETY: see LAYERING note; JS-thread single-writer.
-    let dev: &mut DevServer = unsafe { &mut *(dev_ptr as *mut () as *mut DevServer) };
+    // SAFETY: JS-thread single-writer; `dev_server_mut` returns the
+    // `Box<DevServer>` slot in `NewServer` populated by `set_routes`.
+    let dev: &mut DevServer = unsafe { &mut *dev_ptr };
 
     let route_bundle_index = dev
         .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))

@@ -5190,33 +5190,188 @@ impl Dir {
         mkdir_recursive_at(self.fd, sub_path)?;
         open_dir_at(self.fd, sub_path).map(Dir::from_fd).map_err(Into::into)
     }
-    /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port stub: routes via
-    /// `walker_skippable` once that lands; for now best-effort `unlinkat`.
+    /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port of Zig
+    /// `std.fs.Dir.deleteTree` (stack-based depth-first walk; std/fs/Dir.zig).
     pub fn delete_tree(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-        // TODO(b2): full recursive walk (Zig std.fs.Dir.deleteTree). For B-2
-        // surface this is best-effort: try `rmdir`, then `unlink`, ignoring ENOENT.
-        let mut buf = bun_paths::PathBuffer::default();
-        let len = sub_path.len().min(buf.0.len() - 1);
-        buf.0[..len].copy_from_slice(&sub_path[..len]);
-        buf.0[len] = 0;
-        // SAFETY: NUL-terminated above.
-        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
-        #[cfg(unix)]
-        match unlinkat_with_flags(self.fd, z, libc::AT_REMOVEDIR) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.get_errno() == E::ENOENT => return Ok(()),
-            Err(e) if e.get_errno() == E::ENOTDIR => {
-                return unlinkat(self.fd, z).map_err(Into::into);
-            }
-            Err(e) if e.get_errno() == E::ENOTEMPTY => {
-                // Full recursive impl pending; surface the error so callers can react.
-                return Err(e.into());
-            }
-            Err(e) => return Err(e.into()),
+        // `deleteTreeOpenInitialSubpath` — try unlinking as a file first; if
+        // that yields IsDir/EPERM, open it as an iterable directory.
+        let initial = match self.delete_tree_open_initial_subpath(sub_path)? {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+
+        struct StackItem {
+            name: Vec<u8>,
+            parent_dir: Fd,
+            iter: dir_iterator::WrappedIterator,
         }
-        #[cfg(windows)]
-        Err(bun_core::err!("Unimplemented"))
+        // Ensure every still-open iterator dir is closed on early return
+        // (Zig: `defer StackItem.closeAll(stack.items)`).
+        let mut stack = scopeguard::guard(
+            Vec::<StackItem>::with_capacity(16),
+            |mut s| { for item in s.drain(..) { let _ = close(item.iter.dir()); } },
+        );
+        stack.push(StackItem {
+            name: sub_path.to_vec(),
+            parent_dir: self.fd,
+            iter: dir_iterator::iterate(initial),
+        });
+
+        'process_stack: while let Some(top) = stack.last_mut() {
+            while let Some(entry) = top.iter.next().map_err(bun_core::Error::from)? {
+                let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
+                'handle_entry: loop {
+                    if treat_as_dir {
+                        let new_dir = match openat_a(
+                            top.iter.dir(),
+                            entry.name.slice_u8(),
+                            O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                            0,
+                        ) {
+                            Ok(fd) => fd,
+                            Err(e) => match e.get_errno() {
+                                E::ENOTDIR => { treat_as_dir = false; continue 'handle_entry; }
+                                // That's fine, we were trying to remove this directory anyway.
+                                E::ENOENT => break 'handle_entry,
+                                _ => return Err(e.into()),
+                            },
+                        };
+                        let parent = top.iter.dir();
+                        // PORT NOTE: Zig caps the stack at 16 and falls back to
+                        // `deleteTreeMinStackSizeWithKindHint` past that depth. The
+                        // Rust `Vec` grows, so the capacity check is dropped — same
+                        // semantics, no fixed-depth limit.
+                        stack.push(StackItem {
+                            name: entry.name.slice_u8().to_vec(),
+                            parent_dir: parent,
+                            iter: dir_iterator::iterate(new_dir),
+                        });
+                        continue 'process_stack;
+                    } else {
+                        match unlinkat_a(top.iter.dir(), entry.name.slice_u8(), 0) {
+                            Ok(()) => break 'handle_entry,
+                            Err(e) => match e.get_errno() {
+                                E::ENOENT => break 'handle_entry,
+                                // EISDIR (Linux) / EPERM (POSIX rmdir-required)
+                                E::EISDIR | E::EPERM => {
+                                    treat_as_dir = true;
+                                    continue 'handle_entry;
+                                }
+                                _ => return Err(e.into()),
+                            },
+                        }
+                    }
+                }
+            }
+
+            // Reached the end of the directory entries — exhausted; remove the
+            // directory itself. On Windows we must close before removing.
+            let dir_fd = top.iter.dir();
+            let parent_dir = top.parent_dir;
+            let name = core::mem::take(&mut top.name);
+            // Pop before closing so the cleanup guard doesn't double-close on
+            // an error from `unlinkat_a` (Zig: `stack.items.len -= 1`).
+            stack.pop();
+            let _ = close(dir_fd);
+
+            let mut need_to_retry = false;
+            match unlinkat_a(parent_dir, &name, AT_REMOVEDIR) {
+                Ok(()) => {}
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => {}
+                    E::ENOTEMPTY => need_to_retry = true,
+                    _ => return Err(e.into()),
+                },
+            }
+
+            if need_to_retry {
+                // Since we closed the handle that the previous iterator used, we
+                // need to re-open the dir and re-create the iterator.
+                let new_dir = match openat_a(
+                    parent_dir,
+                    &name,
+                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                    0,
+                ) {
+                    Ok(fd) => fd,
+                    Err(e) => match e.get_errno() {
+                        E::ENOTDIR => {
+                            // Racing fs: it became a file; unlink it.
+                            match unlinkat_a(parent_dir, &name, 0) {
+                                Ok(()) => continue 'process_stack,
+                                Err(e2) => match e2.get_errno() {
+                                    E::ENOENT => continue 'process_stack,
+                                    _ => return Err(e2.into()),
+                                },
+                            }
+                        }
+                        E::ENOENT => continue 'process_stack,
+                        _ => return Err(e.into()),
+                    },
+                };
+                stack.push(StackItem {
+                    name,
+                    parent_dir,
+                    iter: dir_iterator::iterate(new_dir),
+                });
+                continue 'process_stack;
+            }
+        }
+        scopeguard::ScopeGuard::into_inner(stack);
+        Ok(())
     }
+
+    /// Port of `std.fs.Dir.deleteTreeOpenInitialSubpath` — try removing
+    /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
+    /// directory and return the fd. Returns `None` when removal succeeded or
+    /// the path doesn't exist.
+    fn delete_tree_open_initial_subpath(
+        &self,
+        sub_path: &[u8],
+    ) -> core::result::Result<Option<Fd>, bun_core::Error> {
+        let mut treat_as_dir = false;
+        loop {
+            if !treat_as_dir {
+                match unlinkat_a(self.fd, sub_path, 0) {
+                    Ok(()) => return Ok(None),
+                    Err(e) => match e.get_errno() {
+                        E::ENOENT => return Ok(None),
+                        // Linux: EISDIR. POSIX: EPERM when target is a directory.
+                        E::EISDIR | E::EPERM => treat_as_dir = true,
+                        _ => return Err(e.into()),
+                    },
+                }
+            } else {
+                return match openat_a(
+                    self.fd,
+                    sub_path,
+                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                    0,
+                ) {
+                    Ok(fd) => Ok(Some(fd)),
+                    Err(e) => match e.get_errno() {
+                        E::ENOENT => Ok(None),
+                        E::ENOTDIR => { treat_as_dir = false; continue; }
+                        _ => Err(e.into()),
+                    },
+                };
+            }
+        }
+    }
+}
+
+#[cfg(unix)] const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
+#[cfg(windows)] const AT_REMOVEDIR: i32 = 0x200;
+
+/// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
+fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
+    let mut buf = bun_paths::PathBuffer::default();
+    let len = path.len().min(buf.0.len() - 1);
+    buf.0[..len].copy_from_slice(&path[..len]);
+    buf.0[len] = 0;
+    // SAFETY: NUL-terminated above.
+    let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+    unlinkat_with_flags(dirfd, z, flags)
 }
 
 /// RAII owner for a `Dir` — closes the fd on `Drop`. Use when a directory is
@@ -5732,9 +5887,7 @@ pub fn renameat_concurrently_without_fallback(
         if to_dir_fd.is_valid() {
             let _ = Dir::from_fd(to_dir_fd).delete_tree(to.as_bytes());
         } else {
-            // TODO(port): `std.fs.deleteTreeAbsolute(to)` — full recursive
-            // walk pending alongside `Dir::delete_tree` (B-2).
-            let _ = Dir::cwd().delete_tree(to.as_bytes());
+            let _ = delete_tree_absolute(to.as_bytes());
         }
         match renameat(from_dir_fd, from, to_dir_fd, to) {
             Err(err) => return Err(err),

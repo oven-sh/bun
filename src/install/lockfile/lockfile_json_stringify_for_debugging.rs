@@ -787,7 +787,7 @@ impl JsonWriter for WriteStream {
         Ok(())
     }
     fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), bun_core::Error> {
-        use core::fmt::Write as _;
+        use std::io::Write as _;
         self.value_start();
         let _ = self.out.write_fmt(args);
         Ok(())

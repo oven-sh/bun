@@ -34,11 +34,12 @@ bun_core::declare_scope!(MySQLConnection, visible);
 
 const NS_PER_MS: u64 = 1_000_000;
 
-// TODO(b2-blocked): #[bun_jsc::JsClass] — proc-macro emits `bun_jsc::{JSGlobalObject,
-// CallFrame, JSValue}` types, but this crate uses the local `crate::jsc` shim
-// types (distinct nominal types). Re-enable once the shim re-exports `bun_jsc`
-// or the macro is generic over the global-object type. The hand-rolled
-// `impl crate::jsc::JsClass` below covers `from_js`/`to_js` in the meantime.
+// PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
+// already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
+// js_mysql_connection` (which owns the extern symbols) — the hand-rolled
+// `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
+// `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
+// switching to the derive is a mechanical follow-up, not a layering blocker.
 pub struct JSMySQLConnection {
     // intrusive refcount (bun.ptr.RefCount mixin); destroy callback = `deinit`
     ref_count: Cell<u32>,
@@ -83,26 +84,6 @@ impl crate::jsc::JsClass for JSMySQLConnection {
     fn get_constructor(global: &JSGlobalObject) -> JSValue {
         js::get_constructor(global)
     }
-}
-
-/// Local FFI shim for `JSGlobalObject.queueMicrotask` — `bun_jsc` only exposes
-/// the C-style `queue_microtask_callback`; the JS-function form lives in the
-/// gated `JSGlobalObject.rs` module. Forward to the C++ symbol directly.
-// TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
-// drop this and call it directly.
-fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
-    unsafe extern "C" {
-        fn JSC__JSGlobalObject__queueMicrotaskJob(
-            global: *const JSGlobalObject,
-            function: JSValue,
-            first: JSValue,
-            second: JSValue,
-        );
-    }
-    let first = args.first().copied().unwrap_or(JSValue::ZERO);
-    let second = args.get(1).copied().unwrap_or(JSValue::ZERO);
-    // SAFETY: `global` is live; JSValues are stack-rooted for the call.
-    unsafe { JSC__JSGlobalObject__queueMicrotaskJob(global, function, first, second) }
 }
 
 /// RAII owner for one intrusive refcount on a `JSMySQLConnection`. Dropping
@@ -554,9 +535,8 @@ impl JSMySQLConnection {
                 .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {
                 drop(tls_config);
-                // TODO(port): `create_bun_socket_error_t::to_js` extension trait
-                // pending in `crate::jsc`; throw the error name string for now.
-                return Err(global_object.throw(format_args!("{:?}", err)));
+                return Err(global_object
+                    .throw_value(crate::jsc::create_bun_socket_error_to_js(err, global_object)));
             }
         }
         // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
@@ -942,7 +922,8 @@ impl JSMySQLConnection {
         on_connect.ensure_still_alive();
         let js_value = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
-        queue_microtask(self.global_object, on_connect, &[JSValue::NULL, js_value]);
+        self.global_object
+            .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
     pub fn on_query_result(&mut self, request: &mut JSMySQLQuery, result: MySQLQueryResult) {

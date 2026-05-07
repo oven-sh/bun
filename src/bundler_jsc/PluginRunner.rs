@@ -1,13 +1,6 @@
 //! Runtime plugin host (JS-side `Bun.plugin()` resolve hooks). Moved from
 //! `bundler/transpiler.zig` so `bundler/` is free of `JSValue`/`JSGlobalObject`.
 
-use std::io::Write as _;
-
-use bun_string::String as BunString;
-
-use crate::{ErrorableString, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::{BunPluginTarget, StringJsc};
-
 pub use bun_resolver::fs::Path as FsPath;
 
 /// Spec `PluginRunner.zig:MacroJSCtx` — re-export of the canonical newtype
@@ -37,8 +30,7 @@ pub fn could_be_plugin(specifier: &[u8]) -> bool {
 // `on_resolve` (the `Log`-reporting variant, PluginRunner.zig:34) lives at
 // `bun_jsc::plugin_runner::PluginRunner` as the `PluginResolver` impl —
 // `bun_jsc` is the lowest tier that can name `JSGlobalObject` AND is reachable
-// from `Bun__onDidAppendPlugin`. Only `onResolveJSC` (called from
-// `bun_runtime::jsc_hooks`) lives at this tier.
+// from `Bun__onDidAppendPlugin`.
 
 /// Spec PluginRunner.zig:121 `onResolveJSC`.
 /// LAYERING: body moved DOWN into `bun_jsc::virtual_machine` so the
@@ -50,7 +42,11 @@ pub use bun_jsc::virtual_machine::plugin_runner_on_resolve_jsc as on_resolve_jsc
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bundler_jsc/PluginRunner.zig (241 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      Fs.Path.initWithNamespace ownership signature & ErrorableString::err arg type need confirming; allocator field dropped.
+//   confidence: high
+//   todos:      0
+//   notes:      Façade only — all bodies layered down (extract_namespace/
+//               could_be_plugin → bun_bundler::transpiler; PluginRunner +
+//               on_resolve → bun_jsc::plugin_runner; on_resolve_jsc →
+//               bun_jsc::virtual_machine). Allocator field dropped per
+//               PORTING.md (global mimalloc).
 // ──────────────────────────────────────────────────────────────────────────

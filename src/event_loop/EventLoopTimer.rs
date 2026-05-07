@@ -2,34 +2,11 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-// TODO(b1): bun_core::Timespec missing from lower tier — local stub until B-2.
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct Timespec {
-    pub sec: i64,
-    pub nsec: i64,
-}
-impl Timespec {
-    pub const EPOCH: Self = Self { sec: 0, nsec: 0 };
-    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
-    /// 584 years so if we get any overflows we just use maxInt(u64). If
-    /// any software is running in 584 years waiting on this timer...
-    /// shame on me I guess... but I'll be dead.
-    pub fn ns(&self) -> u64 {
-        if self.sec <= 0 {
-            return self.nsec.max(0) as u64;
-        }
-        debug_assert!(self.sec >= 0);
-        debug_assert!(self.nsec >= 0);
-        const NS_PER_S: u64 = 1_000_000_000;
-        let s_ns = match (self.sec.max(0) as u64).checked_mul(NS_PER_S) {
-            Some(v) => v,
-            None => return u64::MAX,
-        };
-        // PORT NOTE: Zig returns maxInt(i64) (not u64) on the add overflow — preserved verbatim.
-        s_ns.checked_add(self.nsec.max(0) as u64)
-            .unwrap_or(i64::MAX as u64)
-    }
-}
+// LAYERING: re-export `bun_core::Timespec` so every embedder of
+// `EventLoopTimer.next` agrees on the type (was a local stub with the same
+// `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
+// — to convert at every assignment and risked silent layout drift).
+pub use bun_core::Timespec;
 use Timespec as timespec;
 
 // Re-export so higher tiers see the *same* type they pass to

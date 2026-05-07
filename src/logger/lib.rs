@@ -2809,7 +2809,7 @@ impl Log {
         &mut self,
         _source: Option<&Source>,
         loc: Loc,
-        text: Str,
+        text: impl IntoText,
     ) -> Result<(), AllocError> {
         self.errors += 1;
         self.add_msg(Msg {

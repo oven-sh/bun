@@ -202,6 +202,79 @@ pub fn verify_error_to_js(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// uws.create_bun_socket_error_t::toJS
+//
+// Same layering note as `verify_error_to_js` above: canonical impl lives in
+// `bun_runtime::socket::uws_jsc::create_bun_socket_error_to_js`, but importing
+// it would cycle (`bun_runtime` depends on this crate). The body only needs
+// `bun_uws` + `bun_boringssl_sys` + `bun_jsc` (all lower-tier), so it is hosted
+// here for the SQL connection `createInstance` paths. Matches
+// `src/runtime/socket/uws_jsc.zig`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `BoringSSL.ERR_toJS` — formats the packed error code into a JS Error with
+/// code `BORINGSSL`. Body mirrors `bun_runtime::crypto::boringssl_jsc::err_to_js`
+/// (unreachable from here without a cycle).
+fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+    const PREFIX: &[u8] = b"BoringSSL ";
+    let mut outbuf = [0u8; 128 + 1 + PREFIX.len()];
+    outbuf[..PREFIX.len()].copy_from_slice(PREFIX);
+    let message_buf = &mut outbuf[PREFIX.len()..];
+    // SAFETY: `message_buf` is a valid writable buffer of `message_buf.len()` bytes.
+    unsafe {
+        bun_boringssl_sys::ERR_error_string_n(
+            err_code,
+            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
+            message_buf.len(),
+        );
+    }
+    let error_message: &[u8] = bun_string::slice_to_nul(&outbuf[..]);
+    if error_message.len() == PREFIX.len() {
+        return global
+            .err(
+                ErrorCode::BORINGSSL,
+                format_args!("An unknown BoringSSL error occurred: {}", err_code),
+            )
+            .to_js();
+    }
+    global
+        .err(
+            ErrorCode::BORINGSSL,
+            format_args!("{}", bstr::BStr::new(error_message)),
+        )
+        .to_js()
+}
+
+pub fn create_bun_socket_error_to_js(
+    err: bun_uws::create_bun_socket_error_t,
+    global: &JSGlobalObject,
+) -> JSValue {
+    use bun_uws::create_bun_socket_error_t as E;
+    match err {
+        // `us_ssl_ctx_from_options` only sets *err for the CA/cipher cases;
+        // bad cert/key/DH return NULL with `.none` and the detail is on the
+        // BoringSSL error queue. Surfacing it here keeps every
+        // `getOrCreateOpts(...) orelse return err.toJS()` site correct.
+        E::none => {
+            // SAFETY: ERR_get_error reads the thread-local error queue; always safe.
+            boringssl_err_to_js(global, unsafe { bun_boringssl_sys::ERR_get_error() })
+        }
+        E::load_ca_file => global
+            .err(ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
+            .to_js(),
+        E::invalid_ca_file => global
+            .err(ErrorCode::BORINGSSL, format_args!("Invalid CA file"))
+            .to_js(),
+        E::invalid_ca => global
+            .err(ErrorCode::BORINGSSL, format_args!("Invalid CA"))
+            .to_js(),
+        E::invalid_ciphers => global
+            .err(ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
+            .to_js(),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // JSGlobalObject — SQL-specific extension surface.
 // ──────────────────────────────────────────────────────────────────────────
 

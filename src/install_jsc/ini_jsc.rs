@@ -183,7 +183,14 @@ impl IniTestingAPIs {
         // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
         // `transpiler.env` is set during VM init (transpiler.rs).
         let env = unsafe { &mut *(*global.bun_vm()).transpiler.env };
-        let mut parser = Parser::init(b"<src>", utf8str.slice(), env);
+        // TODO(port): lifetime — `Parser::init` ties `src: &'a [u8]` and
+        // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
+        // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
+        // before `utf8str` (drop order is reverse of declaration); no borrow
+        // escapes this function. Same pattern as `bun_ini::load_npmrc`.
+        let src: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(utf8str.slice()) };
+        let mut parser = Parser::init(b"<src>", src, env);
 
         // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
         // `parser.arena.allocator()`); split the borrow via raw ptr so the bump

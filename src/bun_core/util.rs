@@ -2608,7 +2608,7 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
 // ── Timespec ──────────────────────────────────────────────────────────────
 // Port of `bun.timespec` (bun.zig:3257). `extern struct { sec: i64, nsec: i64 }`.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Timespec { pub sec: i64, pub nsec: i64 }
 
 /// Lowercase alias (Zig spells it `bun.timespec`).

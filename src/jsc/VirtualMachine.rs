@@ -153,7 +153,12 @@ pub struct VirtualMachine {
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut logger::Log`);
     // raw NonNull used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<logger::Log>>,
-    pub main: &'static [u8], // TODO(port): lifetime — never freed in deinit, often points to argv
+    /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
+    /// process-lifetime `dirname_store`/`filename_store`, the standalone module
+    /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
+    /// every case the storage outlives this VM but is not Rust-`'static`. Stored
+    /// as a raw fat pointer (LIFETIMES.tsv class BACKREF) — read via `main()`.
+    main: *const [u8],
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_string::String,
     pub main_hash: u32,

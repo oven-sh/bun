@@ -1113,6 +1113,18 @@ impl JSValue {
         Protected(self)
     }
 
+    /// `JSValue.callWithGlobalThis(global, args)` (JSValue.zig:237) — `call`
+    /// with `global` as the receiver.
+    #[inline]
+    #[track_caller]
+    pub fn call_with_global_this(
+        self,
+        global: &JSGlobalObject,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        self.call(global, global.to_js_value(), args)
+    }
+
     /// `JSValue.call(global, thisValue, args)` (JSValue.zig:249).
     /// Calls `function` with `this_value` as the receiver. Returns
     /// `Err(JsError::Thrown)` if a JS exception was raised.
@@ -1358,6 +1370,8 @@ unsafe extern "C" {
     fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
+    fn JSC__JSValue__putBunString(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
+    fn JSC__JSValue__putMayBeIndex(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
     fn JSC__JSValue__upsertBunStringArray(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue) -> JSValue;
     fn JSC__JSValue__push(this: JSValue, global: *const JSGlobalObject, value: JSValue);

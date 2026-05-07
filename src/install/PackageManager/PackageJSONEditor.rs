@@ -538,6 +538,12 @@ pub fn edit(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
+    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
+    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
+    // PORT NOTE: reshaped for borrowck — `arena` is a disjoint-field borrow held across
+    // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
+    let arena = &manager.ast_arena;
+
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.contains(Enable::ONLY_MISSING);

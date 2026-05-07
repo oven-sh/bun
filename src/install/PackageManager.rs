@@ -2351,11 +2351,12 @@ pub fn init_with_runtime_once(
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
-        // PORT NOTE: `bun_progress::Progress` (the install-tier shim) is non-rendering;
-        // `supports_ansi_escape_codes` is implicit (always treated as the
-        // `false` path in std.Progress). The Zig assignment is a no-op here.
-        let _ = manager.progress.start(b"", 0);
-        manager.root_progress_node = core::ptr::null_mut();
+        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
+        // Coerce to a raw pointer immediately so the borrow doesn't outlive the
+        // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.
+        let node: *mut ProgressNode = manager.progress.start(b"", 0);
+        manager.root_progress_node = node;
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }

@@ -14,12 +14,20 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // test and asserts that count. It necessarily skips on Windows (no `nm`) and
 // on stripped release binaries (no Zig symbols to read).
 describe("Arguments.parse is not monomorphized per Command.Tag", () => {
-  const nm = Bun.spawnSync({ cmd: ["nm", bunExe()], stdout: "pipe", stderr: "pipe" });
-  const symbols = nm.exitCode === 0 ? nm.stdout.toString() : "";
+  // Bun.spawnSync *throws* ENOENT when the executable isn't in $PATH (unlike
+  // Node's spawnSync which returns { error }), so gate and catch so a
+  // missing `nm` degrades to a skip instead of failing the describe body.
+  let symbols = "";
+  if (!isWindows) {
+    try {
+      const nm = Bun.spawnSync({ cmd: ["nm", bunExe()], stdout: "pipe", stderr: "pipe" });
+      if (nm.exitCode === 0) symbols = nm.stdout.toString();
+    } catch {}
+  }
   const argumentsParse = symbols.match(/ cli\.Arguments\.parse__/g) ?? [];
   // Zero matches means either `nm` is unavailable or the binary is stripped
   // (release). In that case there is nothing we can assert here.
-  const canInspect = !isWindows && argumentsParse.length > 0;
+  const canInspect = argumentsParse.length > 0;
 
   test.skipIf(!canInspect)("exactly one instantiation each", () => {
     const counts = {

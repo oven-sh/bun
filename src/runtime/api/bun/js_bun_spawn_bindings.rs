@@ -789,9 +789,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             }
                         }
                     } else {
-                        return Err(global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(format_args!(
                             "terminal must be a Terminal object or options object",
-                        ));
+                        )));
                     }
 
                     #[cfg(unix)]
@@ -815,9 +815,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // ConPTY spawns with bInheritHandles=FALSE and no stdio buffer,
                         // so extra fds and IPC pipes can't be passed to the child.
                         if maybe_ipc_mode.is_some() || !extra_fds.is_empty() {
-                            return Err(global_this.throw_invalid_arguments(
+                            return Err(global_this.throw_invalid_arguments(format_args!(
                                 "ipc and extra stdio are not supported with terminal on Windows",
-                            ));
+                            )));
                         }
                     }
                 }

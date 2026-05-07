@@ -2723,25 +2723,13 @@ pub fn create_shell_interpreter(
     Ok(js_value)
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-//
-// The remaining ~2400 lines of the original draft (JS-side `init`/`create`,
-// `setup_io_before_run`, `run_from_js`, `finalize`, `OutputTask`,
-// `ShellAsyncSubprocessDone`, `WriteFailingErrorFmt`, `ShellExecEnv::dupe_for_subshell`,
-// the legacy `StatePtrUnion` machinery, etc.) depend on `bun_jsc` method
-// surface, `IOWriter::init`, `bun_aio::FilePoll`, and `bun_glob`. The gated
-// include was removed (file never materialised); port the remainder inline as
-// the upstream pieces land. The NodeId-arena dispatch above supersedes
-// `StatePtrUnion`.
-//
-// TODO(blocked_on: bun_jsc::EventLoopHandle, IOWriter::init, bun_aio::FilePoll,
-// bun_glob::GlobWalker): port init/create/setup_io_before_run/run_from_js/
-// finalize/OutputTask/ShellAsyncSubprocessDone once those crates are green.
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/shell/interpreter.zig (2100 lines)
-//   confidence: medium (NodeId-arena scaffolding compiles; JS-side init/finish gated)
-//   blocked_on: bun_jsc::{EventLoopHandle, codegen::JSShellInterpreter},
-//               IOWriter::init, bun_glob::GlobWalker, ShellExecEnv full body
+//   source:     src/shell/interpreter.zig (2164 lines)
+//   confidence: medium-high — NodeId-arena dispatch + JS-side
+//               init/run/finish/finalize fully ported; `StatePtrUnion`
+//               superseded by NodeId arena.
+//   not-ported: `initAndRunFromFile` (delegate to `init_and_run_from_source`
+//               once cli wires the read), `CmdEnvIter` (subproc.rs owns its
+//               own env iterator shape).
 // ──────────────────────────────────────────────────────────────────────────

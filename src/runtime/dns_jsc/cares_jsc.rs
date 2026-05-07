@@ -15,8 +15,8 @@ use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 /// `ZigString.fromUTF8(slice).toJS(global)` is equivalent to creating a JS
 /// string directly from UTF-8 bytes.
 #[inline]
-fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JSValue {
-    bun_string_jsc::create_utf8_for_js(global, bytes).unwrap_or(JSValue::UNDEFINED)
+fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    bun_string_jsc::create_utf8_for_js(global, bytes)
 }
 
 // ── struct_hostent ─────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ pub fn hostent_to_js_response(
         array.put_index(
             global_this,
             count,
-            utf8_to_js(global_this, alias_slice),
+            utf8_to_js(global_this, alias_slice)?,
         )?;
         count += 1;
     }
@@ -160,7 +160,7 @@ pub fn nameinfo_to_js_response(
     if !this.node.is_null() {
         // SAFETY: node is a non-null NUL-terminated C string from c-ares.
         let node_slice = unsafe { CStr::from_ptr(this.node as *const c_char) }.to_bytes();
-        array.put_index(global_this, 0, utf8_to_js(global_this, node_slice))?;
+        array.put_index(global_this, 0, utf8_to_js(global_this, node_slice)?)?;
     } else {
         array.put_index(global_this, 0, JSValue::UNDEFINED)?;
     }

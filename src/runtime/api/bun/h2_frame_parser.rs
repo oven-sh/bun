@@ -5733,12 +5733,12 @@ impl H2FrameParser {
 
                 if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
                     if max_pings.is_number() {
-                        this_ref.max_outstanding_pings = max_pings.to_u64();
+                        this_ref.max_outstanding_pings = max_pings.to_uint64_no_truncate();
                     }
                 }
                 if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {
                     if max_memory.is_number() {
-                        this_ref.max_session_memory = max_memory.to_u64() as u32;
+                        this_ref.max_session_memory = max_memory.to_uint64_no_truncate() as u32;
                         if this_ref.max_session_memory < 1 {
                             this_ref.max_session_memory = 1;
                         }
@@ -5746,7 +5746,7 @@ impl H2FrameParser {
                 }
                 if let Some(max_header_list_pairs) = settings_js.get(global_object, "maxHeaderListPairs")? {
                     if max_header_list_pairs.is_number() {
-                        this_ref.max_header_list_pairs = max_header_list_pairs.to_u64() as u32;
+                        this_ref.max_header_list_pairs = max_header_list_pairs.to_uint64_no_truncate() as u32;
                         if this_ref.max_header_list_pairs < 4 {
                             this_ref.max_header_list_pairs = 4;
                         }
@@ -5796,7 +5796,7 @@ impl H2FrameParser {
             this_ref.has_nonnative_backpressure = true;
             this_ref.send_preface_and_settings();
         }
-        Ok(this)
+        Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
 
     #[bun_jsc::host_fn(method)]

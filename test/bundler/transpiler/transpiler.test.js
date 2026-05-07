@@ -3878,5 +3878,14 @@ describe("Bun.Transpiler minify/DCE options", () => {
       expect(result).toContain("true");
       expect(result).not.toContain("!0");
     });
+
+    it("target: 'bun' + minifySyntax: false disables target-derived minification", () => {
+      // target: "bun" auto-enables minify_syntax via BundleOptions.fromApi().
+      // Explicit minifySyntax: false must override that.
+      const t = new Bun.Transpiler({ target: "bun", minifySyntax: false });
+      const result = t.transformSync("const x = true;");
+      expect(result).toContain("true");
+      expect(result).not.toContain("!0");
+    });
   });
 });

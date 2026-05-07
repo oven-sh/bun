@@ -39,8 +39,11 @@ pub const Config = struct {
 
     dead_code_elimination: bool = true,
     minify_whitespace: bool = false,
-    minify_identifiers: bool = false,
-    minify_syntax: bool = false,
+    // null = user didn't set it, defer to target-derived default from fromApi()
+    // (e.g. target: "bun" auto-enables minify_syntax). An explicit true/false
+    // from the user overrides.
+    minify_identifiers: ?bool = null,
+    minify_syntax: ?bool = null,
     no_macros: bool = false,
     repl_mode: bool = false,
 
@@ -719,10 +722,14 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     // REPL mode disables DCE to preserve expressions like `42`
     transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
     transpiler.options.minify_whitespace = config.minify_whitespace;
-    if (config.minify_syntax)
-        transpiler.options.minify_syntax = true;
-    if (config.minify_identifiers)
-        transpiler.options.minify_identifiers = true;
+    // Only write through when the user set the flag. This preserves the
+    // target-derived default from fromApi() (e.g. target: "bun" auto-enables
+    // minify_syntax) when unset, while letting an explicit `minifySyntax: false`
+    // override it.
+    if (config.minify_syntax) |flag|
+        transpiler.options.minify_syntax = flag;
+    if (config.minify_identifiers) |flag|
+        transpiler.options.minify_identifiers = flag;
 
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {

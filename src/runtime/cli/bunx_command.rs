@@ -1164,7 +1164,7 @@ impl BunxCommand {
                     Global::exit(exited.code as u32);
                 }
             }
-            SpawnStatus::Signaled(_) => {
+            SpawnStatus::Signaled(sig) => {
                 if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                     .get()
                     .unwrap_or(false)
@@ -1173,15 +1173,11 @@ impl BunxCommand {
                 }
 
                 // Zig: `.signaled => |signal| Global.raiseIgnoringPanicHandler(signal)` —
-                // always diverges. `signal_code()` range-checks 1..=31 because
-                // `bun_core::SignalCode` is exhaustive (Zig's is non-exhaustive `enum(u8)`);
-                // RT signals (>31) fall back to SIGTERM so this arm never falls through.
-                Global::raise_ignoring_panic_handler(
-                    spawn_result
-                        .status
-                        .signal_code()
-                        .unwrap_or(bun_core::SignalCode::SIGTERM),
-                );
+                // unconditionally noreturn. Zig's `SignalCode` is non-exhaustive
+                // `enum(u8)` so RT signals (>31) are valid payloads; forward the
+                // raw byte instead of lossy `signal_code()` so this arm always
+                // diverges with the *actual* signal.
+                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
             }
             SpawnStatus::Err(err) => {
                 Output::pretty_errorln(format_args!(

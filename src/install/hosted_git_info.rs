@@ -57,7 +57,7 @@ use bun_alloc::AllocError;
 use bun_core::StringBuilder;
 // MOVE_DOWN(b0): bun_jsc::URL → bun_url::whatwg::URL (WHATWG parser moves out of jsc).
 use bun_url::whatwg::URL as JscUrl;
-use bun_string::strings;
+use bun_string::{strings, OwnedString};
 use bun_url::PercentEncoding;
 use bstr::BStr;
 use enum_map::{enum_map, Enum, EnumMap};
@@ -279,8 +279,7 @@ impl HostedGitInfo {
             //
             // TODO(markovejnovic): Perhaps we can avoid this allocation...
             // This one seems quite easy to get rid of.
-            let concatenated =
-                strings::concat(&[b"github:", git_url]).map_err(|_| HostedGitInfoError::OutOfMemory)?;
+            let concatenated = bun_core::handle_oom(strings::concat(&[b"github:", git_url]));
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
         }

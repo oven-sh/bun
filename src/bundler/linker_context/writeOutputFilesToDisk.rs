@@ -139,13 +139,10 @@ pub fn write_output_files_to_disk(
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
         // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
-        // buffer after each chunk. Using a scopeguard for the per-iteration reset.
-        // TODO(port): borrowck — resetting through a captured &mut here may
-        // conflict with `code_allocator` borrow above. Phase B may need to
-        // restructure MaxHeapAllocator to use interior mutability.
-        let _reset_guard = scopeguard::guard((), |_| {
-            max_heap_allocator.reset();
-        });
+        // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
+        // guard that resets on drop and derefs to the allocator, so when Phase B
+        // wires up `code_allocator` it can borrow through `_code_allocator`.
+        let mut _code_allocator = max_heap_allocator.scope();
 
         let rel_path: &[u8] = chunk.final_rel_path;
         let rel_parent =

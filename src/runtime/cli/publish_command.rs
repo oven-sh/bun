@@ -473,16 +473,198 @@ impl PublishCommand {
         ));
         Output::flush();
 
-        // TODO(port): `PackageManager::CommandLineArguments::parse`,
-        // `PackageManager::init`, `Subcommand::Publish`, and the
-        // `log` / `original_package_json_path` / `options.do_` /
-        // `options.dry_run` fields are all unit-stubs in `bun_install`
-        // (gated behind `package_manager_real`, reconciler-6). The Zig
-        // body parses CLI args, initialises the package manager, then
-        // dispatches to `from_tarball_path` / `from_workspace` and
-        // `publish`; gated until upstream stubs widen.
-        let _ = ctx;
-        todo!("blocked_on: bun_install::PackageManager::{{init,CommandLineArguments,Subcommand::Publish,log,original_package_json_path,options.do_,options.dry_run}} (reconciler-6)")
+        let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
+
+        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
+            Ok(v) => v,
+            Err(err) => {
+                if !cli.silent {
+                    if err == bun_core::err!("MissingPackageJSON") {
+                        Output::err_generic("missing package.json, nothing to publish", ());
+                    }
+                    Output::err_generic("failed to initialize bun install: {}", (err.name(),));
+                }
+                Global::crash();
+            }
+        };
+        drop(original_cwd);
+        // SAFETY: `init` returns a process-lifetime singleton; reborrow `&mut`.
+        let manager: &mut PackageManager = unsafe { &mut *manager };
+        let manager_ptr: *mut PackageManager = manager;
+
+        if cli.positionals.len() > 1 {
+            let context = match Context::<false>::from_tarball_path(ctx, manager, &cli.positionals[1]) {
+                Ok(c) => c,
+                Err(err) => {
+                    match err {
+                        FromTarballError::OutOfMemory => bun_core::out_of_memory(),
+                        FromTarballError::MissingPackageName => {
+                            Output::err_generic("missing `name` string in package.json", ());
+                        }
+                        FromTarballError::MissingPackageVersion => {
+                            Output::err_generic("missing `version` string in package.json", ());
+                        }
+                        FromTarballError::InvalidPackageName | FromTarballError::InvalidPackageVersion => {
+                            Output::err_generic("package.json `name` and `version` fields must be non-empty strings", ());
+                        }
+                        FromTarballError::MissingPackageJSON => {
+                            Output::err_generic(
+                                "failed to find package.json in tarball '{}'",
+                                (bstr::BStr::new(&cli.positionals[1]),),
+                            );
+                        }
+                        FromTarballError::InvalidPackageJSON => {
+                            // SAFETY: `manager.log` is set once at init.
+                            let _ = unsafe { &mut *(*manager_ptr).log }.print(Output::error_writer() as *mut _);
+                            Output::err_generic("failed to parse tarball package.json", ());
+                        }
+                        FromTarballError::PrivatePackage => {
+                            Output::err_generic("attempted to publish a private package", ());
+                        }
+                        FromTarballError::RestrictedUnscopedPackage => {
+                            Output::err_generic("unable to restrict access to unscoped package", ());
+                        }
+                    }
+                    Global::crash();
+                }
+            };
+
+            if let Err(err) = Self::publish::<false>(&context) {
+                match err {
+                    PublishError::OutOfMemory => bun_core::out_of_memory(),
+                    PublishError::NeedAuth => {
+                        Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                        Global::crash();
+                    }
+                }
+            }
+
+            Output::prettyln(format_args!(
+                "\n<green> +<r> {}@{}{}",
+                bstr::BStr::new(&context.package_name),
+                bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
+                // SAFETY: `manager_ptr` is the same process-lifetime singleton.
+                if unsafe { &*manager_ptr }.options.dry_run { " (dry-run)" } else { "" },
+            ));
+
+            return Ok(());
+        }
+
+        let context = match Context::<true>::from_workspace(ctx, manager) {
+            Ok(c) => c,
+            Err(err) => {
+                use pack::PackError;
+                match err {
+                    PackError::OutOfMemory => bun_core::out_of_memory(),
+                    PackError::MissingPackageName => {
+                        Output::err_generic("missing `name` string in package.json", ());
+                    }
+                    PackError::MissingPackageVersion => {
+                        Output::err_generic("missing `version` string in package.json", ());
+                    }
+                    PackError::InvalidPackageName | PackError::InvalidPackageVersion => {
+                        Output::err_generic("package.json `name` and `version` fields must be non-empty strings", ());
+                    }
+                    PackError::MissingPackageJSON => {
+                        Output::err_generic(
+                            "failed to find package.json from: '{}'",
+                            (bstr::BStr::new(FileSystem::instance().top_level_dir),),
+                        );
+                    }
+                    PackError::RestrictedUnscopedPackage => {
+                        Output::err_generic("unable to restrict access to unscoped package", ());
+                    }
+                    PackError::PrivatePackage => {
+                        Output::err_generic("attempted to publish a private package", ());
+                    }
+                }
+                Global::crash();
+            }
+        };
+
+        // TODO: read this into memory
+        let _ = bun_sys::unlink(&context.abs_tarball_path);
+
+        if let Err(err) = Self::publish::<true>(&context) {
+            match err {
+                PublishError::OutOfMemory => bun_core::out_of_memory(),
+                PublishError::NeedAuth => {
+                    Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                    Global::crash();
+                }
+            }
+        }
+
+        Output::prettyln(format_args!(
+            "\n<green> +<r> {}@{}{}",
+            bstr::BStr::new(&context.package_name),
+            bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
+            // SAFETY: `manager_ptr` is the same process-lifetime singleton.
+            if unsafe { &*manager_ptr }.options.dry_run { " (dry-run)" } else { "" },
+        ));
+
+        // SAFETY: `manager_ptr` is the same process-lifetime singleton.
+        if unsafe { &*manager_ptr }.options.do_.run_scripts {
+            let abs_workspace_path: Box<[u8]> = strings::without_trailing_slash(
+                strings::without_suffix_comptime(
+                    // SAFETY: `manager_ptr` is the same process-lifetime singleton.
+                    unsafe { &*manager_ptr }.original_package_json_path.as_bytes(),
+                    b"package.json",
+                ),
+            ).into();
+            let script_env = context.script_env.expect("DIRECTORY_PUBLISH=true sets script_env");
+            let _ = script_env.map.put(b"npm_command", b"publish");
+
+            // PORT NOTE: reshaped for borrowck — `command_ctx: &mut ContextData`
+            // is held by `context`; `run_package_script_foreground` needs
+            // `&mut ContextData` too. Re-derive from the raw pointer (mirrors
+            // Zig's freely-aliased `Command.Context`).
+            let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
+
+            if let Some(publish_script) = &context.publish_script {
+                if let Err(e) = Run::run_package_script_foreground(
+                    // SAFETY: see above.
+                    unsafe { &mut *cmd_ctx_ptr },
+                    publish_script,
+                    b"publish",
+                    &abs_workspace_path,
+                    script_env,
+                    &[],
+                    context.manager.options.log_level == LogLevel::Silent,
+                    // SAFETY: see above.
+                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                ) {
+                    if e == err!("MissingShell") {
+                        Output::err_generic("failed to find shell executable to run publish script", ());
+                        Global::crash();
+                    }
+                    return Err(e);
+                }
+            }
+
+            if let Some(postpublish_script) = &context.postpublish_script {
+                if let Err(e) = Run::run_package_script_foreground(
+                    // SAFETY: see above.
+                    unsafe { &mut *cmd_ctx_ptr },
+                    postpublish_script,
+                    b"postpublish",
+                    &abs_workspace_path,
+                    script_env,
+                    &[],
+                    context.manager.options.log_level == LogLevel::Silent,
+                    // SAFETY: see above.
+                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                ) {
+                    if e == err!("MissingShell") {
+                        Output::err_generic("failed to find shell executable to run postpublish script", ());
+                        Global::crash();
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn check_package_version_exists(
@@ -590,7 +772,7 @@ impl PublishCommand {
             return Err(PublishError::NeedAuth);
         }
 
-        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish();
+        let tolerate_republish = ctx.manager.options.publish_config.tolerate_republish;
         if tolerate_republish {
             let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
@@ -611,12 +793,12 @@ impl PublishCommand {
         // continues from `printSummary`
         Output::pretty(format_args!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
-            bstr::BStr::new(if !ctx.manager.options.publish_config.tag().is_empty() {
-                ctx.manager.options.publish_config.tag()
+            bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
+                ctx.manager.options.publish_config.tag
             } else {
                 b"latest"
             }),
-            if let Some(access) = ctx.manager.options.publish_config.access() {
+            if let Some(access) = ctx.manager.options.publish_config.access {
                 <&'static str>::from(access)
             } else {
                 "default"
@@ -625,7 +807,7 @@ impl PublishCommand {
         ));
 
         // dry-run stops here
-        if ctx.manager.options.dry_run() {
+        if ctx.manager.options.dry_run {
             return Ok(());
         }
 
@@ -641,8 +823,8 @@ impl PublishCommand {
             &mut print_buf,
             registry,
             Some(publish_req_body.len()),
-            if !ctx.manager.options.publish_config.otp().is_empty() {
-                Some(ctx.manager.options.publish_config.otp())
+            if !ctx.manager.options.publish_config.otp.is_empty() {
+                Some(ctx.manager.options.publish_config.otp)
             } else {
                 None
             },
@@ -838,9 +1020,16 @@ impl PublishCommand {
             }
         }
 
-        // TODO(port): Zig used std.process.Child here; bun_spawn::spawn_sync should be substituted in Phase B
-        let _ = (open::OPENER, auth_url.as_bytes());
-        todo!("blocked_on: bun_spawn::spawn_sync (std.process.Child) for browser open");
+        // PORT NOTE: Zig used `std.process.Child.init(&.{Open.opener, auth_url})
+        // .spawnAndWait()`. Route through `bun.spawnSync` (PORTING.md §Spawning).
+        let _ = spawn_sync::spawn(&spawn_sync::Options {
+            argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
+            envp: None,
+            stdin: spawn_sync::SyncStdio::Inherit,
+            stdout: spawn_sync::SyncStdio::Inherit,
+            stderr: spawn_sync::SyncStdio::Inherit,
+            ..Default::default()
+        });
     }
 
     fn get_otp<const DIRECTORY_PUBLISH: bool>(
@@ -1142,7 +1331,7 @@ impl PublishCommand {
 
         {
             let workspace_root = match bun_sys::open_a(
-                strings::without_suffix_comptime(manager.original_package_json_path(), b"package.json"),
+                strings::without_suffix_comptime(manager.original_package_json_path.as_bytes(), b"package.json"),
                 bun_sys::O::DIRECTORY,
                 0,
             ) {
@@ -1563,8 +1752,8 @@ impl PublishCommand {
     fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<Box<[u8]>, AllocError> {
-        let tag: &[u8] = if !ctx.manager.options.publish_config.tag().is_empty() {
-            ctx.manager.options.publish_config.tag()
+        let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
+            ctx.manager.options.publish_config.tag
         } else {
             b"latest"
         };
@@ -1603,7 +1792,7 @@ impl PublishCommand {
             ).ok();
         }
 
-        if let Some(access) = ctx.manager.options.publish_config.access() {
+        if let Some(access) = ctx.manager.options.publish_config.access {
             write!(&mut buf, ",\"access\":\"{}\"", <&'static str>::from(access)).ok();
         } else {
             buf.extend_from_slice(b",\"access\":null");

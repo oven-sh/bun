@@ -223,6 +223,40 @@ pub type Context<'a> = &'a mut ContextData;
 // the borrow lifetime above may need to become `*mut ContextData` at call sites
 // that re-enter the global ctx (Phase B).
 
+// ──────────────────────────────────────────────────────────────────────────
+// Process-global CLI context handle.
+//
+// `ContextData` is owned by the CLI crate (storage lives in
+// `bun_runtime::cli::command::CONTEXT_DATA`), but lower-tier crates such as
+// `bun_jsc` need read access to parsed runtime options (e.g.
+// `runtime_options.console_depth`) without taking a forward dep on
+// `bun_runtime`. The CLI publishes its pointer here via `set_global` during
+// single-threaded startup; readers use `try_get`.
+static GLOBAL_CLI_CTX: core::sync::atomic::AtomicPtr<ContextData> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Publish the process-global CLI context. Called once from
+/// `bun_runtime::cli::command::create_context_data` during single-threaded
+/// startup.
+///
+/// # Safety
+/// `ctx` must outlive the process (it points into a `static`).
+#[inline]
+pub unsafe fn set_global(ctx: *mut ContextData) {
+    GLOBAL_CLI_CTX.store(ctx, core::sync::atomic::Ordering::Release);
+}
+
+/// Read-only handle to the process-global CLI context, or `None` if the CLI
+/// has not been initialized (embedder/tests). Prefer this over
+/// `bun_runtime::cli::Command::get` from crates below `bun_runtime`.
+#[inline]
+pub fn try_get<'a>() -> Option<&'a ContextData> {
+    let p = GLOBAL_CLI_CTX.load(core::sync::atomic::Ordering::Acquire);
+    // SAFETY: pointer was published from a process-lifetime `static` in
+    // single-threaded startup; treated as read-only here.
+    unsafe { p.as_ref() }
+}
+
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
     pub dump_limits: bool,

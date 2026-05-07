@@ -308,8 +308,8 @@ pub mod bun_object {
     export_callbacks! {
         BunObject_callback_allocUnsafe => super::alloc_unsafe,
         BunObject_callback_build => super::static_adapters::js_bundler_build,
-        // phase-c: bun_css feature-gated off the bun_bin path; Bun.color()
-        // export only emitted when the `css` feature is enabled.
+        // `bun_css` is feature-gated off the default `bun_bin` dep graph;
+        // Bun.color() falls back to a throw stub when the feature is absent.
         #[cfg(feature = "css")]
         BunObject_callback_color => bun_css::CssColor::js_function_color,
         #[cfg(not(feature = "css"))]
@@ -1639,10 +1639,14 @@ pub extern "C" fn Bun__escapeHTML8(
                 return out;
             }
 
-            // SAFETY: ownership of `escaped_html` transfers to JSC's
-            // external-string finalizer (mimalloc-backed); do not drop here.
-            let leaked: &'static [u8] = Box::leak(escaped_html);
-            ZigString::init(leaked).to_external_value(global_object)
+            // Ownership of the buffer transfers to JSC's external-string
+            // finalizer (mimalloc-backed) via `to_external_value`; release
+            // the Box without dropping so JSC frees it on GC.
+            let raw: *mut [u8] = Box::into_raw(escaped_html);
+            // SAFETY: `raw` is a freshly-leaked Box<[u8]> allocation, valid for
+            // the duration of this call; the resulting JSC external string
+            // adopts and later frees it.
+            ZigString::init(unsafe { &*raw }).to_external_value(global_object)
         }
     }
 }

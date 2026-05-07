@@ -1600,11 +1600,12 @@ impl<'a> PackageInstaller<'a> {
                             )
                         };
 
-                        if result.is_fail()
-                            && (result.failure().err == bun_core::err!("ENOENT")
-                                || result.failure().err == bun_core::err!("FileNotFound"))
-                        {
-                            break 'result PackageInstall::Result::SUCCESS;
+                        if let package_install::InstallResult::Failure(f) = &result {
+                            if f.err == bun_core::err!("ENOENT")
+                                || f.err == bun_core::err!("FileNotFound")
+                            {
+                                break 'result package_install::InstallResult::Success;
+                            }
                         }
 
                         break 'result result;
@@ -1620,7 +1621,7 @@ impl<'a> PackageInstaller<'a> {
             };
 
             match install_result {
-                PackageInstall::Result::Success => {
+                package_install::InstallResult::Success => {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                     self.summary.success += (!is_duplicate) as u32;
                     self.successfully_installed.set(package_id as usize);
@@ -1659,10 +1660,12 @@ impl<'a> PackageInstaller<'a> {
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
-                        let mut folder_path = AbsPath::from(self.node_modules.path.as_slice());
+                        let mut folder_path =
+                            AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                         // PORT NOTE: `defer folder_path.deinit()` — AbsPath impls Drop.
                         folder_path
-                            .append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()));
+                            .append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()))
+                            .unwrap_or_oom();
 
                         'enqueue_lifecycle_scripts: {
                             if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(
@@ -1700,7 +1703,7 @@ impl<'a> PackageInstaller<'a> {
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep.behavior.optional,
+                                dep.behavior.is_optional(),
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -1737,10 +1740,13 @@ impl<'a> PackageInstaller<'a> {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                                 // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                                 let mut folder_path =
-                                    AbsPath::from(self.node_modules.path.as_slice());
-                                folder_path.append(
-                                    alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
-                                );
+                                    AbsPath::from(self.node_modules.path.as_slice())
+                                        .unwrap_or_oom();
+                                folder_path
+                                    .append(
+                                        alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                    )
+                                    .unwrap_or_oom();
 
                                 let count = self.get_installed_package_scripts_count(
                                     alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
@@ -1783,7 +1789,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                     );
                 }
-                PackageInstall::Result::Failure(cause) => {
+                package_install::InstallResult::Failure(cause) => {
                     if cfg!(debug_assertions) {
                         debug_assert!(
                             !cause.is_package_missing_from_cache()
@@ -1841,12 +1847,12 @@ impl<'a> PackageInstaller<'a> {
                                             ),
                                         );
                                         if cfg!(debug_assertions) {
-                                            Output::err(err, format_args!("Failed to stat node_modules"));
+                                            Output::err(err, "Failed to stat node_modules", ());
                                         }
                                         Global::exit(1);
                                     }
                                 };
-                                let stat = match bun_sys::fstat(Fd::from_std_dir(dir)).unwrap() {
+                                let stat = match bun_sys::fstat(Fd::from_std_dir(&dir)) {
                                     Ok(s) => s,
                                     Err(err) => {
                                         Output::err_tag(
@@ -1864,7 +1870,7 @@ impl<'a> PackageInstaller<'a> {
                                             ),
                                         );
                                         if cfg!(debug_assertions) {
-                                            Output::err(err, format_args!("Failed to stat node_modules"));
+                                            Output::err(err, "Failed to stat node_modules", ());
                                         }
                                         Global::exit(1);
                                     }
@@ -1907,12 +1913,12 @@ impl<'a> PackageInstaller<'a> {
                     } else {
                         Output::err(
                             cause.err,
-                            format_args!(
-                                "failed {} for package <b>{}<r>",
-                                install_result.failure().step.name(),
+                            "failed {} for package <b>{}<r>",
+                            (
+                                cause.step.name(),
                                 bstr::BStr::new(
                                     self.names[package_id as usize]
-                                        .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                        .slice(self.lockfile.buffers.string_bytes.as_slice()),
                                 ),
                             ),
                         );
@@ -1966,8 +1972,11 @@ impl<'a> PackageInstaller<'a> {
             };
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
-                let mut folder_path = AbsPath::from(self.node_modules.path.as_slice());
-                folder_path.append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()));
+                let mut folder_path =
+                    AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                folder_path
+                    .append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()))
+                    .unwrap_or_oom();
 
                 'enqueue_lifecycle_scripts: {
                     if self.manager.postinstall_optimizer.should_ignore_lifecycle_scripts(

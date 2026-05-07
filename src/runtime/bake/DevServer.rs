@@ -850,27 +850,30 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    dev.server_transpiler.options.dev_server = dev_ptr as *const ();
-    dev.client_transpiler.options.dev_server = dev_ptr as *const ();
-
-    dev.server_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
-    dev.client_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
+    // `bun_resolver::AnyResolveWatcher` is now a re-export of
+    // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
+    // vtable flows directly into the resolver without conversion.
+    let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
+    dev.server_transpiler_mut().options.dev_server = dev_ptr as *const ();
+    dev.server_transpiler_mut().resolver.watcher = Some(resolve_watcher);
+    dev.client_transpiler_mut().options.dev_server = dev_ptr as *const ();
+    dev.client_transpiler_mut().resolver.watcher = Some(resolve_watcher);
 
     if separate_ssr_graph {
-        dev.ssr_transpiler.options.dev_server = dev_ptr as *const ();
-        dev.ssr_transpiler.resolver.watcher = Some(convert_resolve_watcher(dev.bun_watcher.get_resolve_watcher()));
+        dev.ssr_transpiler_mut().options.dev_server = dev_ptr as *const ();
+        dev.ssr_transpiler_mut().resolver.watcher = Some(resolve_watcher);
     }
 
-    debug_assert!(dev.server_transpiler.resolver.opts.target != bundler::options::Target::Browser);
-    debug_assert!(dev.client_transpiler.resolver.opts.target == bundler::options::Target::Browser);
+    debug_assert!(dev.server_transpiler().resolver.opts.target != bundler::options::Target::Browser);
+    debug_assert!(dev.client_transpiler().resolver.opts.target == bundler::options::Target::Browser);
 
     // PORT NOTE: reborrow `framework` and the two resolvers via `dev_ptr` so
     // borrowck doesn't see three overlapping `&mut dev`.
     // SAFETY: `dev_ptr` is the live `Box<DevServer>` heap address; the three
     // fields are disjoint.
     if let Err(_) = unsafe { &mut (*dev_ptr).framework }.resolve(
-        unsafe { &mut (*dev_ptr).server_transpiler.resolver },
-        unsafe { &mut (*dev_ptr).client_transpiler.resolver },
+        unsafe { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
+        unsafe { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
         options.arena,
     ) {
         if dev.framework.is_built_in_react {
@@ -1006,7 +1009,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                     &[&fsr.root],
                 );
             let Some(entry) = dev
-                .server_transpiler
+                .server_transpiler_mut()
                 .resolver
                 .read_dir_info_ignore_error(joined_root)
             else {
@@ -2888,18 +2891,18 @@ impl DevServer {
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
         let self_ptr = self as *mut Self;
-        let mut bv2: Box<BundleV2<'_>> = BundleV2::init(
+        let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { &mut (*self_ptr).server_transpiler },
+            unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
             Some(bundler::BakeOptions {
                 framework: framework_as_bundler_view(&self.framework),
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.
                 client_transpiler: unsafe {
-                    ::core::ptr::NonNull::from(&mut (*self_ptr).client_transpiler)
+                    ::core::ptr::NonNull::from((*self_ptr).client_transpiler.assume_init_mut())
                 },
                 ssr_transpiler: unsafe {
-                    ::core::ptr::NonNull::from(&mut (*self_ptr).ssr_transpiler)
+                    ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
                 },
                 plugins: self.bundler_options.plugin.map(|p| p.cast()),
             }),
@@ -3545,7 +3548,7 @@ pub fn finalize_bundle(
             None => 'brk: {
                 // The source map is `null` if empty
                 debug_assert!(matches!(compile_result, bundler::CompileResult::Javascript { result: bun_js_printer::PrintResult::Result(_), .. }));
-                debug_assert!(dev.server_transpiler.options.source_map != bundler::options::SourceMapOption::None);
+                debug_assert!(dev.server_transpiler().options.source_map != bundler::options::SourceMapOption::None);
                 debug_assert!(!part_range.source_index.is_runtime());
                 break 'brk bun_sourcemap::Chunk::init_empty();
             }

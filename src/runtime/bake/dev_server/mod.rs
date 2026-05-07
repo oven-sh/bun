@@ -1886,7 +1886,254 @@ impl DevServer {
         rel
     }
 }
+/// `DirectoryWatchStore.insert` error set — DirectoryWatchStore.zig:101.
+#[derive(thiserror::Error, Debug)]
+enum DirectoryWatchInsertError {
+    #[error("Ignore")]
+    Ignore,
+    #[error("OutOfMemory")]
+    OutOfMemory,
+}
+impl From<bun_alloc::AllocError> for DirectoryWatchInsertError {
+    fn from(_: bun_alloc::AllocError) -> Self {
+        DirectoryWatchInsertError::OutOfMemory
+    }
+}
+
 impl DirectoryWatchStore {
+    /// `DirectoryWatchStore.trackResolutionFailure` — DirectoryWatchStore.zig:28.
+    pub fn track_resolution_failure(
+        &mut self,
+        import_source: &[u8],
+        specifier: &[u8],
+        renderer: Graph,
+        loader: bun_options_types::Loader,
+    ) -> Result<(), bun_alloc::AllocError> {
+        use bun_options_types::Loader;
+        // When it does not resolve to a file path, there is nothing to track.
+        if specifier.is_empty() {
+            return Ok(());
+        }
+        if !bun_paths::is_absolute(import_source) {
+            return Ok(());
+        }
+
+        match loader {
+            Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
+                if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+                    return Ok(());
+                }
+            }
+            // Imports in CSS can resolve to relative files without './'
+            // Imports in HTML can resolve to project-relative paths by
+            // prefixing with '/', but that is done in HTMLScanner.
+            Loader::Css | Loader::Html => {}
+            // Multiple parts of DevServer rely on the fact that these
+            // loaders do not depend on importing other files.
+            _ => debug_assert!(false),
+        }
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+            &mut buf.0,
+            &[specifier],
+        );
+        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+
+        // The `import_source` parameter is not a stable string. Since the
+        // import source will be added to IncrementalGraph anyways, this is a
+        // great place to share memory.
+        // SAFETY: owner() recovers `*mut DevServer`; `client_graph`/`server_graph`/
+        // `graph_safety_lock` are disjoint from `directory_watchers` so this does
+        // not alias `&mut self`.
+        let dev = self.owner();
+        unsafe { (*dev).graph_safety_lock.lock() };
+        let lock_ptr: *mut ThreadLock = unsafe { &mut (*dev).graph_safety_lock };
+        // SAFETY: `lock_ptr` points into the heap-allocated DevServer.
+        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+        let owned_file_path: *const [u8] = match renderer {
+            Graph::Client => unsafe { &mut (*dev).client_graph }
+                .insert_empty(import_source, FileKind::Unknown)?
+                .key,
+            Graph::Server | Graph::Ssr => unsafe { &mut (*dev).server_graph }
+                .insert_empty(import_source, FileKind::Unknown)?
+                .key,
+        };
+
+        match self.insert(dir, owned_file_path, specifier) {
+            Ok(()) => Ok(()),
+            Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
+            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
+        }
+    }
+
+    /// `DirectoryWatchStore.insert` — DirectoryWatchStore.zig:101.
+    /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
+    /// `specifier` is cloned.
+    fn insert(
+        &mut self,
+        dir_name_to_watch: &[u8],
+        file_path: *const [u8],
+        specifier: &[u8],
+    ) -> Result<(), DirectoryWatchInsertError> {
+        debug_assert!(!specifier.is_empty());
+        // TODO: watch the parent dir too.
+        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
+        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        let dev: *mut DevServer = self.owner();
+
+        bun_core::scoped_log!(
+            DevServer,
+            "DirectoryWatchStore.insert({}, {}, {})",
+            bun_core::fmt::quote(dir_name_to_watch),
+            // SAFETY: file_path is a live IncrementalGraph key slice.
+            bun_core::fmt::quote(unsafe { &*file_path }),
+            bun_core::fmt::quote(specifier),
+        );
+
+        if self.dependencies_free_list.is_empty() {
+            // PERF(port): was ensureUnusedCapacity — profile in Phase B
+            self.dependencies.reserve(1);
+        }
+
+        // PORT NOTE: reshaped for borrowck — capture gop scalars before
+        // calling self methods that need &mut self.
+        let gop = self
+            .watches
+            .get_or_put(bun_str::strings::paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+
+        let specifier_cloned: Box<[u8]> = if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            Box::<[u8]>::from(specifier)
+        } else {
+            let mut v = Vec::with_capacity(2 + specifier.len());
+            v.extend_from_slice(b"./");
+            v.extend_from_slice(specifier);
+            v.into_boxed_slice()
+        };
+        // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
+
+        if found_existing {
+            let prev_first = Some(self.watches.values()[gop_index].first_dep);
+            let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
+                next: prev_first,
+                source_file_path: file_path,
+                specifier: specifier_cloned,
+            });
+            self.watches.values_mut()[gop_index].first_dep = dep;
+            return Ok(());
+        }
+
+        // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
+        // map via raw ptr so it doesn't conflict with `&mut self` below.
+        let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> = &mut self.watches;
+        let watches_guard = scopeguard::guard((), move |_| {
+            // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
+            // the error path no other borrow of `self.watches` is outstanding.
+            let _ = unsafe { (*watches_ptr).swap_remove_at(gop_index) };
+        });
+
+        // Try to use an existing open directory handle
+        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
+        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
+        let cache_fd: Option<bun_sys::Fd> = match unsafe { (*dev).server_transpiler.assume_init_mut() }
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            Ok(Some(cache)) => {
+                // SAFETY: read_dir_info returns a live *mut DirInfo on Some.
+                let fd = unsafe { (*cache).get_file_descriptor() };
+                if fd.is_valid() { Some(fd) } else { None }
+            }
+            Ok(None) | Err(_) => None,
+        };
+
+        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+            if let Some(fd) = cache_fd {
+                (fd, false)
+            } else {
+                // std.posix.toPosixPath — build a NUL-terminated path buffer.
+                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
+                }
+                let mut zbuf = bun_paths::path_buffer_pool::get();
+                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
+                match bun_sys::open(zpath, bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS, 0) {
+                    bun_sys::Maybe::Ok(fd) => (fd, true),
+                    bun_sys::Maybe::Err(err) => match err.get_errno() {
+                        // If this directory doesn't exist, a watcher should be placed
+                        // on the parent directory. Then, if this directory is later
+                        // created, the watcher can be properly initialized.
+                        bun_sys::E::NOENT => {
+                            // TODO: implement that. for now it ignores (BUN-10968)
+                            return Err(DirectoryWatchInsertError::Ignore);
+                        }
+                        bun_sys::E::NOTDIR => return Err(DirectoryWatchInsertError::Ignore),
+                        _ => bun_core::todo_panic!("log watcher error"),
+                    },
+                }
+            }
+        } else {
+            (bun_sys::Fd::INVALID, false)
+        };
+        let fd_guard = scopeguard::guard(fd, move |fd| {
+            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
+                fd.close();
+            }
+        });
+
+        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
+        // errdefer free(dir_name) — handled by Drop.
+
+        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
+        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
+        // boxed the trimmed key on insert above, so the reassignment is a
+        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
+
+        // SAFETY: `dev` is a valid *mut DevServer; `bun_watcher` is a disjoint
+        // field from `directory_watchers` so this does not alias `&mut self`.
+        let watch_index = match unsafe { &mut (*dev).bun_watcher }
+            .add_directory::<false>(fd, &dir_name, bun_watcher::Watcher::get_hash(&dir_name))
+        {
+            bun_sys::Maybe::Err(_) => return Err(DirectoryWatchInsertError::Ignore),
+            bun_sys::Maybe::Ok(id) => id,
+        };
+
+        // Disarm errdefer guards: success path.
+        let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
+        scopeguard::ScopeGuard::into_inner(watches_guard);
+
+        let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
+            next: None,
+            source_file_path: file_path,
+            specifier: specifier_cloned,
+        });
+        self.watches.values_mut()[gop_index] = directory_watch_store::Entry {
+            dir: fd,
+            dir_fd_owned: owned_fd,
+            first_dep: dep,
+            watch_index,
+        };
+        let _ = dir_name; // keep alive past add_directory; dropped here
+        Ok(())
+    }
+
+    /// Appends a dependency into the first free slot, returning its index.
+    /// Capacity for one element must already be ensured.
+    fn append_dep_assume_capacity(&mut self, dep: directory_watch_store::Dep) -> u32 {
+        if let Some(index) = self.dependencies_free_list.pop() {
+            self.dependencies[index as usize] = dep;
+            index
+        } else {
+            let index = u32::try_from(self.dependencies.len()).unwrap();
+            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            self.dependencies.push(dep);
+            index
+        }
+    }
+
     /// `DirectoryWatchStore.removeDependenciesForFile` — DirectoryWatchStore.zig:233.
     /// Removes all dependencies whose `source_file_path` is the exact slice
     /// `file_path`, compared by *pointer identity* since the slice is shared

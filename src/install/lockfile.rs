@@ -564,14 +564,11 @@ impl Lockfile {
 
                             if ATTEMPT_LOADING_FROM_OTHER_LOCKFILE {
                                 if let Some(pm) = manager {
-                                    // TODO(port): `migration::detect_and_load_other_lockfile`
-                                    // is currently typed against the stub `crate::lockfile::
-                                    // Lockfile`/`LoadResult`. Once the stub module is retired
-                                    // (reconciler-6) this `todo!()` collapses to a direct call.
-                                    let _ = (dir, pm, log);
-                                    return todo!(
-                                        "blocked_on: migration::detect_and_load_other_lockfile \
-                                         retyping to lockfile_real::Lockfile (reconciler-6)"
+                                    // Zig assigns `lockfile_format = .text` on `.ok` here,
+                                    // but the local is dead past `return migrate_result` —
+                                    // the format is carried inside the `LoadResult` itself.
+                                    return migration::detect_and_load_other_lockfile(
+                                        self, dir, pm, log,
                                     );
                                 }
                             }

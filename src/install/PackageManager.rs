@@ -1704,10 +1704,16 @@ pub fn init(
     };
 
     env.load_process()?;
-    // TODO(port): blocked_on bun_sys::fs::FsVTable::read_directory — `env.load`
-    // takes the resolver-tier `*DirEntry` to discover `.env*` files; the opaque
-    // handle cannot be materialized here yet (see `entries_option` above).
-    let _ = (&entries_option, dot_env::Mode::Production);
+    // Zig: `try env.load(entries_option.entries, &[_][]u8{}, .production, false)`
+    // (PackageManager.zig:794). Reborrow the BSSMap-owned `*DirEntry` for the
+    // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
+    // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
+    env.load(
+        unsafe { &mut *(entries_option as *mut fs::DirEntry) },
+        &[],
+        dot_env::DotEnvFileSuffix::Production,
+        false,
+    )?;
 
     initialize_store();
 

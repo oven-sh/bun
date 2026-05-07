@@ -505,10 +505,12 @@ impl DevServer {
     /// DevServer.zig `respondForHTMLBundle`.
     pub fn respond_for_html_bundle(
         &mut self,
-        route_bundle_index: route_bundle::Index,
+        html: &mut crate::server::html_bundle::HTMLBundleRoute,
         _req: &mut bun_uws_sys::Request,
         resp: bun_uws::AnyResponse,
-    ) {
+    ) -> Result<(), bun_alloc::AllocError> {
+        let route_bundle_index =
+            self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
         let rb = &self.route_bundles[route_bundle_index.get() as usize];
         // DevServer.zig:1091-1186 `ensureRouteIsBundled` — distinct handling
         // per state; transitions `server_state` so subsequent requests don't

@@ -1925,19 +1925,22 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // PORT NOTE: `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
-            // TODO(port): Zig has `buffer[proxy_.href.len..]` which looks like a bug
-            // (should be `buffer[result.url.len..]`). Preserved verbatim for Phase B review.
-            buffer[proxy_.href.len()..].copy_from_slice(proxy_.href);
+            // PORT NOTE: upstream Zig (fetch.zig:1373) has `buffer[proxy_.href.len..]`
+            // which is an off-by-one typo — it only happens to not crash because
+            // `bun.copy` debug-asserts `dest.len >= src.len` rather than equality.
+            // `copy_from_slice` requires exact length, so we use the correct
+            // `result.url.len()` offset (the obvious upstream fix).
+            buffer[result.url.len()..].copy_from_slice(proxy_.href);
             url_proxy_buffer = buffer;
 
-            url = ZigURL::parse(&url_proxy_buffer[0..result.url.len()]);
-            proxy = Some(ZigURL::parse(&url_proxy_buffer[result.url.len()..]));
+            url = parse_url_detached!(&url_proxy_buffer[0..result.url.len()]);
+            proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
             drop(old_buffer);
         } else {
             // replace headers and url of the request
             // PORT NOTE: allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
             url_proxy_buffer = core::mem::take(&mut result.url).into();
-            url = ZigURL::parse(&url_proxy_buffer);
+            url = parse_url_detached!(&url_proxy_buffer[..]);
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 

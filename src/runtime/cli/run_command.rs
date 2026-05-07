@@ -89,50 +89,11 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     unsafe { (*(&raw const ARENA)).assume_init_ref() }
 }
 
-/// Inlined from `shell_body.rs` (`SPECIAL_CHARS` / `needs_escape_utf8_ascii_latin1`
-/// / `escape_8bit`) so passthrough-arg escaping is never lossy while the
-/// shell crate is ``-gated. Kept byte-identical to the spec
-/// (run_command.zig:233-239 → shell.zig escape8Bit).
-mod shell_escape_inline {
-    const SPECIAL_JS_CHAR: u8 = 8;
-    const SPECIAL_CHARS: [u8; 34] = [
-        b'~', b'[', b']', b'#', b';', b'\n', b'*', b'{', b',', b'}', b'`', b'$', b'=', b'(', b')',
-        b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'|', b'>', b'<', b'&', b'\'',
-        b'"', b' ', b'\\', SPECIAL_JS_CHAR,
-    ];
-    const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
-
-    pub(super) fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
-        for &c in str {
-            for &sc in &SPECIAL_CHARS {
-                if c == sc {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// works for utf-8, latin-1, and ascii
-    pub(super) fn escape_8bit(str: &[u8], outbuf: &mut Vec<u8>, add_quotes: bool) {
-        outbuf.reserve(str.len());
-        if add_quotes {
-            outbuf.push(b'"');
-        }
-        'outer: for &c in str {
-            for &spc in &BACKSLASHABLE_CHARS {
-                if spc == c {
-                    outbuf.extend_from_slice(&[b'\\', c]);
-                    continue 'outer;
-                }
-            }
-            outbuf.push(c);
-        }
-        if add_quotes {
-            outbuf.push(b'"');
-        }
-    }
-}
+// Passthrough-arg shell escaping (run_command.zig:233-239 → shell.zig
+// escape8Bit). The escape tables + helpers are the lower-tier
+// `bun_shell_parser` crate's canonical copy — import them so future fixes to
+// the shell escaper cannot silently diverge.
+use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
 pub struct NpmArgs;
 impl NpmArgs {

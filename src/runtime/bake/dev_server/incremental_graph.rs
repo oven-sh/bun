@@ -25,11 +25,10 @@ use crate::bake::dev_server_body::{CachedFileIndex, HotUpdateContext};
 ///
 /// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`
 /// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
-/// spec. A default of `Server` is provided so the many call sites that have not
-/// yet been side-annotated continue to resolve while the port catches up.
+/// spec.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct FileIndex<const SIDE: bake::Side = { bake::Side::Server }>(pub u32);
+pub struct FileIndex<const SIDE: bake::Side>(pub u32);
 impl<const SIDE: bake::Side> FileIndex<SIDE> {
     #[inline] pub const fn init(v: u32) -> Self { Self(v) }
     #[inline] pub const fn get(self) -> u32 { self.0 }
@@ -38,21 +37,8 @@ impl<const SIDE: bake::Side> FileIndex<SIDE> {
 pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
 pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
-/// Side-erased `FileIndex` kept so existing `incremental_graph::BodyFileIndex`
-/// call sites (and the `CachedFileIndex: From<Option<_>>` impl in
-/// `DevServer.rs`) resolve. Same `#[repr(transparent)] u32` wire shape as
-/// `FileIndex<SIDE>` but a distinct nominal type so the two `From` impls
-/// don't overlap.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct BodyFileIndex(pub u32);
-impl BodyFileIndex {
-    #[inline] pub const fn init(v: u32) -> Self { Self(v) }
-    #[inline] pub const fn get(self) -> u32 { self.0 }
-}
-
 /// Return shape for `IncrementalGraph::insert_empty`.
-pub struct InsertEmptyResult<const SIDE: bake::Side = { bake::Side::Server }> {
+pub struct InsertEmptyResult<const SIDE: bake::Side> {
     pub index: FileIndex<SIDE>,
     /// Borrow of the interned key in `bundled_files` (raw fat ptr to avoid a
     /// lifetime parameter; callers compare it by pointer identity).
@@ -74,11 +60,11 @@ impl EdgeIndex {
 /// is implemented using an array of `Edge` objects that act as linked-list
 /// nodes; each file stores the first import and dependency.
 #[derive(Copy, Clone)]
-pub struct Edge {
+pub struct Edge<const SIDE: bake::Side> {
     /// The file with the import statement.
-    pub dependency: FileIndex,
+    pub dependency: FileIndex<SIDE>,
     /// The file the import statement references.
-    pub imported: FileIndex,
+    pub imported: FileIndex<SIDE>,
     /// Next edge in the "imports" linked list for the `dependency` file.
     pub next_import: Option<EdgeIndex>,
     /// Next edge in the "dependencies" linked list for the `imported` file.
@@ -181,7 +167,7 @@ impl Default for File {
 /// `IncrementalGraph(.server).CurrentChunkSourceMapData`
 /// (IncrementalGraph.zig:305).
 pub struct CurrentChunkSourceMapData {
-    pub file_index: FileIndex,
+    pub file_index: ServerFileIndex,
     pub source_map: packed_map::Shared,
 }
 

@@ -1251,23 +1251,17 @@ impl DevServer<'_> {
         // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
         // function pointer with the handler baked in.
         macro_rules! route {
-            ($method:ident, $pattern:expr, $handler:path) => {{
-                app.$method(
-                    $pattern,
-                    Some(dev_route_tramp::<SSL, { dev_handler_id($handler) }>),
-                    dev,
-                );
+            ($method:ident, $pattern:expr, $id:expr) => {{
+                app.$method($pattern, Some(dev_route_tramp::<SSL, { $id }>), dev);
             }};
         }
 
-        route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(), on_js_request);
-        route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(), on_asset_request);
-        route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(), on_src_request);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(),
-            on_report_error_request);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(),
-            on_unref_source_map_request);
-        route!(any, INTERNAL_PREFIX.as_bytes(), on_not_found);
+        route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route").as_bytes(), DevHandlerId::JsRequest);
+        route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset").as_bytes(), DevHandlerId::AssetRequest);
+        route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*").as_bytes(), DevHandlerId::SrcRequest);
+        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error").as_bytes(), DevHandlerId::ReportError);
+        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref").as_bytes(), DevHandlerId::UnrefSourceMap);
+        route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         app.ws(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
@@ -1279,15 +1273,15 @@ impl DevServer<'_> {
         #[cfg(feature = "bake_debugging_features")]
         {
             route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes(),
-                on_incremental_visualizer);
+                DevHandlerId::IncrementalVisualizer);
             route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes(),
-                on_memory_visualizer);
+                DevHandlerId::MemoryVisualizer);
         }
 
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
         if !self.framework.file_system_router_types.is_empty() {
-            route!(any, b"/*", on_request);
+            route!(any, b"/*", DevHandlerId::Request);
             Ok(true)
         } else {
             Ok(false)

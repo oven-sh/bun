@@ -1414,15 +1414,21 @@ pub mod js_bundler {
         } else {
             // SAFETY: bv2 backref is valid; plugins is Some
             let global = unsafe { (*bv2_plugin(resolve.bv2)).global_object() };
+            // `to_slice_clone` already heap-allocates; `into_vec` moves that
+            // buffer out instead of allocating a second copy.
             let path = path_value
                 .to_slice_clone(global)
-                .expect("Unexpected: path is not a string");
+                .expect("Unexpected: path is not a string")
+                .into_vec()
+                .into_boxed_slice();
             let namespace = namespace_value
                 .to_slice_clone(global)
-                .expect("Unexpected: namespace is not a string");
+                .expect("Unexpected: namespace is not a string")
+                .into_vec()
+                .into_boxed_slice();
             resolve.value = ResolveValue::Success(ResolveSuccess {
-                path: path.slice().to_vec().into_boxed_slice(),
-                namespace: namespace.slice().to_vec().into_boxed_slice(),
+                path,
+                namespace,
                 external: external_value.to_boolean(),
             });
         }

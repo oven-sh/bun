@@ -457,6 +457,13 @@ impl From<bun_event_loop::ErasedJsError> for JsError {
     }
 }
 
+impl From<JsTerminated> for bun_event_loop::ErasedJsError {
+    #[inline]
+    fn from(_: JsTerminated) -> Self {
+        bun_event_loop::ErasedJsError::Terminated
+    }
+}
+
 impl From<JsError> for bun_event_loop::ErasedJsError {
     #[inline]
     fn from(e: JsError) -> Self {
@@ -2182,6 +2189,49 @@ pub use self::sizes as Sizes;
 pub type ZigString = bun_string::ZigString;
 /// `ZigString.Slice` — re-exported under the path dependents expect.
 pub type ZigStringSlice = bun_string::ZigStringSlice;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Core webcore data types (Blob/Store/BuildArtifact) and node path types,
+// moved DOWN from `bun_runtime` so lower-tier crates (`bun_bundler_jsc`,
+// `bun_http_jsc`, `bun_js_parser_jsc`, `bun_sql_jsc`) can name them without a
+// forward dep. `bun_runtime::webcore` re-exports these and layers behaviour
+// (S3 I/O, streaming, Body mixin, JS host-fns) on top.
+//
+// `Request`/`Response` are NOT defined here: their Body-mixin behaviour is
+// inseparable from `bun_runtime` (streams/fetch). Code that needs to downcast
+// a `JSValue` to `Request`/`Response` lives in `bun_runtime`.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "webcore_types.rs"] mod webcore_types;
+#[path = "node_path.rs"] pub mod node_path;
+
+/// `jsc.WebCore` (jsc.zig:163, deprecated alias) — only the data-shape subset
+/// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
+/// full API surface.
+#[allow(non_snake_case)]
+pub mod WebCore {
+    pub use super::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
+    pub use super::webcore_types::store::Store;
+}
+/// Lower-case alias + nested `blob` namespace (Zig: `jsc.webcore.blob.Store`).
+pub mod webcore {
+    pub use super::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
+    pub mod blob {
+        pub use crate::webcore_types::store::*;
+        pub use crate::webcore_types::{SizeType, MAX_SIZE};
+    }
+}
+/// `jsc.API` (jsc.zig:164, deprecated alias) — only `BuildArtifact` is hoisted.
+pub mod api {
+    pub use super::webcore_types::BuildArtifact;
+}
+/// `jsc.Node` (jsc.zig:165, deprecated alias) — `PathLike`/`PathOrFileDescriptor`
+/// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
+#[allow(non_snake_case)]
+pub mod Node {
+    pub use super::node_path::*;
+}
+pub use self::Node as node;
+
 /// `jsc.zig:170 markBinding(@src())` — opt-in `BUN_DEBUG_JSC=1` trace of every
 /// FFI binding entry. Zig: `log("{s} ({s}:{d})", .{src.fn_name, src.file, src.line})`
 /// where `log = Output.scoped(.JSC, .hidden)`.

@@ -259,6 +259,21 @@ describe("bundler", () => {
     },
     capture: ['myLogger("x")'],
   });
+  // The symmetric inverse: a more-specific `--drop=globalThis.X.Y` must win over
+  // a less-specific `--define:X.Y=v` for `globalThis.X.Y(...)`.
+  itBundled("edgecase/NodeEnvDropBeatsDefineAcrossGlobalThis", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.console.log("x"));
+      `,
+    },
+    target: "browser",
+    drop: ["globalThis.console.log"],
+    define: {
+      "console.log": "myLogger",
+    },
+    capture: ["undefined"],
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

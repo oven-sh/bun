@@ -837,23 +837,23 @@ pub fn VisitExpr(
                     // the first *valued* hit would make the result depend on hash iteration
                     // order when two valued defines both match (e.g. `--define:X.Y=a` and
                     // `--define:globalThis.X.Y=b` for a `globalThis.X.Y` expression). Scan
-                    // all matches, accumulate side-effect flags, and prefer the longest
-                    // (most specific) valued match. A pending drop flag from a valueless
-                    // match only applies if no valued match wins, otherwise a less-specific
-                    // `--drop` would silently drop a more-specific `--define`'d substitution.
+                    // all matches, accumulate side-effect flags, and pick the longest
+                    // (most specific) match independently for substitution and the method-call
+                    // drop flag — either can be more specific than the other depending on
+                    // how the user wrote their `--define` and `--drop` CLI flags.
                     var best_value: ?*const DefineData = null;
-                    var best_len: usize = 0;
-                    var drop_pending = false;
+                    var best_value_len: usize = 0;
+                    var best_drop_len: usize = 0;
                     for (parts) |*define| {
                         if (!p.isDotDefineMatch(expr, define.parts)) continue;
 
-                        if (in.assign_target == .none and !define.data.valueless() and define.parts.len >= best_len) {
+                        if (in.assign_target == .none and !define.data.valueless() and define.parts.len >= best_value_len) {
                             best_value = &define.data;
-                            best_len = define.parts.len;
+                            best_value_len = define.parts.len;
                         }
 
-                        if (in.assign_target == .none and define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
-                            drop_pending = true;
+                        if (in.assign_target == .none and define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined and define.parts.len >= best_drop_len) {
+                            best_drop_len = define.parts.len;
                         }
 
                         // Copy the side-effect flags over in case this expression is unused.
@@ -871,12 +871,13 @@ pub fn VisitExpr(
                         }
                     }
 
-                    if (best_value) |data| {
-                        return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, data);
-                    }
-
-                    if (drop_pending) {
+                    // Drop flag wins only when strictly more specific than the valued
+                    // substitution; setting parser state and falling through so the enclosing
+                    // call is replaced with undefined. Otherwise the substitution wins.
+                    if (best_drop_len > best_value_len) {
                         p.method_call_must_be_replaced_with_undefined = true;
+                    } else if (best_value) |data| {
+                        return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, data);
                     }
                 }
 

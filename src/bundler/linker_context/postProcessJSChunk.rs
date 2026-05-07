@@ -32,6 +32,18 @@ fn print_result_code(r: &PrintResult) -> &[u8] {
     }
 }
 
+/// Move the printed code out of a `PrintResult`. Mirrors Zig
+/// `j.push(result.code, worker.allocator)` where the joiner takes ownership of
+/// the slice — the Rust `PrintResultSuccess.code` is a `Box<[u8]>` that would
+/// otherwise drop at end of `post_process_js_chunk` and leave the deferred
+/// `IntermediateOutput::Joiner` path holding freed memory.
+fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
+    match r {
+        PrintResult::Result(ok) => core::mem::take(&mut ok.code),
+        PrintResult::Err(_) => Box::default(),
+    }
+}
+
 /// This runs after we've already populated the compile results
 pub fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
@@ -59,8 +71,8 @@ pub fn post_process_js_chunk(
     let mut arena = Arena::new();
 
     // Also generate the cross-chunk binding code
-    let cross_chunk_prefix: PrintResult;
-    let cross_chunk_suffix: PrintResult;
+    let mut cross_chunk_prefix: PrintResult;
+    let mut cross_chunk_suffix: PrintResult;
 
     let runtime_input_file =
         c.graph.files.items_input_file()[Index::RUNTIME.value as usize].get() as usize;
@@ -536,11 +548,15 @@ pub fn post_process_js_chunk(
     }
 
     {
-        let code = print_result_code(&cross_chunk_prefix);
+        // PORT NOTE: Zig `j.push(code, worker.allocator)` transferred ownership;
+        // `cross_chunk_prefix` is a local that drops at fn exit, but the joiner
+        // may be stashed on `chunk.intermediate_output` and consumed later
+        // (`IntermediateOutput::Joiner` path). Move the Box into the joiner.
+        let code = print_result_take_code(&mut cross_chunk_prefix);
         if !code.is_empty() {
             newline_before_comment = true;
-            line_offset.advance(code);
-            j.push(code);
+            line_offset.advance(&code);
+            j.push_owned(code);
         }
     }
 
@@ -670,22 +686,29 @@ pub fn post_process_js_chunk(
         newline_before_comment = !compile_result.code().is_empty();
     }
 
-    let tail_code = entry_point_tail.code();
-    if !tail_code.is_empty() {
-        // Stick the entry point tail at the end of the file. Deliberately don't
-        // include any source mapping information for this because it's automatically
-        // generated and doesn't correspond to a location in the input file.
-        j.push(tail_code);
+    {
+        // PORT NOTE: `entry_point_tail` is a local `CompileResult` whose `code`
+        // is a `Box<[u8]>`; Zig `j.push(tail_code, worker.allocator)` handed
+        // ownership to the joiner. Move it so the deferred-joiner path doesn't
+        // read freed memory after this fn returns.
+        let tail_code = entry_point_tail.into_code();
+        if !tail_code.is_empty() {
+            // Stick the entry point tail at the end of the file. Deliberately don't
+            // include any source mapping information for this because it's automatically
+            // generated and doesn't correspond to a location in the input file.
+            j.push_owned(tail_code);
+        }
     }
 
     // Put the cross-chunk suffix inside the IIFE
     {
-        let code = print_result_code(&cross_chunk_suffix);
+        // PORT NOTE: see cross_chunk_prefix above — move ownership into joiner.
+        let code = print_result_take_code(&mut cross_chunk_suffix);
         if !code.is_empty() {
             if newline_before_comment {
                 j.push_static(b"\n");
             }
-            j.push(code);
+            j.push_owned(code);
         }
     }
 

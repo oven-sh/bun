@@ -3,7 +3,7 @@
 // instead of a per-command `ComptimeClap` instantiation. Each command's
 // distinctive flag must still be recognized and wired to the same option.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
@@ -40,11 +40,7 @@ describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [quietOut, quietErr, quietCode] = await Promise.all([
-      quiet.stdout.text(),
-      quiet.stderr.text(),
-      quiet.exited,
-    ]);
+    const [quietOut, quietErr, quietCode] = await Promise.all([quiet.stdout.text(), quiet.stderr.text(), quiet.exited]);
     expect(quietErr).not.toContain("$ echo loud");
     expect(quietOut).toContain("loud");
     expect(quietCode).toBe(0);
@@ -107,20 +103,17 @@ describe.concurrent("Arguments.parse runtime cmd dispatch", () => {
     expect(runCode).toBe(0);
   });
 
-  describe.each([[], ["run"], ["build"], ["test"], ["upgrade"], ["exec"]])(
-    "`bun %s --help`",
-    (...sub: string[]) => {
-      test("renders", async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), ...sub, "--help"],
-          env: { ...bunEnv, NO_COLOR: "1" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect((stdout + stderr).length).toBeGreaterThan(40);
-        expect(code).toBe(0);
+  describe.each([[], ["run"], ["build"], ["test"], ["upgrade"], ["exec"]])("`bun %s --help`", (...sub: string[]) => {
+    test("renders", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...sub, "--help"],
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
       });
-    },
-  );
+      const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect((stdout + stderr).length).toBeGreaterThan(40);
+      expect(code).toBe(0);
+    });
+  });
 });

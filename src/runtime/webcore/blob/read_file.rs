@@ -219,10 +219,14 @@ impl FileCloser for ReadFile {
             let this = unsafe { &mut *(ctx as *mut ReadFile) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
+        // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
+        // before mutably borrowing `io_poll` so the two borrows do not overlap.
+        let ctx = this as *mut ReadFile as *mut ();
+        let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
-            fd: this.opened_fd,
+            fd,
             poll: &mut this.io_poll,
-            ctx: this as *mut ReadFile as *mut (),
+            ctx,
             tag: <Self as FileCloser>::IO_TAG,
             on_done,
         })

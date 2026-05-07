@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_aio::KeepAlive;
 use bun_collections::ByteList;
-use bun_core::Output;
+use bun_core::{handle_oom, Output};
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_io::StreamBuffer;
 use crate as jsc;

@@ -1381,12 +1381,16 @@ impl Expect {
                     bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
                 }
                 let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
-                // SAFETY: FFI call with valid global, &bun_str::String, host-fn ptr, and JSValue
+                // SAFETY: FFI call with valid global, &bun_str::String, host-fn ptr, and JSValue.
+                // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
+                // pointer-to-function-pointer — the Zig `*const jsc.JSHostFn` is itself the
+                // function-pointer type (Zig fn types aren't pointers), whereas Rust's
+                // `JSHostFn` already is, so pass it directly.
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
                         &raw const matcher_name,
-                        &raw const host_fn_ptr,
+                        host_fn_ptr,
                         matcher_fn,
                         true,
                     )
@@ -3020,7 +3024,10 @@ unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: *const bun_str::String,
-        function_pointer: *const bun_jsc::JSHostFn,
+        // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
+        // Zig spells this `*const jsc.JSHostFn` because Zig fn types need a `*const` to
+        // become pointers; Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
+        function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
         strong: bool,
     ) -> JSValue;

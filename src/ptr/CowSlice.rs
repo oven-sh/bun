@@ -212,7 +212,11 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
                 drop(unsafe { Box::from_raw(d.as_ptr()) });
             }
         }
-        *self = Self::EMPTY;
+        // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
+        // `*self = Self::EMPTY` would run `Drop` on the old value first and
+        // free the very `ptr[..len]` allocation we are about to hand back.
+        // `mem::forget(mem::replace(..))` resets `self` without dropping.
+        core::mem::forget(core::mem::replace(self, Self::EMPTY));
         // SAFETY: owned ⇒ `ptr[..len]` was produced by `Box::into_raw`.
         Ok(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len)) })
     }

@@ -905,6 +905,77 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         result
     }
 
+    /// `${abi_name}__finalize` body. Port of `Sink.zig::JSSink.finalize`.
+    #[inline]
+    pub fn js_finalize(this: &mut T) {
+        this.finalize();
+    }
+
+    /// `${abi_name}__close` body. Port of `Sink.zig::JSSink.close` — called from
+    /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
+    /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
+    pub fn js_close(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        this: &mut T,
+    ) -> crate::webcore::jsc::JSValue {
+        use crate::webcore::jsc::JSValue;
+        use bun_sys_jsc::ErrorJsc;
+        bun_core::mark_binding!();
+
+        if let Some(err) = this.get_pending_error() {
+            return global.vm().throw_error(global, err).unwrap_or(JSValue::ZERO);
+        }
+
+        // TODO: properly propagate exception upwards
+        match this.end(None) {
+            sys::Result::Ok(()) => JSValue::UNDEFINED,
+            sys::Result::Err(err) => match err.to_js(global) {
+                Ok(v) => {
+                    let _ = global.throw_value(v);
+                    JSValue::ZERO
+                }
+                Err(_) => JSValue::ZERO,
+            },
+        }
+    }
+
+    /// `${abi_name}__endWithSink` body. Port of `Sink.zig::JSSink.endWithSink` —
+    /// called from `JSReadable${name}Controller__end` with a raw `m_sinkPtr`.
+    pub fn js_end_with_sink(
+        this: &mut T,
+        global: &crate::webcore::jsc::JSGlobalObject,
+    ) -> crate::webcore::jsc::JSValue {
+        use crate::webcore::jsc::JSValue;
+        use bun_sys_jsc::ErrorJsc;
+        bun_core::mark_binding!();
+
+        if let Some(err) = this.get_pending_error() {
+            let _ = global.throw_value(err);
+            return JSValue::ZERO;
+        }
+
+        // TODO: properly propagate exception upwards
+        match this.end_from_js(global) {
+            sys::Result::Ok(value) => value,
+            sys::Result::Err(err) => match err.to_js(global) {
+                Ok(v) => {
+                    let _ = global.throw_value(v);
+                    JSValue::ZERO
+                }
+                Err(_) => JSValue::ZERO,
+            },
+        }
+    }
+
+    /// `${abi_name}__updateRef` body. Port of `Sink.zig::JSSink.updateRef`.
+    #[inline]
+    pub fn js_update_ref(this: &mut T, value: bool) {
+        bun_core::mark_binding!();
+        if T::HAS_UPDATE_REF {
+            this.update_ref(value);
+        }
+    }
+
     /// `${abi_name}__getInternalFd` body.
     #[inline]
     pub fn js_get_internal_fd(this: &mut T) -> crate::webcore::jsc::JSValue {

@@ -2015,14 +2015,20 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         this: *mut This,
         is_ipc: bool,
     ) -> Option<Self> {
-        let ext_size = core::mem::size_of::<Option<*mut This>>() as c_int;
+        // Zig `?*This` is null-niche optimized (8 bytes); the dispatch
+        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
+        // write must match that layout — NOT `Option<*mut This>` (16 bytes).
+        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<This>>>() as c_int;
         let raw = g.from_fd(k, None, ext_size, handle.native() as LIBUS_SOCKET_DESCRIPTOR, is_ipc);
         if raw.is_null() {
             return None;
         }
-        // SAFETY: ext storage was sized for `Option<*mut This>` above; `raw` is
-        // a freshly-created live socket.
-        unsafe { *sock_c::us_socket_ext(raw).cast::<Option<*mut This>>() = Some(this) };
+        // SAFETY: ext storage was sized for `?*This` above; `raw` is a
+        // freshly-created live socket.
+        unsafe {
+            *sock_c::us_socket_ext(raw).cast::<Option<core::ptr::NonNull<This>>>() =
+                core::ptr::NonNull::new(this)
+        };
         Some(Self { socket: InternalSocket::Connected(raw) })
     }
 
@@ -2067,17 +2073,28 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
             unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(&heap[..]) }
         };
 
-        let ext_size = core::mem::size_of::<Option<*mut Owner>>() as c_int;
+        // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch
+        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
+        // write must match that layout — NOT `Option<*mut Owner>` (16 bytes,
+        // discriminant-first), which would hand the trampoline `1` instead of
+        // the owner pointer.
+        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int;
         match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-                unsafe { *sock_c::us_socket_ext(s).cast::<Option<*mut Owner>>() = Some(owner) };
+                unsafe {
+                    *sock_c::us_socket_ext(s).cast::<Option<core::ptr::NonNull<Owner>>>() =
+                        core::ptr::NonNull::new(owner)
+                };
                 Ok(Self { socket: InternalSocket::Connected(s) })
             }
             ConnectResult::Connecting(cs) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `cs` is live.
-                unsafe { *sock_c::us_connecting_socket_ext(cs).cast::<Option<*mut Owner>>() = Some(owner) };
+                unsafe {
+                    *sock_c::us_connecting_socket_ext(cs).cast::<Option<core::ptr::NonNull<Owner>>>() =
+                        core::ptr::NonNull::new(owner)
+                };
                 Ok(Self { socket: InternalSocket::Connecting(cs) })
             }
         }
@@ -2092,13 +2109,17 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
         let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
-        let ext_size = core::mem::size_of::<Option<*mut Owner>>() as c_int;
+        // Zig `?*Owner` — see connect_group above for layout rationale.
+        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<Owner>>>() as c_int;
         let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }
         // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe { *sock_c::us_socket_ext(s).cast::<Option<*mut Owner>>() = Some(owner) };
+        unsafe {
+            *sock_c::us_socket_ext(s).cast::<Option<core::ptr::NonNull<Owner>>>() =
+                core::ptr::NonNull::new(owner)
+        };
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 

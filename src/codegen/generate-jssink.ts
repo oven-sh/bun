@@ -1100,6 +1100,45 @@ pub unsafe extern "C" fn ${name}__memoryCost(this: *mut c_void) -> usize {
 }
 
 `;
+
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
+    symbols.push(`${name}__finalize`);
+    templ += `#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__finalize(this: *mut c_void) {
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_finalize(&mut *this.cast::<${name}>()) }
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
+    symbols.push(`${name}__close`);
+    templ += `#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__close(global: *mut JSGlobalObject, this: *mut c_void) -> JSValue {
+    if this.is_null() { return JSValue::UNDEFINED; }
+    let global = unsafe { &*global };
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_close(global, &mut *this.cast::<${name}>()) }
+}
+
+`;
+
+    // ZIG_DECL JSC::EncodedJSValue SYSV_ABI ${name}__endWithSink(void* sinkPtr, JSC::JSGlobalObject*)
+    symbols.push(`${name}__endWithSink`);
+    templ += `#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__endWithSink(this: *mut c_void, global: *mut JSGlobalObject) -> JSValue {
+    let global = unsafe { &*global };
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_end_with_sink(&mut *this.cast::<${name}>(), global) }
+}
+
+`;
+
+    // ZIG_DECL void ${name}__updateRef(void* sinkPtr, bool)
+    symbols.push(`${name}__updateRef`);
+    templ += `#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ${name}__updateRef(this: *mut c_void, value: bool) {
+    unsafe { crate::webcore::sink::JSSink::<${name}>::js_update_ref(&mut *this.cast::<${name}>(), value) }
+}
+
+`;
   }
 
   templ += `// sinks: ${classes.length}, exported symbols: ${symbols.length}\n`;

@@ -133,7 +133,7 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
     ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
         // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
         let appended = builder.append::<SemverString>(self.folder_path);
-        Ok(ResolutionType::init(match TAG {
+        Ok(ResolutionType::<SemverIntType>::init(match TAG {
             ResolutionTag::Folder => TaggedValue::Folder(appended),
             ResolutionTag::Symlink => TaggedValue::Symlink(appended),
             ResolutionTag::Workspace => TaggedValue::Workspace(appended),
@@ -289,7 +289,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     let mut body = npm::Registry::BodyPool::get();
     // defer Npm.Registry.BodyPool.release(body) — handled by PoolGuard Drop
 
-    let mut package = LockfilePackage::default();
+    let mut package: LockfilePackage = Default::default();
 
     // PORT NOTE: Zig passed `manager.lockfile`, `manager`, `manager.log` as
     // three separate args; Rust borrowck rejects the overlap on `&mut self`,

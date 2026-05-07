@@ -376,13 +376,6 @@ impl DirectoryWatchStore {
             .bun_watcher
             .remove_at_index(bun_watcher::Kind::File, entry.watch_index, 0, &[]);
 
-        // defer if (entry.dir_fd_owned) entry.dir.close();
-        let _close_guard = scopeguard::guard((), |_| {
-            if entry.dir_fd_owned {
-                entry.dir.close();
-            }
-        });
-
         // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
         self.watches.swap_remove_at(entry_index);
 
@@ -391,6 +384,12 @@ impl DirectoryWatchStore {
             debug_assert_eq!(self.dependencies.len(), self.dependencies_free_list.len());
             self.dependencies.clear();
             self.dependencies_free_list.clear();
+        }
+
+        // Zig: defer if (entry.dir_fd_owned) entry.dir.close();
+        // No early returns above, so close at fn end instead of via scopeguard.
+        if entry.dir_fd_owned {
+            entry.dir.close();
         }
     }
 

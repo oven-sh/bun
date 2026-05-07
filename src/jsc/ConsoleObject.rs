@@ -3189,15 +3189,15 @@ pub mod formatter {
                 }
 
                 if self.map_node.is_none() {
-                    // TODO(port): `visited::Pool` storage isn't wired
-                    // (`ObjectPoolType` impl + `object_pool!` storage hook);
-                    // until it is, allocate a fresh node directly. Pool reuse
-                    // is an optimization only.
-                    let node = Box::new(visited::PoolNode {
-                        next: core::ptr::null_mut(),
-                        data: core::mem::MaybeUninit::new(visited::Map::default()),
+                    // SAFETY: `get_node()` always returns a valid heap node;
+                    // `data` is initialized because `Map::INIT` is `Some`.
+                    let mut node = unsafe {
+                        core::ptr::NonNull::new_unchecked(visited::Pool::get_node())
+                    };
+                    unsafe { node.as_mut().data.assume_init_mut().clear() };
+                    self.map = core::mem::take(unsafe {
+                        node.as_mut().data.assume_init_mut()
                     });
-                    self.map = visited::Map::default();
                     self.map_node = Some(node);
                 }
 

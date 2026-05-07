@@ -1133,7 +1133,8 @@ std::thread_local! {
 /// `EString::init` — this is arena ownership, not a leak.
 pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
     DATA_STORE.with(|s| {
-        let copied: &[u8] = s.borrow().alloc_slice_copy(bytes);
+        let store = s.borrow();
+        let copied: &[u8] = store.alloc_slice_copy(bytes);
         // SAFETY: `copied` lives in `DATA_STORE` until `data_store_reset`;
         // erase to match `EString::init`'s `&'static [u8]` field.
         unsafe { core::mem::transmute::<&[u8], &'static [u8]>(copied) }

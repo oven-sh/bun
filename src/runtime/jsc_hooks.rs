@@ -3312,11 +3312,8 @@ unsafe fn transpile_virtual_module(
     };
 
     // Spec :1272-1273 — `defer log.deinit(); defer module_loader.resetArena()`.
-    let _reset_arena = scopeguard::guard((), |_| {
-        // SAFETY: `jsc_vm` is the live per-thread VM (closure runs on the same
-        // thread, before this hook returns).
-        ModuleLoader::reset_arena(unsafe { &mut *jsc_vm });
-    });
+    // SAFETY: `jsc_vm` is the live per-thread VM and outlives this guard.
+    let _reset_arena = ModuleLoader::arena_scope(jsc_vm);
 
     // Lazy-init the per-thread shared printer (same path as `transpile_file`).
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {

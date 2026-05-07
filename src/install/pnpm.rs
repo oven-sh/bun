@@ -1962,8 +1962,13 @@ fn update_package_json_after_migration(
                     bstr::BStr::new(&**res_str)
                 )
                 .map_err(|_| AllocError)?;
-                // Intern into the bump so the slice outlives `join_buf`.
-                let interned: &[u8] = bump.alloc_slice_copy(join_buf.as_slice());
+                // Zig: `allocator.dupe(u8, join_buf.items)` with the long-lived
+                // default allocator. The rewritten key ends up inside
+                // `root_pkg_json.root` (Store-backed, cached in
+                // `workspace_package_json_cache`), so it must outlive this
+                // function — intern into the thread-local `DATA_STORE` that
+                // backs the surrounding `Expr` nodes, NOT the local `bump`.
+                let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
                 prop.key = Some(Expr::init(E::EString::init(interned), logger::Loc::EMPTY));
             }
             if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {

@@ -475,13 +475,19 @@ pub fn enqueue_dependency_to_root(
 
         // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
         // takes `&mut PackageManager`; `builder` already borrows
-        // `this.lockfile`. Detach `builder` via a raw pointer for the call
+        // `this.lockfile`. Detach `this` via a raw pointer for the call
         // (Zig passes both freely).
-        let builder_ptr: *mut Lockfile::StringBuilder<'_> = &mut builder;
+        let this_ptr: *mut PackageManager = this;
         // SAFETY: `builder` borrows `this.lockfile.buffers.string_bytes`;
-        // `clone_with_different_buffers` does not touch `this.lockfile`.
+        // `clone_with_different_buffers` only reads `this.options` /
+        // `this.workspace_package_json_cache`, never the string buffer.
         let dep = dummy
-            .clone_with_different_buffers(this, name, version_buf, unsafe { &mut *builder_ptr })
+            .clone_with_different_buffers(
+                unsafe { &mut *this_ptr },
+                name,
+                version_buf,
+                &mut builder,
+            )
             .expect("unreachable");
         builder.clamp();
         let index = this.lockfile.buffers.dependencies.len();

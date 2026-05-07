@@ -293,7 +293,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Npm::WhoamiError::ProbablyInvalidAuth => {
                             Output::err_generic(
                                 "failed to authenticate with registry '{f}'",
-                                (bun_fmt::redacted_npm_url(pm.options.scope.url.href),),
+                                (bun_fmt::redacted_npm_url(pm.options.scope.url.href()),),
                             );
                         }
                     }

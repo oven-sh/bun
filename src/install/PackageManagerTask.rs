@@ -366,8 +366,9 @@ impl<'a> Task<'a> {
 
                     // SAFETY: tag == Extract discriminates the union
                     let extract = unsafe { &mut *this.request.extract };
-                    let buffer = &mut extract.network.response_buffer;
-                    // TODO(port): `defer buffer.deinit()` — free response_buffer after use
+                    // Zig: `defer buffer.deinit()` — take ownership so the
+                    // tarball body drops on every exit of this arm.
+                    let mut buffer = core::mem::take(&mut extract.network.response_buffer);
 
                     let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
@@ -399,7 +400,8 @@ impl<'a> Task<'a> {
                             match Repository::download(
                                 req.env,
                                 &mut this.log,
-                                manager.get_cache_directory(),
+                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                unsafe { &mut *manager }.get_cache_directory(),
                                 this.id,
                                 name,
                                 https,
@@ -438,7 +440,8 @@ impl<'a> Task<'a> {
                                 match Repository::download(
                                     req.env,
                                     &mut this.log,
-                                    manager.get_cache_directory(),
+                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                unsafe { &mut *manager }.get_cache_directory(),
                                     this.id,
                                     name,
                                     ssh,
@@ -472,7 +475,8 @@ impl<'a> Task<'a> {
                     let data = match Repository::checkout(
                         git_checkout.env,
                         &mut this.log,
-                        manager.get_cache_directory(),
+                        // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                        unsafe { &mut *manager }.get_cache_directory(),
                         bun_sys::Dir::from_fd(git_checkout.repo_dir),
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),

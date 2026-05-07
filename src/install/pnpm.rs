@@ -874,7 +874,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 if res.tag == resolution::Tag::Npm {
                     let scope = manager.scope_for_package_name(name_str);
                     let url = crate::extract_tarball::build_url(
-                        scope.url.href,
+                        scope.url.href(),
                         &strings::StringOrTinyString::init(
                             name.slice(string_bytes!(lockfile)),
                         ),

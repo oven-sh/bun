@@ -399,7 +399,7 @@ impl NetworkTask {
             // `defer tmp.deref()`, NetworkTask.zig:216) — covers both the
             // success path and the InvalidURL early returns below.
             let tmp = bun_str::OwnedString::new(bun_url::join(
-                &bun_str::String::borrow_utf8(&scope.url.href),
+                &bun_str::String::borrow_utf8(scope.url.href()),
                 &bun_str::String::borrow_utf8(encoded_name),
             ));
 
@@ -410,7 +410,7 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(&scope.url.href),
+                            quote(scope.url.href()),
                             quote(name),
                         ),
                     )?;
@@ -420,7 +420,7 @@ impl NetworkTask {
                         logger::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(&scope.url.href),
+                            quote(scope.url.href()),
                             quote(name),
                         ),
                     )?;
@@ -661,7 +661,7 @@ impl NetworkTask {
             // (callers gate on `resolution.tag == .npm`).
             let version = unsafe { tarball_.resolution.value.npm }.version;
             Box::from(extract_tarball::build_url(
-                &scope.url.href,
+                scope.url.href(),
                 &tarball_.name,
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),

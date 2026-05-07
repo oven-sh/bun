@@ -557,11 +557,13 @@ impl<'a> PackageInstaller<'a> {
             loop {
                 // PORT NOTE: reshaped for borrowck — Zig aliases the same `*AbsPath` for
                 // both `node_modules_path` (mut) and `target_node_modules_path` (read-only)
-                // when no replacement is set. Capture a shared raw pointer first; the
-                // `&mut` write provenance covers later reads through the shared ref.
+                // when no replacement is set. Derive both from a single `*mut` so the
+                // read pointer shares the write reference's provenance (a `*const` taken
+                // from `&node_modules_path` would be popped by the later `&mut` reborrow
+                // under stacked-borrows).
                 // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
                 // never writes through it while `node_modules_path` is borrowed.
-                let nm_ptr: *const AbsPath = &node_modules_path;
+                let nm_ptr: *mut AbsPath = &mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: self.options.bin_path,
@@ -570,11 +572,11 @@ impl<'a> PackageInstaller<'a> {
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                     seen: Some(&mut self.seen_bin_links),
-                    target_node_modules_path: match target_node_modules_path_opt.as_ref() {
-                        Some(path) => path,
-                        None => unsafe { &*nm_ptr },
-                    },
-                    node_modules_path: &mut node_modules_path,
+                    target_node_modules_path: target_node_modules_path_opt
+                        .as_ref()
+                        .map(|p| p as *const AbsPath)
+                        .unwrap_or(nm_ptr as *const AbsPath),
+                    node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,

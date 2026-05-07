@@ -420,15 +420,16 @@ pub fn cached_npm_package_folder_name_print<'a>(
     let spanned_len = basename.as_bytes().len();
     // PORT NOTE: reshaped for borrowck — drop `basename` borrow before re-borrowing `buf`
     let available = &mut buf[spanned_len..];
+    let scope_url = scope.url.url();
     let end_len: usize;
-    if scope.url.hostname.len() > 32 || available.len() < 64 {
-        let visible_hostname = &scope.url.hostname[..scope.url.hostname.len().min(12)];
+    if scope_url.hostname.len() > 32 || available.len() < 64 {
+        let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
         end_len = buf_print(
             available,
             format_args!(
                 "@@{}__{}{}{}",
                 bstr::BStr::new(visible_hostname),
-                bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(scope.url.href)),
+                bun_fmt::hex_int_lower::<16>(Semver::semver_string::Builder::string_hash(scope_url.href)),
                 CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
                 PatchHashFmt { hash: patch_hash },
             ),
@@ -439,7 +440,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
             available,
             format_args!(
                 "@@{}{}{}",
-                bstr::BStr::new(scope.url.hostname),
+                bstr::BStr::new(scope_url.hostname),
                 CacheVersionFormatter { version_number: Some(CacheVersion::CURRENT) },
                 PatchHashFmt { hash: patch_hash },
             ),

@@ -666,7 +666,6 @@ pub fn find_imported_files_in_css_order<'a>(
                     continue 'next_forward;
                 }
             }
-            let _ = duplicates;
 
             handle_oom(layer_duplicates.mut_(index).indices.append(wip_order.len));
             handle_oom(wip_order.append(unsafe { bitwise_copy(entry) }));
@@ -731,14 +730,26 @@ pub fn find_imported_files_in_css_order<'a>(
     BabyList::default()
 }
 
-/// Zig: `wrapping_conditions.deepCloneInfallible(allocator)`.
+/// Zig: `wrapping_conditions.deepCloneInfallible(visitor.allocator)`.
+///
+/// Allocates in the bump arena (`Origin::Borrowed`) so `Drop` is a no-op:
+/// the returned list is later bitwise-copied into multiple `CssImportOrder`
+/// entries via `bitwise_copy(wrapping_conditions)` (lines tagged PORT NOTE
+/// above), and the local also falls out of scope after the recursive
+/// `visit()` — neither path may free. Reserves one extra slot for the
+/// single `append_assume_capacity` each call site performs.
 #[cfg(feature = "css")]
 #[inline]
 fn deep_clone_conditions(
     list: &BabyList<ImportConditions>,
     allocator: &Arena,
 ) -> BabyList<ImportConditions> {
-    list.deep_clone_with(|c| c.deep_clone(allocator))
+    let mut out =
+        BabyList::<ImportConditions>::init_capacity_in(allocator, list.len as usize + 1);
+    for c in list.slice_const() {
+        out.append_assume_capacity(c.deep_clone(allocator));
+    }
+    out
 }
 
 /// Zig: `bun.handleOom(wrapping_import_records.clone(allocator))` — shallow

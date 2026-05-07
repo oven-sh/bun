@@ -687,7 +687,7 @@ impl PublishCommand {
         registry: &Npm::Registry::Scope,
     ) -> bool {
         let mut url_buf: Vec<u8> = Vec::new();
-        let registry_url = strings::without_trailing_slash(&registry.url.href);
+        let registry_url = strings::without_trailing_slash(registry.url.href());
         let encoded_name = bun_fmt::dependency_url(package_name);
 
         // Try to get package metadata to check if version exists
@@ -781,8 +781,9 @@ impl PublishCommand {
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
+        let registry_url = registry.url.url();
 
-        if registry.token.is_empty() && (registry.url.password.is_empty() || registry.url.username.is_empty()) {
+        if registry.token.is_empty() && (registry_url.password.is_empty() || registry_url.username.is_empty()) {
             return Err(PublishError::NeedAuth);
         }
 

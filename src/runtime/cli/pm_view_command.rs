@@ -130,7 +130,7 @@ pub fn view(
         path_buf.0.as_mut_slice(),
         format_args!(
             "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href)),
+            BStr::new(strings::without_trailing_slash(scope.url.href())),
             BStr::new(encoded_name),
         ),
     );

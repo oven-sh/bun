@@ -1644,9 +1644,11 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                let mut creds = credentials_with_options.credentials.dupe();
+                // SAFETY: heap-dupe (ref=1); `writable_stream` bumps via
+                // `IntrusiveRc::init_ref` and the MultiPartUpload derefs on done.
+                let creds = credentials_with_options.credentials.dupe().into_raw();
                 return crate::webcore::s3::client::writable_stream(
-                    &mut creds,
+                    unsafe { &mut *creds },
                     path,
                     global_this,
                     credentials_with_options.options,

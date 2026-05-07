@@ -1003,6 +1003,14 @@ pub mod store {
             self.ptr.as_ptr()
         }
 
+        /// Raw `NonNull<Store>` view (does not touch the refcount). For
+        /// passing the parent `Store` alongside a `&mut` into one of its
+        /// fields without materialising an aliasing `&Store`.
+        #[inline]
+        pub fn as_non_null(&self) -> NonNull<Store> {
+            self.ptr
+        }
+
         /// Leak the held +1 and return the raw pointer. Pair with a later
         /// `Store::deref()` (typically via `Store::external` / an FFI
         /// deallocator).

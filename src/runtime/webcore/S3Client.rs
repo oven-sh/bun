@@ -246,6 +246,16 @@ pub struct S3Client {
     pub request_payer: bool,
 }
 
+impl Drop for S3Client {
+    fn drop(&mut self) {
+        // `IntrusiveRc<T>` is `bun_ptr::RefPtr<T>`, which has no `Drop` impl
+        // of its own (only `ScopedRef<T>` does), so the +1 taken by
+        // `aws_options.credentials.dupe()` in `constructor` must be released
+        // explicitly. Mirrors Zig `S3Client.deinit`: `this.credentials.deref()`.
+        self.credentials.deref();
+    }
+}
+
 impl S3Client {
     // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
     // derive on the struct emits `S3ClientClass__construct` which calls

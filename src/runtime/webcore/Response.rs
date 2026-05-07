@@ -1003,9 +1003,8 @@ impl Response {
                 } else {
                     // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
                     // We already hold the +1 from `leak_wtf_impl`; transfer it
-                    // into the body value. `BodyValue::WTFStringImpl` wraps in
-                    // `Arc` per its current Rust shape.
-                    response.body.value = BodyValue::WTFStringImpl(std::sync::Arc::new(wtf));
+                    // into the body value.
+                    response.body.value = BodyValue::WTFStringImpl(wtf);
                 }
             }
         }

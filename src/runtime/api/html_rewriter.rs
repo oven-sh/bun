@@ -309,14 +309,12 @@ impl HTMLRewriter {
             ArrayBuffer,
             Other,
         }
-        let kind: ResponseKind = 'brk: {
-            if response_value.is_string() {
-                break 'brk ResponseKind::String;
-            } else if response_value.js_type().is_typed_array_or_array_buffer() {
-                break 'brk ResponseKind::ArrayBuffer;
-            } else {
-                break 'brk ResponseKind::Other;
-            }
+        let kind = if response_value.is_string() {
+            ResponseKind::String
+        } else if response_value.js_type().is_typed_array_or_array_buffer() {
+            ResponseKind::ArrayBuffer
+        } else {
+            ResponseKind::Other
         };
 
         if kind != ResponseKind::Other {
@@ -839,16 +837,15 @@ impl BufferOutputSink {
         response_js_value.ensure_still_alive();
 
         // SAFETY: sink is a live heap allocation; body_value_bufferer was just
-        // set to Some above. The `&mut` borrow here is scoped to this single
-        // expression and does not overlap raw-pointer writes (the bufferer may
-        // re-enter `BufferOutputSink::write/done` through the lol-html
-        // callback, which writes through the raw `sink` pointer).
+        // set to Some above. `run()` may synchronously invoke
+        // `on_finished_buffering`, which (via lol-html FFI) re-enters
+        // `<BufferOutputSink as OutputSink>::write/done` and forms a fresh
+        // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
+        // derived from `*sink` is live across that callback.
         let buffering_result: Result<(), bun_core::Error> = unsafe {
-            (*sink)
-                .body_value_bufferer
-                .as_mut()
-                .unwrap()
-                .run(value, owned_readable_stream)
+            let bufferer: *mut webcore::body::ValueBufferer =
+                match (*sink).body_value_bufferer { Some(ref mut b) => b, None => core::hint::unreachable_unchecked() };
+            (*bufferer).run(value, owned_readable_stream)
         };
         if let Err(buffering_error) = buffering_result {
             BufferOutputSink::deref(sink);

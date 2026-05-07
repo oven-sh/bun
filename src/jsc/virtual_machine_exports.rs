@@ -13,25 +13,31 @@ use bun_string::String as BunString;
 
 // Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
 // Handled below by `#[cfg(windows)]` on the fn definition itself.
+//
+// `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
+// `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
+// markers; the bodies here take safe `&VirtualMachine` / `&JSGlobalObject` /
+// `&BunString` borrows and the thunk performs the single `unsafe { &*ptr }`
+// deref centrally.
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VirtualMachine__isShuttingDown(this: &VirtualMachine) -> bool {
+// HOST_EXPORT(Bun__VirtualMachine__isShuttingDown, c)
+pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__getVM() -> *mut VirtualMachine {
+// HOST_EXPORT(Bun__getVM, c)
+pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
 /// Caller must check for termination exception
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__drainMicrotasks() {
+// HOST_EXPORT(Bun__drainMicrotasks, c)
+pub fn drain_microtasks() {
     VirtualMachine::get().event_loop_mut().tick();
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__readOriginTimer(vm: &VirtualMachine) -> u64 {
+// HOST_EXPORT(Bun__readOriginTimer, c)
+pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     // Check if performance.now() is overridden (for fake timers)
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
@@ -40,15 +46,15 @@ pub extern "C" fn Bun__readOriginTimer(vm: &VirtualMachine) -> u64 {
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__readOriginTimerStart(vm: &VirtualMachine) -> f64 {
+// HOST_EXPORT(Bun__readOriginTimerStart, c)
+pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     // timespce to milliseconds
     ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bool {
+// HOST_EXPORT(Bun__GlobalObject__connectedIPC, c)
+pub fn global_object_connected_ipc(global: &JSGlobalObject) -> bool {
     use crate::virtual_machine::IPCInstanceUnion;
     match &global.bun_vm().as_mut().ipc {
         Some(IPCInstanceUnion::Initialized(inst)) => {
@@ -61,22 +67,22 @@ pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bo
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__GlobalObject__hasIPC(global: &JSGlobalObject) -> bool {
+// HOST_EXPORT(Bun__GlobalObject__hasIPC, c)
+pub fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
     // JSGlobalObject::bun_vm contract.
     global.bun_vm().as_mut().ipc.is_some()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut VirtualMachine) {
+// HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
+pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
+// HOST_EXPORT(Bun__isBunMain, c)
+pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
     // JSGlobalObject::bun_vm contract.
     str.eql_utf8(global.bun_vm().as_mut().main())
 }
@@ -84,8 +90,8 @@ pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bo
 /// When IPC environment variables are passed, the socket is not immediately opened,
 /// but rather we wait for process.on('message') or process.send() to be called, THEN
 /// we open the socket. This is to avoid missing messages at the start of the program.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
+// HOST_EXPORT(Bun__ensureProcessIPCInitialized, c)
+pub fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     // getIPCInstance() will initialize a "waiting" ipc instance so this is enough.
     // it will do nothing if IPC is not enabled.
     let _ = global.bun_vm().as_mut().get_ipc_instance();
@@ -93,14 +99,14 @@ pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
+// HOST_EXPORT(Bun__queueTask, c)
+pub fn queue_task(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
     global.bun_vm().event_loop_mut().enqueue_task(Task::init(task));
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__reportUnhandledError(global: &JSGlobalObject, value: JSValue) -> JSValue {
+// HOST_EXPORT(Bun__reportUnhandledError, c)
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
@@ -112,8 +118,8 @@ pub extern "C" fn Bun__reportUnhandledError(global: &JSGlobalObject, value: JSVa
 /// This function is called on another thread
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueTaskConcurrently(
+// HOST_EXPORT(Bun__queueTaskConcurrently, c)
+pub fn queue_task_concurrently(
     global: &JSGlobalObject,
     task: *mut crate::cpp_task::CppTask,
 ) {
@@ -127,8 +133,8 @@ pub extern "C" fn Bun__queueTaskConcurrently(
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__handleRejectedPromise(global: &JSGlobalObject, promise: &mut JSPromise) {
+// HOST_EXPORT(Bun__handleRejectedPromise, c)
+pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
@@ -167,8 +173,8 @@ impl HandledPromiseContext {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &JSPromise) {
+// HOST_EXPORT(Bun__handleHandledPromise, c)
+pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
     let context = Box::into_raw(Box::new(HandledPromiseContext {
@@ -178,8 +184,8 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
     global.bun_vm().event_loop_mut().enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
+// HOST_EXPORT(Bun__onDidAppendPlugin, c)
+pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
     if jsc_vm.plugin_runner.is_some() {
         return;
     }
@@ -201,20 +207,20 @@ pub extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *
     jsc_vm.uv_loop().cast()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__setTLSRejectUnauthorizedValue(value: i32) {
+// HOST_EXPORT(Bun__setTLSRejectUnauthorizedValue, c)
+pub fn set_tls_reject_unauthorized_value(value: i32) {
     // SAFETY: VM singleton is process-lifetime.
     VirtualMachine::get().as_mut().default_tls_reject_unauthorized = Some(value != 0);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
+// HOST_EXPORT(Bun__getTLSRejectUnauthorizedValue, c)
+pub fn get_tls_reject_unauthorized_value() -> i32 {
     // SAFETY: VM singleton is process-lifetime.
     if VirtualMachine::get().as_mut().get_tls_reject_unauthorized() { 1 } else { 0 }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__isNoProxy(
+// HOST_EXPORT(Bun__isNoProxy, c)
+pub fn is_no_proxy(
     hostname_ptr: *const u8,
     hostname_len: usize,
     host_ptr: *const u8,
@@ -239,8 +245,8 @@ pub extern "C" fn Bun__isNoProxy(
     unsafe { (*vm.transpiler.env).is_no_proxy(hostname, host) }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
+// HOST_EXPORT(Bun__setVerboseFetchValue, c)
+pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;
     VirtualMachine::get().as_mut().default_verbose_fetch = Some(match value {
         1 => HTTPVerboseLevel::Headers as u8,
@@ -249,8 +255,8 @@ pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
     });
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__getVerboseFetchValue() -> i32 {
+// HOST_EXPORT(Bun__getVerboseFetchValue, c)
+pub fn get_verbose_fetch_value() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
     match VirtualMachine::get().as_mut().get_verbose_fetch() {
@@ -260,8 +266,8 @@ pub extern "C" fn Bun__getVerboseFetchValue() -> i32 {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addBakeSourceProviderSourceMap(
+// HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
+pub fn add_bake_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -274,8 +280,8 @@ pub extern "C" fn Bun__addBakeSourceProviderSourceMap(
     );
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addDevServerSourceProvider(
+// HOST_EXPORT(Bun__addDevServerSourceProvider, c)
+pub fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -288,8 +294,8 @@ pub extern "C" fn Bun__addDevServerSourceProvider(
     );
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__removeDevServerSourceProvider(
+// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
+pub fn remove_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -300,8 +306,8 @@ pub extern "C" fn Bun__removeDevServerSourceProvider(
         .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__addSourceProviderSourceMap(
+// HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
+pub fn add_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
@@ -312,8 +318,8 @@ pub extern "C" fn Bun__addSourceProviderSourceMap(
         .put_zig_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__removeSourceProviderSourceMap(
+// HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
+pub fn remove_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,

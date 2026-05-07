@@ -4,9 +4,12 @@
 //! `@import("../runtime/server/InspectorBunFrontendDevServerAgent.zig")` path.
 
 pub use crate::jsc::debugger::{
-    BunFrontendDevServerAgent, Bun__InspectorBunFrontendDevServerAgent__setEnabled,
-    InspectorBunFrontendDevServerAgentHandle,
+    BunFrontendDevServerAgent, InspectorBunFrontendDevServerAgentHandle,
 };
+// `Bun__InspectorBunFrontendDevServerAgent__setEnabled` thunk now emitted by
+// `generate-host-exports.ts`; the safe-signature impl is
+// `bun_jsc::debugger::frontend_dev_server_agent_set_enabled`.
+pub use crate::generated_host_exports::Bun__InspectorBunFrontendDevServerAgent__setEnabled;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

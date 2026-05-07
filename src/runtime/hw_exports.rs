@@ -42,15 +42,12 @@ pub fn is_main_thread_vm() -> bool {
 
 /// `export fn Bun__drainMicrotasksFromJS(global, callframe) callconv(jsc.conv) JSValue`
 ///
-/// SEMANTICS NOTE: the .zig spec is a bare `callconv(jsc.conv)` body (no
-/// `toJSHostCall` wrap); routing through `host_fn_static` here adds an
-/// `ExceptionValidationScope` + `catch_unwind` barrier. This is an intentional
-/// hardening over the prior `#[bun_jsc::host_call]` bare-ABI rewrite —
-/// `VirtualMachine::drain_microtasks()` swallows its result internally
-/// (`let _ = …`, mirroring `drainMicrotasks() catch {}`), so no exception is
-/// expected to be pending when we return `UNDEFINED` and the scope assert
-/// holds. If that invariant ever changes, the assert fires in debug-validate
-/// builds rather than silently leaking the exception.
+/// Returns plain `JSValue` (not `JsResult`) so the generated thunk is a bare
+/// deref+call with no `ExceptionValidationScope` — matching the .zig spec's
+/// bare `callconv(jsc.conv)` body and the prior `#[bun_jsc::host_call]`
+/// rewrite. `drain_microtasks()` runs arbitrary microtasks; wrapping in a
+/// scope would trip `assert_exception_presence_matches(false)` if one left an
+/// exception pending while we return `UNDEFINED`.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
 pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
     global.bun_vm().as_mut().drain_microtasks();
@@ -515,11 +512,9 @@ fn bindgen_out<T>(global: &JSGlobalObject, out: *mut T, r: bun_jsc::JsResult<T>)
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchCpus1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::cpus(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchCpus1)
+pub fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::cpus(global)
 }
 
 #[unsafe(no_mangle)]
@@ -553,25 +548,19 @@ pub extern "C" fn bindgen_Node_os_dispatchHomedir1(
     bindgen_out(global, out, node_os::homedir(global))
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchHostname1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::hostname(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchHostname1)
+pub fn bindgen_node_os_hostname(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::hostname(global)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchLoadavg1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::loadavg(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchLoadavg1)
+pub fn bindgen_node_os_loadavg(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::loadavg(global)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bindgen_Node_os_dispatchNetworkInterfaces1(global: *mut JSGlobalObject) -> JSValue {
-    // SAFETY: `global` is the live per-thread global.
-    let global = unsafe { &*global };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::network_interfaces(global))
+// HOST_EXPORT(bindgen_Node_os_dispatchNetworkInterfaces1)
+pub fn bindgen_node_os_network_interfaces(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+    node_os::network_interfaces(global)
 }
 
 #[unsafe(no_mangle)]

@@ -406,19 +406,12 @@ pub mod bun_object {
     // (BunObject__createBunStdin / Stderr / Stdout exported at file scope below.)
     // --- LazyProperty initializers ---
 
-    // --- Getters ---
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_getter_main(g: *mut JSGlobalObject) -> JSValue {
-        unsafe { super::get_main(&*g) }
-    }
-    // --- Getters ---
-
-    // --- Setters ---
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> bool {
-        unsafe { super::set_main(&*g, v) }
-    }
-    // --- Setters ---
+    // --- Getters / Setters ---
+    // `BunObject_getter_main` / `BunObject_setter_main` thunks are emitted by
+    // `generate-host-exports.ts` from the `// HOST_EXPORT` markers on
+    // `super::{get_main, set_main}` below (SYSV_ABI on win-x64 — matches the
+    // `extern "C" SYSV_ABI` decl in BunObject.cpp:1103).
+    // --- Getters / Setters ---
 }
 
 pub fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
@@ -841,7 +834,10 @@ pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValu
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
-// callconv(jsc.conv) — emitted by #[bun_jsc::host_call]; see PORTING.md §FFI.
+// callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
+// plain `JSValue` so the generated thunk is a bare deref+call (no
+// `ExceptionValidationScope`), matching the .zig spec's bare body.
+// HOST_EXPORT(BunObject_getter_main, jsc)
 pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
@@ -911,6 +907,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     ZigString::init(vm.main()).to_js(global_this)
 }
 
+// HOST_EXPORT(BunObject_setter_main, jsc)
 pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     global_this.bun_vm().as_mut()

@@ -307,7 +307,19 @@ for (const { dir, crate } of scanRoots) {
       }
       seenSymbols.set(symbol, where);
 
-      exportsFound.push({ symbol, abi, file, line: j + 1, fnName, modPath, params, ret, shape });
+      // Type tokens are copied verbatim into the thunk; `crate::` in a
+      // bun_jsc-sourced impl would resolve as `bun_runtime::` in the
+      // generated module. Rewrite to the source crate's name so
+      // `*mut crate::cpp_task::CppTask` etc. round-trip.
+      const cratePrefix = fm?.crate === "bun_jsc" ? "bun_jsc::" : "crate::";
+      const rewriteTy = (t: string) => t.replace(/\bcrate::/g, cratePrefix);
+      for (const p of params) {
+        p.cTy = rewriteTy(p.cTy);
+        p.ty = rewriteTy(p.ty);
+      }
+      const retRw = rewriteTy(ret);
+
+      exportsFound.push({ symbol, abi, file, line: j + 1, fnName, modPath, params, ret: retRw, shape });
     }
   }
 }
@@ -362,21 +374,34 @@ ${body}
 function emitThunk(e: Export): string {
   const impl = `${e.modPath}::${e.fnName}`;
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
+  // `JsResult<JSValue>` impls need `to_js_host_call` (exception-scope assert +
+  // panic barrier + Err→empty mapping). Plain-`JSValue` impls are bare
+  // `callconv(jsc.conv)` bodies in the .zig spec — wrap them and you trip
+  // `assert_exception_presence_matches(false)` whenever the body legitimately
+  // leaves an exception pending while returning non-empty (e.g.
+  // `Bun__drainMicrotasksFromJS`). Match `#[bun_jsc::host_call]`: deref + call,
+  // no scope.
+  const retIsJsResult = /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(e.ret);
   switch (e.shape) {
-    case "host":
-      // JSC host fn: `(g, cf) -> JSValue` via host_fn_static (panic barrier +
-      // exception-scope assert + JsResult mapping). Always JSC ABI — these are
+    case "host": {
+      // JSC host fn: `(g, cf) -> JSValue`. Always JSC ABI — these are
       // dispatched through `JSC::JSFunction` (`BUN_DECLARE_HOST_FUNCTION`).
+      const body = retIsJsResult
+        ? `    unsafe { host_fn::host_fn_static(g, cf, ${impl}) }`
+        : `    ${impl}(unsafe { &*g }, unsafe { &*cf })`;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", `    unsafe { host_fn::host_fn_static(g, cf, ${impl}) }`)}`;
-    case "lazy":
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body)}`;
+    }
+    case "lazy": {
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
       // `SYSV_ABI` lazyPropCb-style getters).
+      const body = retIsJsResult ? `    unsafe { host_fn::host_fn_lazy(g, ${impl}) }` : `    ${impl}(unsafe { &*g })`;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject", "JSValue", `    unsafe { host_fn::host_fn_lazy(g, ${impl}) }`)}`;
+${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject", "JSValue", body)}`;
+    }
     case "rust": {
       // `extern "Rust"` link-time hook: forward the safe signature verbatim
       // (no pointer rewriting; `extern "Rust"` ABI == native Rust ABI).
@@ -414,7 +439,6 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       // somewhere, route through `host_fn_result` so the error is mapped; else
       // forward raw.
       const globalParam = e.params.find(p => /JSGlobalObject$/.test(p.ty));
-      const retIsJsResult = /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(e.ret);
       const cRet = retIsJsResult ? "JSValue" : e.ret;
       const body =
         retIsJsResult && globalParam
@@ -447,7 +471,10 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsResult};
 // (\`bun_jsc::…\` / \`crate::…\`) in the impl signature — the generator copies
 // the type token verbatim.
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSInternalPromise, JSObject, ZigStackFrame};
+use bun_jsc::{JSInternalPromise, JSObject, JSPromise, ZigStackFrame};
+use bun_jsc::debugger::{
+    InspectorBunFrontendDevServerAgentHandle, LifecycleHandle, TestReporterHandle,
+};
 use bun_string::String as BunString;
 `;
 

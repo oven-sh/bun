@@ -379,14 +379,24 @@ impl IOWriter {
         }
         #[cfg(not(windows))]
         {
-            // TODO(port): FilePoll vtable lacks `insert(.nonblocking)` /
-            // `.insert(.socket)` / `.insert(.fifo)` setters (only `has_flag`).
-            // Zig set these so `try_write` picks `send`/`writeNonblocking`.
-            // The PosixPipeWriter Rust port routes via `get_file_type()` which
-            // reads the poll's flags — until the vtable grows a setter the
-            // first write may take the `sys::write` path on a socket. Tracked
-            // in bun_io FilePollVTable follow-up.
-            let _ = (s.flags.nonblock, s.flags.is_socket, s.flags.pollable);
+            use bun_io::FilePollFlag;
+            // PORT NOTE: re-derive `state()` — the EINVAL/EPERM fallback paths
+            // above re-enter `__start()` and mutate `writer.handle`, which
+            // invalidates `s` under Stacked Borrows.
+            let s = self.state();
+            if let Some(poll) = s.writer.get_poll() {
+                if s.flags.nonblock {
+                    poll.set_flag(FilePollFlag::Nonblocking);
+                }
+                // On macOS `sendto` with MSG_DONTWAIT can still block, so
+                // only mark as socket there if the fd is already O_NONBLOCK.
+                let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
+                if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
+                    poll.set_flag(FilePollFlag::Socket);
+                } else if s.flags.pollable {
+                    poll.set_flag(FilePollFlag::Fifo);
+                }
+            }
         }
         Ok(())
     }

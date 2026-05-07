@@ -339,9 +339,9 @@ pub fn view(
                 // `data` slice is the literal value.
                 let slice = e_string.data;
                 if json_output {
-                    Output::print(format_args!("{}\n", bun_fmt::format_json_string_utf8(slice, Default::default())));
+                    Output::print(format_args!("{}\n", bun_fmt::format_json_string_utf8(&slice, Default::default())));
                 } else {
-                    Output::print(format_args!("{}\n", BStr::new(slice)));
+                    Output::print(format_args!("{}\n", BStr::new(&*slice)));
                 }
                 Output::flush();
                 return Ok(());

@@ -23,6 +23,15 @@ comptime {
     @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
+/// Idle timeout for HTTP client sockets, in seconds. The timer is armed in
+/// `onOpen` (so it covers the TLS handshake) and re-armed on every read/write;
+/// if no bytes move in either direction for this long the request fails with
+/// `error.Timeout`. 0 disables the timer (matching `disable_timeout = true`).
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
+/// previous hard-coded value — so unchanged environments see identical
+/// behaviour except that the handshake phase is now also covered.
+pub var idle_timeout_seconds: c_uint = 300;
+
 pub var overridden_default_user_agent: []const u8 = "";
 
 const print_every = 0;
@@ -174,6 +183,15 @@ pub fn onOpen(
     }
     client.registerAbortTracker(is_ssl, socket);
     log("Connected {s} \n", .{client.url.href});
+
+    // Arm the idle timer immediately so a stalled TLS handshake (server
+    // accepts TCP but never answers ClientHello, or a NAT/middlebox silently
+    // drops the flow under load) eventually fails with error.Timeout instead
+    // of leaving the request — and for `bun install`, the whole process —
+    // blocked in epoll_wait forever. Previously the first `setTimeout` call
+    // was inside `onWritable`, which only runs *after* the handshake
+    // completes. See https://github.com/oven-sh/bun/issues/30325.
+    client.setTimeout(socket, 5);
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
@@ -2193,15 +2211,19 @@ pub fn cloneMetadata(this: *HTTPClient) void {
     }
 }
 
-pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
-    if (this.flags.disable_timeout) {
-        socket.timeout(0);
-        socket.setTimeoutMinutes(0);
+pub fn setTimeout(this: *HTTPClient, socket: anytype, _: c_uint) void {
+    // The `minutes` parameter is retained for call-site compatibility but is
+    // no longer used; every caller passed the same hard-coded `5`. The actual
+    // duration now comes from `idle_timeout_seconds` so it can be tuned via
+    // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` (and set low in tests). `socket.setTimeout`
+    // picks the short-tick timer for values ≤ 240s and the minute-granularity
+    // long timer above that, so the default (300s → 5 min long timer) is
+    // exactly the previous behaviour.
+    if (this.flags.disable_timeout or idle_timeout_seconds == 0) {
+        socket.setTimeout(0);
         return;
     }
-
-    socket.timeout(0);
-    socket.setTimeoutMinutes(minutes);
+    socket.setTimeout(idle_timeout_seconds);
 }
 
 pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {

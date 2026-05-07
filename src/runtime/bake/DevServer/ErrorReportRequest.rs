@@ -62,7 +62,7 @@ impl BodyReaderHandler for ErrorReportRequest {
 }
 
 impl ErrorReportRequest {
-    pub fn run(dev: &mut DevServer, _req: &mut Request, mut resp: impl BodyResponse) {
+    pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
         let ctx = Box::into_raw(Box::new(ErrorReportRequest {
             dev: NonNull::from(dev),
             body: uws::BodyReaderMixin::init(),
@@ -71,7 +71,7 @@ impl ErrorReportRequest {
         unsafe {
             (*ctx).dev.as_mut().server.as_mut().unwrap().on_pending_request();
         }
-        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, &mut resp);
+        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
     }
 
     /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`;

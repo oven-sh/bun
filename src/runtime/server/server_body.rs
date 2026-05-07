@@ -3930,6 +3930,10 @@ where
         ctx.request_body = NonNull::new(body_ptr);
 
         let signal = AbortSignal::new(unsafe { &*self.global_this });
+        // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
+        // RequestContext owns one ref so aborts during the WS-upgrade fallback
+        // fetch path propagate.
+        ctx.signal = Some(signal);
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
         // SAFETY: signal is live; ref_() bumps for Request's copy.

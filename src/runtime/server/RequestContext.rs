@@ -272,6 +272,8 @@ use bun_jsc::SysErrorJsc as _;
 use bun_jsc::event_loop::EventLoop;
 use crate::server::jsc::CallFrame;
 use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
+use crate::webcore::blob::BlobExt as _;
+use crate::node::types::PathLikeExt as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
@@ -290,6 +292,9 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> Drop
     for RequestContextRef<ThisServer, SSL, DBG, H3>
 where
     ThisServer: ServerLike + 'static,
+    TransportFor<SSL, H3>: Transport,
+    RequestContext<ThisServer, SSL, DBG, H3>:
+        NativePromiseContext::NativePromiseContextType + RequestContextHostFns,
 {
     #[inline]
     fn drop(&mut self) {

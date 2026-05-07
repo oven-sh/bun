@@ -2010,12 +2010,21 @@ fn standalone_file_blob(
     }
     let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
     let mut blob_body = Blob::init_with_store(store, global);
-    if let Some(mime) = bun_http_types::MimeType::by_loader(file.loader) {
-        // SAFETY: `mime.value` is a process-lifetime &'static str.
-        blob_body.content_type = mime.value.as_ptr() as *const _;
-        blob_body.content_type_len = mime.value.len() as u32;
-    }
-    blob_body.name = BunString::create_utf8(bun_paths::basename(file.name));
+    // PORT NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
+    // discriminant and an extension; matches Zig spec
+    // `MimeType.byLoader(file.loader, std.fs.path.extension(file.name))`.
+    let mime = bun_http_types::MimeType::by_loader(
+        file.loader as u8,
+        bun_paths::extension(file.name),
+    );
+    // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
+    // stable for the life of `mime` (`'static` for the table-backed loaders).
+    blob_body.content_type = mime.value.as_ref() as *const [u8];
+    // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
+    // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
+    // is a no-op for the static case and correct for the owned `OTHER` case.
+    core::mem::forget(mime);
+    blob_body.name = BunString::clone_utf8(bun_paths::basename(file.name));
     let blob = Blob::new(blob_body);
     // SAFETY: `Blob::new` heap-allocates; never null.
     file.cached_blob = core::ptr::NonNull::new(blob.cast());
@@ -2190,7 +2199,9 @@ pub mod environment_variables {
         *slot.ptr = None;
 
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
-        let env_map = unsafe { &mut *vm.transpiler.env }.map;
+        // PORT NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
+        // re-borrow as `&mut *` to avoid moving the reference out of the loader.
+        let env_map = &mut *unsafe { &mut *vm.transpiler.env }.map;
 
         // SAFETY: `value` is a live `bun.String` from C++.
         if unsafe { (*value).is_empty() } {
@@ -3167,7 +3178,7 @@ mod stdio_stores {
         });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (*blob).to_js(global_this) }
+        unsafe { (&mut *blob).to_js(global_this) }
     }
 
     pub fn stdin(global_this: &JSGlobalObject) -> JSValue {

@@ -962,7 +962,7 @@ pub mod command {
                 }
 
                 if !ctx.positionals.is_empty() {
-                    if RunCommand::exec_with_cfg(ctx, run_command::ExecCfg {
+                    if RunCommand::exec(ctx, run_command::ExecCfg {
                         bin_dirs_only: false,
                         log_errors: true,
                         allow_fast_run_for_extensions: false,
@@ -1029,7 +1029,7 @@ pub mod command {
                         ));
                     }
                     let log_errors = !ctx.runtime_options.if_present;
-                    if RunCommand::exec_with_cfg(ctx, run_command::ExecCfg {
+                    if RunCommand::exec(ctx, run_command::ExecCfg {
                         bin_dirs_only: true,
                         log_errors,
                         allow_fast_run_for_extensions: true,

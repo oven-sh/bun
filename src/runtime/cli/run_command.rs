@@ -1984,13 +1984,13 @@ impl RunCommand {
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     /// script, then either boot the VM or spawn the script.
     ///
-    /// Legacy two-arg form preserved for `Command::start`; callers wanting
-    /// the full `ExecCfg` go through `exec_with_cfg`.
-    pub fn exec(ctx: &mut ContextData, bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
-        Self::exec_with_cfg(
-            ctx,
-            ExecCfg { bin_dirs_only, log_errors: true, allow_fast_run_for_extensions: true },
-        )
+    /// Mirrors Zig `RunCommand.exec(ctx, .{ .bin_dirs_only, .log_errors,
+    /// .allow_fast_run_for_extensions })` — all three knobs are forwarded so
+    /// `--if-present` (suppresses missing-script errors) and the Auto-command
+    /// fast-path-by-extension behave exactly per spec.
+    #[inline]
+    pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
+        Self::exec_with_cfg(ctx, cfg)
     }
 
     pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {

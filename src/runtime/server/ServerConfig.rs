@@ -362,13 +362,14 @@ pub fn apply_static_route<const SSL: bool, T>(
         // kept alive by the route table for the lifetime of the app.
         let route = user_data as *mut T;
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        unsafe {
-            T::on_request(
-                route,
-                bun_uws_sys::AnyRequest::H1(req),
-                bun_uws_sys::AnyResponse::from_const::<SSL>(resp),
-            )
+        // `Response<SSL>` is a `#[repr(C)]` opaque over `uws_res`; pointer cast
+        // selects the matching `AnyResponse` variant for the comptime SSL flag.
+        let any_resp = if SSL {
+            bun_uws_sys::AnyResponse::SSL(resp.cast())
+        } else {
+            bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
     extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
@@ -379,13 +380,12 @@ pub fn apply_static_route<const SSL: bool, T>(
         // SAFETY: see `handler` above.
         let route = user_data as *mut T;
         let resp = uws::NewAppResponse::<SSL>::cast_res(resp);
-        unsafe {
-            T::on_head_request(
-                route,
-                bun_uws_sys::AnyRequest::H1(req),
-                bun_uws_sys::AnyResponse::from_const::<SSL>(resp),
-            )
+        let any_resp = if SSL {
+            bun_uws_sys::AnyResponse::SSL(resp.cast())
+        } else {
+            bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
     let user_data = entry as *mut core::ffi::c_void;

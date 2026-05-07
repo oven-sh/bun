@@ -1138,7 +1138,18 @@ impl Readable {
             // blobs are immutable, so we should only ever get the case
             // where the user passed in a Blob with an fd
             Stdio::Blob(_) => Readable::Ignore,
-            Stdio::Memfd(memfd) => Readable::Memfd(*memfd),
+            Stdio::Memfd(memfd) => {
+                let fd = *memfd;
+                // Ownership of the fd transfers to `Readable::Memfd` (Zig sets
+                // `stdio_consumed = true` to suppress `Stdio.deinit`). Swap in
+                // `Ignore` and suppress the old value's destructor so
+                // `Stdio::Drop` doesn't close the fd we just took.
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+                    &mut stdio,
+                    Stdio::Ignore,
+                ));
+                Readable::Memfd(fd)
+            }
             Stdio::Pipe => Readable::Pipe(PipeReader::create(
                 event_loop, process, result, None, out_type, interp,
             )),

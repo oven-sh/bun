@@ -1107,7 +1107,7 @@ impl FFI {
         let arguments = callframe.arguments_old::<1>();
         let arguments = arguments.slice();
         if arguments.is_empty() || !arguments[0].is_object() {
-            return Err(global_this.throw_invalid_arguments("Expected object"));
+            return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
         // Step 1. compile the user's code
@@ -1122,8 +1122,8 @@ impl FFI {
         if !global_this.has_exception() && (symbols_object.is_empty() || !symbols_object.is_object())
         {
             return Err(global_this.throw_invalid_argument_type_value(
-                "symbols",
-                "object",
+                b"symbols",
+                b"object",
                 symbols_object,
             ));
         }
@@ -1145,7 +1145,7 @@ impl FFI {
         }
 
         if compile_c.symbols.map.len() == 0 {
-            return Err(global_this.throw("Expected at least one exported symbol"));
+            return Err(global_this.throw(format_args!("Expected at least one exported symbol")));
         }
 
         if let Some(library_value) = object.get_own(global_this, &bun_str::String::borrow_utf8(b"library"))? {
@@ -1166,8 +1166,8 @@ impl FFI {
                 while let Some(value) = iter.next()? {
                     if !value.is_string() {
                         return Err(global_this.throw_invalid_argument_type_value(
-                            "flags",
-                            "array of strings",
+                            b"flags",
+                            b"array of strings",
                             value,
                         ));
                     }
@@ -1183,8 +1183,8 @@ impl FFI {
             } else {
                 if !flags_value.is_string() {
                     return Err(global_this.throw_invalid_argument_type_value(
-                        "flags",
-                        "string",
+                        b"flags",
+                        b"string",
                         flags_value,
                     ));
                 }
@@ -1249,8 +1249,8 @@ impl FFI {
                 while let Some(value) = iter.next()? {
                     if !value.is_string() {
                         return Err(global_this.throw_invalid_argument_type_value(
-                            "source",
-                            "array of strings",
+                            b"source",
+                            b"array of strings",
                             value,
                         ));
                     }
@@ -1260,8 +1260,8 @@ impl FFI {
                 }
             } else if !source_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type_value(
-                    "source",
-                    "string",
+                    b"source",
+                    b"string",
                     source_value,
                 ));
             } else {
@@ -1342,7 +1342,7 @@ impl FFI {
                 }
                 Step::Pending => {
                     return Err(
-                        global_this.throw("Failed to compile (nothing happend!)")
+                        global_this.throw(format_args!("Failed to compile (nothing happend!)"))
                     );
                 }
                 Step::Compiled(compiled) => {
@@ -1388,17 +1388,17 @@ impl FFI {
     ) -> JsResult<JSValue> {
         #[cfg(not(feature = "tinycc"))]
         {
-            return Err(global_this.throw(
-                "bun:ffi callback() is not available in this build (TinyCC is disabled)",
-            ));
+            return Err(global_this.throw(format_args!(
+                "bun:ffi callback() is not available in this build (TinyCC is disabled)"
+            )));
         }
         jsc::mark_binding();
         if !interface.is_object() {
-            return Ok(global_this.to_invalid_arguments("Expected object"));
+            return Ok(global_this.to_invalid_arguments(format_args!("Expected object")));
         }
 
         if js_callback.is_empty_or_undefined_or_null() || !js_callback.is_callable() {
-            return Ok(global_this.to_invalid_arguments("Expected callback function"));
+            return Ok(global_this.to_invalid_arguments(format_args!("Expected callback function")));
         }
 
         let mut function = Function::default();
@@ -1475,7 +1475,7 @@ impl FFI {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
-            return global.to_invalid_arguments("Expected an object");
+            return global.to_invalid_arguments(format_args!("Expected an object"));
         }
 
         let mut function = Function::default();
@@ -1553,16 +1553,16 @@ impl FFI {
 /// Creates an Exception object indicating that options object is invalid.
 /// The exception is not thrown on the VM.
 fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
-    global.to_invalid_arguments("Expected an options object with symbol names")
+    global.to_invalid_arguments(format_args!("Expected an options object with symbol names"))
 }
 
 impl FFI {
     pub fn open(global: &JSGlobalObject, name_str: ZigString, object_value: JSValue) -> JSValue {
         #[cfg(not(feature = "tinycc"))]
         {
-            let _ = global.throw(
-                "bun:ffi dlopen() is not available in this build (TinyCC is disabled)",
-            );
+            let _ = global.throw(format_args!(
+                "bun:ffi dlopen() is not available in this build (TinyCC is disabled)"
+            ));
             return JSValue::ZERO;
         }
         jsc::mark_binding();
@@ -1601,7 +1601,7 @@ impl FFI {
         };
 
         if name.is_empty() {
-            return global.to_invalid_arguments("Invalid library name");
+            return global.to_invalid_arguments(format_args!("Invalid library name"));
         }
 
         let mut symbols = StringArrayHashMap::<Function>::default();

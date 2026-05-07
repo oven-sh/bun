@@ -12,7 +12,7 @@
 use bun_jsc::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_string::String as BunString;
 
 use crate::api::bun::subprocess::Subprocess;

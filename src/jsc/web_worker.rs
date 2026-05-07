@@ -1444,7 +1444,13 @@ fn resolve_entry_point_specifier(
         }
     }
 
-    if let Some(blob_id) = str.strip_prefix(b"blob:".as_slice()) {
+    // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` requires
+    // `str.len >= "blob:".len + UUID.stringLength` (5 + 36 = 41) AND the
+    // `blob:` prefix. A short specifier like `"blob:foo"` must fall through to
+    // `resolveEntryPoint` rather than short-circuit to "Blob URL is missing".
+    const BLOB_URL_SPECIFIER_LEN: usize = b"blob:".len() + 36; // UUID::STRING_LENGTH
+    if str.len() >= BLOB_URL_SPECIFIER_LEN && str.starts_with(b"blob:") {
+        let blob_id = &str[b"blob:".len()..];
         // PORT NOTE (layering): `WebCore.ObjectURLRegistry` lives in
         // `bun_runtime::webcore`; routed through `RuntimeHooks::has_blob_url`.
         let has = runtime_hooks()
@@ -1454,10 +1460,9 @@ fn resolve_entry_point_specifier(
         if has {
             // SAFETY: see fn doc.
             return Some(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(str) });
-        } else {
-            *error_message = BunString::static_(b"Blob URL is missing");
-            return None;
         }
+        *error_message = BunString::static_(b"Blob URL is missing");
+        return None;
     }
 
     let mut resolved_entry_point: bun_resolver::Result =

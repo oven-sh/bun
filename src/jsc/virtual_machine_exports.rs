@@ -66,7 +66,9 @@ pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bo
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__hasIPC(global: &JSGlobalObject) -> bool {
-    global.bun_vm().ipc.is_some()
+    // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
+    // JSGlobalObject::bun_vm contract.
+    unsafe { (*global.bun_vm()).ipc.is_some() }
 }
 
 #[unsafe(no_mangle)]
@@ -79,7 +81,9 @@ pub extern "C" fn Bun__VirtualMachine__exitDuringUncaughtException(this: &mut Vi
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__isBunMain(global: &JSGlobalObject, str: &BunString) -> bool {
-    str.eql_utf8(global.bun_vm().main)
+    // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
+    // JSGlobalObject::bun_vm contract.
+    str.eql_utf8(unsafe { (*global.bun_vm()).main })
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -99,9 +103,10 @@ pub extern "C" fn Bun__ensureProcessIPCInitialized(global: &JSGlobalObject) {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__queueTask(global: &JSGlobalObject, task: *mut crate::cpp_task::CppTask) {
     crate::mark_binding!();
-    // SAFETY: `event_loop()` never returns null for a Bun-owned global.
+    // SAFETY: bun_vm() yields the live per-thread VM; `event_loop()` never
+    // returns null for a Bun-owned global.
     unsafe {
-        (*global.bun_vm().event_loop()).enqueue_task(Task::init(task));
+        (*(*global.bun_vm()).event_loop()).enqueue_task(Task::init(task));
     }
 }
 
@@ -126,10 +131,11 @@ pub extern "C" fn Bun__queueTaskConcurrently(
     task: *mut crate::cpp_task::CppTask,
 ) {
     crate::mark_binding!();
-    // SAFETY: `event_loop()` never returns null for a Bun-owned global; called
-    // off-thread but `bunVMConcurrently` and the loop wakeup are thread-safe.
+    // SAFETY: bun_vm_concurrently() yields the live VM; `event_loop()` never
+    // returns null for a Bun-owned global. Called off-thread but the loop
+    // wakeup is thread-safe.
     unsafe {
-        (*global.bun_vm_concurrently().event_loop())
+        (*(*global.bun_vm_concurrently()).event_loop())
             .enqueue_task_concurrent(ConcurrentTask::create(Task::init(task)));
     }
 }
@@ -168,7 +174,9 @@ impl HandledPromiseContext {
         // SAFETY: `global_this` was the live global at enqueue time; the VM is
         // process-lifetime and the global outlives the event-loop tick.
         let global = unsafe { &*context.global_this };
-        let _ = global.bun_vm().handled_promise(global, context.promise.get());
+        // SAFETY: bun_vm() yields the live per-thread VM; deref locally per
+        // JSGlobalObject::bun_vm contract.
+        let _ = unsafe { (*global.bun_vm()).handled_promise(global, context.promise.get()) };
         // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
         // Strong's Drop replaces the explicit `.unprotect()`.
         Ok(())
@@ -183,9 +191,10 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
         global_this: global.as_ptr(),
         promise: Strong::create(promise_js, global),
     }));
-    // SAFETY: `event_loop()` never returns null for a Bun-owned global.
+    // SAFETY: bun_vm() yields the live per-thread VM; `event_loop()` never
+    // returns null for a Bun-owned global.
     unsafe {
-        (*global.bun_vm().event_loop())
+        (*(*global.bun_vm()).event_loop())
             .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
     }
 }

@@ -946,16 +946,10 @@ pub trait PathLikeExt {
         str: &bun_str::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> where Self: Sized;
-    fn dupe(&self) -> Self;
 }
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
 pub trait PathOrFdExt {
-    fn dupe(&self) -> Self;
-    fn path(&self) -> &PathLike;
-    fn fd(&self) -> Fd;
-    fn estimated_size(&self) -> usize;
-    fn hash(&self) -> u64;
     fn deinit(&self);
     fn deinit_and_unprotect(&self);
     fn from_js(
@@ -1258,11 +1252,6 @@ impl PathLikeExt for PathLike {
             Ok(Self::EncodedSlice(utf8))
         }
     }
-    fn dupe(&self) -> Self {
-        match self {
-            Self::String(s) => Self::String(*s),
-            // SAFETY: bitwise copy mirrors Zig's by-value union semantics. The
-            // wrapped types are POD-ish handles (JS-rooted buffer / WTF ref);
             // a real ref-bump belongs here once those types expose `dupe()`.
             // TODO(port): switch to `b.dupe()` / `s.dupe_ref()` when available.
             Self::Buffer(b) => Self::Buffer(unsafe { core::ptr::read(b) }),
@@ -1500,45 +1489,12 @@ impl PathOrFdExt for PathOrFileDescriptor {
     /// `pathlike.path` direct field access, which is only used after the
     /// caller has matched on the tag).
     #[inline]
-    fn path(&self) -> &PathLike {
-        match self {
-            Self::Path(path) => path,
-            Self::Fd(_) => unreachable!("PathOrFileDescriptor::path() on Fd variant"),
-        }
-    }
 
     /// Unwrap the `Fd` arm. Panics on `Path` (mirrors Zig's
     /// `pathlike.fd` direct field access).
     #[inline]
-    fn fd(&self) -> Fd {
-        match self {
-            Self::Fd(fd) => *fd,
-            Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on Path variant"),
-        }
-    }
 
-    fn estimated_size(&self) -> usize {
-        match self {
-            Self::Path(path) => path.estimated_size(),
-            Self::Fd(_) => 0,
-        }
-    }
 
-    fn hash(&self) -> u64 {
-        match self {
-            Self::Path(path) => hash(path.slice()),
-            Self::Fd(fd) => {
-                // SAFETY: Fd is POD; reinterpret as bytes for hashing.
-                let bytes = unsafe {
-                    core::slice::from_raw_parts(
-                        (fd as *const Fd) as *const u8,
-                        core::mem::size_of::<Fd>(),
-                    )
-                };
-                hash(bytes)
-            }
-        }
-    }
 
     /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
     fn deinit(&self) {

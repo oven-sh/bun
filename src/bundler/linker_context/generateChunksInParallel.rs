@@ -710,9 +710,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     enable_sm,
                 )?
             };
-            chunks[chunk_index_in_chunks_list].intermediate_output = intermediate_output;
-            // Body below only reads `chunk`; bind a shared reborrow.
-            let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
+            // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
+            // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
+            let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
+            chunk.intermediate_output = intermediate_output;
             let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;

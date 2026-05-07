@@ -218,8 +218,10 @@ pub fn write_output_files_to_disk(
                 )),
             }
         };
-        chunks[chunk_index_in_chunks_list].intermediate_output = intermediate_output;
-        let chunk: &Chunk = &chunks[chunk_index_in_chunks_list];
+        // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
+        // no `&[Chunk]` is needed past this point so an exclusive reborrow is fine.
+        let chunk: &mut Chunk = &mut chunks[chunk_index_in_chunks_list];
+        chunk.intermediate_output = intermediate_output;
 
         let mut source_map_output_file: Option<OutputFile> = None;
 

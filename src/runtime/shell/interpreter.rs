@@ -2051,7 +2051,10 @@ pub struct ShellTask {
     /// recovers `&mut Interpreter` from this field instead. Set at
     /// `ShellTask::new`; cleared (raw-ptr) only when the task is freed.
     pub interp: *mut Interpreter,
-    // TODO(b2-blocked): bun_jsc::EventLoopTask (concurrent_task).
+    /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
+    /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
+    /// mini arm holds an `AnyTaskWithExtraContext` (Zig: `jsc.EventLoopTask`).
+    pub concurrent_task: bun_event_loop::EventLoopTask,
 }
 
 impl ShellTask {
@@ -2066,6 +2069,7 @@ impl ShellTask {
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
+            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
 
@@ -2091,13 +2095,41 @@ impl ShellTask {
         }
     }
 
-    pub fn on_finish(&mut self) {
+    /// Spec: interpreter.zig `InnerShellTask.onFinish`. Called from the worker
+    /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
+    /// concurrent task so the main thread re-enters via
+    /// [`run_from_main_thread`](Self::run_from_main_thread) (which performs the
+    /// `keep_alive.unref` paired with [`schedule`](Self::schedule)).
+    ///
+    /// # Safety
+    /// `ctx` must be the same live heap allocation passed to
+    /// [`schedule`](Self::schedule); not touched again on the worker thread
+    /// after this returns.
+    pub unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
-        // TODO(b2-blocked): event_loop.enqueueTaskConcurrent(concurrent_task.from(ctx))
-        // — needs bun_jsc::EventLoopTask. Until then the bounce back to the
-        // main thread (and thus `run_from_main_thread`) is not wired; builtin
-        // state machines that depend on it remain suspended (matching the
-        // pre-WorkPool stub behaviour).
+        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        let this = unsafe { (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask };
+        // SAFETY: `this` is live; we stay on raw pointers because the
+        // concurrent queue may dispatch on the main thread before this stack
+        // frame unwinds.
+        unsafe {
+            let event_loop = (*this).event_loop;
+            match &mut (*this).concurrent_task {
+                EventLoopTask::Js(ct) => {
+                    // Zig: `concurrent_task.js.from(ctx, .manual_deinit)` —
+                    // tag resolved via `C: Taskable`.
+                    let ct = ct.from(ctx, AutoDeinit::ManualDeinit) as *mut _;
+                    event_loop.enqueue_task_concurrent(EventLoopTaskPtr { js: ct });
+                }
+                EventLoopTask::Mini(at) => {
+                    // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
+                    // Rust passes the monomorphised callback explicitly.
+                    let at = at.from(this, shell_task_run_from_main_thread_mini::<C>);
+                    event_loop.enqueue_task_concurrent(EventLoopTaskPtr { mini: at });
+                }
+            }
+        }
     }
 
     /// Spec: interpreter.zig `InnerShellTask.runFromMainThread`. Unrefs the

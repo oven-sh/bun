@@ -998,8 +998,12 @@ impl RunCommand {
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
-            // TODO(port): `dns_result_order` is `u8` here pending the
-            // `bun_runtime::api::dns::Resolver::Order` move-down (b2-cycle).
+            // PORT NOTE: `Options::dns_result_order` is `u8` until the
+            // b2-cycle widens it to `bun_dns::Order`; the enum is
+            // `#[repr(u8)]` so `as u8` matches Zig's `@intFromEnum`.
+            dns_result_order: bun_dns::Order::from_string_or_die(
+                &ctx.runtime_options.dns_result_order,
+            ) as u8,
             ..Default::default()
         })?;
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM

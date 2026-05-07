@@ -156,8 +156,6 @@ impl ByteStream {
             return Ok(());
         }
 
-        let chunk = stream.slice();
-
         if let Some(action) = self.buffer_action.as_mut() {
             if let streams::Result::Err(err) = &stream {
                 // PORT NOTE: Zig `defer { ... }` block — runs after `action.reject`. Reordered
@@ -214,13 +212,15 @@ impl ByteStream {
                 return action.fulfill(self.parent().global_this, &mut blob);
             } else {
                 self.buffer.extend_from_slice(stream.slice());
-                // Zig: `if owned* allocator.free(stream.slice())` — owned ByteList freed by
-                // `release` (StreamResult has no Drop).
-                stream.release();
+                // Zig: `if owned* allocator.free(stream.slice())` — owned `ByteList` payload of
+                // `stream` is freed by its Drop glue (Temporary* are `ManuallyDrop`, left alone).
+                drop(stream);
             }
 
             return Ok(());
         }
+
+        let chunk = stream.slice();
 
         if self.pending.state == streams::PendingState::Pending {
             debug_assert!(self.buffer.is_empty());

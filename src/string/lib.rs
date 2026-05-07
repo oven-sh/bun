@@ -1307,6 +1307,20 @@ impl ZigString {
         bun_core::ZBox::from_vec_with_nul(list)
     }
 
+    /// `ZigString.indexOfAny` (ZigString.zig:89) — first index whose code unit
+    /// matches any byte in `chars`. The 16-bit branch narrows each unit to the
+    /// Latin-1 range before comparing (mirrors Zig's comptime widening of the
+    /// `[]const u8` needle to `u16` inside `strings.indexOfAny16`).
+    pub fn index_of_any(self, chars: &'static [u8]) -> Option<usize> {
+        if self.is_16bit() {
+            self.utf16_slice()
+                .iter()
+                .position(|&c| c < 256 && chars.contains(&(c as u8)))
+        } else {
+            crate::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
+        }
+    }
+
     /// `ZigString.charAt` — first/nth code unit, widened to `u16` regardless
     /// of encoding (ZigString.zig:615). Caller must ensure `i < self.len`.
     #[inline]

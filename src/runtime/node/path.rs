@@ -1362,31 +1362,6 @@ pub fn format(
     )
 }
 
-/// Based on Node v21.6.1 path.posix.isAbsolute:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1159
-pub fn is_absolute_posix_t<T: PathChar>(path: &[T]) -> bool {
-    // validateString of `path` is performed in pub fn isAbsolute.
-    !path.is_empty() && path[0] == T::from_u8(CHAR_FORWARD_SLASH)
-}
-
-/// Based on Node v21.6.1 path.win32.isAbsolute:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L406
-pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
-    // validateString of `path` is performed in pub fn isAbsolute.
-    let len = path.len();
-    if len == 0 {
-        return false;
-    }
-
-    let byte0 = path[0];
-    is_sep_windows_t(byte0)
-        // Possible device root
-        || (len > 2
-            && is_windows_device_root_t(byte0)
-            && path[1] == T::from_u8(CHAR_COLON)
-            && is_sep_windows_t(path[2]))
-}
-
 pub fn is_absolute_posix_zig_string(path_zstr: &ZigString) -> bool {
     let path_zstr_trunc = path_zstr.trunc(1);
     if path_zstr_trunc.len > 0 && path_zstr_trunc.is_16bit() {
@@ -1425,24 +1400,6 @@ pub fn is_absolute(
         return Ok(JSValue::from(is_absolute_windows_zig_string(&path_zstr)));
     }
     Ok(JSValue::from(is_absolute_posix_zig_string(&path_zstr)))
-}
-
-#[inline]
-pub fn is_sep_posix_t<T: PathChar>(byte: T) -> bool {
-    byte == T::from_u8(CHAR_FORWARD_SLASH)
-}
-
-#[inline]
-pub fn is_sep_windows_t<T: PathChar>(byte: T) -> bool {
-    byte == T::from_u8(CHAR_FORWARD_SLASH) || byte == T::from_u8(CHAR_BACKWARD_SLASH)
-}
-
-/// Based on Node v21.6.1 private helper isWindowsDeviceRoot:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L60C10-L60C29
-#[inline]
-pub fn is_windows_device_root_t<T: PathChar>(byte: T) -> bool {
-    (byte >= T::from_u8(b'A') && byte <= T::from_u8(b'Z'))
-        || (byte >= T::from_u8(b'a') && byte <= T::from_u8(b'z'))
 }
 
 /// Based on Node v21.6.1 path.posix.join:

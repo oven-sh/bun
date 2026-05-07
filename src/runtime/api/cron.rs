@@ -374,27 +374,32 @@ impl CronRegisterJob {
 
     // -- Linux --
 
-    fn start_linux(&mut self) {
-        self.state = RegisterState::ReadingCrontab;
-        self.stdout_reader = OutputReader::init::<CronRegisterJob>();
-        let self_ptr = self as *mut Self as *mut _;
-        self.stdout_reader.set_parent(self_ptr);
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_linux(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RegisterState::ReadingCrontab;
+        s.stdout_reader = OutputReader::init::<CronRegisterJob>();
+        s.stdout_reader.set_parent(this.cast());
         let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Self::finish(self);
+            s.set_err(format_args!("crontab not found in PATH"));
+            return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] =
             [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
-    fn process_crontab_and_install(&mut self) {
-        let existing_content = self.stdout_reader.final_buffer().as_slice();
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn process_crontab_and_install(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
+        let s = unsafe { &mut *this };
+        let existing_content = s.stdout_reader.final_buffer().as_slice();
         let mut result: Vec<u8> = Vec::new();
 
-        if filter_crontab(existing_content, self.title.as_bytes(), &mut result).is_err() {
-            self.set_err(format_args!("Out of memory building crontab"));
-            return Self::finish(self);
+        if filter_crontab(existing_content, s.title.as_bytes(), &mut result).is_err() {
+            s.set_err(format_args!("Out of memory building crontab"));
+            return unsafe { Self::finish(this) };
         }
 
         // Build new entry with single-quoted paths to prevent shell injection
@@ -402,95 +407,98 @@ impl CronRegisterJob {
         if write!(
             &mut new_entry,
             "# bun-cron: {title}\n{sched} '{exe}' run --cron-title={title} --cron-period='{sched}' '{path}'\n",
-            title = bstr::BStr::new(self.title.as_bytes()),
-            sched = bstr::BStr::new(self.schedule.as_bytes()),
-            exe = bstr::BStr::new(self.bun_exe.as_bytes()),
-            path = bstr::BStr::new(self.abs_path.as_bytes()),
+            title = bstr::BStr::new(s.title.as_bytes()),
+            sched = bstr::BStr::new(s.schedule.as_bytes()),
+            exe = bstr::BStr::new(s.bun_exe.as_bytes()),
+            path = bstr::BStr::new(s.abs_path.as_bytes()),
         )
         .is_err()
         {
-            self.set_err(format_args!("Out of memory"));
-            return Self::finish(self);
+            s.set_err(format_args!("Out of memory"));
+            return unsafe { Self::finish(this) };
         }
         result.extend_from_slice(&new_entry);
 
         let tmp_path = match make_temp_path("bun-cron-") {
             Ok(p) => p,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
         let tmp_path_ptr = tmp_path.as_ptr();
-        self.tmp_path = Some(tmp_path);
+        s.tmp_path = Some(tmp_path);
 
         let file = match File::openat(
             Fd::cwd(),
-            self.tmp_path.as_ref().unwrap(),
+            s.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
         ) {
             Ok(f) => f,
             Err(_) => {
-                self.set_err(format_args!("Failed to create temp file"));
-                return Self::finish(self);
+                s.set_err(format_args!("Failed to create temp file"));
+                return unsafe { Self::finish(this) };
             }
         };
         if file.write_all(&result).is_err() {
             file.close();
-            self.set_err(format_args!("Failed to write temp file"));
-            return Self::finish(self);
+            s.set_err(format_args!("Failed to write temp file"));
+            return unsafe { Self::finish(this) };
         }
         file.close();
 
-        self.state = RegisterState::InstallingCrontab;
-        // TODO(port): explicit deinit of old reader before reassign — Drop handles it.
-        self.stdout_reader = OutputReader::init::<CronRegisterJob>();
+        s.state = RegisterState::InstallingCrontab;
+        // PORT NOTE: explicit deinit of old reader before reassign — Drop handles it.
+        s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         let Some(crontab_path) = find_crontab() else {
-            self.set_err(format_args!("crontab not found in PATH"));
-            return Self::finish(self);
+            s.set_err(format_args!("crontab not found in PATH"));
+            return unsafe { Self::finish(this) };
         };
         let mut argv: [*const c_char; 3] = [crontab_path, tmp_path_ptr.cast(), core::ptr::null()];
-        self.spawn_cmd(&mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
+        unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
     // -- macOS --
 
-    fn start_mac(&mut self) {
-        self.state = RegisterState::WritingPlist;
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    unsafe fn start_mac(this: *mut Self) {
+        // SAFETY: local reborrow; not used after `spawn_bootout`/`finish`.
+        let s = unsafe { &mut *this };
+        s.state = RegisterState::WritingPlist;
 
-        let calendar_xml = match cron_to_calendar_interval(self.schedule.as_bytes()) {
+        let calendar_xml = match cron_to_calendar_interval(s.schedule.as_bytes()) {
             Ok(x) => x,
             Err(_) => {
-                self.set_err(format_args!("Invalid cron expression"));
-                return Self::finish(self);
+                s.set_err(format_args!("Invalid cron expression"));
+                return unsafe { Self::finish(this) };
             }
         };
 
         let Some(home) = env_var::HOME.get() else {
-            self.set_err(format_args!("HOME environment variable not set"));
-            return Self::finish(self);
+            s.set_err(format_args!("HOME environment variable not set"));
+            return unsafe { Self::finish(this) };
         };
 
         let mut launch_agents_dir = Vec::new();
         let _ = write!(&mut launch_agents_dir, "{}/Library/LaunchAgents", bstr::BStr::new(home));
         if Fd::cwd().make_path(&launch_agents_dir).is_err() {
-            self.set_err(format_args!("Failed to create ~/Library/LaunchAgents directory"));
-            return Self::finish(self);
+            s.set_err(format_args!("Failed to create ~/Library/LaunchAgents directory"));
+            return unsafe { Self::finish(this) };
         }
 
         let plist_path = match alloc_print_z(format_args!(
             "{}/Library/LaunchAgents/bun.cron.{}.plist",
             bstr::BStr::new(home),
-            bstr::BStr::new(self.title.as_bytes())
+            bstr::BStr::new(s.title.as_bytes())
         )) {
             Ok(p) => p,
             Err(_) => {
-                self.set_err(format_args!("Out of memory"));
-                return Self::finish(self);
+                s.set_err(format_args!("Out of memory"));
+                return unsafe { Self::finish(this) };
             }
         };
-        self.tmp_path = Some(plist_path);
+        s.tmp_path = Some(plist_path);
 
         // XML-escape all dynamic values
         macro_rules! try_escape {
@@ -498,16 +506,16 @@ impl CronRegisterJob {
                 match xml_escape($e) {
                     Ok(v) => v,
                     Err(_) => {
-                        self.set_err(format_args!("Out of memory"));
-                        return Self::finish(self);
+                        s.set_err(format_args!("Out of memory"));
+                        return unsafe { Self::finish(this) };
                     }
                 }
             };
         }
-        let xml_title = try_escape!(self.title.as_bytes());
-        let xml_bun = try_escape!(self.bun_exe.as_bytes());
-        let xml_path = try_escape!(self.abs_path.as_bytes());
-        let xml_sched = try_escape!(self.schedule.as_bytes());
+        let xml_title = try_escape!(s.title.as_bytes());
+        let xml_bun = try_escape!(s.bun_exe.as_bytes());
+        let xml_path = try_escape!(s.abs_path.as_bytes());
+        let xml_sched = try_escape!(s.schedule.as_bytes());
 
         let mut plist = Vec::new();
         if write!(

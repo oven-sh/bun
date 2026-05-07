@@ -4267,7 +4267,6 @@ pub fn write_file_with_source_destination(
                         ));
                     }
                 } else {
-                    // TODO(port): local Wrapper struct { store: StoreRef, promise, global } with resolve cb.
                     struct Wrapper {
                         store: StoreRef,
                         promise: jsc::JSPromiseStrong,

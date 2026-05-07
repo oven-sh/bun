@@ -41,6 +41,11 @@ impl BunSocketContextOptionsExt for uws::SocketContext::BunSocketContextOptions 
     }
 }
 
+/// Mirrors Zig's `pub const js = jsc.Codegen.JSSecureContext`. Re-export the
+/// codegen-emitted module so `$zig(SecureContext.zig, js.getConstructor)` in
+/// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
+pub use crate::generated_classes::js_SecureContext as js;
+
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
 #[bun_jsc::JsClass]
 pub struct SecureContext {

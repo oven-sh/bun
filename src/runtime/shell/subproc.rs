@@ -1213,8 +1213,10 @@ impl EnvMapIterKey<'_> {
 }
 
 pub struct EnvMapIterValue {
-    pub val: &'static bun_str::ZStr,
-    // TODO(port): Zig stores `[:0]const u8` allocated from arena; using leaked &'static ZStr here.
+    /// Zig stores `[:0]const u8` allocated from the spawn arena. Port owns the
+    /// NUL-terminated copy directly — `ZBox` is the `allocator.dupeZ` analogue.
+    // PERF(port): arena allocSentinel — profile in Phase B
+    pub val: bun_core::ZBox,
 }
 
 impl core::fmt::Display for EnvMapIterValue {
@@ -1224,36 +1226,26 @@ impl core::fmt::Display for EnvMapIterValue {
 }
 
 impl<'a> EnvMapIter<'a> {
-    pub fn init(_map: &'a DotEnvMap) -> EnvMapIter<'a> {
-        // TODO(port): `DotEnvMap::iterator()` takes `&mut self` but the shell
-        // only ever holds a shared `&DotEnvMap` here. The sole caller
-        // (`fill_env_from_process`) was already dead under Zig lazy
-        // compilation (type-mismatched call to `fill_env`).
-        todo!("blocked_on: bun_dotenv::Map::iterator(&mut self) needs shared variant")
+    pub fn init(map: &'a DotEnvMap) -> EnvMapIter<'a> {
+        EnvMapIter {
+            map,
+            iter: map.iter(),
+        }
     }
 
     pub fn len(&self) -> usize {
-        // TODO(port): map.map.unmanaged.entries — bun_dotenv internals not
-        // exposed; dead code (see `init`).
-        0
+        self.map.count()
     }
 
     pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_alloc::AllocError> {
-        let Some(entry) = self.iter.next() else {
+        let Some((key, value)) = self.iter.next() else {
             return Ok(None);
         };
-        let value_bytes: &[u8] = &entry.value_ptr.value;
-        let mut value = vec![0u8; value_bytes.len() + 1];
-        value[..value_bytes.len()].copy_from_slice(value_bytes);
-        value[value_bytes.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        let zstr = unsafe { bun_str::ZStr::from_raw(value.leak().as_ptr(), value_bytes.len()) };
-        // TODO(port): leaked Vec — Zig used arena alloc; revisit ownership.
         Ok(Some(EnvMapIterEntry {
-            key: EnvMapIterKey {
-                val: &entry.key_ptr[..],
+            key: EnvMapIterKey { val: &key[..] },
+            value: EnvMapIterValue {
+                val: bun_core::ZBox::from_bytes(&value.value),
             },
-            value: EnvMapIterValue { val: zstr },
         }))
     }
 }

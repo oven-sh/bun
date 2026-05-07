@@ -383,7 +383,7 @@ impl JSBundleCompletionTask {
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
-            root_dir.fd,
+            root_dir.0.fd,
             module_prefix,
             outfile_for_executable,
             env,
@@ -477,19 +477,19 @@ impl JSBundleCompletionTask {
                     let write_args = fs_args::WriteFile {
                         encoding: Encoding::Buffer,
                         flag: FileSystemFlags::W,
-                        mode: crate::node::types::DEFAULT_PERMISSION,
+                        mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
                             bun_str::PathString::init(write_path),
                         )),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
-                            bun_str::zig_string::Slice::from_borrow(bytes),
+                            bun_str::zig_string::Slice::from_utf8_never_free(bytes),
                         ),
-                        dirfd: root_dir.fd,
+                        dirfd: root_dir.0.fd,
                         signal: None,
                     };
                     match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
-                        sys::Maybe::Err(err) => {
+                        Err(err) => {
                             bun_core::Output::err(
                                 err,
                                 "failed to write sourcemap file '{s}'",
@@ -498,7 +498,7 @@ impl JSBundleCompletionTask {
                             // current.deinit() — `OutputFile` drops below.
                             false
                         }
-                        sys::Maybe::Ok(()) => {
+                        Ok(()) => {
                             output_files[i].dest_path = sourcemap_full_path;
                             true
                         }
@@ -572,7 +572,11 @@ impl JSBundleCompletionTask {
             if let CompileResult::Err(err) = &compile_result {
                 // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
                 this.log
-                    .add_error(None, logger::Loc::EMPTY, Box::from(err.slice()))
+                    .add_error_fmt(
+                        None,
+                        logger::Loc::EMPTY,
+                        format_args!("{}", bstr::BStr::new(err.slice())),
+                    )
                     .expect("oom");
                 // `this.result.value.deinit()` — owned fields drop with the
                 // overwrite below; `output_files` (moved out above) drops here.

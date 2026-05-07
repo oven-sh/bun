@@ -3589,7 +3589,7 @@ declare module "bun" {
      * await redis.function("DELETE", "mylib");
      * ```
      */
-    function(...args: (string | Buffer | ArrayBufferView)[]): Promise<any>;
+    function(...args: RedisClient.KeyLike[]): Promise<any>;
 
     /**
      * Return the number of keys in the currently-selected database

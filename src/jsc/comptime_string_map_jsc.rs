@@ -1,11 +1,11 @@
 //! JSC bridges for `bun.ComptimeStringMap(V)`. The generic map type stays in
 //! `collections/`; only the `JSValue → V` lookup helpers live here.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_str::String as BunString;
-// PORT NOTE: `from_js` on `bun_str::String` is provided by the `StringJsc`
+use crate::{JSGlobalObject, JSValue, JsResult};
+use bun_string::{OwnedString, String as BunString, Tag};
+// PORT NOTE: `from_js` on `bun_string::String` is provided by the `StringJsc`
 // extension trait, which is allowed here because this file lives in `src/jsc/`.
-use bun_jsc::StringJsc as _;
+use crate::StringJsc as _;
 
 // PORT NOTE: reshaped for borrowck / Rust generics. Zig took `comptime Map: type`
 // (the `ComptimeStringMap(V, ...)` instantiation, a namespace with static
@@ -20,15 +20,17 @@ pub fn from_js<V: Copy>(
     global_this: &JSGlobalObject,
     input: JSValue,
 ) -> JsResult<Option<V>> {
-    let str = BunString::from_js(input, global_this)?;
-    debug_assert!(str.tag() != bun_str::Tag::Dead);
-    // `defer str.deref()` — handled by `Drop` on `bun_str::String`.
-    // TODO(port): phf custom hasher — Zig used
-    // `Map.getWithEql(str, bun.String.eqlComptime)`, comparing a `bun.String`
-    // against the map's comptime UTF-8 keys without unconditionally transcoding.
-    // For now, materialize UTF-8 bytes and do a direct phf lookup.
+    // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
+    let str = OwnedString::new(BunString::from_js(input, global_this)?);
+    debug_assert!(str.tag() != Tag::Dead);
+    // Zig used `Map.getWithEql(str, bun.String.eqlComptime)`, comparing a
+    // `bun.String` against the map's comptime UTF-8 keys without unconditionally
+    // transcoding. `phf` keys are `&[u8]`, so materialize UTF-8 bytes and do a
+    // direct phf lookup.
+    // PERF(port): avoid the UTF-8 transcode for 8-bit/latin1-backed strings —
+    // profile in Phase B.
     let utf8 = str.to_utf8();
-    Ok(map.get(utf8.as_bytes()).copied())
+    Ok(map.get(utf8.slice()).copied())
 }
 
 pub fn from_js_case_insensitive<V: Copy>(
@@ -36,27 +38,26 @@ pub fn from_js_case_insensitive<V: Copy>(
     global_this: &JSGlobalObject,
     input: JSValue,
 ) -> JsResult<Option<V>> {
-    let str = BunString::from_js(input, global_this)?;
-    debug_assert!(str.tag() != bun_str::Tag::Dead);
-    // `defer str.deref()` — handled by `Drop` on `bun_str::String`.
-    // TODO(port): phf custom hasher — Zig used `str.inMapCaseInsensitive(Map)`,
-    // which dispatches through the map's length-bucketed comptime tables with an
-    // ASCII-case-insensitive comparator. `phf` has no case-insensitive mode, so
-    // Phase B must either (a) lower-case the probe and require lower-case keys
-    // at map build time, or (b) keep this linear scan for small maps.
+    // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
+    let str = OwnedString::new(BunString::from_js(input, global_this)?);
+    debug_assert!(str.tag() != Tag::Dead);
+    // Zig used `str.inMapCaseInsensitive(Map)`, which dispatches through the
+    // map's length-bucketed comptime tables with an ASCII-case-insensitive
+    // comparator. `phf` has no case-insensitive mode, so scan entries with the
+    // same `eqlCaseInsensitiveASCII` comparator the Zig path used.
     let utf8 = str.to_utf8();
+    let probe = utf8.slice();
     // PERF(port): linear ASCII case-insensitive scan over all entries; the Zig
     // path was O(1) via length bucketing — profile in Phase B.
     Ok(map
         .entries()
-        .find(|(k, _)| bun_str::strings::eql_case_insensitive_ascii(utf8.as_bytes(), k, true))
+        .find(|(k, _)| bun_string::strings::eql_case_insensitive_ascii(probe, k, true))
         .map(|(_, v)| *v))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/comptime_string_map_jsc.zig (20 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      `comptime Map: type` reshaped to `&'static phf::Map<&[u8], V>`; getWithEql/case-insensitive need phf-side work in Phase B
+//   confidence: high
+//   notes:      `comptime Map: type` reshaped to `&'static phf::Map<&[u8], V>`
 // ──────────────────────────────────────────────────────────────────────────

@@ -43,11 +43,14 @@ impl CallbackWrapper {
     }
 
     #[inline]
-    pub fn call(self, global_object: &JSGlobalObject, args: &[JSValue]) -> Option<JSValue> {
+    pub fn call(self, global_object: &JSGlobalObject, args: &[JSValue]) -> JsResult<Option<JSValue>> {
+        // PORT NOTE: codegen.zig's `callback.call(globalObject, args)` predates the
+        // 3-arg JSValue.call signature and is dead Zig (never instantiated). The intent
+        // is `callWithGlobalThis`; the JS exception is propagated rather than swallowed.
         if let Some(callback) = self.get() {
-            return Some(callback.call(global_object, args));
+            return Ok(Some(callback.call_with_global_this(global_object, args)?));
         }
-        None
+        Ok(None)
     }
 }
 

@@ -508,16 +508,22 @@ impl JSValue {
     /// `JSValue.createUninitializedUint8Array(global, len)` — allocate a new
     /// `Uint8Array` of `len` bytes without zeroing. Backing memory is
     /// uninitialized; caller must write every byte before exposing it to JS.
+    /// May throw (OOM) — Zig spec wraps via `fromJSHostCall`.
     #[inline]
-    pub fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JSValue {
+    pub fn create_uninitialized_uint8_array(
+        global: &JSGlobalObject,
+        len: usize,
+    ) -> JsResult<JSValue> {
         unsafe extern "C" {
             fn JSC__JSValue__createUninitializedUint8Array(
                 global: *const JSGlobalObject,
                 len: usize,
             ) -> JSValue;
         }
-        // SAFETY: `global` is a live borrow.
-        unsafe { JSC__JSValue__createUninitializedUint8Array(global, len) }
+        // SAFETY: `global` is a live borrow; FFI may set an exception (OOM).
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__createUninitializedUint8Array(global, len)
+        })
     }
     pub fn coerce_to_i32(self, global: &JSGlobalObject) -> JsResult<i32> {
         // SAFETY: `global` is live; FFI may set an exception.

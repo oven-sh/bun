@@ -50,7 +50,7 @@ pub struct InitOpts<'a> {
     pub arena: Box<ArenaAllocator>,
 }
 
-pub struct AsyncModule<'a> {
+pub struct AsyncModule {
     // This is all the state used by the printer to print the module
     pub parse_result: ParseResult,
     pub promise: StrongOptional, // Strong.Optional, default .empty
@@ -62,10 +62,14 @@ pub struct AsyncModule<'a> {
     referrer_len: u32,
     specifier_len: u32,
     pub fd: Option<Fd>,
-    pub package_json: Option<&'a PackageJSON>,
+    // PORT NOTE: `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
+    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). Stored as raw
+    // ptrs so `AsyncModule` is `'static`-embeddable in `Queue`/`VirtualMachine`
+    // without a phantom lifetime; reborrowed via `global_this()` at use sites.
+    pub package_json: Option<core::ptr::NonNull<PackageJSON>>,
     pub loader: api::Loader,
     pub hash: u32, // default = u32::MAX
-    pub global_this: &'a JSGlobalObject,
+    pub global_this: core::ptr::NonNull<JSGlobalObject>,
     pub arena: Box<ArenaAllocator>,
 
     // This is the specific state for making it async
@@ -96,12 +100,7 @@ pub struct DeferredDependencyError {
     pub err: bun_core::Error,
 }
 
-// TODO(port): AsyncModule carries <'a> only for `package_json` /
-// `global_this`; Queue is embedded intrusively in VirtualMachine via
-// @fieldParentPtr, so it cannot itself be generic over a borrowed lifetime.
-// Using 'static here — both referents live for the VM lifetime. Phase B:
-// switch `global_this` / `package_json` to raw ptrs to drop the lifetime.
-pub type Map = Vec<AsyncModule<'static>>;
+pub type Map = Vec<AsyncModule>;
 
 #[derive(Default)]
 pub struct Queue {

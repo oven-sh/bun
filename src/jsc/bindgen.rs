@@ -1,11 +1,11 @@
 use core::ffi::c_uint;
 use core::marker::PhantomData;
-use core::mem::{align_of, size_of};
+use core::mem::{align_of, size_of, ManuallyDrop};
 use core::ptr::NonNull;
 
-use bun_jsc::{self as jsc, JSValue, Strong};
-use bun_runtime::webcore;
-use bun_str as string;
+use crate::{self as jsc, JSValue, Strong};
+use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
+use bun_string::wtf::{WTFString, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
 // The Zig file defines a family of "Bindgen*" comptime structs that all share
@@ -18,6 +18,11 @@ use bun_str as string;
 pub trait Bindgen {
     type ZigType;
     type ExternType;
+
+    /// `true` when `ZigType` and `ExternType` are layout-identical (Zig's
+    /// `Child.ZigType == Child.ExternType` test). Enables `BindgenArray`'s
+    /// allocation-reuse fast path. Defaults to `false`; override per adapter.
+    const SAME_REPR: bool = false;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType;
 }
@@ -68,10 +73,11 @@ impl Bindgen for BindgenStrongAny {
     // `?*jsc.Strong.Impl` — must be single-word for #[repr(C)] union placement, so
     // `Option<NonNull<T>>` (niche-optimized), NOT `Option<*mut T>` (two words).
     type ExternType = Option<NonNull<jsc::strong::Impl>>;
-    // TODO(port): lifetime — `?*jsc.Strong.Impl` is an FFI handle from C++; raw ptr for now.
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
-        Strong { impl_: extern_value.expect("non-null") }
+        // SAFETY: bindgen contract — C++ passes a freshly-allocated Strong handle
+        // whose ownership is transferred to Zig/Rust here.
+        unsafe { Strong::adopt(extern_value.expect("non-null")) }
     }
 }
 
@@ -82,7 +88,8 @@ impl BindgenOptionalRepr for BindgenStrongAny {
     fn convert_optional_from_extern(
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
-        jsc::strong::Optional { impl_: extern_value }
+        // SAFETY: bindgen contract — if non-null, ownership is transferred.
+        unsafe { jsc::strong::Optional::adopt(extern_value) }
     }
 }
 
@@ -107,13 +114,11 @@ pub struct BindgenOptional<Child>(PhantomData<Child>);
 // Default path: `Child` does NOT define a custom optional repr — wrap in
 // `ExternTaggedUnion<(u8, Child::ExternType)>` and produce `Option<Child::ZigType>`.
 //
-// TODO(port): Zig switches on `@hasDecl(Child, "OptionalExternType")` to pick
+// PORT NOTE: Zig switches on `@hasDecl(Child, "OptionalExternType")` to pick
 // between this default and `Child::convertOptionalFromExtern`. Stable Rust
-// cannot specialize on "does Child impl BindgenOptionalRepr". Phase B should
-// either (a) require every `Child` to impl `BindgenOptionalRepr` (blanket impl
-// providing this default, overridden by the four custom types below), which
-// needs `min_specialization`, or (b) have the bindgen codegen emit
-// `BindgenOptional<Child>` vs `BindgenOptionalCustom<Child>` explicitly.
+// cannot specialize on "does Child impl BindgenOptionalRepr", so the bindgen
+// codegen emits `BindgenOptional<Child>` vs `BindgenOptionalCustom<Child>`
+// explicitly per call site.
 impl<Child: Bindgen> Bindgen for BindgenOptional<Child> {
     type ZigType = Option<Child::ZigType>;
     type ExternType = ExternTaggedUnion2<u8, Child::ExternType>;
@@ -124,7 +129,9 @@ impl<Child: Bindgen> Bindgen for BindgenOptional<Child> {
         }
         debug_assert_eq!(extern_value.tag, 1);
         // SAFETY: tag == 1 means the `_1` arm of the union is initialized.
-        Some(Child::convert_from_extern(unsafe { extern_value.data._1 }))
+        Some(Child::convert_from_extern(unsafe {
+            ManuallyDrop::into_inner(extern_value.data._1)
+        }))
     }
 }
 
@@ -146,26 +153,30 @@ impl<Child: BindgenOptionalRepr> Bindgen for BindgenOptionalCustom<Child> {
 pub struct BindgenString;
 
 impl Bindgen for BindgenString {
-    type ZigType = string::WTFString;
-    // TODO(port): verify `bun_str::WTFStringImpl` is a `NonNull`/ref newtype with a
-    // null niche so `Option<WTFStringImpl>` is single-word (FFI layout requirement —
-    // ExternType is placed in `#[repr(C)]` unions). If not, change to
-    // `Option<NonNull<string::WTFStringImplStruct>>`.
-    type ExternType = Option<string::WTFStringImpl>;
+    type ZigType = WTFString;
+    // `?bun.string.WTFStringImpl` — `Option<NonNull<_>>` for single-word FFI layout.
+    type ExternType = Option<NonNull<WTFStringImplStruct>>;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
-        string::WTFString::adopt(extern_value.unwrap())
+        // SAFETY: bindgen contract — C++ passes a `StringImpl*` with one ref already
+        // taken for us; `adopt` consumes that ref.
+        unsafe { WTFString::adopt(extern_value.expect("non-null").as_ptr()) }
     }
 }
 
 impl BindgenOptionalRepr for BindgenString {
-    type OptionalZigType = string::wtf_string::Optional;
+    type OptionalZigType = ExternalSharedOptional<WTFStringImplStruct>;
     type OptionalExternType = <Self as Bindgen>::ExternType;
 
     fn convert_optional_from_extern(
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
-        string::wtf_string::Optional::adopt(extern_value)
+        // SAFETY: bindgen contract — if non-null, one ref is transferred.
+        unsafe {
+            ExternalSharedOptional::adopt(
+                extern_value.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
+            )
+        }
     }
 }
 
@@ -177,33 +188,33 @@ impl BindgenOptionalRepr for BindgenString {
 // generated per arity (or by a proc-macro from the bindgen codegen).
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): proc-macro — `BindgenUnion(children)` reflects over a comptime
-// type list to build a tagged union and dispatch `convertFromExtern` per arm
-// via `inline else`. Phase B should emit this from `generate-classes.ts` /
-// the bindgen TS codegen as a concrete `enum` + `#[repr(C)]` union pair per
-// call site, rather than a generic Rust combinator.
+// PORT NOTE: `BindgenUnion(children)` reflects over a comptime type list to
+// build a tagged union and dispatch `convertFromExtern` per arm via
+// `inline else`. The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]`
+// union pair per call site rather than a generic Rust combinator (see
+// `src/jsc/generated.rs`). This marker type exists for documentation parity.
 pub struct BindgenUnion;
 
 /// `extern struct { data: ExternUnion(field_types), tag: u8 }`
 ///
 /// Zig builds the inner untagged `extern union` from a comptime type list via
 /// `@Type`. We provide fixed-arity instantiations; the 2-ary case is the only
-/// one used directly in this file (by `BindgenOptional`).
+/// one used directly in this file (by `BindgenOptional`). Higher arities are
+/// emitted by codegen alongside their consumers.
 #[repr(C)]
 pub struct ExternTaggedUnion2<T0, T1> {
     pub data: ExternUnion2<T0, T1>,
     pub tag: u8,
 }
 
+/// PORT NOTE: union fields wrapped in `ManuallyDrop` so non-`Copy` payloads
+/// (e.g. nested `ExternTaggedUnion2`, `ExternArrayList`) are permitted without
+/// trait bounds. Matches Zig `extern union` semantics (no auto-drop).
 #[repr(C)]
-pub union ExternUnion2<T0: Copy, T1: Copy> {
-    pub _0: T0,
-    pub _1: T1,
+pub union ExternUnion2<T0, T1> {
+    pub _0: ManuallyDrop<T0>,
+    pub _1: ManuallyDrop<T1>,
 }
-
-// TODO(port): variadic `ExternTaggedUnion<const N>` / `ExternUnion<const N>` —
-// generate per arity from codegen, or use a `macro_rules!` arity expander.
-// Compile-time assert `field_types.len() <= u8::MAX` belongs in that macro.
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -229,21 +240,23 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         );
         // SAFETY: C++ side guarantees `data` points to `capacity` elements with
         // `length` initialized; allocation came from mimalloc (when `USE_MIMALLOC`).
-        let mut unmanaged: Vec<Child::ExternType> =
+        let unmanaged: Vec<Child::ExternType> =
             unsafe { Vec::from_raw_parts(data, length, capacity) };
 
         if !bun_alloc::USE_MIMALLOC {
             // Don't reuse memory in this case; it would be freed by the wrong allocator.
         } else if size_of::<Child::ZigType>() == size_of::<Child::ExternType>()
-            // TODO(port): Zig checks `Child.ZigType == Child.ExternType` (type identity).
-            // Rust cannot compare types for equality on stable; Phase B can gate this on
-            // `TypeId::of` (requires `'static`) or a `const SAME_REPR: bool` on the trait.
-            && false
+            && align_of::<Child::ZigType>() == align_of::<Child::ExternType>()
+            // PORT NOTE: Zig checks `Child.ZigType == Child.ExternType` (type identity).
+            // Rust has no stable type-equality test in generic context. Gate this
+            // fast-path on a `const SAME_REPR: bool` opt-in so it only fires when the
+            // bindgen codegen has proven layout identity.
+            && Child::SAME_REPR
         {
             // PORT NOTE: when the types are identical the Vec is returned as-is.
-            // SAFETY: `ZigType == ExternType` ⇒ same layout; `from_raw_parts` round-trip.
+            // SAFETY: `SAME_REPR` ⇒ same layout; `from_raw_parts` round-trip.
             let (ptr, len, cap) = {
-                let mut v = core::mem::ManuallyDrop::new(unmanaged);
+                let mut v = ManuallyDrop::new(unmanaged);
                 (v.as_mut_ptr(), v.len(), v.capacity())
             };
             let reused: Vec<Child::ZigType> =
@@ -253,7 +266,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             && align_of::<Child::ZigType>() <= bun_alloc::mimalloc::MI_MAX_ALIGN_SIZE
         {
             // We can reuse the allocation, but we still need to convert the elements.
-            let mut v = core::mem::ManuallyDrop::new(unmanaged);
+            let mut v = ManuallyDrop::new(unmanaged);
             let storage_len = v.capacity() * size_of::<Child::ExternType>();
             // SAFETY: `data` is a contiguous mimalloc block of `storage_len` bytes.
             let mut storage: &mut [u8] =
@@ -303,15 +316,12 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 if new_alloc_size != storage.len() {
                     // Allocation isn't a multiple of `size_of::<Child::ZigType>()`; we have to
                     // resize it.
-                    // TODO(port): `bun.default_allocator.realloc` — need a raw mimalloc
-                    // realloc that preserves the pointer/contents. Phase B: expose
-                    // `bun_alloc::realloc(ptr, old_size, new_size)`.
                     // SAFETY: `storage` was allocated by mimalloc (USE_MIMALLOC branch
                     // above guards entry to this path); reallocating with the same
                     // allocator to a smaller size preserves the prefix bytes.
-                    storage = unsafe {
+                    storage = bun_core::handle_oom(unsafe {
                         bun_alloc::realloc_slice(storage, new_alloc_size)
-                    };
+                    });
                 }
                 new_capacity
             };
@@ -324,20 +334,28 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         }
 
         // Fallback: allocate fresh, convert, free old.
-        // PORT NOTE: Zig frees `unmanaged` with `raw_c_allocator` when `!use_mimalloc`;
-        // in Rust the global allocator IS mimalloc (per crate prereq), so dropping the
-        // `Vec` is correct only when USE_MIMALLOC. The `!USE_MIMALLOC` arm needs an
-        // explicit `libc::free` — left as TODO since `USE_MIMALLOC` is always true in
-        // production builds.
-        // TODO(port): free via raw_c_allocator when !USE_MIMALLOC
-        let mut result = Self::ZigType::init_capacity(length);
-        for item in unmanaged.drain(..) {
+        // PORT NOTE: Zig frees `unmanaged` with `raw_c_allocator` when `!use_mimalloc`,
+        // else with `default_allocator`. In Rust the global allocator IS mimalloc
+        // (per crate prereq) and `USE_MIMALLOC` is `const true`, so dropping the
+        // `Vec` is correct.
+        let mut result = bun_core::handle_oom(Self::ZigType::init_capacity(length));
+        for item in unmanaged {
             // PERF(port): was appendAssumeCapacity — profile in Phase B
-            result.push(Child::convert_from_extern(item));
+            result.append_assume_capacity(Child::convert_from_extern(item));
         }
-        drop(unmanaged);
         result
     }
+}
+
+/// Compile-time hint set by `BindgenTrivial` (and any other adapter where
+/// `ZigType == ExternType`) so `BindgenArray` can reuse the allocation without
+/// per-element conversion. Stands in for Zig's `Child.ZigType == Child.ExternType`.
+pub trait BindgenSameRepr {
+    const SAME_REPR: bool;
+}
+
+impl<B: Bindgen> BindgenSameRepr for B {
+    default const SAME_REPR: bool = false;
 }
 
 #[repr(C)]
@@ -345,7 +363,6 @@ pub struct ExternArrayList<Child> {
     // Zig `?[*]Child` — single-word nullable pointer. `Option<*mut T>` has no niche
     // (two words) and would break the C ABI; use raw `*mut T` and check `.is_null()`.
     pub data: *mut Child,
-    // TODO(port): lifetime — raw FFI buffer from C++, ownership transferred on convert.
     pub length: c_uint,
     pub capacity: c_uint,
 }
@@ -354,36 +371,42 @@ pub struct ExternArrayList<Child> {
 
 pub struct BindgenExternalShared<T>(PhantomData<T>);
 
-impl<T> Bindgen for BindgenExternalShared<T> {
-    type ZigType = bun_ptr::ExternalShared<T>;
-    // TODO(port): `bun.ptr.ExternalShared` is not in the crate map — assumed to be a
-    // C++-owned ref-counted handle wrapper living in `bun_ptr` (or `bun_collections`).
+impl<T: ExternalSharedDescriptor> Bindgen for BindgenExternalShared<T> {
+    type ZigType = ExternalShared<T>;
     // `?*T` — single-word FFI layout requires `Option<NonNull<T>>`, not `Option<*mut T>`.
     type ExternType = Option<NonNull<T>>;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
-        bun_ptr::ExternalShared::adopt(extern_value.expect("non-null"))
+        // SAFETY: bindgen contract — C++ passes a pointer with one ref already taken.
+        unsafe { ExternalShared::adopt(extern_value.expect("non-null").as_ptr()) }
     }
 }
 
-impl<T> BindgenOptionalRepr for BindgenExternalShared<T> {
-    type OptionalZigType = bun_ptr::external_shared::Optional<T>;
+impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<T> {
+    type OptionalZigType = ExternalSharedOptional<T>;
     type OptionalExternType = <Self as Bindgen>::ExternType;
 
     fn convert_optional_from_extern(
         extern_value: Self::OptionalExternType,
     ) -> Self::OptionalZigType {
-        bun_ptr::external_shared::Optional::adopt(extern_value)
+        // SAFETY: bindgen contract — if non-null, one ref is transferred.
+        unsafe {
+            ExternalSharedOptional::adopt(
+                extern_value.map_or(core::ptr::null_mut(), |p| p.as_ptr()),
+            )
+        }
     }
 }
 
 pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
-pub type BindgenBlob = BindgenExternalShared<webcore::Blob>;
+
+// PORT NOTE (layering): `BindgenBlob = BindgenExternalShared<webcore::Blob>` cannot
+// live in `bun_jsc` because `Blob` is defined in `bun_runtime`, which depends on
+// `bun_jsc`. The alias is defined alongside `Blob` in `bun_runtime::webcore` instead.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/bindgen.zig (254 lines)
 //   confidence: medium
-//   todos:      10
-//   notes:      Heavy comptime reflection (@hasDecl/@Type/@typeInfo) reshaped into Bindgen/BindgenOptionalRepr traits; BindgenUnion + variadic ExternTaggedUnion need codegen/proc-macro in Phase B; BindgenArray type-identity fast-path gated off pending stable type-eq; ExternType layouts use Option<NonNull<T>>/raw *mut T for single-word FFI ABI.
+//   notes:      Heavy comptime reflection (@hasDecl/@Type/@typeInfo) reshaped into Bindgen/BindgenOptionalRepr traits; BindgenUnion + variadic ExternTaggedUnion are emitted per-arity by the bindgen TS codegen instead of a generic combinator; BindgenArray type-identity fast-path gated on `SAME_REPR` const; ExternType layouts use Option<NonNull<T>>/raw *mut T for single-word FFI ABI; BindgenBlob moved to bun_runtime (cycle break).
 // ──────────────────────────────────────────────────────────────────────────

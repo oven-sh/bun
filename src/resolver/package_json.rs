@@ -1343,10 +1343,10 @@ impl PackageJSON {
 
                 // // if there is a name & version, check if the lockfile has the package
                 if !package_json.name.is_empty() && !package_json.version.is_empty() {
-                    if let Some(pm) = r.package_manager {
+                    if let Some(mut pm) = r.package_manager {
                         // SAFETY: BACKREF — `pm` is the bun_install-owned PackageManager
                         // pointer; live for the resolver's lifetime once installed.
-                        let pm: &dyn AutoInstaller = unsafe { pm.as_ref() };
+                        let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
                         let tag = pm.infer_dependency_tag(&package_json.version);
 
                         if tag == DependencyVersionTag::Npm {
@@ -1459,9 +1459,9 @@ impl PackageJSON {
                                     // wired, the dependencies map is only ever
                                     // read by the auto-install path itself, so
                                     // skip filling it.
-                                    let Some(pm) = r.package_manager else { break };
+                                    let Some(mut pm) = r.package_manager else { break };
                                     // SAFETY: see BACKREF note above.
-                                    let pm: &dyn AutoInstaller = unsafe { pm.as_ref() };
+                                    let pm: &mut dyn AutoInstaller = unsafe { pm.as_mut() };
                                     if let Some(dependency_version) = pm.parse_dependency(
                                         name,
                                         Some(name_hash),

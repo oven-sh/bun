@@ -35,6 +35,21 @@ use crate::{
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
 
+/// Newtype adapter so `bun_core::io::Writer` (vtable-struct) satisfies the
+/// `bun_io::Write` trait for [`crate::console_object::Formatter::format`].
+/// Mirrors the private adapter in `console_object.rs`.
+struct IoWriterAdapter<'a>(&'a mut bun_core::io::Writer);
+impl bun_io::Write for IoWriterAdapter<'_> {
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+        self.0.write_all(buf)
+    }
+    #[inline]
+    fn flush(&mut self) -> bun_io::Result<()> {
+        self.0.flush()
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Exported globals
 // ──────────────────────────────────────────────────────────────────────────
@@ -784,18 +799,21 @@ impl VirtualMachine {
             self.macro_event_loop.virtual_machine = NonNull::new(self as *mut _);
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
+            ensure_source_code_printer();
         }
-        self.event_loop = &mut self.macro_event_loop;
+        self.transpiler.options.target = bun_bundler::options::Target::BunMacro;
+        self.transpiler.resolver.caches.fs.use_alternate_source_cache = true;
         self.macro_mode = true;
-        // TODO(b2-cycle): self.transpiler.options.target = .bun_macro / no_macros
-        // — `bun_bundler::options` is gated.
+        self.event_loop = &mut self.macro_event_loop;
+        bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
 
     pub fn disable_macro_mode(&mut self) {
+        self.transpiler.options.target = bun_bundler::options::Target::Bun;
+        self.transpiler.resolver.caches.fs.use_alternate_source_cache = false;
         self.macro_mode = false;
         self.event_loop = &mut self.regular_event_loop;
-        // TODO(b2-cycle): self.transpiler.options.target = .bun
         self.transpiler_store.enabled = true;
     }
 
@@ -3616,9 +3634,28 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        // TODO(b2-cycle): `plugin_runner` is `Option<()>` placeholder; the
-        // `PluginRunner::could_be_plugin` / `on_resolve_jsc` fast-path is
-        // gated until `bun_bundler::transpiler::PluginRunner` un-gates.
+        if jsc_vm.plugin_runner.is_some() {
+            use bun_bundler::transpiler::PluginRunner;
+            let spec = specifier_utf8.slice();
+            if PluginRunner::could_be_plugin(spec) {
+                let namespace = PluginRunner::extract_namespace(spec);
+                let after_namespace = if namespace.is_empty() {
+                    spec
+                } else {
+                    &spec[namespace.len() + 1..]
+                };
+                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
+                    global,
+                    bun_string::String::init(namespace),
+                    bun_string::String::borrow_utf8(after_namespace),
+                    source,
+                    crate::BunPluginTarget::Bun,
+                )? {
+                    *res = resolved_path;
+                    return Ok(());
+                }
+            }
+        }
 
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
@@ -4817,8 +4854,10 @@ impl VirtualMachine {
         let mut default_formatter =
             crate::console_object::Formatter::new(unsafe { &*self.global });
         let f = formatter.unwrap_or(&mut default_formatter);
-        self.print_error_instance_zig(
+        self.print_error_instance_body(
             zig_exception,
+            JSValue::ZERO,
+            None,
             f,
             writer,
             allow_ansi_color,
@@ -4857,9 +4896,12 @@ impl VirtualMachine {
         );
         error_instance.ensure_still_alive();
 
-        let result = self.print_error_instance_zig(
+        let result = self.print_error_instance_body(
             // SAFETY: see above.
             unsafe { &mut *exception },
+            error_instance,
+            None, // PORT NOTE: spec passes `exception_list` but it was already
+                  // consumed by `remap_zig_exception` above (only writer).
             formatter,
             writer,
             allow_ansi_color,
@@ -4872,17 +4914,40 @@ impl VirtualMachine {
         result
     }
 
-    /// `printErrorInstance(.zig_exception, ...)` — shared tail body.
-    fn print_error_instance_zig(
+    /// Spec VirtualMachine.zig:3288 `printErrorInstance` — shared body for both
+    /// `mode == .js` (`error_instance != .zero`) and `mode == .zig_exception`
+    /// (`error_instance == .zero`). Renders source-line previews, the
+    /// name/message line, owned-property dump, stack trace, and the `cause:` /
+    /// AggregateError chain.
+    #[allow(clippy::too_many_arguments)]
+    fn print_error_instance_body(
         &mut self,
         exception: &mut ZigException,
+        error_instance: JSValue,
+        exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
+        use crate::console_object::{self, Colon, TagOptions, TagPayload};
+        use crate::JSType;
+
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
+        // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — restore on
+        // every exit (including `?` from `JSError` paths).
+        struct RestoreHadErrors {
+            vm: *mut VirtualMachine,
+            prev: bool,
+        }
+        impl Drop for RestoreHadErrors {
+            fn drop(&mut self) {
+                // SAFETY: `vm` is the live per-thread VM (caller is on the JS thread).
+                unsafe { (*self.vm).had_errors = self.prev };
+            }
+        }
+        let _restore_had_errors = RestoreHadErrors { vm: self as *mut _, prev: prev_had_errors };
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.as_deref_mut() {
@@ -4890,32 +4955,589 @@ impl VirtualMachine {
             }
         }
 
-        // TODO(port): VirtualMachine.zig:3341-3737 — the ~400-line body that
-        // renders source-line previews, name/message, code/errno/syscall/path
-        // properties, the `cause:` chain, and the `at <fn> (<file>:<line>)`
-        // stack. The shape is `{preview}{name}: {message}\n{stack}` with
-        // `<tag>`-ANSI markup; the full port needs `ConsoleObject::Formatter`
-        // method surface that is still gated. Emit the minimal
-        // name/message/stack so callers see *something*, and append the
-        // GitHub annotation if `Output.is_github_action`.
-        {
-            let name = exception.name.to_utf8();
-            let message = exception.message.to_utf8();
-            if !name.slice().is_empty() {
-                let _ = writer.write_all(name.slice());
-                let _ = writer.write_all(b": ");
+        // PORT NOTE: Zig `defer if (allow_side_effects and Output.is_github_action)
+        // printGithubAnnotation(exception);`.
+        struct DeferGhAnnotation {
+            run: bool,
+            exception: *mut ZigException,
+        }
+        impl Drop for DeferGhAnnotation {
+            fn drop(&mut self) {
+                if self.run {
+                    // SAFETY: `exception` borrows the caller's stack-local
+                    // ZigException, live across this drop guard.
+                    VirtualMachine::print_github_annotation(unsafe { &*self.exception });
+                }
             }
-            let _ = writer.write_all(message.slice());
-            let _ = writer.write_all(b"\n");
-            let _ = Self::print_stack_trace(writer, &exception.stack, allow_ansi_color);
         }
-        let _ = formatter; // PERF(port): used by the full body for property formatting.
+        let _defer_gh = DeferGhAnnotation {
+            run: allow_side_effects && bun_core::Output::is_github_action(),
+            exception: exception as *mut _,
+        };
 
-        if allow_side_effects && bun_core::Output::is_github_action() {
-            Self::print_github_annotation(exception);
+        // Runtime dispatch over `comptime allow_ansi_color` — `pretty_fmt!` is
+        // a `const`-param macro, so route through a local wrapper.
+        macro_rules! pretty_write {
+            ($w:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
+                if allow_ansi_color {
+                    write!($w, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
+                } else {
+                    write!($w, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
+                }
+            };
+        }
+        // `writer.splatByteAll(' ', n)` — `bun_core::io::Writer` has no native
+        // `splat`, so emit in chunks.
+        #[inline]
+        fn splat_space(
+            w: &mut bun_core::io::Writer,
+            mut n: u64,
+        ) -> Result<(), bun_core::Error> {
+            const SPACES: &[u8; 32] = b"                                ";
+            while n > 0 {
+                let chunk = n.min(32) as usize;
+                w.write_all(&SPACES[..chunk])?;
+                n -= chunk as u64;
+            }
+            Ok(())
+        }
+        #[inline]
+        fn count_digits(n: i32) -> u64 {
+            // `std.fmt.count("{d}", .{n})`
+            let mut buf = itoa::Buffer::new();
+            buf.format(n).len() as u64
         }
 
-        self.had_errors = prev_had_errors;
+        // This is a longer number than necessary because we don't handle this
+        // case very well — at the very least, we shouldn't dump 100 KB of
+        // minified code into your terminal.
+        const MAX_LINE_LENGTH_WITH_DIVOT: usize = 512;
+        const MAX_LINE_LENGTH: usize = 1024;
+
+        // SAFETY: `source_lines_numbers[..source_lines_len]` is the
+        // caller-owned buffer (see ZigStackTrace contract).
+        let line_numbers = unsafe {
+            core::slice::from_raw_parts(
+                exception.stack.source_lines_numbers,
+                exception.stack.source_lines_len as usize,
+            )
+        };
+        let max_line: i32 = line_numbers.iter().copied().fold(-1, i32::max);
+        let max_line_number_pad = count_digits(max_line + 1);
+
+        let mut source_lines = exception.stack.source_line_iterator();
+        let mut last_pad: u64 = 0;
+        while let Some(source) = source_lines.until_last() {
+            let display_line = source.line + 1;
+            let int_size = count_digits(display_line);
+            let pad = max_line_number_pad.saturating_sub(int_size);
+            last_pad = pad;
+            splat_space(writer, pad)?;
+
+            let text = source.text.slice();
+            let trimmed = text
+                .trim_ascii_start()
+                .strip_prefix(b"\n")
+                .unwrap_or(text)
+                .trim_ascii_end();
+            // Zig: trimRight(trim(text, "\n"), "\t ") — match by trimming
+            // newlines on both sides then trailing tab/space.
+            let trimmed = bun_string::strings::trim(text, b"\n");
+            let trimmed = bun_string::strings::trim_right(trimmed, b"\t ");
+            let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+
+            let hl = bun_core::fmt::fmt_javascript(
+                clamped,
+                bun_core::fmt::HighlighterOptions {
+                    enable_colors: allow_ansi_color,
+                    ..Default::default()
+                },
+            );
+            if clamped.len() != trimmed.len() {
+                if allow_ansi_color {
+                    pretty_write!(writer, "<r><b>{} |<r> {}<r><d> | ... truncated <r>\n", display_line, hl)?;
+                } else {
+                    pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
+                }
+            } else {
+                pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
+            }
+            drop(source.text);
+        }
+        let _ = last_pad;
+
+        let name = exception.name;
+        let message = exception.message;
+
+        let is_error_instance = error_instance != JSValue::ZERO
+            && error_instance.is_cell()
+            && error_instance.js_type() == JSType::ErrorInstance;
+        // SAFETY: `self.global` valid for VM lifetime.
+        let global_ref = unsafe { &*self.global };
+        // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
+        // `bun.String` is `defer .deref()`-ed; hold the owning `bun_string::String`
+        // alongside the slice so the latin1 view stays live for this fn.
+        let mut code_string_guard: Option<bun_string::String> = None;
+        let code: Option<&[u8]> = if is_error_instance {
+            // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
+            let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
+            if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
+                if code_value.is_string() {
+                    match code_value.to_bun_string(global_ref) {
+                        Ok(code_string) if code_string.is_8bit() => {
+                            // SAFETY: `code_string` is moved into
+                            // `code_string_guard` and outlives the borrow.
+                            let bytes: &[u8] = unsafe {
+                                core::slice::from_raw_parts(
+                                    code_string.latin1().as_ptr(),
+                                    code_string.latin1().len(),
+                                )
+                            };
+                            code_string_guard = Some(code_string);
+                            Some(bytes)
+                        }
+                        Ok(s) => {
+                            s.deref();
+                            None
+                        }
+                        Err(_) => bun_core::out_of_memory(),
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut did_print_name = false;
+        if let Some(source) = source_lines.next() {
+            'brk: {
+                if source.text.slice().is_empty() {
+                    break 'brk;
+                }
+
+                let frames = exception.stack.frames();
+                let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
+                if self.hide_bun_stackframes {
+                    for frame in frames {
+                        if frame.position.is_invalid()
+                            || frame.source_url.has_prefix_comptime(b"bun:")
+                            || frame.source_url.has_prefix_comptime(b"node:")
+                        {
+                            continue;
+                        }
+                        top_frame = Some(frame);
+                        break;
+                    }
+                }
+
+                let text = source.text.slice();
+                let trimmed = bun_string::strings::trim(text, b"\n");
+                let trimmed = bun_string::strings::trim_right(trimmed, b"\t ");
+
+                if top_frame.is_none() || top_frame.unwrap().position.is_invalid() {
+                    did_print_name = true;
+                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let hl = bun_core::fmt::fmt_javascript(
+                        clamped,
+                        bun_core::fmt::HighlighterOptions {
+                            enable_colors: allow_ansi_color,
+                            ..Default::default()
+                        },
+                    );
+                    if clamped.len() != trimmed.len() {
+                        if allow_ansi_color {
+                            pretty_write!(writer, "<r><b>- |<r> {}<r><d> | ... truncated <r>\n", hl)?;
+                        } else {
+                            pretty_write!(writer, "<r><b>- |<r> {}\n", hl)?;
+                        }
+                    } else {
+                        pretty_write!(writer, "<r><d>- |<r> {}\n", hl)?;
+                    }
+                    Self::print_error_name_and_message(
+                        name,
+                        message,
+                        !exception.browser_url.is_empty(),
+                        code,
+                        writer,
+                        allow_ansi_color,
+                        formatter.error_display_level,
+                    )?;
+                } else if let Some(top) = top_frame {
+                    did_print_name = true;
+                    let display_line = source.line + 1;
+                    let int_size = count_digits(display_line);
+                    let pad = max_line_number_pad.saturating_sub(int_size);
+                    splat_space(writer, pad)?;
+
+                    let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
+                    let hl = bun_core::fmt::fmt_javascript(
+                        clamped,
+                        bun_core::fmt::HighlighterOptions {
+                            enable_colors: allow_ansi_color,
+                            ..Default::default()
+                        },
+                    );
+                    if clamped.len() != trimmed.len() {
+                        if allow_ansi_color {
+                            pretty_write!(writer, "<r><b>{} |<r> {}<r><d> | ... truncated <r>\n\n", display_line, hl)?;
+                        } else {
+                            pretty_write!(writer, "<r><b>{} |<r> {}\n\n", display_line, hl)?;
+                        }
+                    } else {
+                        pretty_write!(writer, "<r><b>{} |<r> {}\n", display_line, hl)?;
+
+                        let col = top.position.column.zero_based();
+                        if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
+                            || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
+                        {
+                            let indent = max_line_number_pad
+                                + b" | ".len() as u64
+                                + col.max(0) as u64;
+                            splat_space(writer, indent)?;
+                            pretty_write!(writer, "<red><b>^<r>\n")?;
+                        } else {
+                            writer.write_all(b"\n")?;
+                        }
+                    }
+                    Self::print_error_name_and_message(
+                        name,
+                        message,
+                        !exception.browser_url.is_empty(),
+                        code,
+                        writer,
+                        allow_ansi_color,
+                        formatter.error_display_level,
+                    )?;
+                }
+            }
+            drop(source.text);
+        }
+
+        if !did_print_name {
+            Self::print_error_name_and_message(
+                name,
+                message,
+                !exception.browser_url.is_empty(),
+                code,
+                writer,
+                allow_ansi_color,
+                formatter.error_display_level,
+            )?;
+        }
+
+        // This is usually unsafe to do, but we are protecting them each time first.
+        let mut errors_to_append: Vec<JSValue> = Vec::new();
+        // PORT NOTE: Zig `defer { for (..) |e| e.unprotect(); deinit(); }`.
+        struct UnprotectAll(*mut Vec<JSValue>);
+        impl Drop for UnprotectAll {
+            fn drop(&mut self) {
+                // SAFETY: borrows the caller's stack `Vec`, live for this scope.
+                for v in unsafe { (*self.0).iter() } {
+                    v.unprotect();
+                }
+            }
+        }
+        let _unprotect_guard = UnprotectAll(&mut errors_to_append as *mut _);
+
+        if is_error_instance {
+            let mut saw_cause = false;
+            // SAFETY: `is_error_instance` ⇒ object.
+            let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
+            let mut iterator = crate::JSPropertyIterator::init(
+                global_ref,
+                error_obj,
+                crate::JSPropertyIteratorOptions {
+                    include_value: true,
+                    skip_empty_name: true,
+                    own_properties_only: true,
+                    observable: false,
+                    only_non_index_properties: true,
+                },
+            )?;
+            let longest_name = iterator.get_longest_property_name().min(10);
+            let mut is_first_property = true;
+            while let Some(field) = iterator.next()? {
+                let value = iterator.value;
+                if field.eql_comptime(b"message")
+                    || field.eql_comptime(b"name")
+                    || field.eql_comptime(b"stack")
+                {
+                    continue;
+                }
+                if field.eql_comptime(b"code") && code.is_some() {
+                    continue;
+                }
+
+                let kind = value.js_type();
+                if kind == JSType::ErrorInstance && !prev_had_errors {
+                    if field.eql_comptime(b"cause") {
+                        saw_cause = true;
+                    }
+                    value.protect();
+                    errors_to_append.push(value);
+                } else if kind.is_object()
+                    || kind.is_array()
+                    || value.is_primitive()
+                    || kind.is_string_like()
+                {
+                    let prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                    let prev_quote_strings = formatter.quote_strings;
+                    let prev_max_depth = formatter.max_depth;
+                    let prev_format_buffer_as_text = formatter.format_buffer_as_text;
+                    formatter.depth += 1;
+                    formatter.format_buffer_as_text = true;
+                    formatter.max_depth = 1;
+                    formatter.quote_strings = true;
+                    formatter.disable_inspect_custom = true;
+                    // PORT NOTE: Zig `defer { restore }` — hand-rolled drop guard.
+                    struct RestoreFmt<'a, 'f> {
+                        f: &'a mut crate::console_object::Formatter<'f>,
+                        d: bool,
+                        q: bool,
+                        m: u16,
+                        b: bool,
+                    }
+                    impl Drop for RestoreFmt<'_, '_> {
+                        fn drop(&mut self) {
+                            self.f.depth -= 1;
+                            self.f.max_depth = self.m;
+                            self.f.quote_strings = self.q;
+                            self.f.disable_inspect_custom = self.d;
+                            self.f.format_buffer_as_text = self.b;
+                        }
+                    }
+                    let restore = RestoreFmt {
+                        f: formatter,
+                        d: prev_disable_inspect_custom,
+                        q: prev_quote_strings,
+                        m: prev_max_depth,
+                        b: prev_format_buffer_as_text,
+                    };
+                    let formatter = restore.f;
+
+                    let pad_left = longest_name.saturating_sub(field.length());
+                    is_first_property = false;
+                    splat_space(writer, pad_left as u64)?;
+                    pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+
+                    if allow_side_effects && global_ref.has_exception() {
+                        global_ref.clear_exception();
+                    }
+
+                    let tag = console_object::TagPayload::get_advanced(
+                        value,
+                        global_ref,
+                        TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
+                    )?;
+                    // `Formatter::format` writes to `dyn bun_io::Write`; adapt
+                    // the vtable-struct `bun_core::io::Writer`.
+                    let mut adapt = IoWriterAdapter(writer);
+                    let _ = if allow_ansi_color {
+                        formatter.format::<true>(tag, &mut adapt, value, global_ref)
+                    } else {
+                        formatter.format::<false>(tag, &mut adapt, value, global_ref)
+                    };
+
+                    if allow_side_effects {
+                        if global_ref.has_exception() {
+                            global_ref.clear_exception();
+                        }
+                    } else if global_ref.has_exception() || formatter.failed {
+                        return Ok(());
+                    }
+
+                    pretty_write!(writer, "<r><d>,<r>\n")?;
+                }
+            }
+
+            if let Some(code_str) = code {
+                let pad_left = longest_name.saturating_sub(b"code".len());
+                is_first_property = false;
+                splat_space(writer, pad_left as u64)?;
+                pretty_write!(
+                    writer,
+                    " code<r><d>:<r> <green>{}<r>\n",
+                    bun_core::fmt::quote(code_str)
+                )?;
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
+            }
+
+            // "cause" is not enumerable, so the above loop won't see it.
+            if !saw_cause {
+                let key = bun_string::String::static_(b"cause");
+                if let Some(cause) = error_instance.get_own(global_ref, &key)? {
+                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                        cause.protect();
+                        errors_to_append.push(cause);
+                    }
+                }
+            }
+        } else if error_instance != JSValue::ZERO {
+            // If you do `reportError([1,2,3])` we should still show something.
+            let tag = console_object::TagPayload::get_advanced(
+                error_instance,
+                global_ref,
+                TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
+            )?;
+            if tag.tag != TagPayload::NativeCode {
+                let mut adapt = IoWriterAdapter(writer);
+                let _ = if allow_ansi_color {
+                    formatter.format::<true>(tag, &mut adapt, error_instance, global_ref)
+                } else {
+                    formatter.format::<false>(tag, &mut adapt, error_instance, global_ref)
+                };
+                writer.write_all(b"\n")?;
+            }
+        }
+
+        Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+
+        if !exception.browser_url.is_empty() {
+            pretty_write!(
+                writer,
+                "    <d>from <r>browser tab <magenta>{}<r>\n",
+                exception.browser_url
+            )?;
+        }
+
+        let mut exception_list = exception_list;
+        for &err in &errors_to_append {
+            // Circular-ref guard for cause chains.
+            if formatter.map_node.is_none() {
+                // SAFETY: `get_node()` always returns a valid heap node;
+                // `data` is initialized because `Map::INIT` is `Some`.
+                let mut node = unsafe {
+                    NonNull::new_unchecked(console_object::visited::Pool::get_node())
+                };
+                unsafe { node.as_mut().data.assume_init_mut().clear() };
+                formatter.map = core::mem::take(unsafe {
+                    node.as_mut().data.assume_init_mut()
+                });
+                formatter.map_node = Some(node);
+            }
+
+            let entry = formatter.map.get_or_put(err).expect("unreachable");
+            if entry.found_existing {
+                writer.write_all(b"\n")?;
+                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
+                continue;
+            }
+
+            writer.write_all(b"\n")?;
+            self.print_error_instance_js(
+                err,
+                exception_list.as_deref_mut(),
+                formatter,
+                writer,
+                allow_ansi_color,
+                allow_side_effects,
+            )?;
+            let _ = formatter.map.remove(err);
+        }
+
+        drop(code_string_guard);
+        Ok(())
+    }
+
+    /// Spec VirtualMachine.zig:3679 `printErrorNameAndMessage`.
+    fn print_error_name_and_message(
+        name: bun_string::String,
+        message: bun_string::String,
+        is_browser_error: bool,
+        optional_code: Option<&[u8]>,
+        writer: &mut bun_core::io::Writer,
+        allow_ansi_color: bool,
+        error_display_level: crate::console_object::ErrorDisplayLevel,
+    ) -> Result<(), bun_core::Error> {
+        use crate::console_object::Colon;
+        macro_rules! pretty_write {
+            ($fmt:literal $(, $arg:expr)* $(,)?) => {
+                if allow_ansi_color {
+                    write!(writer, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
+                } else {
+                    write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
+                }
+            };
+        }
+        if is_browser_error {
+            writer.write_all(bun_core::pretty_fmt!("<red>frontend<r> ", true).as_bytes())?;
+        }
+        if !name.is_empty() && !message.is_empty() {
+            let (display_name, display_message) = if name.eql_comptime(b"Error") {
+                'brk: {
+                    if let Some(code) = optional_code {
+                        if bun_string::strings::is_all_ascii(code) {
+                            let has_prefix = if message.is_utf16() {
+                                let msg_chars = message.utf16();
+                                msg_chars.len() > code.len() + 2 + 1
+                                    && code
+                                        .iter()
+                                        .zip(msg_chars.iter())
+                                        .all(|(&a, &b)| u16::from(a) == b)
+                                    && msg_chars[code.len()] == u16::from(b':')
+                                    && msg_chars[code.len() + 1] == u16::from(b' ')
+                            } else {
+                                let msg_chars = message.latin1();
+                                msg_chars.len() > code.len() + 2 + 1
+                                    && bun_string::strings::eql_long(
+                                        &msg_chars[..code.len()],
+                                        code,
+                                        false,
+                                    )
+                                    && msg_chars[code.len()] == b':'
+                                    && msg_chars[code.len() + 1] == b' '
+                            };
+                            if has_prefix {
+                                break 'brk (
+                                    bun_string::String::init(code),
+                                    message.substring(code.len() + 2),
+                                );
+                            }
+                        }
+                    }
+                    (bun_string::String::empty(), message)
+                }
+            } else {
+                (name, message)
+            };
+            pretty_write!(
+                "{}<b>{}<r>\n",
+                error_display_level.formatter(display_name, allow_ansi_color, Colon::IncludeColon),
+                display_message,
+            )?;
+        } else if !name.is_empty() {
+            write!(
+                writer,
+                "{}\n",
+                error_display_level.formatter(name, allow_ansi_color, Colon::IncludeColon)
+            )?;
+        } else if !message.is_empty() {
+            pretty_write!(
+                "{}<b>{}<r>\n",
+                error_display_level.formatter(
+                    bun_string::String::empty(),
+                    allow_ansi_color,
+                    Colon::IncludeColon
+                ),
+                message,
+            )?;
+        } else {
+            pretty_write!(
+                "{}\n",
+                error_display_level.formatter(
+                    bun_string::String::empty(),
+                    allow_ansi_color,
+                    Colon::ExcludeColon
+                ),
+            )?;
+        }
         Ok(())
     }
 

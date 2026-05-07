@@ -213,6 +213,11 @@ impl JSValue {
     #[inline] pub fn is_string(self) -> bool {
         self.is_cell() && self.js_type().is_string_like()
     }
+    /// `JSValue.isPrimitive` — true for non-cell or string/symbol/bigint cells.
+    #[inline] pub fn is_primitive(self) -> bool {
+        // SAFETY: FFI is `nothrow`; `self` is a valid encoded JSValue.
+        unsafe { JSC__JSValue__isPrimitive(self) }
+    }
     #[inline] pub fn is_object(self) -> bool {
         self.is_cell() && self.js_type().is_object()
     }

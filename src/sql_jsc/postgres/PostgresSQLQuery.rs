@@ -220,8 +220,8 @@ impl PostgresSQLQuery {
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
-        let function = vm.rare_data().postgresql_context.on_query_reject_fn.get().unwrap();
-        let event_loop = vm.event_loop();
+        let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
+        let event_loop = unsafe { vm.event_loop_mut() };
         // PORT NOTE: Zig narrowed `err` to `AnyPostgresError`. The Rust call chain
         // funnels through `bun_core::Error`, so build the JS error generically via
         // throw+take (the only no-FFI-extern path that yields a `JSValue` here).
@@ -251,8 +251,8 @@ impl PostgresSQLQuery {
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
-        let function = vm.rare_data().postgresql_context.on_query_reject_fn.get().unwrap();
-        let event_loop = vm.event_loop();
+        let function = vm.sql_state().postgresql_context.on_query_reject_fn.get().unwrap();
+        let event_loop = unsafe { vm.event_loop_mut() };
         event_loop.run_callback(function, global_object, this_value, &[
             target_value,
             err.to_error().unwrap_or(err),
@@ -312,8 +312,8 @@ impl PostgresSQLQuery {
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = unsafe { &mut *crate::jsc::VirtualMachine::get() };
-        let function = vm.rare_data().postgresql_context.on_query_resolve_fn.get().unwrap();
-        let event_loop = vm.event_loop();
+        let function = vm.sql_state().postgresql_context.on_query_resolve_fn.get().unwrap();
+        let event_loop = unsafe { vm.event_loop_mut() };
 
         event_loop.run_callback(function, global_object, this_value, &[
             target_value,

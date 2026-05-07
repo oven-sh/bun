@@ -311,7 +311,7 @@ impl JSMySQLQuery {
         };
         js_tag.ensure_still_alive();
 
-        let Some(function) = this.vm_mut().rare_data().mysql_context.on_query_resolve_fn.get()
+        let Some(function) = this.vm_mut().sql_state().mysql_context.on_query_resolve_fn.get()
         else {
             return;
         };
@@ -321,7 +321,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         this.set_pending_value(JSValue::UNDEFINED);
 
-        let event_loop = this.vm().event_loop();
+        let event_loop = unsafe { this.vm().event_loop_mut() };
 
         event_loop.run_callback(
             function,
@@ -415,11 +415,11 @@ impl JSMySQLQuery {
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let Some(function) = this.vm_mut().rare_data().mysql_context.on_query_reject_fn.get() else {
+        let Some(function) = this.vm_mut().sql_state().mysql_context.on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        let event_loop = this.vm().event_loop();
+        let event_loop = unsafe { this.vm().event_loop_mut() };
         let js_array = if queries_array.is_empty() { JSValue::UNDEFINED } else { queries_array };
         js_array.ensure_still_alive();
         let Some(this_value) = this.this_value.try_get() else { return };

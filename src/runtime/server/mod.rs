@@ -1915,30 +1915,78 @@ impl AnyServer {
     /// handler frame (used by bake's deferred bundling path).
     pub fn prepare_and_save_js_request_context(
         &self,
-        _req: &mut uws::Request,
-        _resp: uws::AnyResponse,
-        _global: &jsc::JSGlobalObject,
-        _method: Option<bun_http::Method>,
+        req: &mut uws::Request,
+        resp: uws::AnyResponse,
+        global: &jsc::JSGlobalObject,
+        method: Option<bun_http::Method>,
     ) -> jsc::JsResult<Option<SavedRequest>> {
-        // TODO(port): `mod.rs::NewServer` lacks `prepare_js_request_context` /
-        // `RequestContext::save` (bodies live in `server_body::NewServer`,
-        // which is a parallel type). Port those once the two `NewServer`
-        // definitions collapse; until then this path is unreachable because
-        // bake's `set_routes` is gated on the same collapse.
-        todo!("blocked_on: server::NewServer::prepare_js_request_context (mod.rs ↔ server_body unification)")
+        // PORT NOTE: hand-dispatched (the macro can't bind a per-arm `resp`
+        // type). `uws::Request` and `uws_sys::Request` are the same opaque
+        // FFI handle re-exported through two crates.
+        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
+        // and is non-null while the server is alive.
+        let req: &mut uws_sys::Request = req;
+        Ok(match self.tag {
+            AnyServerTag::HTTPServer => {
+                let s = self.ptr.cast::<HTTPServer>();
+                let r = resp.assert_no_ssl();
+                let Some(p) = HTTPServer::prepare_js_request_context(
+                    s, req, r, None, CreateJsRequest::Bake, method,
+                ) else { return Ok(None) };
+                Some(p.save(global, req, r))
+            }
+            AnyServerTag::HTTPSServer => {
+                let s = self.ptr.cast::<HTTPSServer>();
+                let r = resp.assert_ssl();
+                let Some(p) = HTTPSServer::prepare_js_request_context(
+                    s, req, r, None, CreateJsRequest::Bake, method,
+                ) else { return Ok(None) };
+                Some(p.save(global, req, r))
+            }
+            AnyServerTag::DebugHTTPServer => {
+                let s = self.ptr.cast::<DebugHTTPServer>();
+                let r = resp.assert_no_ssl();
+                let Some(p) = DebugHTTPServer::prepare_js_request_context(
+                    s, req, r, None, CreateJsRequest::Bake, method,
+                ) else { return Ok(None) };
+                Some(p.save(global, req, r))
+            }
+            AnyServerTag::DebugHTTPSServer => {
+                let s = self.ptr.cast::<DebugHTTPSServer>();
+                let r = resp.assert_ssl();
+                let Some(p) = DebugHTTPSServer::prepare_js_request_context(
+                    s, req, r, None, CreateJsRequest::Bake, method,
+                ) else { return Ok(None) };
+                Some(p.save(global, req, r))
+            }
+        })
     }
 
     /// `server.zig:3574` — invoke the user's route handler for a request that
     /// was deferred (bake bundle-then-serve flow).
     pub fn on_saved_request<const EXTRA_ARG_COUNT: usize>(
         &self,
-        _req: SavedRequestUnion<'_>,
-        _resp: uws::AnyResponse,
-        _callback: jsc::JSValue,
-        _extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
+        req: SavedRequestUnion<'_>,
+        resp: uws::AnyResponse,
+        callback: jsc::JSValue,
+        extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
     ) {
-        // TODO(port): same blocker as `prepare_and_save_js_request_context`.
-        todo!("blocked_on: server::NewServer::on_saved_request (mod.rs ↔ server_body unification)")
+        // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
+        // and is non-null while the server is alive.
+        match self.tag {
+            AnyServerTag::HTTPServer => HTTPServer::on_saved_request(
+                self.ptr.cast(), req, resp.assert_no_ssl(), callback, extra_args,
+            ),
+            AnyServerTag::HTTPSServer => HTTPSServer::on_saved_request(
+                self.ptr.cast(), req, resp.assert_ssl(), callback, extra_args,
+            ),
+            AnyServerTag::DebugHTTPServer => DebugHTTPServer::on_saved_request(
+                self.ptr.cast(), req, resp.assert_no_ssl(), callback, extra_args,
+            ),
+            AnyServerTag::DebugHTTPSServer => DebugHTTPSServer::on_saved_request(
+                self.ptr.cast(), req, resp.assert_ssl(), callback, extra_args,
+            ),
+        }
     }
 
     /// Mutable handle to the DevServer (when configured). HTMLBundle's request

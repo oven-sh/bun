@@ -40,9 +40,9 @@ pub struct Parser<'a> {
     pub options: Options<'a>,
     pub lexer: js_lexer::Lexer<'a>,
     /// Raw pointer alias of `lexer.log`. Zig held two `*Log` pointers; Rust
-    /// cannot hold two live `&'a mut Log`, so the parser-side handle is a
-    /// `NonNull` and dereferenced at use sites (see `log_mut`). The unique
-    /// `&'a mut Log` lives in `self.lexer.log`.
+    /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
+    /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
+    /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
     pub log: core::ptr::NonNull<logger::Log>,
     pub source: &'a logger::Source,
     pub define: &'a Define,
@@ -301,9 +301,8 @@ impl<'a> Parser<'a> {
         // when `self` later drops. Move them out, leaving inert placeholders.
         //
         // The inert placeholder lexer is given its *own* arena-allocated `Log`
-        // so it does not alias `self.log` at all — deriving a second `&mut`
-        // from `self.log` here would pop the moved-out `lexer.log`'s Unique
-        // tag under Stacked Borrows before it ever reaches `P::init`.
+        // so it does not alias `self.log` at all — keeps the placeholder fully
+        // disjoint from the real `Log` handed to `P` and never read again.
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -434,7 +433,7 @@ impl<'a> Parser<'a> {
         // placeholders so `self` may drop without double-free.
         //
         // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports` for the Stacked Borrows rationale).
+        // `self.log` (see `_scan_imports`).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(
@@ -531,7 +530,7 @@ impl<'a> Parser<'a> {
         // placeholders so `self` may drop without double-free.
         //
         // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports` for the Stacked Borrows rationale).
+        // `self.log` (see `_scan_imports`).
         let lexer = core::mem::replace(
             &mut self.lexer,
             js_lexer::Lexer::init_without_reading(

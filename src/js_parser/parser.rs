@@ -2614,14 +2614,15 @@ pub fn new_lazy_export_ast_impl<'bump>(
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
     
     let mut temp_log = logger::Log::init();
-    // Zig held two aliasing `*Log` (parser.log + lexer.log). Rust forbids two
-    // live `&mut Log`, so `Parser.log` is `NonNull` and the unique `&mut` lives
-    // in the lexer. See `Parser::init` for the same pattern.
-    let log_ptr = core::ptr::NonNull::from(&mut temp_log);
+    // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
+    // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
+    // provenance chain. See `Parser::init` for the same pattern.
+    let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
+    let log_ptr = lexer.log;
     let mut parser = Parser {
         options: opts,
         bump,
-        lexer: js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump),
+        lexer,
         define,
         source,
         log: log_ptr,

@@ -497,9 +497,9 @@ impl ProxyEnvSlots {
     }
 
     /// Bump refcounts on all non-null values so a worker can share the
-    /// parent's strings. Caller must hold parent.lock — the pointer load
-    /// and ref() are not atomic with respect to Bun__setEnvValue's deref().
-    pub fn clone_from(&mut self, parent: &ProxyEnvStorage) {
+    /// parent's strings. Caller passes the parent's locked guard — the `Arc`
+    /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
+    pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
         // PORT NOTE: reshaped for borrowck — Zig iterated fields via @typeInfo;
         // here Arc::clone bumps the refcount.
         self.HTTP_PROXY = parent.HTTP_PROXY.clone();

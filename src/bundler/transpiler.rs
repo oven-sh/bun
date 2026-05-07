@@ -2833,7 +2833,9 @@ impl<'a> Transpiler<'a> {
                     let alloc: &'static Arena =
                         unsafe { &*(self.allocator as *const Arena) };
 
-                    let (mut sheet, extra) = match bun_css::StyleSheet::parse(
+                    let (mut sheet, extra) = match bun_css::StyleSheet::<
+                        bun_css::DefaultAtRule,
+                    >::parse(
                         alloc,
                         entry.contents(),
                         opts,

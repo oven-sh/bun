@@ -3017,7 +3017,12 @@ impl<'a> LinkerContext<'a> {
             let advanced = self.advance_import_tracker(&tracker);
             let next_tracker = advanced.value;
             let status = advanced.status;
-            let potentially_ambiguous_export_star_refs = advanced.import_data;
+            // SAFETY: `advanced.import_data` borrows
+            // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
+            // that storage is never reallocated while this loop runs (only
+            // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
+            let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
+                unsafe { &*advanced.import_data };
 
             match status {
                 ImportTrackerStatus::Cjs

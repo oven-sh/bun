@@ -123,23 +123,21 @@ impl Default for Config {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local shims for upstream `from_js` enum lookups (live in lower-tier crates
-// without jsc dep). These bridge `phf::Map` → JS string lookup via the
-// `ComptimeStringMapExt` extension trait from bun_jsc.
+// `from_js` enum lookups for `Loader`/`Target`. The canonical port of
+// `bundler_jsc/options_jsc.zig` lives in `bun_bundler_jsc::options_jsc` and
+// carries the spec'd error semantics (throw `TypeError` on non-string / unknown
+// loader). The earlier local shims here only did a bare `phf` lookup and
+// silently returned `None` for unknown loaders, breaking
+// `transpiler-utf16-loader.test.ts`.
 // ──────────────────────────────────────────────────────────────────────────
 
-fn loader_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Loader>> {
-    if value.is_undefined_or_null() {
-        return Ok(None);
-    }
-    Loader::NAMES.from_js(global, value)
-}
+use bun_bundler_jsc::options_jsc::loader_from_js;
 
 fn target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Target>> {
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    Target::MAP.from_js(global, value)
+    bun_bundler_jsc::options_jsc::target_from_js(global, value)
 }
 
 fn source_map_option_from_js(

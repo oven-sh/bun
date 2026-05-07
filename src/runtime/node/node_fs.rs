@@ -3283,7 +3283,10 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<WriteFile> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
-            let data_value = arguments.next_eat().ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("data is required") })?;
+            // `errdefer path.deinit()` — guard so every `?`-propagated JsError below
+            // releases the parsed path (matches node_fs.zig).
+            let path = scopeguard::guard(path, |p| p.deinit());
+            let data_value = arguments.next_eat().ok_or_else(|| ctx.throw_invalid_arguments("data is required"))?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::W;
             let mut mode: Mode = DEFAULT_PERMISSION;
@@ -3299,7 +3302,7 @@ pub mod args {
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("Invalid flag") })?;
+                        flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| ctx.throw_invalid_arguments("Invalid flag"))?;
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -3311,7 +3314,6 @@ pub mod args {
                             *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
-                            path.deinit();
                             return Err(ctx.throw_invalid_argument_type_value("signal", "AbortSignal", value));
                         }
                     }
@@ -3319,7 +3321,6 @@ pub mod args {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
                         } else {
-                            path.deinit();
                             return Err(ctx.throw_invalid_argument_type_value("flush", "boolean", flush_));
                         }
                     }
@@ -3331,8 +3332,9 @@ pub mod args {
             // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
             let is_async = false;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
-                .ok_or_else(|| { path.deinit(); validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")) })?;
+                .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
+            let path = scopeguard::ScopeGuard::into_inner(path);
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {

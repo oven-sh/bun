@@ -4342,18 +4342,52 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 match &entry.route {
                     crate::server::AnyRoute::Static(static_route) => {
-                        let _ = (&any_server, app_ptr, static_route.as_ptr(), &entry.path, entry.method);
-                        todo!("blocked_on: server::ServerConfig::apply_static_route");
+                        server_config::apply_static_route::<SSL, StaticRoute>(
+                            any_server, app!(), static_route.as_ptr(), &entry.path, entry.method,
+                        );
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                server_config::apply_static_route_h3::<StaticRoute>(
+                                    any_server, unsafe { &mut *h3_app }, static_route.as_ptr(),
+                                    &entry.path, entry.method,
+                                );
+                            }
+                        }
                     }
                     crate::server::AnyRoute::File(file_route) => {
-                        let _ = (&any_server, app_ptr, file_route.as_ptr(), &entry.path, entry.method);
-                        todo!("blocked_on: server::ServerConfig::apply_static_route");
+                        server_config::apply_static_route::<SSL, FileRoute>(
+                            any_server, app!(), file_route.as_ptr(), &entry.path, entry.method,
+                        );
+                        if Self::HAS_H3 {
+                            if let Some(h3_app) = self.h3_app {
+                                server_config::apply_static_route_h3::<FileRoute>(
+                                    any_server, unsafe { &mut *h3_app }, file_route.as_ptr(),
+                                    &entry.path, entry.method,
+                                );
+                            }
+                        }
                     }
                     crate::server::AnyRoute::Html(html_bundle_route) => {
-                        let _ = (&any_server, app_ptr, html_bundle_route, &entry.path, entry.method);
-                        todo!("blocked_on: server::ServerConfig::apply_static_route / dev_server::HTMLRouter::put");
-                        #[allow(unreachable_code)]
-                        { needs_plugins = true; }
+                        if let Some(dev_server) = self.dev_server.as_deref_mut() {
+                            // SAFETY: RefPtr.data is a live NonNull while in the route table.
+                            let bundle = unsafe { (*html_bundle_route.data.as_ptr()).html_bundle() };
+                            bun_core::handle_oom(dev_server.html_router.put(&entry.path, bundle));
+                        } else {
+                            server_config::apply_static_route::<SSL, html_bundle::Route>(
+                                any_server, app!(), html_bundle_route.data.as_ptr(),
+                                &entry.path, entry.method,
+                            );
+                            if Self::HAS_H3 {
+                                if let Some(h3_app) = self.h3_app {
+                                    server_config::apply_static_route_h3::<html_bundle::Route>(
+                                        any_server, unsafe { &mut *h3_app },
+                                        html_bundle_route.data.as_ptr(),
+                                        &entry.path, entry.method,
+                                    );
+                                }
+                            }
+                        }
+                        needs_plugins = true;
                     }
                     crate::server::AnyRoute::FrameworkRouter(_) => {}
                 }

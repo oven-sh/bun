@@ -26,6 +26,11 @@ use crate::package_install::{self, Method as InstallMethod, Summary as InstallSu
 use crate::package_manager_real::Command;
 use crate::lockfile_real::PackageIDSlice;
 use crate::lockfile::package;
+// Bring `items_<field>()` column accessors into scope for
+// `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
+use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
+use crate::package_manager_real::directories;
+use crate::package_manager_real::package_manager_options::Do;
 use crate::bun_fs;
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;

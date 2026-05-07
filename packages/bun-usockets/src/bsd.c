@@ -1076,6 +1076,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET6) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                // Preserve the real errno (EMFILE, ENFILE, EACCES, …) so the
+                // caller can surface it if all addrinfos exhaust.
+                *error = LIBUS_ERR;
                 continue;
             }
 
@@ -1093,6 +1096,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
         if (a->ai_family == AF_INET) {
             listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (listenFd == LIBUS_SOCKET_ERROR) {
+                *error = LIBUS_ERR;
                 continue;
             }
 

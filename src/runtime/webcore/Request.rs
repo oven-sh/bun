@@ -158,8 +158,14 @@ impl BodyMixin for Request {
     }
     #[inline]
     fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Zig: `?*FetchHeaders` — opaque C++ handle, pass as raw ptr.
-        self.headers.as_deref().map(core::ptr::NonNull::from)
+        // Zig: `?*FetchHeaders` — opaque C++ handle. Return the raw `*mut`
+        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
+        // going through `as_deref()` would derive it from a `&FetchHeaders`
+        // and make the later `as_mut()` UB under Stacked Borrows.
+        self.headers.as_ref().map(|h| {
+            // SAFETY: HeadersRef wraps a non-null `*mut FetchHeaders`.
+            unsafe { core::ptr::NonNull::new_unchecked(h.as_ptr()) }
+        })
     }
     #[inline]
     fn get_form_data_encoding(

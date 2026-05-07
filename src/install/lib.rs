@@ -826,6 +826,29 @@ pub mod lockfile {
         /// In-place form of `init_empty` (Zig writes `lockfile.* = .{}`).
         #[inline]
         pub fn init_empty_in_place(&mut self) { *self = Self::default(); }
+        /// Port of `Lockfile.isResolvedDependencyDisabled`
+        /// (src/install/lockfile.zig). Mirrors the body in
+        /// `lockfile_real::Lockfile::is_resolved_dependency_disabled`; both
+        /// only touch `buffers.dependencies` so the column-vec stub can carry
+        /// the same logic verbatim.
+        pub fn is_resolved_dependency_disabled(
+            &self,
+            dep_id: DependencyID,
+            features: Features,
+            meta: &package::Meta,
+            cpu: crate::npm::Architecture,
+            os: crate::npm::OperatingSystem,
+        ) -> bool {
+            if meta.is_disabled(cpu, os) {
+                return true;
+            }
+            let dep = self.buffers.dependencies[dep_id as usize];
+            dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
+        }
+        /// Port of `Lockfile.fmtMetaHash` (src/install/lockfile.zig).
+        pub fn fmt_meta_hash(&self) -> crate::lockfile_real::MetaHashFormatter<'_> {
+            crate::lockfile_real::MetaHashFormatter { meta_hash: &self.meta_hash }
+        }
         /// Port of `Lockfile.hasTrustedDependency` (src/install/lockfile.zig).
         pub fn has_trusted_dependency(&self, name: &[u8], resolution: &Resolution) -> bool {
             if let Some(trusted_dependencies) = &self.trusted_dependencies {

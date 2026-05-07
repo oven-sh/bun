@@ -536,7 +536,7 @@ pub mod E {
             };
             if let Some(existing) = self.get(head_key) {
                 match existing.data {
-                    super::expr::Data::EArray(mut array) => {
+                    super::expr::Data::EArray(array) => {
                         if rope.next.is_null() {
                             return Err(SetError::Clobber);
                         }

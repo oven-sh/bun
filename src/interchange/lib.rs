@@ -17,6 +17,7 @@
 
 // PORTING.md crate-map calls the string crate `bun_str`; the workspace package
 // is `bun_string`. Alias once here so submodule `use bun_str::…` paths resolve.
+#![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 
 // ───── json_lexer (CYCLEBREAK) ────────────────────────────────────────────

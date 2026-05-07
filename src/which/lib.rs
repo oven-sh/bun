@@ -1,5 +1,5 @@
 #![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
-#![warn(unused_must_use)]
+#![warn(unused_must_use, unreachable_pub)]
 use bstr::BStr;
 use bun_paths::{
     is_absolute, path_buffer_pool, w_path_buffer_pool, PathBuffer,

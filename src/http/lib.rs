@@ -23,6 +23,7 @@
 // PORT NOTE: `h2_client`/`h3_client` are now un-gated as thin shells (atomics
 // + constants only); their heavy submodules (Stream/ClientSession/…) remain
 // gated inside H2Client.rs/H3Client.rs until the cluster above lands.
+#![warn(unreachable_pub)]
 #[path = "AsyncHTTP.rs"]                            pub mod async_http;
 #[path = "CertificateInfo.rs"]                      pub mod certificate_info;
 #[path = "Decompressor.rs"]                         pub mod decompressor;
@@ -740,28 +741,28 @@ pub enum AlpnOffer { H1, H2Only, H1OrH2 }
 mod boring_extra {
     use core::ffi::{c_int, c_uchar, c_uint};
     unsafe extern "C" {
-        pub fn i2d_X509(x: *mut bun_boringssl::c::X509, out: *mut *mut u8) -> c_int;
-        pub fn SSL_get0_alpn_selected(
+        pub(crate) fn i2d_X509(x: *mut bun_boringssl::c::X509, out: *mut *mut u8) -> c_int;
+        pub(crate) fn SSL_get0_alpn_selected(
             ssl: *const bun_boringssl::c::SSL,
             out_data: *mut *const c_uchar,
             out_len: *mut c_uint,
         );
-        pub fn SSL_is_init_finished(ssl: *const bun_boringssl::c::SSL) -> c_int;
-        pub fn SSL_get_peer_cert_chain(
+        pub(crate) fn SSL_is_init_finished(ssl: *const bun_boringssl::c::SSL) -> c_int;
+        pub(crate) fn SSL_get_peer_cert_chain(
             ssl: *const bun_boringssl::c::SSL,
         ) -> *mut core::ffi::c_void; // STACK_OF(X509)*
-        pub fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509;
-        pub fn SSL_set_tlsext_host_name(ssl: *mut bun_boringssl::c::SSL, name: *const core::ffi::c_char) -> c_int;
-        pub fn SSL_set_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
-        pub fn SSL_clear_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
-        pub fn SSL_set_alpn_protos(ssl: *mut bun_boringssl::c::SSL, protos: *const u8, protos_len: usize) -> c_int;
-        pub fn SSL_enable_signed_cert_timestamps(ssl: *mut bun_boringssl::c::SSL);
-        pub fn SSL_enable_ocsp_stapling(ssl: *mut bun_boringssl::c::SSL);
+        pub(crate) fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509;
+        pub(crate) fn SSL_set_tlsext_host_name(ssl: *mut bun_boringssl::c::SSL, name: *const core::ffi::c_char) -> c_int;
+        pub(crate) fn SSL_set_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
+        pub(crate) fn SSL_clear_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
+        pub(crate) fn SSL_set_alpn_protos(ssl: *mut bun_boringssl::c::SSL, protos: *const u8, protos_len: usize) -> c_int;
+        pub(crate) fn SSL_enable_signed_cert_timestamps(ssl: *mut bun_boringssl::c::SSL);
+        pub(crate) fn SSL_enable_ocsp_stapling(ssl: *mut bun_boringssl::c::SSL);
     }
 
     // BoringSSL defines this as 0 (a no-op flag), but we keep the
     // clear/set pair to mirror the Zig spec exactly.
-    pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
+    pub(crate) const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 }
 
 /// Port of `BoringSSL.SSL.configureHTTPClientWithALPN` (boringssl.zig:19066).

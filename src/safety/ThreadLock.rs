@@ -141,7 +141,7 @@ impl Drop for ThreadLockGuard {
 }
 
 // TODO(port): `bun.Environment.ci_assert` cfg mapping (see field cfg above).
-pub const ENABLED: bool = cfg!(feature = "ci_assert");
+pub(crate) const ENABLED: bool = cfg!(feature = "ci_assert");
 
 #[allow(dead_code)]
 const TRACES_ENABLED: bool = cfg!(debug_assertions);

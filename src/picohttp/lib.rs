@@ -1,6 +1,7 @@
 #![allow(unused, non_camel_case_types, non_snake_case)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 use core::ffi::c_int;
 use core::fmt;
 
@@ -137,11 +138,11 @@ mod c {
 
 // TODO(b1): bun_str crate missing — local stub for the few helpers used here.
 mod strings {
-    #[inline] pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], _check_len: bool) -> bool {
+    #[inline] pub(crate) fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], _check_len: bool) -> bool {
         a.eq_ignore_ascii_case(b)
     }
-    #[inline] pub fn has_prefix(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
-    #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool {
+    #[inline] pub(crate) fn has_prefix(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
+    #[inline] pub(crate) fn contains(h: &[u8], n: &[u8]) -> bool {
         ::bstr::ByteSlice::find(h, n).is_some()
     }
 }

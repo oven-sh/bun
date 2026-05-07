@@ -5,6 +5,7 @@
 #![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
 use bun_sha_hmac::hmac;
 use bun_string::strings;

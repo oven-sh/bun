@@ -10,6 +10,7 @@
 // expose stable-surface stubs. Full bodies preserved on disk for B-2.
 
 // Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
+#![warn(unreachable_pub)]
 pub use std::borrow::Cow;
 pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;

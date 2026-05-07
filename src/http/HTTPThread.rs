@@ -962,7 +962,7 @@ mod _event_loop_draft {
 
     static INIT_ONCE: Once = Once::new();
 
-    pub fn init(opts: &InitOpts) {
+    pub(super) fn init(opts: &InitOpts) {
         INIT_ONCE.call_once(|| init_once(opts));
     }
 
@@ -987,7 +987,7 @@ mod _event_loop_draft {
         }
     }
 
-    pub fn on_start(opts: InitOpts) {
+    pub(super) fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 

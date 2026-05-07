@@ -375,15 +375,15 @@ const FLAG_HAS_SRC_IDX: u8 = 1 << 3;
 /// and padded to 8 bytes so `parse()` is straight-line; only the rare
 /// gen-line-exception / src-idx sections are conditional.
 mod win_hdr {
-    pub const COUNT_OFF: usize = 0;
-    pub const FLAGS_OFF: usize = 1;
-    pub const GEN_COL_LEN_OFF: usize = 2;
-    pub const ORIG_LINE_LEN_OFF: usize = 4;
-    pub const ORIG_COL_LEN_OFF: usize = 6;
-    pub const GEN_LINE_MASK_OFF: usize = 8;
-    pub const ORIG_LINE_EQ_MASK_OFF: usize = 16;
-    pub const ORIG_COL_EQ_MASK_OFF: usize = 24;
-    pub const GEN_COL_LANE_OFF: usize = 32;
+    pub(super) const COUNT_OFF: usize = 0;
+    pub(super) const FLAGS_OFF: usize = 1;
+    pub(super) const GEN_COL_LEN_OFF: usize = 2;
+    pub(super) const ORIG_LINE_LEN_OFF: usize = 4;
+    pub(super) const ORIG_COL_LEN_OFF: usize = 6;
+    pub(super) const GEN_LINE_MASK_OFF: usize = 8;
+    pub(super) const ORIG_LINE_EQ_MASK_OFF: usize = 16;
+    pub(super) const ORIG_COL_EQ_MASK_OFF: usize = 24;
+    pub(super) const GEN_COL_LANE_OFF: usize = 32;
 }
 
 /// Parses a window header and steps through its deltas in order. Exception

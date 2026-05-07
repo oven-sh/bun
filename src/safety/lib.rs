@@ -1,6 +1,7 @@
 #![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 pub mod alloc;
 
 #[path = "CriticalSection.rs"] mod critical_section;

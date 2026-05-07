@@ -13,6 +13,7 @@
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 // TODO(b1): Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
+#![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 use bun_collections::VecExt;
 use bun_logger as logger;

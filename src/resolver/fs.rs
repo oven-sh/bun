@@ -154,22 +154,22 @@ impl BOM {
 
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
 
-pub mod preallocate {
-    pub mod counts {
-        pub const DIR_ENTRY: usize = 2048;
-        pub const FILES: usize = 4096;
+pub(crate) mod preallocate {
+    pub(crate) mod counts {
+        pub(crate) const DIR_ENTRY: usize = 2048;
+        pub(crate) const FILES: usize = 4096;
     }
 }
 
 // PORT NOTE: Zig `BSSStringList(_COUNT, _ITEM_LENGTH)` internally remaps to
 // `<_COUNT * 2, _ITEM_LENGTH + 1>`; the Rust port took the post-transform
 // const params, so apply the arithmetic at the type-alias / declare site.
-pub type DirnameStoreBacking =
+pub(crate) type DirnameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::DIR_ENTRY * 2 }, { 128 + 1 }>;
-pub type FilenameStoreBacking =
+pub(crate) type FilenameStoreBacking =
     allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
 // PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
-pub type EntryStoreBacking =
+pub(crate) type EntryStoreBacking =
     allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage — Zig kept `var instance` inside the
@@ -251,7 +251,7 @@ macro_rules! string_store_impl {
 string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking, DIRNAME_STORE_MUTEX);
 string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking, FILENAME_STORE_MUTEX);
 
-pub struct FileSystem {
+pub(crate) struct FileSystem {
     pub top_level_dir: &'static [u8],
 
     // used on subsequent updates
@@ -279,13 +279,13 @@ pub enum FileSystemError {
 
 static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-pub static mut MAX_FD: bun_sys::RawFd = 0;
-pub static mut INSTANCE_LOADED: bool = false;
+pub(crate) static mut MAX_FD: bun_sys::RawFd = 0;
+pub(crate) static mut INSTANCE_LOADED: bool = false;
 // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
-pub static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
+pub(crate) static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
 
 impl FileSystem {
-    pub fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
+    pub(crate) fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
         let tld = self.top_level_dir;
         if tld.len() > 1 && tld[tld.len() - 1] == SEP {
             &tld[0..tld.len() - 1]
@@ -294,7 +294,7 @@ impl FileSystem {
         }
     }
 
-    pub fn tmpdir(&mut self) -> Result<bun_sys::Dir, bun_core::Error> {
+    pub(crate) fn tmpdir(&mut self) -> Result<bun_sys::Dir, bun_core::Error> {
         TMPDIR_HANDLE.with(|h| {
             if h.get().is_none() {
                 h.set(Some(self.fs.open_tmp_dir()?));
@@ -303,13 +303,13 @@ impl FileSystem {
         })
     }
 
-    pub fn get_fd_path(&self, fd: Fd) -> Result<&'static [u8], bun_core::Error> {
+    pub(crate) fn get_fd_path(&self, fd: Fd) -> Result<&'static [u8], bun_core::Error> {
         let mut buf = PathBuffer::uninit();
         let dir = bun_sys::get_fd_path(fd, &mut buf)?;
         Ok(self.dirname_store.append(dir)?)
     }
 
-    pub fn tmpname<'b>(
+    pub(crate) fn tmpname<'b>(
         extname: &[u8],
         buf: &'b mut [u8],
         hash: u64,
@@ -339,7 +339,7 @@ impl FileSystem {
     }
 
     #[inline]
-    pub fn set_max_fd(fd: bun_sys::RawFd) {
+    pub(crate) fn set_max_fd(fd: bun_sys::RawFd) {
         #[cfg(windows)]
         {
             return;
@@ -355,11 +355,11 @@ impl FileSystem {
         }
     }
 
-    pub fn init(top_level_dir: Option<&[u8]>) -> Result<*mut FileSystem, bun_core::Error> {
+    pub(crate) fn init(top_level_dir: Option<&[u8]>) -> Result<*mut FileSystem, bun_core::Error> {
         Self::init_with_force::<false>(top_level_dir)
     }
 
-    pub fn init_with_force<const FORCE: bool>(
+    pub(crate) fn init_with_force<const FORCE: bool>(
         top_level_dir_: Option<&[u8]>,
     ) -> Result<*mut FileSystem, bun_core::Error> {
         // TODO(port): Environment.isBrowser branch
@@ -405,7 +405,7 @@ impl FileSystem {
     }
 
     #[inline]
-    pub fn instance() -> *mut FileSystem {
+    pub(crate) fn instance() -> *mut FileSystem {
         // PORT NOTE: returns the raw `*mut` singleton (Zig `*FileSystem`). Do NOT
         // materialize a `&'static mut` here — concurrent callers (resolver runs on a
         // thread pool) would each hold a live `&'static mut` to the same object (UB).
@@ -419,13 +419,13 @@ impl FileSystem {
 // PORT NOTE: Zig `FileSystem.deinit()` only called .deinit() on dirname_store/filename_store,
 // which are &'static singletons here — nothing owned to free, so no `impl Drop`.
 
-pub mod dir_entry {
+pub(crate) mod dir_entry {
     use super::*;
 
-    pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+    pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
     /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
     /// ZST handle resolving to the `entry_store_backing()` singleton.
-    pub struct EntryStore(());
+    pub(crate) struct EntryStore(());
 
     // PORT NOTE: external lock serializing formation of `&mut *entry_store_backing()`.
     // `BSSList::append(&mut self, ...)` only acquires its internal mutex *after* the
@@ -439,14 +439,14 @@ pub mod dir_entry {
 
     impl EntryStore {
         #[inline]
-        pub fn instance() -> *mut EntryStoreBacking {
+        pub(crate) fn instance() -> *mut EntryStoreBacking {
             // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
             // materialize a `&'static mut` here — concurrent callers would alias the
             // same object via `&mut` (UB) regardless of the backing's internal mutex.
             // Form the `&mut` only for the duration of a single locked operation.
             entry_store_backing()
         }
-        pub fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
+        pub(crate) fn append(value: Entry) -> core::result::Result<*mut Entry, AllocError> {
             let _guard = ENTRY_STORE_MUTEX.lock_guard();
             // SAFETY: `ENTRY_STORE_MUTEX` is held, so this is the only live `&mut` to
             // the process-lifetime singleton; `append` further serializes via its
@@ -839,16 +839,16 @@ impl Entry {
 // }
 
 impl FileSystem {
-    pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
         // PERF(port): was @call(bun.callmod_inline, ...)
         path_handler::normalize_string::<true, platform::Auto>(str)
     }
 
-    pub fn normalize_buf<'a>(&self, buf: &'a mut [u8], str: &[u8]) -> &'a [u8] {
+    pub(crate) fn normalize_buf<'a>(&self, buf: &'a mut [u8], str: &[u8]) -> &'a [u8] {
         path_handler::normalize_string_buf::<false, platform::Auto, false>(str, buf)
     }
 
-    pub fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
+    pub(crate) fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
         // TODO(port): join_buf is threadlocal static; returning &'static matches Zig (caller copies before reuse)
         JOIN_BUF.with_borrow_mut(|buf| {
             let s = path_handler::join_string_buf::<platform::Loose>(&mut buf[..], parts);
@@ -857,15 +857,15 @@ impl FileSystem {
         })
     }
 
-    pub fn join_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
+    pub(crate) fn join_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
         path_handler::join_string_buf::<platform::Loose>(buf, parts)
     }
 
-    pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
+    pub(crate) fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
         path_handler::relative(from, to)
     }
 
-    pub fn relative_platform<P: path_handler::PlatformT>(
+    pub(crate) fn relative_platform<P: path_handler::PlatformT>(
         &self,
         from: &[u8],
         to: &[u8],
@@ -873,20 +873,20 @@ impl FileSystem {
         path_handler::relative_platform::<P, false>(from, to)
     }
 
-    pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
+    pub(crate) fn relative_to(&self, to: &[u8]) -> &'static [u8] {
         path_handler::relative(self.top_level_dir, to)
     }
 
-    pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
+    pub(crate) fn relative_from(&self, from: &[u8]) -> &'static [u8] {
         path_handler::relative(from, self.top_level_dir)
     }
 
-    pub fn abs_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
+    pub(crate) fn abs_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
         let joined = path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts);
         Ok(Box::<[u8]>::from(joined))
     }
 
-    pub fn abs_alloc_z(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
+    pub(crate) fn abs_alloc_z(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
         let joined = path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts);
         // allocator.dupeZ → owned NUL-terminated buffer
         let mut v = Vec::with_capacity(joined.len() + 1);
@@ -895,31 +895,31 @@ impl FileSystem {
         Ok(v.into_boxed_slice())
     }
 
-    pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
+    pub(crate) fn abs(&self, parts: &[&[u8]]) -> &[u8] {
         path_handler::join_abs_string::<platform::Loose>(self.top_level_dir, parts)
     }
 
-    pub fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
+    pub(crate) fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
         path_handler::join_abs_string_buf::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
     /// Like `abs_buf`, but returns null when the joined path (after `..`/`.`
     /// normalization) would overflow `buf`. Use when `parts` may contain
     /// user-controlled input of arbitrary length.
-    pub fn abs_buf_checked<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    pub(crate) fn abs_buf_checked<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> Option<&'a [u8]> {
         path_handler::join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
-    pub fn abs_buf_z<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a ZStr {
+    pub(crate) fn abs_buf_z<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a ZStr {
         path_handler::join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
     }
 
-    pub fn join_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
+    pub(crate) fn join_alloc(&self, parts: &[&[u8]]) -> Result<Box<[u8]>, AllocError> {
         let joined = self.join(parts);
         Ok(Box::<[u8]>::from(joined))
     }
 
-    pub fn print_limits() {
+    pub(crate) fn print_limits() {
         // TODO(port): std.posix.rlimit_resource / getrlimit — bun_sys equivalent
         #[cfg(unix)]
         {
@@ -944,7 +944,7 @@ impl FileSystem {
 
 // Zig: `allocators.BSSMap(EntriesOption, dir_entry, false, 256, true)`.
 // `store_keys=false` → Rust `BSSMapInner<V, COUNT, RM_SLASH>` (est_key_len unused on inner shape).
-pub type EntriesOptionMap =
+pub(crate) type EntriesOptionMap =
     allocators::BSSMapInner<EntriesOption, { preallocate::counts::DIR_ENTRY }, true>;
 
 // Per-monomorphization singleton storage for `EntriesOption.Map`.
@@ -1019,12 +1019,12 @@ pub struct RealFS {
 #[cfg(windows)]
 pub type Tmpfile = TmpfileWindows;
 #[cfg(not(windows))]
-pub type Tmpfile = TmpfilePosix;
+pub(crate) type Tmpfile = TmpfilePosix;
 
-pub mod limit {
-    pub static mut HANDLES: usize = 0;
+pub(crate) mod limit {
+    pub(crate) static mut HANDLES: usize = 0;
     #[cfg(unix)]
-    pub static mut HANDLES_BEFORE: bun_sys::posix::Rlimit =
+    pub(crate) static mut HANDLES_BEFORE: bun_sys::posix::Rlimit =
         // SAFETY: all-zero is a valid Rlimit (POD)
         unsafe { core::mem::zeroed() };
     #[cfg(not(unix))]
@@ -1454,7 +1454,7 @@ unsafe impl Sync for Entry {}
 unsafe impl Send for Entry {}
 
 #[repr(u8)]
-pub enum EntriesOptionTag {
+pub(crate) enum EntriesOptionTag {
     Entries,
     Err,
 }
@@ -1464,7 +1464,7 @@ pub enum EntriesOptionTag {
 // - Preallocates a fixed amount of directory name space
 // - Doesn't store directory names which don't exist.
 
-pub struct TmpfilePosix {
+pub(crate) struct TmpfilePosix {
     pub fd: Fd,
     pub dir_fd: Fd,
 }
@@ -1477,23 +1477,23 @@ impl Default for TmpfilePosix {
 
 impl TmpfilePosix {
     #[inline]
-    pub fn dir(&self) -> bun_sys::Dir {
+    pub(crate) fn dir(&self) -> bun_sys::Dir {
         bun_sys::Dir::from_fd(self.dir_fd)
     }
 
     #[inline]
-    pub fn file(&self) -> bun_sys::File {
+    pub(crate) fn file(&self) -> bun_sys::File {
         bun_sys::File::from_fd(self.fd)
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         if self.fd.is_valid() {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
     }
 
-    pub fn create(&mut self, _: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
+    pub(crate) fn create(&mut self, _: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
         // We originally used a temporary directory, but it caused EXDEV.
         let dir_fd = Fd::cwd();
         self.dir_fd = dir_fd;
@@ -1503,7 +1503,7 @@ impl TmpfilePosix {
         Ok(())
     }
 
-    pub fn promote_to_cwd(
+    pub(crate) fn promote_to_cwd(
         &mut self,
         from_name: &ZStr,
         name: &ZStr,
@@ -1516,7 +1516,7 @@ impl TmpfilePosix {
         Ok(())
     }
 
-    pub fn close_and_delete(&mut self, name: &ZStr) {
+    pub(crate) fn close_and_delete(&mut self, name: &ZStr) {
         self.close();
 
         #[cfg(not(target_os = "linux"))]
@@ -1533,7 +1533,7 @@ impl TmpfilePosix {
     }
 }
 
-pub struct TmpfileWindows {
+pub(crate) struct TmpfileWindows {
     pub fd: Fd,
     pub existing_path: Box<[u8]>,
 }
@@ -1546,7 +1546,7 @@ impl Default for TmpfileWindows {
 
 impl TmpfileWindows {
     #[inline]
-    pub fn dir(&self) -> bun_sys::Dir {
+    pub(crate) fn dir(&self) -> bun_sys::Dir {
         // TODO(port): Fs.FileSystem.instance.tmpdir() — needs &mut FileSystem
         // SAFETY: `instance()` is the process-lifetime singleton (Zig `*FileSystem`);
         // `&mut` scoped to this call only (no `&'static mut` escapes).
@@ -1554,18 +1554,18 @@ impl TmpfileWindows {
     }
 
     #[inline]
-    pub fn file(&self) -> bun_sys::File {
+    pub(crate) fn file(&self) -> bun_sys::File {
         bun_sys::File::from_fd(self.fd)
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         if self.fd.is_valid() {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
     }
 
-    pub fn create(&mut self, rfs: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
+    pub(crate) fn create(&mut self, rfs: &mut RealFS, name: &ZStr) -> Result<(), bun_core::Error> {
         let tmp_dir = rfs.open_tmp_dir()?;
 
         let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
@@ -1610,11 +1610,11 @@ impl TmpfileWindows {
     }
 
     #[cfg(not(windows))]
-    pub fn promote_to_cwd(&mut self, _: &CStr, _: &ZStr) -> Result<(), bun_core::Error> {
+    pub(crate) fn promote_to_cwd(&mut self, _: &CStr, _: &ZStr) -> Result<(), bun_core::Error> {
         unreachable!()
     }
 
-    pub fn close_and_delete(&mut self, _name: &CStr) {
+    pub(crate) fn close_and_delete(&mut self, _name: &CStr) {
         self.close();
     }
 }
@@ -2381,7 +2381,7 @@ impl RealFS {
     // doNotCacheEntries bool
 }
 
-pub type Implementation = RealFS;
+pub(crate) type Implementation = RealFS;
 // pub const Implementation = switch (build_target) {
 // .wasi, .native => RealFS,
 //     .wasm => WasmFS,
@@ -2397,7 +2397,7 @@ pub struct PathContentsPair<'a, 'buf> {
     pub contents: Cow<'buf, [u8]>,
 }
 
-pub struct NodeJSPathName<'a> {
+pub(crate) struct NodeJSPathName<'a> {
     pub base: &'a [u8],
     pub dir: &'a [u8],
     /// includes the leading .
@@ -2406,7 +2406,7 @@ pub struct NodeJSPathName<'a> {
 }
 
 impl<'a> NodeJSPathName<'a> {
-    pub fn init<const IS_WINDOWS: bool>(path_: &'a [u8]) -> NodeJSPathName<'a> {
+    pub(crate) fn init<const IS_WINDOWS: bool>(path_: &'a [u8]) -> NodeJSPathName<'a> {
         let platform: path_handler::Platform =
             if IS_WINDOWS { path_handler::Platform::Windows } else { path_handler::Platform::Posix };
         let get_last_sep = platform.get_last_separator_func();
@@ -2648,7 +2648,7 @@ const NS_DATAURL: &[u8] = b"dataurl";
 const NS_FILE: &[u8] = b"file";
 const NS_MACRO: &[u8] = b"macro";
 
-pub struct PackageRelative {
+pub(crate) struct PackageRelative {
     pub path: &'static [u8],
     pub name: &'static [u8],
     pub is_parent_package: bool,
@@ -3005,9 +3005,9 @@ impl<'a> Path<'a> {
 // }
 
 /// Display wrapper for fd-like handles (i32 / *anyopaque / FD).
-pub struct PrintHandle<T>(pub T);
+pub(crate) struct PrintHandle<T>(pub T);
 
-pub fn print_handle<T>(handle: T) -> PrintHandle<T> {
+pub(crate) fn print_handle<T>(handle: T) -> PrintHandle<T> {
     PrintHandle(handle)
 }
 

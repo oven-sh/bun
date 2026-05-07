@@ -94,7 +94,7 @@ impl ObjectRopeExt for E::Object {
         };
         if let Some(existing) = self.get(head_key) {
             match existing.data {
-                ExprData::EArray(mut array) => {
+                ExprData::EArray(array) => {
                     if rope.next.is_null() {
                         return Ok(existing);
                     }
@@ -158,12 +158,12 @@ mod hash_map_pool {
     // std.HashMap(u64, void, IdentityContext, 80)
     // TODO(port): load-factor 80 and IdentityContext hasher need to be expressed
     // on bun_collections::HashMap; using the default wyhash map as placeholder.
-    pub type HashMap = bun_collections::HashMap<u64, ()>;
+    pub(super) type HashMap = bun_collections::HashMap<u64, ()>;
 
     // bun.deprecated.SinglyLinkedList(HashMap)
     // TODO(port): `bun.deprecated.SinglyLinkedList` has no Rust mapping; using an
     // intrusive singly-linked node with raw `next` pointer to match shape.
-    pub struct Node {
+    pub(super) struct Node {
         pub data: HashMap,
         pub next: *mut Node,
     }
@@ -174,7 +174,7 @@ mod hash_map_pool {
         static LIST: RefCell<Option<*mut Node>> = const { RefCell::new(None) };
     }
 
-    pub fn get() -> *mut Node {
+    pub(super) fn get() -> *mut Node {
         let popped = LIST.with_borrow_mut(|list| {
             if let Some(first) = list {
                 // SAFETY: `first` was produced by Box::into_raw below and is non-null.
@@ -199,7 +199,7 @@ mod hash_map_pool {
         }))
     }
 
-    pub fn release(node: *mut Node) {
+    pub(super) fn release(node: *mut Node) {
         // Zig models this as a sticky `loaded: bool` + `list.prepend(node)`;
         // prepend always sets `node.next = list.first`. Folding into a single
         // `Option<*mut Node>` means we must rewrite `next` on BOTH arms — a

@@ -1,5 +1,6 @@
 //! bun_threading crate root — thin re-exports mirroring `src/threading/threading.zig`.
 
+#![warn(unreachable_pub)]
 #[path = "Mutex.rs"]
 pub mod mutex;
 #[path = "Futex.rs"]

@@ -8,6 +8,7 @@
 // #[path = "lib_draft_b1.rs"] mod draft;
 // RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
 // `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
+#![warn(unreachable_pub)]
 pub mod fd;
 pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContext, MovableIfWindowsFd, FdT, UvFile, RawFd};
 // `File.rs` (Phase-A draft) stays gated: the inline `impl File` below is the

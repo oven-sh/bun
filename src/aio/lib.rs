@@ -3,6 +3,7 @@
 #![allow(static_mut_refs)]
 // AUTOGEN: mod declarations only — real exports added in B-1.
 
+#![warn(unreachable_pub)]
 pub mod stub_event_loop;
 
 // ────────────────────────────────────────────────────────────────────────────

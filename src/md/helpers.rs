@@ -6,7 +6,7 @@ mod strings {
     /// Port of `bun.strings.codepointSize` — UTF-8 sequence length from leading byte.
     /// Returns 0 for an invalid leading byte.
     #[inline]
-    pub fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
+    pub(super) fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
         match r.into() {
             0b0000_0000..=0b0111_1111 => 1,
             0b1100_0000..=0b1101_1111 => 2,
@@ -20,7 +20,7 @@ mod strings {
     /// tail). Converts potentially ill-formed UTF-8 bytes to a codepoint;
     /// invalid sequences return `zero`.
     #[inline]
-    pub fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: u8, zero: T) -> T
+    pub(super) fn decode_wtf8_rune_t<T>(p: &[u8; 4], len: u8, zero: T) -> T
     where
         T: Copy
             + From<u8>
@@ -85,7 +85,7 @@ mod strings {
     /// Port of `bun.strings.encodeWTF8RuneT` — clone of golang's
     /// `utf8.EncodeRune` modified for WTF-8.
     #[inline]
-    pub fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> u8 {
+    pub(super) fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> u8 {
         let r: u32 = r.into();
         match r {
             0..=0x7F => {
@@ -116,7 +116,7 @@ mod strings {
     /// Port of `bun.strings.eqlCaseInsensitiveASCIIICheckLength` (sic — triple-`i`
     /// typo preserved from Zig). Length-checked ASCII case-insensitive compare.
     #[inline]
-    pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
+    pub(super) fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
         if a.len() != b.len() {
             return false;
         }

@@ -40,7 +40,7 @@ use super::thread_id::{ThreadId, AtomicThreadId, current as current_thread_id, I
 #[cfg(feature = "ci_assert")]
 pub const ENABLED: bool = true;
 #[cfg(not(feature = "ci_assert"))]
-pub const ENABLED: bool = false;
+pub(crate) const ENABLED: bool = false;
 
 #[derive(Default)]
 pub struct CriticalSection {
@@ -54,7 +54,7 @@ struct OptionalThreadId {
 }
 
 impl OptionalThreadId {
-    pub fn init(id: ThreadId) -> OptionalThreadId {
+    pub(crate) fn init(id: ThreadId) -> OptionalThreadId {
         OptionalThreadId { inner: id }
     }
 }

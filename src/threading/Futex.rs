@@ -102,11 +102,11 @@ use unsupported_impl as imp;
 mod unsupported_impl {
     use super::*;
 
-    pub fn wait(_ptr: &AtomicU32, _expect: u32, _timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(_ptr: &AtomicU32, _expect: u32, _timeout: Option<u64>) -> Result<(), TimeoutError> {
         unsupported()
     }
 
-    pub fn wake(_ptr: &AtomicU32, _max_waiters: u32) {
+    pub(super) fn wake(_ptr: &AtomicU32, _max_waiters: u32) {
         unsupported()
     }
 
@@ -284,7 +284,7 @@ mod darwin_impl {
 mod linux_impl {
     use super::*;
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         use bun_sys::linux;
         // SAFETY: ts is fully initialized below before being passed to the kernel when
         // timeout.is_some(); when timeout is None we pass null and ts is never read.
@@ -326,7 +326,7 @@ mod linux_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
         use bun_sys::linux;
         let val: u32 = match i32::try_from(max_waiters) {
             Ok(v) => v as u32,

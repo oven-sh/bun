@@ -1,5 +1,6 @@
 // @link "deps/zlib/libz.a"
 
+#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void, CStr};
 use core::mem::size_of;
 
@@ -371,7 +372,7 @@ impl From<ZlibError> for bun_core::Error {
 struct ZlibAllocator;
 
 impl ZlibAllocator {
-    pub unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
+    pub(crate) unsafe extern "C" fn alloc(_: *mut c_void, items: uInt, len: uInt) -> *mut c_void {
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
             // Zig: `zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory()`.
@@ -391,7 +392,7 @@ impl ZlibAllocator {
         p
     }
 
-    pub unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
+    pub(crate) unsafe extern "C" fn free(_: *mut c_void, data: *mut c_void) {
         if bun_alloc::heap_breakdown::ENABLED {
             let zone = bun_alloc::get_zone!("zlib");
             // SAFETY: `data` was allocated by `malloc_zone_calloc` on this same
@@ -1118,13 +1119,13 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 // B-2: re-export from bun_zlib_sys, platform-selected to match build.zig.
 mod internal {
     #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{
-        z_stream, z_streamp, zStream_struct, DataType, FlushValue, ReturnCode,
-    };
+    pub use bun_zlib_sys::posix::{z_stream, z_streamp, FlushValue, ReturnCode};
+    #[cfg(not(windows))]
+    pub(super) use bun_zlib_sys::posix::{zStream_struct, DataType};
     #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{
-        z_stream, z_streamp, zStream_struct, DataType, FlushValue, ReturnCode,
-    };
+    pub use bun_zlib_sys::win32::{z_stream, z_streamp, FlushValue, ReturnCode};
+    #[cfg(windows)]
+    pub(super) use bun_zlib_sys::win32::{zStream_struct, DataType};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

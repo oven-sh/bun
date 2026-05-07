@@ -15,6 +15,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 // ── submodules ──────────────────────────────────────────────────────────────
+#![warn(unreachable_pub)]
 #[path = "heap.rs"]
 pub mod heap;
 // `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
@@ -89,16 +90,16 @@ macro_rules! log {
 /// TODO(b2-blocked): bun_sys::linux — replace with that module once available.
 #[cfg(target_os = "linux")]
 mod linux {
-    pub use libc::epoll_event;
-    pub const EPOLL_IN: u32 = libc::EPOLLIN as u32;
-    pub const EPOLL_OUT: u32 = libc::EPOLLOUT as u32;
-    pub const EPOLL_ERR: u32 = libc::EPOLLERR as u32;
-    pub const EPOLL_HUP: u32 = libc::EPOLLHUP as u32;
-    pub const EPOLL_ET: u32 = libc::EPOLLET as u32;
-    pub const EPOLL_ONESHOT: u32 = libc::EPOLLONESHOT as u32;
-    pub const EPOLL_CTL_ADD: i32 = libc::EPOLL_CTL_ADD;
-    pub const EPOLL_CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
-    pub const EPOLL_CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
+    pub(crate) use libc::epoll_event;
+    pub(crate) const EPOLL_IN: u32 = libc::EPOLLIN as u32;
+    pub(crate) const EPOLL_OUT: u32 = libc::EPOLLOUT as u32;
+    pub(crate) const EPOLL_ERR: u32 = libc::EPOLLERR as u32;
+    pub(crate) const EPOLL_HUP: u32 = libc::EPOLLHUP as u32;
+    pub(crate) const EPOLL_ET: u32 = libc::EPOLLET as u32;
+    pub(crate) const EPOLL_ONESHOT: u32 = libc::EPOLLONESHOT as u32;
+    pub(crate) const EPOLL_CTL_ADD: i32 = libc::EPOLL_CTL_ADD;
+    pub(crate) const EPOLL_CTL_MOD: i32 = libc::EPOLL_CTL_MOD;
+    pub(crate) const EPOLL_CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
 }
 
 /// Zig std's `.freebsd` `EV` struct lacks `.EOF`; the value (0x8000) is the
@@ -717,21 +718,21 @@ const POLLABLE_ADDR_BITS: u64 = 49;
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
 impl Pollable {
-    pub fn init(t: PollableTag, p: *mut Poll) -> Pollable {
+    pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
         debug_assert!(addr & !POLLABLE_ADDR_MASK == 0);
         Pollable { value: (addr & POLLABLE_ADDR_MASK) | ((t as u64) << POLLABLE_ADDR_BITS) }
     }
 
-    pub fn from(int: u64) -> Pollable {
+    pub(crate) fn from(int: u64) -> Pollable {
         Pollable { value: int }
     }
 
-    pub fn poll(self) -> *mut Poll {
+    pub(crate) fn poll(self) -> *mut Poll {
         (self.value & POLLABLE_ADDR_MASK) as usize as *mut Poll
     }
 
-    pub fn tag(self) -> PollableTag {
+    pub(crate) fn tag(self) -> PollableTag {
         let data = (self.value >> POLLABLE_ADDR_BITS) as u16;
         if data == 0 {
             return PollableTag::Empty;
@@ -740,7 +741,7 @@ impl Pollable {
         unsafe { core::mem::transmute::<u16, PollableTag>(data) }
     }
 
-    pub fn ptr(self) -> u64 {
+    pub(crate) fn ptr(self) -> u64 {
         self.value
     }
 }

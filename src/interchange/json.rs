@@ -32,7 +32,7 @@ mod hash_map_pool {
     // Zig: std.HashMap(u64, void, IdentityContext, 80)
     // TODO(port): identity-hash u64 set with 80% max-load — verify bun_collections has an
     // identity-hasher variant; otherwise add one. Using HashMap<u64, ()> for now.
-    pub type HashMap = bun_collections::HashMap<u64, ()>;
+    pub(super) type HashMap = bun_collections::HashMap<u64, ()>;
 
     // Zig used a threadlocal SinglyLinkedList<HashMap> as a freelist.
     // PORT NOTE: reshaped for borrowck — Rust thread_local + Vec<HashMap> freelist;
@@ -41,7 +41,7 @@ mod hash_map_pool {
         static LIST: RefCell<Vec<HashMap>> = const { RefCell::new(Vec::new()) };
     }
 
-    pub fn get() -> HashMap {
+    pub(super) fn get() -> HashMap {
         LIST.with_borrow_mut(|list| {
             if let Some(mut map) = list.pop() {
                 map.clear();
@@ -52,7 +52,7 @@ mod hash_map_pool {
         })
     }
 
-    pub fn release(map: HashMap) {
+    pub(super) fn release(map: HashMap) {
         LIST.with_borrow_mut(|list| list.push(map));
     }
 }

@@ -1,3 +1,4 @@
+#![warn(unreachable_pub)]
 use core::ffi::c_void;
 use core::ptr;
 

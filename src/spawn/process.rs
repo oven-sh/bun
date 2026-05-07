@@ -2553,7 +2553,7 @@ pub mod sync {
 
     #[cfg(unix)]
     impl JobControl {
-        pub fn is_active(&self) -> bool {
+        pub(crate) fn is_active(&self) -> bool {
             self.prev > 0
         }
 

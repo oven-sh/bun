@@ -12,6 +12,7 @@
 // Wyhash11 (legacy, 32-byte rounds, 5 primes)
 // ════════════════════════════════════════════════════════════════════════════
 
+#![warn(unreachable_pub)]
 const PRIMES: [u64; 5] = [
     0xa0761d6478bd642f,
     0xe7037ed1a0b428db,
@@ -67,7 +68,7 @@ struct WyhashStateless {
 }
 
 impl WyhashStateless {
-    pub fn init(seed: u64) -> WyhashStateless {
+    pub(crate) fn init(seed: u64) -> WyhashStateless {
         WyhashStateless {
             seed,
             msg_len: 0,
@@ -90,7 +91,7 @@ impl WyhashStateless {
     }
 
     #[inline]
-    pub fn update(&mut self, b: &[u8]) {
+    pub(crate) fn update(&mut self, b: &[u8]) {
         debug_assert!(b.len() % 32 == 0);
 
         let mut off: usize = 0;
@@ -104,7 +105,7 @@ impl WyhashStateless {
     }
 
     #[inline]
-    pub fn final_(&mut self, b: &[u8]) -> u64 {
+    pub(crate) fn final_(&mut self, b: &[u8]) -> u64 {
         debug_assert!(b.len() < 32);
 
         let seed = self.seed;
@@ -152,7 +153,7 @@ impl WyhashStateless {
         mum(self.seed ^ (self.msg_len as u64), PRIMES[4])
     }
 
-    pub fn hash(seed: u64, input: &[u8]) -> u64 {
+    pub(crate) fn hash(seed: u64, input: &[u8]) -> u64 {
         let aligned_len = input.len() - (input.len() % 32);
 
         let mut c = WyhashStateless::init(seed);

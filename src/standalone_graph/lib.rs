@@ -2,6 +2,7 @@
 #![warn(unused_must_use)]
 
 // Phase-A draft used `bun_str`; the workspace crate is `bun_string`.
+#![warn(unreachable_pub)]
 extern crate bun_string as bun_str;
 
 #[path = "StandaloneModuleGraph.rs"]

@@ -1,6 +1,7 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 use bun_string::ZStr;
@@ -191,7 +192,7 @@ pub type LIBUS_SOCKET_DESCRIPTOR = i32;
 mod c {
     // TODO(port): move to uws_sys
     unsafe extern "C" {
-        pub fn us_get_default_ciphers() -> *const core::ffi::c_char;
+        pub(crate) fn us_get_default_ciphers() -> *const core::ffi::c_char;
     }
 }
 
@@ -239,70 +240,70 @@ pub mod ssl_wrapper {
         use core::ffi::{c_int, c_void};
         use core::marker::{PhantomData, PhantomPinned};
 
-        pub use bun_boringssl::c::{SSL, SSL_CTX};
+        pub(super) use bun_boringssl::c::{SSL, SSL_CTX};
 
         // ── opaque handles not yet in bun_boringssl_sys ────────────────
         macro_rules! opaque {
             ($($name:ident),+ $(,)?) => {$(
-                #[repr(C)] pub struct $name { _p: [u8; 0], _m: PhantomData<(*mut u8, PhantomPinned)> }
+                #[repr(C)] pub(super) struct $name { _p: [u8; 0], _m: PhantomData<(*mut u8, PhantomPinned)> }
             )+};
         }
         opaque!(BIO, BIO_METHOD, X509_STORE, X509_STORE_CTX);
 
         // ── constants (values from vendor/boringssl/include/openssl/ssl.h) ──
-        pub const SSL_ERROR_SSL: c_int = 1;
-        pub const SSL_ERROR_WANT_READ: c_int = 2;
-        pub const SSL_ERROR_WANT_WRITE: c_int = 3;
-        pub const SSL_ERROR_SYSCALL: c_int = 5;
-        pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
-        pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
+        pub(super) const SSL_ERROR_SSL: c_int = 1;
+        pub(super) const SSL_ERROR_WANT_READ: c_int = 2;
+        pub(super) const SSL_ERROR_WANT_WRITE: c_int = 3;
+        pub(super) const SSL_ERROR_SYSCALL: c_int = 5;
+        pub(super) const SSL_ERROR_ZERO_RETURN: c_int = 6;
+        pub(super) const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 
-        pub const SSL_VERIFY_NONE: c_int = 0x00;
-        pub const SSL_VERIFY_PEER: c_int = 0x01;
+        pub(super) const SSL_VERIFY_NONE: c_int = 0x00;
+        pub(super) const SSL_VERIFY_PEER: c_int = 0x01;
 
-        pub const SSL_RECEIVED_SHUTDOWN: c_int = 2;
+        pub(super) const SSL_RECEIVED_SHUTDOWN: c_int = 2;
 
         // `enum ssl_renegotiate_mode_t` is `BORINGSSL_ENUM_INT` (= c_int).
-        pub type ssl_renegotiate_mode_t = c_int;
-        pub const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
-        pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
+        pub(super) type ssl_renegotiate_mode_t = c_int;
+        pub(super) const ssl_renegotiate_never: ssl_renegotiate_mode_t = 0;
+        pub(super) const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 
-        pub type SSL_verify_cb =
+        pub(super) type SSL_verify_cb =
             Option<unsafe extern "C" fn(preverify_ok: c_int, ctx: *mut X509_STORE_CTX) -> c_int>;
 
         // ── extern fns ─────────────────────────────────────────────────
         unsafe extern "C" {
             // ssl.h
-            pub fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
-            pub fn SSL_free(ssl: *mut SSL);
-            pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
-            pub fn SSL_set_connect_state(ssl: *mut SSL);
-            pub fn SSL_set_accept_state(ssl: *mut SSL);
-            pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
-            pub fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
-            pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
-            pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
-            pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
-            pub fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
-            pub fn SSL_shutdown(ssl: *mut SSL) -> c_int;
-            pub fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
-            pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
-            pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
-            pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
-            pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
-            pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
-            pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
-            pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
+            pub(super) fn SSL_new(ctx: *mut SSL_CTX) -> *mut SSL;
+            pub(super) fn SSL_free(ssl: *mut SSL);
+            pub(super) fn SSL_CTX_free(ctx: *mut SSL_CTX);
+            pub(super) fn SSL_set_connect_state(ssl: *mut SSL);
+            pub(super) fn SSL_set_accept_state(ssl: *mut SSL);
+            pub(super) fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
+            pub(super) fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
+            pub(super) fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
+            pub(super) fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
+            pub(super) fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
+            pub(super) fn SSL_write(ssl: *mut SSL, buf: *const c_void, num: c_int) -> c_int;
+            pub(super) fn SSL_shutdown(ssl: *mut SSL) -> c_int;
+            pub(super) fn SSL_get_error(ssl: *const SSL, ret_code: c_int) -> c_int;
+            pub(super) fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
+            pub(super) fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
+            pub(super) fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+            pub(super) fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+            pub(super) fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+            pub(super) fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
+            pub(super) fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
             // bio.h
-            pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
-            pub fn BIO_free(bio: *mut BIO) -> c_int;
-            pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
-            pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-            pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
-            pub fn BIO_s_mem() -> *const BIO_METHOD;
-            pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+            pub(super) fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
+            pub(super) fn BIO_free(bio: *mut BIO) -> c_int;
+            pub(super) fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
+            pub(super) fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
+            pub(super) fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+            pub(super) fn BIO_s_mem() -> *const BIO_METHOD;
+            pub(super) fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
             // err.h
-            pub fn ERR_clear_error();
+            pub(super) fn ERR_clear_error();
         }
     }
 
@@ -1210,16 +1211,16 @@ mod group_c {
     use super::{us_socket_t, ConnectingSocket, ListenSocket, Loop, SocketGroup, SocketGroupVTable, SslCtx, LIBUS_SOCKET_DESCRIPTOR};
     use core::ffi::{c_char, c_int, c_void};
     unsafe extern "C" {
-        pub fn us_socket_group_init(group: *mut SocketGroup, loop_: *mut Loop, vt: *const SocketGroupVTable, ext: *mut c_void);
-        pub fn us_socket_group_deinit(group: *mut SocketGroup);
-        pub fn us_socket_group_close_all(group: *mut SocketGroup);
-        pub fn us_socket_group_listen(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
-        pub fn us_socket_group_listen_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
+        pub(crate) fn us_socket_group_init(group: *mut SocketGroup, loop_: *mut Loop, vt: *const SocketGroupVTable, ext: *mut c_void);
+        pub(crate) fn us_socket_group_deinit(group: *mut SocketGroup);
+        pub(crate) fn us_socket_group_close_all(group: *mut SocketGroup);
+        pub(crate) fn us_socket_group_listen(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
+        pub(crate) fn us_socket_group_listen_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int, err: *mut c_int) -> *mut ListenSocket;
         /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
         /// path), discriminated by `*is_connecting`. Call `SocketGroup::connect`.
-        pub fn us_socket_group_connect(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, is_connecting: *mut c_int) -> *mut c_void;
-        pub fn us_socket_group_connect_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int) -> *mut us_socket_t;
-        pub fn us_socket_from_fd(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, socket_ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR, ipc: c_int) -> *mut us_socket_t;
+        pub(crate) fn us_socket_group_connect(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, host: *const c_char, port: c_int, options: c_int, socket_ext_size: c_int, is_connecting: *mut c_int) -> *mut c_void;
+        pub(crate) fn us_socket_group_connect_unix(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, path: *const u8, pathlen: usize, options: c_int, socket_ext_size: c_int) -> *mut us_socket_t;
+        pub(crate) fn us_socket_from_fd(group: *mut SocketGroup, kind: u8, ssl_ctx: *mut SslCtx, socket_ext_size: c_int, fd: LIBUS_SOCKET_DESCRIPTOR, ipc: c_int) -> *mut us_socket_t;
     }
 }
 
@@ -1584,43 +1585,43 @@ mod sock_c {
     use core::ffi::{c_int, c_uint, c_void};
     unsafe extern "C" {
         // ── us_socket_t ──────────────────────────────────────────────────────
-        pub fn us_socket_close(s: *mut us_socket_t, code: i32, reason: *mut c_void) -> *mut us_socket_t;
-        pub fn us_socket_is_closed(s: *mut us_socket_t) -> i32;
-        pub fn us_socket_is_shut_down(s: *mut us_socket_t) -> i32;
-        pub fn us_socket_is_established(s: *mut us_socket_t) -> i32;
-        pub fn us_socket_shutdown(s: *mut us_socket_t);
-        pub fn us_socket_shutdown_read(s: *mut us_socket_t);
-        pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        pub(crate) fn us_socket_close(s: *mut us_socket_t, code: i32, reason: *mut c_void) -> *mut us_socket_t;
+        pub(crate) fn us_socket_is_closed(s: *mut us_socket_t) -> i32;
+        pub(crate) fn us_socket_is_shut_down(s: *mut us_socket_t) -> i32;
+        pub(crate) fn us_socket_is_established(s: *mut us_socket_t) -> i32;
+        pub(crate) fn us_socket_shutdown(s: *mut us_socket_t);
+        pub(crate) fn us_socket_shutdown_read(s: *mut us_socket_t);
+        pub(crate) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
-        pub fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
-        pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub fn us_socket_flush(s: *mut us_socket_t);
-        pub fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);
-        pub fn us_socket_long_timeout(s: *mut us_socket_t, minutes: c_uint);
-        pub fn us_socket_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
-        pub fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void;
-        pub fn us_socket_group(s: *mut us_socket_t) -> *mut SocketGroup;
-        pub fn us_socket_get_fd(s: *mut us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
-        pub fn us_socket_local_port(s: *mut us_socket_t) -> i32;
-        pub fn us_socket_remote_port(s: *mut us_socket_t) -> i32;
-        pub fn us_socket_verify_error(s: *mut us_socket_t) -> us_bun_verify_error_t;
-        pub fn us_socket_get_error(s: *mut us_socket_t) -> c_int;
-        pub fn us_socket_sendfile_needs_more(s: *mut us_socket_t);
-        pub fn us_socket_open(s: *mut us_socket_t, is_client: i32, ip: *const u8, ip_length: i32) -> *mut us_socket_t;
-        pub fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
+        pub(crate) fn us_socket_ipc_write_fd(s: *mut us_socket_t, data: *const u8, length: i32, fd: i32) -> i32;
+        pub(crate) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        pub(crate) fn us_socket_flush(s: *mut us_socket_t);
+        pub(crate) fn us_socket_timeout(s: *mut us_socket_t, seconds: c_uint);
+        pub(crate) fn us_socket_long_timeout(s: *mut us_socket_t, minutes: c_uint);
+        pub(crate) fn us_socket_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
+        pub(crate) fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void;
+        pub(crate) fn us_socket_group(s: *mut us_socket_t) -> *mut SocketGroup;
+        pub(crate) fn us_socket_get_fd(s: *mut us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(crate) fn us_socket_local_port(s: *mut us_socket_t) -> i32;
+        pub(crate) fn us_socket_remote_port(s: *mut us_socket_t) -> i32;
+        pub(crate) fn us_socket_verify_error(s: *mut us_socket_t) -> us_bun_verify_error_t;
+        pub(crate) fn us_socket_get_error(s: *mut us_socket_t) -> c_int;
+        pub(crate) fn us_socket_sendfile_needs_more(s: *mut us_socket_t);
+        pub(crate) fn us_socket_open(s: *mut us_socket_t, is_client: i32, ip: *const u8, ip_length: i32) -> *mut us_socket_t;
+        pub(crate) fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
 
         // ── us_connecting_socket_t ───────────────────────────────────────────
-        pub fn us_connecting_socket_close(s: *mut ConnectingSocket);
-        pub fn us_connecting_socket_is_closed(s: *mut ConnectingSocket) -> i32;
-        pub fn us_connecting_socket_is_shut_down(s: *mut ConnectingSocket) -> i32;
-        pub fn us_connecting_socket_shutdown(s: *mut ConnectingSocket);
-        pub fn us_connecting_socket_shutdown_read(s: *mut ConnectingSocket);
-        pub fn us_connecting_socket_timeout(s: *mut ConnectingSocket, seconds: c_uint);
-        pub fn us_connecting_socket_long_timeout(s: *mut ConnectingSocket, minutes: c_uint);
-        pub fn us_connecting_socket_get_native_handle(s: *mut ConnectingSocket) -> *mut c_void;
-        pub fn us_connecting_socket_ext(s: *mut ConnectingSocket) -> *mut c_void;
-        pub fn us_connecting_socket_group(s: *mut ConnectingSocket) -> *mut SocketGroup;
-        pub fn us_connecting_socket_get_error(s: *mut ConnectingSocket) -> i32;
+        pub(crate) fn us_connecting_socket_close(s: *mut ConnectingSocket);
+        pub(crate) fn us_connecting_socket_is_closed(s: *mut ConnectingSocket) -> i32;
+        pub(crate) fn us_connecting_socket_is_shut_down(s: *mut ConnectingSocket) -> i32;
+        pub(crate) fn us_connecting_socket_shutdown(s: *mut ConnectingSocket);
+        pub(crate) fn us_connecting_socket_shutdown_read(s: *mut ConnectingSocket);
+        pub(crate) fn us_connecting_socket_timeout(s: *mut ConnectingSocket, seconds: c_uint);
+        pub(crate) fn us_connecting_socket_long_timeout(s: *mut ConnectingSocket, minutes: c_uint);
+        pub(crate) fn us_connecting_socket_get_native_handle(s: *mut ConnectingSocket) -> *mut c_void;
+        pub(crate) fn us_connecting_socket_ext(s: *mut ConnectingSocket) -> *mut c_void;
+        pub(crate) fn us_connecting_socket_group(s: *mut ConnectingSocket) -> *mut SocketGroup;
+        pub(crate) fn us_connecting_socket_get_error(s: *mut ConnectingSocket) -> i32;
     }
 }
 

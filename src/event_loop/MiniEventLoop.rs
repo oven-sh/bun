@@ -580,7 +580,7 @@ mod mini_ctx {
         }
     }
 
-    pub static VTABLE: EventLoopCtxVTable = EventLoopCtxVTable {
+    pub(super) static VTABLE: EventLoopCtxVTable = EventLoopCtxVTable {
         platform_event_loop,
         file_polls,
         alloc_file_poll,

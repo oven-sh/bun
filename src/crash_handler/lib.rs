@@ -29,6 +29,7 @@
 #![allow(unused, nonstandard_style, static_mut_refs, unexpected_cfgs, clippy::all)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 
@@ -1581,7 +1582,7 @@ struct StackLine {
 
 impl StackLine {
     /// `None` implies the trace is not known.
-    pub fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+    pub(crate) fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
         #[cfg(windows)]
         {
             let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -1739,7 +1740,7 @@ impl StackLine {
         }
     }
 
-    pub fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> Result<(), bun_core::Error> {
+    pub(crate) fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> Result<(), bun_core::Error> {
         let Some(known) = self_ else {
             writer.write_all(b"_")?;
             return Ok(());
@@ -1755,7 +1756,7 @@ impl StackLine {
         Ok(())
     }
 
-    pub fn write_decoded(self_: Option<&StackLine>, writer: &mut impl Write) -> Result<(), bun_core::Error> {
+    pub(crate) fn write_decoded(self_: Option<&StackLine>, writer: &mut impl Write) -> Result<(), bun_core::Error> {
         let Some(known) = self_ else {
             return writer.write_all(b"???");
         };

@@ -5,6 +5,7 @@
 #![allow(unused, dead_code, non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -1109,16 +1110,16 @@ struct LookbackIterator<'a> {
 }
 
 impl<'a> LookbackIterator<'a> {
-    pub fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
+    pub(crate) fn from_inner(inner: ScalarSplitIter<'a>) -> Self {
         Self { inner, prev_index: 0 }
     }
 
-    pub fn next(&mut self) -> Option<&'a [u8]> {
+    pub(crate) fn next(&mut self) -> Option<&'a [u8]> {
         self.prev_index = self.inner.index.unwrap_or(self.prev_index);
         self.inner.next()
     }
 
-    pub fn back(&mut self) {
+    pub(crate) fn back(&mut self) {
         self.inner.index = Some(self.prev_index);
     }
 }
@@ -1178,7 +1179,7 @@ impl<'a> PatchLinesParser<'a> {
         *self = Self { result, ..Default::default() };
     }
 
-    pub fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
+    pub(crate) fn parse(&mut self, file_: &'a [u8], opts: ParseOpts) -> Result<(), ParseErr> {
         if file_.is_empty() {
             return Ok(());
         }

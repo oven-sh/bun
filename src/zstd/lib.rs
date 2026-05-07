@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![warn(unused_must_use)]
 
+#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
 
 use bun_core::ZStr;

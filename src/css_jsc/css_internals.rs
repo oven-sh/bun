@@ -75,6 +75,13 @@ pub fn testing_impl(
 
     let arena = Arena::new();
     // PERF(port): was arena bulk-free — CSS parser allocates into this bump
+    //
+    // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
+    // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
+    // NOTE on `'bump` threading). The arena strictly outlives every value parsed
+    // out of it below, so erasing `&arena -> &'static Bump` here matches the
+    // crate-wide `unsafe { &*(allocator as *const Bump) }` pattern.
+    let alloc: &'static Arena = unsafe { &*(&arena as *const Arena) };
 
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the

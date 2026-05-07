@@ -535,7 +535,7 @@ impl JSMySQLConnection {
                 }
             } else {
                 return Err(global_object
-                    .throw_invalid_arguments("tls must be a boolean or an object"));
+                    .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
             };
 
             if global_object.has_exception() {
@@ -597,7 +597,7 @@ impl JSMySQLConnection {
         ] {
             if !slice.is_empty() && strings::index_of_char(slice, 0).is_some() {
                 // tls_config / secure released by the guard above.
-                return Err(global_object.throw_invalid_arguments(msg));
+                return Err(global_object.throw_invalid_arguments(format_args!("{msg}")));
             }
         }
 

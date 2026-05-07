@@ -1185,7 +1185,7 @@ pub use crate::MarkedArrayBuffer as Buffer;
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/hot_reloader.zig (616 lines)
-//   confidence: medium
-//   todos:      18
-//   notes:      heavy comptime reflection (@TypeOf/@hasField on Ctx) — Phase B needs a HotReloaderCtx trait; per-monomorphization static `clear_screen` collapsed to module static; `affected` slice element type is platform-divergent so split into two locals; possible off-by-one in path-buf copy ported verbatim
+//   confidence: high
+//   todos:      8
+//   notes:      heavy comptime reflection (@TypeOf/@hasField on Ctx) folded into HotReloaderCtx trait; per-monomorphization static `clear_screen` collapsed to module static; `affected` slice element type is platform-divergent so split into two locals; possible off-by-one in path-buf copy ported verbatim
 // ──────────────────────────────────────────────────────────────────────────

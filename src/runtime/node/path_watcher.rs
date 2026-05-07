@@ -785,7 +785,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
                         unsafe {
-                            (*w).emit_error(err);
+                            (*w).emit_error(err.clone());
                             (*w).flush();
                         }
                     }
@@ -806,7 +806,7 @@ impl Linux {
             while i < n {
                 // SAFETY: inotify guarantees whole events; buf[i..] starts at an event header.
                 let ev: &InotifyEvent =
-                    unsafe { &*(buf.as_ptr().add(i) as *const InotifyEvent) };
+                    unsafe { &*(buf.0.as_ptr().add(i) as *const InotifyEvent) };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;
 

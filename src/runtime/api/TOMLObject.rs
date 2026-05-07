@@ -82,6 +82,7 @@ pub fn parse(
         js_printer::PrintJsonOptions {
             indent: Default::default(),
             mangled_props: None,
+            ..Default::default()
         },
     ) {
         return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));

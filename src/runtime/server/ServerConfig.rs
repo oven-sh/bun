@@ -217,63 +217,15 @@ impl Drop for StaticRouteEntry {
     }
 }
 
-/// Local shim: `@tagName(method)` — `bun_http::Method` has no `From<Method> for &str`
-/// upstream yet (blocked_on: bun_http_types::Method as_str).
-pub(crate) fn method_as_str(m: Method) -> &'static str {
-    match m {
-        Method::ACL => "ACL",
-        Method::BIND => "BIND",
-        Method::CHECKOUT => "CHECKOUT",
-        Method::CONNECT => "CONNECT",
-        Method::COPY => "COPY",
-        Method::DELETE => "DELETE",
-        Method::GET => "GET",
-        Method::HEAD => "HEAD",
-        Method::LINK => "LINK",
-        Method::LOCK => "LOCK",
-        Method::M_SEARCH => "M-SEARCH",
-        Method::MERGE => "MERGE",
-        Method::MKACTIVITY => "MKACTIVITY",
-        Method::MKADDRESSBOOK => "MKADDRESSBOOK",
-        Method::MKCALENDAR => "MKCALENDAR",
-        Method::MKCOL => "MKCOL",
-        Method::MOVE => "MOVE",
-        Method::NOTIFY => "NOTIFY",
-        Method::OPTIONS => "OPTIONS",
-        Method::PATCH => "PATCH",
-        Method::POST => "POST",
-        Method::PROPFIND => "PROPFIND",
-        Method::PROPPATCH => "PROPPATCH",
-        Method::PURGE => "PURGE",
-        Method::PUT => "PUT",
-        Method::QUERY => "QUERY",
-        Method::REBIND => "REBIND",
-        Method::REPORT => "REPORT",
-        Method::SEARCH => "SEARCH",
-        Method::SOURCE => "SOURCE",
-        Method::SUBSCRIBE => "SUBSCRIBE",
-        Method::TRACE => "TRACE",
-        Method::UNBIND => "UNBIND",
-        Method::UNLINK => "UNLINK",
-        Method::UNLOCK => "UNLOCK",
-        Method::UNSUBSCRIBE => "UNSUBSCRIBE",
-    }
-}
-
 impl ServerConfig {
-    // TODO(b2-blocked): bun_wyhash::Wyhash (std seed-0 flavor not yet ported;
-    // only Wyhash11 exists) + http_method::Set iterator. Body preserved.
-
     fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
                 MethodOptional::Any => hasher.update(b"ANY"),
                 MethodOptional::Method(set) => {
-                    let mut iter = set.iter();
-                    while let Some(method) = iter.next() {
-                        hasher.update(method_as_str(method).as_bytes());
+                    for method in set.iter() {
+                        hasher.update(method.as_str().as_bytes());
                     }
                 }
             }
@@ -281,8 +233,8 @@ impl ServerConfig {
             hasher.final_()
         }
 
-        let mut static_routes_dedupe_list: Vec<u64> = Vec::new();
-        static_routes_dedupe_list.reserve(self.static_routes.len());
+        let mut static_routes_dedupe_list: Vec<u64> =
+            Vec::with_capacity(self.static_routes.len());
 
         // Iterate through the list of static routes backwards
         // Later ones added override earlier ones
@@ -292,7 +244,7 @@ impl ServerConfig {
             loop {
                 let route = &list[index];
                 let h = hash(route);
-                if static_routes_dedupe_list.iter().any(|&x| x == h) {
+                if static_routes_dedupe_list.contains(&h) {
                     let _item = list.remove(index);
                     // _item drops here (deinit)
                 } else {
@@ -307,32 +259,58 @@ impl ServerConfig {
         }
 
         // sort the cloned static routes by name for determinism
-        list.sort_by(|a, b| {
-            if StaticRouteEntry::is_less_than((), a, b) {
-                core::cmp::Ordering::Less
-            } else {
-                core::cmp::Ordering::Greater
-            }
-        });
-        // PERF(port): Zig std.mem.sort with isLessThan — verify ordering semantics in Phase B
+        // PORT NOTE: Zig `std.mem.sort` takes a strict-weak `lessThan(a,b)` and
+        // tolerates `false`/`false` for equal elements; Rust `sort_by` requires
+        // a total `Ordering`. `is_less_than` ≡ `strings::order(a,b) == Greater`
+        // (descending by path), so the 3-way equivalent is `order(b, a)`.
+        list.sort_by(|a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }
 
-     // gated alongside normalize_static_routes_list (its only callee).
     pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): Zig did `var that = this.*;` (bitwise struct copy) then nulled ONLY
-        // {ssl_config, sni, address, websocket, bake} on `this` — leaving `this` and `that`
-        // ALIASING static_routes/negative_routes/user_routes_to_build/id/base_uri/base_url
-        // and all scalar fields. Rust cannot alias owned Vec/Box, so we mem::take instead:
-        // `that` owns everything, `self` is reset to Default. Semantic divergence from Zig:
-        //   - self.static_routes / negative_routes / user_routes_to_build → now empty (Zig: aliased)
-        //   - self.id / base_uri / base_url → now empty (Zig: aliased)
-        //   - self.idle_timeout / max_request_body_size / development / flags → now Default (Zig: retained)
-        // Phase B must verify the sole caller (server reload path) discards `self` immediately
-        // after this call; if not, reshape to per-field mem::take of the 5 nulled fields.
-        let mut that = core::mem::take(self);
+        // Zig: `var that = this.*` (bitwise copy) then nulls ONLY {ssl_config,
+        // sni, address, websocket, bake} on `this`, leaving `this` aliasing
+        // every other heap field with `that`. The sole caller is
+        // `self.config = self.config.clone_for_reloading_static_routes()?;`, so
+        // the residual `self` is overwritten by `that` on success without
+        // running `deinit`, and the aliasing is benign.
+        //
+        // Rust cannot alias owned Vec/Box/Strong; instead move every owning
+        // field into `that` and leave the Copy scalars in place on `self` —
+        // matching Zig's observable post-state for `self` (idle_timeout,
+        // development, reuse_port, h1/h3, etc. retained; resources gone) and
+        // ensuring the assignment-drop of the residual `self` is a no-op.
+        let mut that = ServerConfig {
+            address: core::mem::take(&mut self.address),
+            idle_timeout: self.idle_timeout,
+            has_idle_timeout: self.has_idle_timeout,
+            base_uri: core::mem::take(&mut self.base_uri),
+            ssl_config: self.ssl_config.take(),
+            sni: self.sni.take(),
+            max_request_body_size: self.max_request_body_size,
+            development: self.development,
+            broadcast_console_log_from_browser_to_server_for_bake:
+                self.broadcast_console_log_from_browser_to_server_for_bake,
+            enable_chrome_devtools_automatic_workspace_folders:
+                self.enable_chrome_devtools_automatic_workspace_folders,
+            on_error: self.on_error.take(),
+            on_request: self.on_request.take(),
+            on_node_http_request: self.on_node_http_request.take(),
+            websocket: self.websocket.take(),
+            reuse_port: self.reuse_port,
+            id: core::mem::take(&mut self.id),
+            allow_hot: self.allow_hot,
+            ipv6_only: self.ipv6_only,
+            h3: self.h3,
+            h1: self.h1,
+            is_node_http: self.is_node_http,
+            had_routes_object: self.had_routes_object,
+            static_routes: core::mem::take(&mut self.static_routes),
+            negative_routes: core::mem::take(&mut self.negative_routes),
+            user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
+            bake: self.bake.take(),
+        };
 
         that.normalize_static_routes_list()?;
 
@@ -541,53 +519,6 @@ impl ServerConfig {
 }
 
 // ─── from_js + JS-side parsing ───────────────────────────────────────────────
-
-// Local extension shim for `JSValue::get_boolean_strict` (upstream copy in
-// `crate::node::fs` is `pub(super)` and not reachable here).
-trait JSValueBooleanStrictExt {
-    fn get_boolean_strict(
-        self,
-        global: &JSGlobalObject,
-        name: &'static str,
-    ) -> JsResult<Option<bool>>;
-}
-impl JSValueBooleanStrictExt for JSValue {
-    fn get_boolean_strict(
-        self,
-        global: &JSGlobalObject,
-        name: &'static str,
-    ) -> JsResult<Option<bool>> {
-        match self.get(global, name)? {
-            Some(v) if v.is_boolean() => Ok(Some(v.to_boolean())),
-            Some(v) if v.is_undefined_or_null() => Ok(None),
-            Some(_) => Err(global.throw_invalid_arguments(format_args!(
-                "Expected '{}' to be a boolean",
-                name
-            ))),
-            None => Ok(None),
-        }
-    }
-}
-
-/// `AnyRoute::fromJS` — parse via `server_body::AnyRoute::from_js` then
-/// convert to the `crate::server::AnyRoute` (mod.rs) enum that
-/// `StaticRouteEntry` stores. The two enums are nominally distinct (Phase-A
-/// duplication) but variant-isomorphic; this is the bridge until they unify.
-#[inline]
-fn any_route_from_js(
-    global: &JSGlobalObject,
-    path: &[u8],
-    argument: JSValue,
-    init_ctx: &mut super::server_body::ServerInitContext,
-) -> JsResult<Option<AnyRoute>> {
-    use super::server_body::AnyRoute as BodyAnyRoute;
-    Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
-        BodyAnyRoute::Static(p) => AnyRoute::Static(p),
-        BodyAnyRoute::File(p) => AnyRoute::File(p),
-        BodyAnyRoute::Html(refptr) => AnyRoute::Html(refptr),
-        BodyAnyRoute::FrameworkRouter(idx) => AnyRoute::FrameworkRouter(idx),
-    }))
-}
 
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     // Already validated by the caller

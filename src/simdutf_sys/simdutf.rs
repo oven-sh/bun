@@ -484,6 +484,19 @@ pub mod base64 {
         unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output.as_mut_ptr(), is_urlsafe as c_int) }
     }
 
+    /// Raw-pointer variant of [`encode`] for writing into uninitialised
+    /// storage (e.g. `Vec::spare_capacity_mut`). Writes exactly
+    /// [`encode_len(input.len(), is_urlsafe)`] bytes to `output` and returns
+    /// that count.
+    ///
+    /// # Safety
+    /// `output` must be valid for writes of at least
+    /// `encode_len(input.len(), is_urlsafe)` bytes and must not overlap
+    /// `input`.
+    pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: bool) -> usize {
+        unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
+    }
+
     pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
         // SAFETY: pure length computation; no pointers dereferenced.
         unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }

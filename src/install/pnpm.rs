@@ -1989,6 +1989,7 @@ fn update_package_json_after_migration(
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,
                 mangled_props: None,
+                ..Default::default()
             },
         )
         .is_err()
@@ -2016,12 +2017,6 @@ fn update_package_json_after_migration(
 
     Ok(())
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local helpers bridging T4 (`bun_js_parser::Expr`) → routines that take the
-// T2 `bun_logger::js_ast::Expr` (Bin / Negatable). The bodies match the Zig
-// originals and only touch the EObject/EArray/EString shapes.
-// ──────────────────────────────────────────────────────────────────────────
 
 fn negatable_from_json<T: npm::NegatableEnum + npm::NegatableExt>(expr: &Expr) -> T {
     let mut this = T::NONE.negatable();

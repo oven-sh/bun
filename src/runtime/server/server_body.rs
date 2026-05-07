@@ -1872,15 +1872,202 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: from_js returns a live *mut Request
         let request = unsafe { &mut *request };
 
-        // PORT NOTE: the Request-branch upgrade path requires
-        // `AnyRequestContext::get::<ServerRequestContext<SSL,DEBUG>>()`, which
-        // is bounded by `CtxKind` (only implemented for the four/six concrete
-        // monomorphizations, not for the generic `<SSL,DEBUG>` form), plus
-        // `&mut FetchHeaders` access via `Request::get_fetch_headers` (which
-        // currently returns `&FetchHeaders`). The full body is preserved in
-        // server.zig; defer until those trait surfaces are widened.
-        let _ = request;
-        todo!("blocked_on: bun_runtime::server::any_request_context::CtxKind for ServerRequestContext<SSL,DEBUG>")
+        let Some(upgrader_ptr) = request.request_context.get::<ServerRequestContext<SSL, DEBUG>>() else {
+            return Ok(JSValue::FALSE);
+        };
+        // SAFETY: tagged pointer just matched this monomorphization.
+        let upgrader = unsafe { &mut *upgrader_ptr };
+
+        if upgrader.is_aborted_or_ended() {
+            return Ok(JSValue::FALSE);
+        }
+
+        if upgrader.upgrade_context.is_none()
+            || upgrader.upgrade_context.map(|p| p as usize) == Some(usize::MAX)
+        {
+            return Ok(JSValue::FALSE);
+        }
+
+        let resp = upgrader.resp.unwrap();
+        let upgrade_ctx = upgrader.upgrade_context.unwrap();
+
+        // Keep the upgrader alive across option getters below, which run
+        // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
+        // would otherwise be able to deref this context out from under us.
+        upgrader.ref_();
+        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| unsafe { (*p).deref() });
+
+        let mut sec_websocket_key_str = ZigString::EMPTY;
+        let mut sec_websocket_protocol = ZigString::EMPTY;
+        let mut sec_websocket_extensions = ZigString::EMPTY;
+
+        // Owned backing storage for sec_websocket_* — see server.zig:910 comment.
+        let mut sec_websocket_key_owned = bun_str::ZigStringSlice::empty();
+        let _k = scopeguard::guard((), |_| sec_websocket_key_owned.deinit());
+        let mut sec_websocket_protocol_owned = bun_str::ZigStringSlice::empty();
+        let _p = scopeguard::guard((), |_| sec_websocket_protocol_owned.deinit());
+        let mut sec_websocket_extensions_owned = bun_str::ZigStringSlice::empty();
+        let _e = scopeguard::guard((), |_| sec_websocket_extensions_owned.deinit());
+
+        if let Some(head) = request.get_fetch_headers() {
+            use jsc::HTTPHeaderName;
+            if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
+                sec_websocket_key_owned = key.to_slice_clone();
+                sec_websocket_key_str = ZigString::init(sec_websocket_key_owned.slice());
+            }
+            if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
+                sec_websocket_protocol_owned = proto.to_slice_clone();
+                sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
+            }
+            if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
+                sec_websocket_extensions_owned = ext.to_slice_clone();
+                sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
+            }
+        }
+
+        // SAFETY: upgrader_ptr is live (ref_() above)
+        let upgrader = unsafe { &mut *upgrader_ptr };
+        if let Some(req_ptr) = upgrader.req {
+            // SAFETY: BACKREF; uws::Request is live while RequestContext.req is Some.
+            let r = unsafe { &mut *req_ptr };
+            if sec_websocket_key_str.len == 0 {
+                sec_websocket_key_str = ZigString::init(r.header(b"sec-websocket-key").unwrap_or(b""));
+            }
+            if sec_websocket_protocol.len == 0 {
+                sec_websocket_protocol = ZigString::init(r.header(b"sec-websocket-protocol").unwrap_or(b""));
+            }
+            if sec_websocket_extensions.len == 0 {
+                sec_websocket_extensions = ZigString::init(r.header(b"sec-websocket-extensions").unwrap_or(b""));
+            }
+        }
+
+        if sec_websocket_key_str.len == 0 {
+            return Ok(JSValue::FALSE);
+        }
+        if sec_websocket_protocol.len > 0 { sec_websocket_protocol.mark_utf8(); }
+        if sec_websocket_extensions.len > 0 { sec_websocket_extensions.mark_utf8(); }
+
+        let mut data_value = JSValue::ZERO;
+        let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
+        let _fh_guard = scopeguard::guard((), |_| {
+            if let Some(fh) = fetch_headers_to_deref { unsafe { (*fh).deref() } }
+        });
+        let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
+
+        if let Some(opts) = optional {
+            'getter: {
+                if opts.is_empty_or_undefined_or_null() { break 'getter; }
+                if !opts.is_object() {
+                    return Err(global.throw_invalid_arguments(format_args!("upgrade options must be an object")));
+                }
+                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? { data_value = v; }
+                if global.has_exception() { return Err(JsError::Thrown); }
+
+                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
+                    if headers_value.is_empty_or_undefined_or_null() { break 'getter; }
+                    use jsc::HTTPHeaderName;
+                    let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
+                        Some(h) => h,
+                        None => {
+                            if headers_value.is_object() {
+                                if let Some(created) = FetchHeaders::create_from_js(global, headers_value)? {
+                                    fetch_headers_to_deref = Some(created);
+                                    created
+                                } else if !global.has_exception() {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "upgrade options.headers must be a Headers or an object"
+                                    )));
+                                } else { return Err(JsError::Thrown); }
+                            } else if !global.has_exception() {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "upgrade options.headers must be a Headers or an object"
+                                )));
+                            } else { return Err(JsError::Thrown); }
+                        }
+                    };
+                    fetch_headers_to_use = Some(fh);
+                    if global.has_exception() { return Err(JsError::Thrown); }
+
+                    // SAFETY: fh is a live FetchHeaders (either from JS or freshly created).
+                    let fh = unsafe { &mut *fh };
+                    if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
+                        sec_websocket_protocol_owned.deinit();
+                        sec_websocket_protocol_owned = p.to_slice_clone();
+                        sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
+                        fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
+                    }
+                    if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
+                        sec_websocket_extensions_owned.deinit();
+                        sec_websocket_extensions_owned = e.to_slice_clone();
+                        sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
+                        fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                    }
+                }
+                if global.has_exception() { return Err(JsError::Thrown); }
+            }
+        }
+
+        // SAFETY: upgrader_ptr is live (ref_() above)
+        let upgrader = unsafe { &mut *upgrader_ptr };
+        // Option getters may have run a re-entrant server.upgrade(req).
+        if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
+            return Ok(JSValue::FALSE);
+        }
+
+        let cookies_to_write = upgrader.cookies.take();
+        let _cookies_guard = scopeguard::guard((), |_| {
+            if let Some(c) = &cookies_to_write { c.deref() }
+        });
+
+        // Write status, custom headers, and cookies in one place
+        if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
+            resp.write_status(b"101 Switching Protocols");
+            if let Some(h) = fetch_headers_to_use {
+                // SAFETY: h is a live FetchHeaders (see above).
+                unsafe { (*h).to_uws_response(ResponseKind::from(SSL, false), resp.socket() as *mut c_void) };
+            }
+            if let Some(c) = &cookies_to_write {
+                c.write(global, ResponseKind::from(SSL, false), resp.socket() as *mut c_void)?;
+            }
+        }
+
+        // --- After this point, do not throw an exception
+        // See https://github.com/oven-sh/bun/issues/1339
+        upgrader.upgrade_context = Some(usize::MAX as *mut WebSocketUpgradeContext);
+        let signal = upgrader.signal.take();
+        upgrader.resp = None;
+        request.request_context = AnyRequestContext::NULL;
+        upgrader.request_weakref.deref();
+
+        data_value.ensure_still_alive();
+        let ws = ServerWebSocket::init(
+            &mut self.config.websocket.as_mut().unwrap().handler,
+            data_value,
+            signal,
+        );
+        data_value.ensure_still_alive();
+
+        let proto_str = sec_websocket_protocol.to_slice();
+        let _ps = scopeguard::guard((), |_| proto_str.deinit());
+        let ext_str = sec_websocket_extensions.to_slice();
+        let _es = scopeguard::guard((), |_| ext_str.deinit());
+
+        resp.clear_aborted();
+        resp.clear_on_data();
+        resp.clear_on_writable();
+        resp.clear_timeout();
+
+        upgrader.deref();
+
+        resp.upgrade(
+            ws,
+            sec_websocket_key_str.slice(),
+            proto_str.slice(),
+            ext_str.slice(),
+            upgrade_ctx,
+        );
+
+        Ok(JSValue::TRUE)
     }
 
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {

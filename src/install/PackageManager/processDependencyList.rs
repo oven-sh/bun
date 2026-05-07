@@ -359,7 +359,6 @@ impl PackageManager {
                     builder.allocate().expect("unreachable");
                     scripts.parse_alloc(&mut builder, &json_root);
                     scripts.filled = true;
-                    let _ = scripts;
                 }
 
                 None

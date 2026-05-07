@@ -549,9 +549,8 @@ impl TrustCommand {
             &mut package_json_writer,
             &package_json,
             &package_json_source,
-            bun_js_printer::PrintJsonOptions { mangled_props: None },
+            bun_js_printer::PrintJsonOptions { mangled_props: None, ..Default::default() },
         ) {
-            // TODO(port): printJSON options struct shape
             Ok(n) => n,
             Err(err) => {
                 Output::err_generic(format_args!("failed to print package.json: {}", err.name()));

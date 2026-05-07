@@ -1325,7 +1325,11 @@ impl CreateCommand {
                     &mut package_json_writer,
                     package_json_expr.into(),
                     &source,
-                    JSPrinter::PrintJsonOptions { mangled_props: None, indent: Default::default() },
+                    JSPrinter::PrintJsonOptions {
+                        mangled_props: None,
+                        indent: Default::default(),
+                        ..Default::default()
+                    },
                 ) {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to write due to error {}",

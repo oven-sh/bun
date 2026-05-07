@@ -184,7 +184,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
             Global::crash();
         }
-        GetResult::Entry(entry) => entry as *mut MapEntry,
+        GetResult::Entry(entry) => core::ptr::from_mut(entry),
     };
     // SAFETY: see PORT NOTE above — pointer into `manager.workspace_package_json_cache`,
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
@@ -266,10 +266,9 @@ fn update_package_json_and_install_with_manager_with_updates(
                             let mut i: usize = 0;
                             let mut new_len = dependencies.len();
                             while i < dependencies.len() {
-                                if let Some(key_str) =
-                                    dependencies[i].key.as_ref().unwrap().data.as_e_string()
-                                {
-                                    if key_str.eql_bytes(request.name) {
+                                let key = dependencies[i].key.unwrap();
+                                if key.data.is_e_string() {
+                                    if key.data.as_e_string().unwrap().eql_bytes(request.name) {
                                         if new_len > 1 {
                                             dependencies.swap(i, new_len - 1);
                                             new_len -= 1;
@@ -473,7 +472,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 );
                 Global::crash();
             }
-            GetResult::Entry(entry) => entry as *mut MapEntry,
+            GetResult::Entry(entry) => core::ptr::from_mut(entry),
         };
         // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
         // next `get_with_path` (after this block). `edit_patched_dependencies` touches

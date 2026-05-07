@@ -343,6 +343,61 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 // PORT NOTE: Zig `UserRoute.deinit()` only freed `self.route`; RouteDeclaration
 // drops automatically, so an explicit `impl Drop` would double-free.
 
+/// HTTP/1 `RequestContext` for a given server monomorphization (Zig:
+/// `RequestContext = NewRequestContext(ssl_enabled, debug_mode, ThisServer)`).
+pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
+    request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
+
+/// `server.zig:CreateJsRequest`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CreateJsRequest {
+    Yes,
+    No,
+    Bake,
+}
+
+/// `server.zig:PreparedRequest` — bundle of the JS-side `Request`, the heap
+/// `webcore::Request`, and the per-request `RequestContext`. Only the HTTP/1
+/// instantiation (`PreparedRequestFor(RequestContext)`) is materialized; H3
+/// callers never `save()` (it `@compileError`s in Zig) and the H3 dispatch
+/// path is private to `set_routes`.
+pub struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
+    pub js_request: JSValue,
+    pub request_object: *mut crate::webcore::Request,
+    pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
+}
+
+impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
+    /// `server.zig:PreparedRequest.save` — used by DevServer to defer calling
+    /// the JS handler until the bundle is actually ready.
+    pub fn save(
+        self,
+        global: &jsc::JSGlobalObject,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+    ) -> SavedRequest {
+        // By saving a request, all information from `req` must be
+        // copied since the provided uws.Request will be re-used for
+        // future requests (stack allocated).
+        // SAFETY: `ctx`/`request_object` are the freshly-allocated
+        // `RequestContext` slot and heap `Request` produced by
+        // `prepare_js_request_context` for this frame; no other borrow is live.
+        unsafe {
+            (*self.ctx).to_async(
+                req as *mut uws_sys::Request as *mut c_void,
+                &mut *self.request_object,
+            );
+        }
+
+        SavedRequest {
+            js_request: jsc::StrongOptional::create(self.js_request, global),
+            request: self.request_object,
+            ctx: AnyRequestContext::init(self.ctx),
+            response: uws::AnyResponse::init(resp),
+        }
+    }
+}
+
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub const SSL_ENABLED: bool = SSL;
     pub const DEBUG_MODE: bool = DEBUG;
@@ -364,6 +419,378 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn on_pending_request(&mut self) {
         self.pending_requests += 1;
+    }
+
+    /// `server.zig:jsValueAssertAlive`.
+    pub fn js_value_assert_alive(&self) -> JSValue {
+        debug_assert!(self.js_value.is_not_empty());
+        self.js_value.try_get().expect("js_value alive")
+    }
+
+    /// Per-monomorphization static (Zig: `var did_send_idletimeout_warning_once = false;`).
+    /// PORT NOTE: Rust statics cannot be const-generic; routed through a
+    /// `&'static AtomicBool` so the four (SSL,DEBUG) instantiations share one
+    /// flag — the warning is process-global by intent (printed at most once
+    /// regardless of how many servers are running).
+    fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
+        static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+        &FLAG
+    }
+
+    /// `server.zig:onTimeoutForIdleWarn` — generic over `Ctx::Resp`; the body
+    /// ignores both arguments so a single non-generic shim suffices.
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
+        if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
+            if !crate::cli::Command::get().debug.silent {
+                Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
+                bun_core::Output::warn(format_args!(
+                    "Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
+                ));
+            }
+        }
+    }
+
+    /// `server.zig:shouldAddTimeoutHandlerForWarning`.
+    fn should_add_timeout_handler_for_warning(&self) -> bool {
+        if DEBUG {
+            if !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed)
+                && !crate::cli::Command::get().debug.silent
+            {
+                return !self.config.has_idle_timeout;
+            }
+        }
+        false
+    }
+
+    /// `server.zig:prepareJsRequestContext` — the HTTP/1 instantiation
+    /// (`Ctx == RequestContext`). The `Ctx`-generic `prepareJsRequestContextFor`
+    /// is folded directly: const-generic `bool` cannot select an associated
+    /// `Req`/`Resp` type in stable Rust without specialization, and the only
+    /// other instantiation (H3) populates url/headers eagerly via a separate
+    /// codepath. The bake/saved-request callers reached through `AnyServer`
+    /// are HTTP/1-only by construction (`PreparedRequest::save` is
+    /// `@compileError`'d for H3 in Zig).
+    pub fn prepare_js_request_context(
+        this: *mut Self,
+        req: &mut uws_sys::Request,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+        should_deinit_context: Option<*mut bool>,
+        create_js_request: CreateJsRequest,
+        method: Option<bun_http_types::Method::Method>,
+    ) -> Option<PreparedRequest<SSL, DEBUG>> {
+        jsc::mark_binding!();
+        // SAFETY: `this`/`resp` are live for the duration of the uWS callback;
+        // re-borrowed disjointly below to avoid stacking `&mut` across the
+        // `ctx.create()` call (which stores `this` as a backref).
+        let server = unsafe { &mut *this };
+        let resp_ref = unsafe { &mut *resp };
+
+        // We need to register the handler immediately since uSockets will not buffer.
+        //
+        // We first validate the self-reported request body length so that
+        // we avoid needing to worry as much about what memory to free.
+        // (RFC 9114 §4.2 transfer-encoding check is H3-only — skipped here.)
+
+        let request_body_length: Option<usize> = 'len: {
+            if bun_http_types::Method::Method::which(req.method())
+                .unwrap_or(bun_http_types::Method::Method::OPTIONS)
+                .has_request_body()
+            {
+                let len: usize = if let Some(cl) = req.header(b"content-length") {
+                    bun_str::strings::parse_int::<usize>(cl, 10).unwrap_or(0)
+                } else {
+                    0
+                };
+
+                // Abort the request very early.
+                if len > server.config.max_request_body_size {
+                    resp_ref.write_status(b"413 Request Entity Too Large");
+                    resp_ref.end_without_body(true);
+                    return None;
+                }
+
+                break 'len Some(len);
+            }
+            None
+        };
+
+        server.on_pending_request();
+
+        // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
+        // re-entrancy bookkeeping; routed through cfg(debug_assertions).
+        #[cfg(debug_assertions)]
+        // SAFETY: vm backref is live for the server's lifetime.
+        unsafe { (*(server.vm as *mut jsc::VirtualMachine)).event_loop_debug_enter() };
+        let vm_ptr = server.vm as *mut jsc::VirtualMachine;
+        let _dbg_guard = scopeguard::guard((), move |_| {
+            #[cfg(debug_assertions)]
+            // SAFETY: see above.
+            unsafe { (*vm_ptr).event_loop_debug_exit() };
+        });
+        req.set_yield(false);
+        resp_ref.timeout(server.config.idle_timeout);
+
+        // Since we do timeouts by default, we should tell the user when
+        // this happens - but limit it to only warn once.
+        if server.should_add_timeout_handler_for_warning() {
+            // We need to pass it a pointer, any pointer should do.
+            resp_ref.on_timeout(
+                Self::on_timeout_for_idle_warn,
+                Self::did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
+            );
+        }
+
+        // SAFETY: `request_pool_allocator` points at a process-static (or
+        // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
+        let ctx_slot = bun_core::handle_oom(unsafe { (*server.request_pool_allocator).try_get() });
+        // SAFETY: `try_get` hands out an uninitialized slot; `create()` fully
+        // initializes it via `MaybeUninit::write`.
+        let ctx_uninit = unsafe {
+            &mut *(ctx_slot as *mut core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>)
+        };
+        ServerRequestContext::<SSL, DEBUG>::create(
+            ctx_uninit,
+            this,
+            req as *mut uws_sys::Request as *mut c_void,
+            uws::AnyResponse::init(resp),
+            should_deinit_context,
+            method,
+        );
+        // SAFETY: fully initialized by `create()`.
+        let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
+        let ctx_mut = unsafe { &mut *ctx };
+
+        // SAFETY: `jsc_vm` set in VM init; valid for the JS thread's lifetime.
+        unsafe { (*(*vm_ptr).jsc_vm).deprecated_report_extra_memory(core::mem::size_of::<ServerRequestContext<SSL, DEBUG>>()) };
+
+        // Allocate the pooled body slot. `init_request_body_value` returns a
+        // type-erased `*mut Body::Value::HiveRef` (the hook lives in `bun_jsc`
+        // which cannot name `bun_runtime` types); cast back here.
+        let mut body_init = crate::webcore::body::Value::Null;
+        // SAFETY: vm backref live; hook contract documented on `init_request_body_value`.
+        let body_hive: *mut crate::webcore::body::HiveRef = unsafe {
+            (*vm_ptr).init_request_body_value(&mut body_init as *mut _ as *mut c_void)
+        }
+        .cast();
+        // SAFETY: `init_request_body_value` returns a freshly-initialized
+        // hive slot (`ref_count = 1`); never null on success.
+        let body_value: *mut crate::webcore::body::Value =
+            unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
+        ctx_mut.request_body = core::ptr::NonNull::new(body_value);
+
+        // SAFETY: `global_this` set in `init()`; outlives the server.
+        let global = unsafe { &*server.global_this };
+        let signal = jsc::AbortSignal::new(global);
+        // SAFETY: `AbortSignal::new` returns a +1-ref'd non-null pointer.
+        ctx_mut.signal = core::ptr::NonNull::new(signal);
+        unsafe { (*signal).pending_activity_ref() };
+
+        // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
+        let signal_ref = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // SAFETY: hive slot is live; `ref_()` bumps the slot's refcount and
+        // hands back the same pointer.
+        let _ = unsafe { (*body_hive).ref_() };
+        // TODO(port): `Request.body` is currently `Box<BodyValue>` (see
+        // Request.rs:95) — Zig stores `*Body.Value.HiveRef` so the request
+        // and the RequestContext share one body slot. Until that field is
+        // re-typed, the JS `Request.body` and `ctx.request_body` diverge
+        // (body data buffered into `ctx` won't surface on `request.body`).
+        // The bake path (the only caller through `AnyServer`) does not read
+        // `request.body`, so this is not observable there.
+        let request_object = Box::leak(crate::webcore::Request::new(
+            crate::webcore::Request::init(
+                ctx_mut.method,
+                AnyRequestContext::init(ctx),
+                SSL,
+                Some(signal_ref),
+                Box::new(crate::webcore::body::Value::Null),
+            ),
+        ));
+        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(request_object);
+
+        // (H3 eager-url/header population is unreachable on this path.)
+
+        if DEBUG {
+            ctx_mut.flags.set_is_web_browser_navigation('brk: {
+                if let Some(fetch_dest) = req.header(b"sec-fetch-dest") {
+                    if fetch_dest == b"document" {
+                        break 'brk true;
+                    }
+                }
+                false
+            });
+        }
+
+        if let Some(req_len) = request_body_length {
+            ctx_mut.request_body_content_len = req_len;
+            let is_transfer_encoding = req.header(b"transfer-encoding").is_some();
+            ctx_mut.flags.set_is_transfer_encoding(is_transfer_encoding);
+            if req_len > 0 || is_transfer_encoding {
+                // we defer pre-allocating the body until we receive the first chunk
+                // that way if the client is lying about how big the body is or the client aborts
+                // we don't waste memory
+                // SAFETY: `body_value` is the freshly-initialized hive payload.
+                unsafe {
+                    *body_value =
+                        crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
+                            task: Some(ctx as *mut c_void),
+                            global,
+                            on_start_buffering: Some(
+                                ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,
+                            ),
+                            on_start_streaming: Some(
+                                ServerRequestContext::<SSL, DEBUG>::on_start_streaming_request_body_callback,
+                            ),
+                            on_readable_stream_available: Some(
+                                ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
+                            ),
+                            ..Default::default()
+                        });
+                }
+                ctx_mut.flags.set_is_waiting_for_request_body(true);
+
+                resp_ref.on_data(
+                    |u: *mut ServerRequestContext<SSL, DEBUG>,
+                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     chunk: &[u8],
+                     last: bool| {
+                        ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
+                    },
+                    ctx,
+                );
+            }
+        }
+
+        Some(PreparedRequest {
+            js_request: match create_js_request {
+                CreateJsRequest::Yes => request_object.to_js(global),
+                CreateJsRequest::Bake => match request_object.to_js_for_bake(global) {
+                    Ok(v) => v,
+                    Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+                    Err(_) => return None,
+                },
+                CreateJsRequest::No => JSValue::ZERO,
+            },
+            request_object,
+            ctx,
+        })
+    }
+
+    /// `server.zig:onSavedRequest` — invoke the user's route handler for a
+    /// request that was deferred (bake bundle-then-serve flow).
+    pub fn on_saved_request<const ARG_COUNT: usize>(
+        this: *mut Self,
+        req: SavedRequestUnion<'_>,
+        resp: *mut uws_sys::NewAppResponse<SSL>,
+        callback: JSValue,
+        extra_args: [JSValue; ARG_COUNT],
+    ) {
+        let prepared: PreparedRequest<SSL, DEBUG> = match &req {
+            SavedRequestUnion::Stack(r) => {
+                // PORT NOTE: reshaped for borrowck — decouple the inner
+                // `&mut uws::Request` lifetime from the `req` match guard.
+                let r = *r as *const uws::Request as *mut uws_sys::Request;
+                match Self::prepare_js_request_context(
+                    this,
+                    // SAFETY: stack uws::Request still alive for this frame.
+                    unsafe { &mut *r },
+                    resp,
+                    None,
+                    CreateJsRequest::Bake,
+                    None,
+                ) {
+                    Some(p) => p,
+                    None => return,
+                }
+            }
+            SavedRequestUnion::Saved(data) => PreparedRequest {
+                js_request: data
+                    .js_request
+                    .get()
+                    .expect("Request was unexpectedly freed"),
+                request_object: data.request,
+                // SAFETY: `SavedRequest` was produced by `PreparedRequest::save`
+                // for this exact (SSL,DEBUG) monomorphization, so the erased
+                // `AnyRequestContext` payload is `ServerRequestContext<SSL,DEBUG>`.
+                ctx: data
+                    .ctx
+                    .get::<ServerRequestContext<SSL, DEBUG>>()
+                    .expect("ctx tag mismatch"),
+            },
+        };
+        let ctx = prepared.ctx;
+
+        debug_assert!(!callback.is_empty());
+        // PERF(port): Zig built `[1+N]JSValue` on the stack via comptime concat;
+        // stable Rust forbids `ARG_COUNT + 1` in const-generic array lengths.
+        // The conservative GC scan reaches the heap allocation as well as the
+        // stack, so a small Vec is sound.
+        let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
+        args.push(prepared.js_request);
+        args.extend_from_slice(&extra_args);
+
+        // SAFETY: `this` is the live server backref for this request.
+        let server = unsafe { &*this };
+        let global = unsafe { &*server.global_this };
+        let response_value = match callback.call(global, server.js_value_assert_alive(), &args) {
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
+
+        let is_stack = matches!(req, SavedRequestUnion::Stack(_));
+        let request_object = prepared.request_object;
+        let _detach_guard = scopeguard::guard((), move |_| {
+            if is_stack {
+                // uWS request will not live longer than this function
+                // SAFETY: `request_object` is the heap allocation produced by
+                // `Request::new` (or saved by `PreparedRequest::save`); kept
+                // alive by `ctx.request_weakref` for the request's lifetime.
+                unsafe { (*request_object).request_context.detach_request() };
+            }
+        });
+
+        // SAFETY: `ctx` was just allocated (or saved) by this server; no other
+        // borrow is live across this scope.
+        let ctx_mut = unsafe { &mut *ctx };
+        let original_state = ctx_mut.defer_deinit_until_callback_completes;
+        let mut should_deinit_context = false;
+        ctx_mut.defer_deinit_until_callback_completes = Some(&mut should_deinit_context);
+        ctx_mut.on_response(server, prepared.js_request, response_value);
+        // SAFETY: re-borrow after `on_response` returned (which may have run
+        // arbitrary JS but cannot free `ctx` while `defer_deinit_...` is set).
+        unsafe { (*ctx).defer_deinit_until_callback_completes = original_state };
+
+        // Reference in the stack here in case it is not for whatever reason
+        prepared.js_request.ensure_still_alive();
+
+        if should_deinit_context {
+            // SAFETY: see above; `on_response` set the deferred flag instead of
+            // freeing in-place.
+            unsafe { (*ctx).deinit() };
+            return;
+        }
+
+        // SAFETY: ctx not yet freed (should_deinit_context == false).
+        if unsafe { (*ctx).should_render_missing() } {
+            unsafe { (*ctx).render_missing() };
+            return;
+        }
+
+        // The request is asynchronous, and all information from `req` must be copied
+        // since the provided uws.Request will be re-used for future requests (stack allocated).
+        match req {
+            SavedRequestUnion::Stack(r) => {
+                // SAFETY: `r` is the live stack `uws::Request`; `request_object`
+                // is the heap `Request` kept alive by `ctx.request_weakref`.
+                unsafe {
+                    (*ctx).to_async(
+                        r as *const uws::Request as *mut c_void,
+                        &mut *request_object,
+                    )
+                };
+            }
+            SavedRequestUnion::Saved(_) => {} // info already copied
+        }
     }
 
     /// Dispatch the user `fetch` handler for an incoming request.

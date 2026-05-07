@@ -3026,6 +3026,7 @@ fn edit_root_package_json(
         js_printer::PrintJsonOptions {
             indent: json.indentation,
             mangled_props: None,
+            ..Default::default()
         },
     ) {
         Ok(w) => w,

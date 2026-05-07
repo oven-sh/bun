@@ -1656,7 +1656,8 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     let dep =
-                        self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+                        &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+                    let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
@@ -1722,7 +1723,7 @@ impl<'a> PackageInstaller<'a> {
                                 log_level,
                                 &mut folder_path,
                                 package_id,
-                                dep.behavior.is_optional(),
+                                dep_behavior.is_optional(),
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
@@ -1966,7 +1967,8 @@ impl<'a> PackageInstaller<'a> {
             // TODO(port): `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
             // No early returns in this branch, so manual calls at end are equivalent.
 
-            let dep = self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+            let dep = &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize];
+            let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =
                 dep.name_hash as TruncatedPackageNameHash;
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
@@ -2033,7 +2035,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         &mut folder_path,
                         package_id,
-                        dep.behavior.is_optional(),
+                        dep_behavior.is_optional(),
                         resolution,
                     ) {
                         if is_trusted_through_update_request {

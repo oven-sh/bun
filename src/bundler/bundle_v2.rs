@@ -5743,7 +5743,7 @@ impl<'a> BundleV2<'a> {
         }
 
         // To minimize contention, watchers are appended on the bundle thread.
-        if let Some(watcher) = this.bun_watcher {
+        if let Some(bun_watcher) = this.bun_watcher {
             if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                 let source_index = match &parse_result.value {
                     parse_task::ResultValue::Empty { source_index } => source_index.get(),
@@ -5758,7 +5758,7 @@ impl<'a> BundleV2<'a> {
                     .clone();
                 let loader = this.graph.input_files.items_loader()[source_index as usize];
                 if this.should_add_watcher(&source_path) {
-                    let _ = watcher.add_file(
+                    let _ = bun_watcher.add_file(
                         parse_result.watcher_data.fd,
                         &source_path,
                         bun_wyhash::hash(source_path.as_ref()) as u32,

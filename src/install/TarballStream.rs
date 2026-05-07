@@ -404,13 +404,13 @@ impl TarballStream {
     /// added or the stream is now closed.
     ///
     /// # Safety
-    /// `this` must be live. Called re-entrantly from inside libarchive's
-    /// read callback while `step()`'s `&mut self` is on the stack, so this
-    /// must NOT materialise `&mut TarballStream` — all access is via
-    /// raw-ptr field projection (matches Zig's freely-aliasing
-    /// `*TarballStream`). Producer fields (`pending`/`closed`) are
-    /// synchronised by `mutex`; drain-side fields (`reading`/`read_pos`/
-    /// `hasher`) are owned by the single active drain task.
+    /// `this` must be live. Called both from `drain()` and re-entrantly
+    /// from inside libarchive's read callback (while `step()` is on the
+    /// stack), so this must NOT materialise `&mut TarballStream` — all
+    /// access is via raw-ptr field projection (matches Zig's freely-
+    /// aliasing `*TarballStream`). Producer fields (`pending`/`closed`)
+    /// are synchronised by `mutex`; drain-side fields (`reading`/
+    /// `read_pos`/`hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
         // SAFETY: see fn-level # Safety — raw-ptr field projection only.
         unsafe {
@@ -544,7 +544,14 @@ impl TarballStream {
         } // unsafe
     }
 
-    fn open_archive(&mut self) -> Result<(), bun_core::Error> {
+    /// # Safety
+    /// `this` must be live and rooted at the Box allocation (i.e. the
+    /// pointer threaded from `drain_callback` → `drain` → `step`, NOT a
+    /// `&mut self as *mut Self` reborrow). libarchive stores `this` as
+    /// client_data and `archive_read_callback` dereferences it across the
+    /// lifetime of the archive — see `step()` # Safety for the provenance
+    /// requirement.
+    unsafe fn open_archive(this: *mut Self) -> Result<(), bun_core::Error> {
         let archive = lib::Archive::read_new();
         let guard = scopeguard::guard(archive, |a| {
             // SAFETY: errdefer cleanup — archive is a valid handle from read_new().
@@ -567,11 +574,14 @@ impl TarballStream {
         // SAFETY: archive is a valid handle.
         let _ = unsafe { (*archive).read_set_options(c"read_concatenated_archives") };
 
-        // SAFETY: archive is a valid handle; callback/data pointers outlive the read.
+        // SAFETY: archive is a valid handle; `this` outlives the archive
+        // (freed only in `Drop` after `read_free`). See fn-level # Safety
+        // for why client_data must be the Box-rooted `this` and not a
+        // `&mut self`-derived pointer.
         let rc_raw: c_int = unsafe {
             lib::archive_read_open(
                 archive,
-                self as *mut Self as *mut c_void,
+                this as *mut c_void,
                 None,
                 Some(archive_read_callback),
                 None,
@@ -593,7 +603,8 @@ impl TarballStream {
             lib::Result::Retry => {
                 // open() runs the filter bidder which we bypassed, but the
                 // client open path may still probe; treat as transient.
-                self.archive = Some(scopeguard::ScopeGuard::into_inner(guard));
+                // SAFETY: see fn-level # Safety — raw-ptr field write.
+                unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
                 return Ok(());
             }
             _ => {
@@ -606,7 +617,8 @@ impl TarballStream {
                 return Err(bun_core::err!("Fail"));
             }
         }
-        self.archive = Some(scopeguard::ScopeGuard::into_inner(guard));
+        // SAFETY: see fn-level # Safety — raw-ptr field write.
+        unsafe { (*this).archive = Some(scopeguard::ScopeGuard::into_inner(guard)) };
         Ok(())
     }
 
@@ -1124,16 +1136,17 @@ unsafe extern "C" fn archive_read_callback(
     ctx: *mut c_void,
     out_buffer: *mut *const c_void,
 ) -> lib::la_ssize_t {
-    // SAFETY: `ctx` was set to `self` in `open_archive`; libarchive passes it
-    // back unchanged. This callback is re-entered from inside
-    // `archive.read_next_header()` / `archive.next()` in `step()`, while
-    // `step()`'s `&mut self` is on the stack. Materialising a full
-    // `&mut TarballStream` here would alias that outer borrow (UB under
-    // Stacked Borrows). Instead we keep `this` as a raw pointer and access
-    // fields through it directly — matching Zig's freely-aliasing
-    // `*TarballStream`. All fields touched here (`reading`, `read_pos`,
-    // `mutex`, `pending`, `closed`, `hasher`) are drain-side / mutex-guarded
-    // and are not accessed by `step()` across the FFI call boundary.
+    // SAFETY: `ctx` is the Box-rooted `*mut TarballStream` threaded from
+    // `drain()` → `step()` → `open_archive()`; libarchive passes it back
+    // unchanged. `step()`/`open_archive()` take `*mut Self` (not
+    // `&mut self`) precisely so this pointer's provenance survives every
+    // re-entry — see `step()` # Safety. We keep `this` as a raw pointer and
+    // access fields through it directly (Zig: freely-aliasing
+    // `*TarballStream`); no `&mut TarballStream` is live anywhere on the
+    // call stack while libarchive runs. All fields touched here (`reading`,
+    // `read_pos`, `mutex`, `pending`, `closed`, `hasher`) are drain-side /
+    // mutex-guarded and are not accessed by `step()` across the FFI call
+    // boundary.
     let this: *mut TarballStream = ctx as *mut TarballStream;
 
     // SAFETY: `this` is valid (see above); `reading`/`read_pos` are owned by
@@ -1165,9 +1178,9 @@ unsafe extern "C" fn archive_read_callback(
         // the only consumer of `reading`/`read_pos`, and `take_pending`
         // only touches producer state under the same mutex.
         // SAFETY: `take_pending` takes `*mut Self` and accesses fields via
-        // raw-ptr projection, never forming `&mut TarballStream`, so it
-        // does not alias `step()`'s outer `&mut self` that is dormant on
-        // the stack while libarchive is on the C stack.
+        // raw-ptr projection, never forming `&mut TarballStream`; `step()`
+        // holds no `&mut TarballStream` across the libarchive call that
+        // re-entered us.
         unsafe {
             let _ = TarballStream::take_pending(this);
             let again = &(*this).reading[(*this).read_pos..];
@@ -1367,5 +1380,5 @@ use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 //   source:     src/install/TarballStream.zig (940 lines)
 //   confidence: medium
 //   todos:      7
-//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant `&mut` aliasing; extract_task/package_manager are raw ptrs; tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
+//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/step/open_archive/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant/cross-call `&mut` aliasing and so libarchive client_data provenance roots at the Box allocation; extract_task/package_manager are raw ptrs; tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
 // ──────────────────────────────────────────────────────────────────────────

@@ -873,6 +873,7 @@ impl InitCommand {
                 js_printer::PrintJsonOptions {
                     indent: Default::default(),
                     mangled_props: None,
+                    ..Default::default()
                 },
             );
             if let Err(err) = print_result {

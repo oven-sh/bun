@@ -245,9 +245,14 @@ pub fn enqueue_tarball_for_reading(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
 ) {
+    // PORT NOTE: reshaped for borrowck — `path` borrows
+    // `this.lockfile.buffers.string_bytes`; route through a raw root.
+    let this_ptr: *mut PackageManager = this;
     // SAFETY: caller passes `resolution.tag == LocalTarball`; the
-    // `local_tarball` arm is the active union field.
-    let path = this.lockfile.str(unsafe { &resolution.value.local_tarball });
+    // `local_tarball` arm is the active union field. `string_bytes` is not
+    // resized in this fn.
+    let path =
+        unsafe { &*this_ptr }.lockfile.str(unsafe { &resolution.value.local_tarball });
     let task_id = Task::Id::for_tarball(path);
     let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
     if !task_queue.found_existing {
@@ -263,9 +268,6 @@ pub fn enqueue_tarball_for_reading(
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
-    // PORT NOTE: reshaped for borrowck — `path` borrows `this.lockfile`; rebind
-    // through the raw root so `&mut PackageManager` is reachable for the call.
-    let this_ptr: *mut PackageManager = this;
     // SAFETY: `path` is a slice into `lockfile.buffers.string_bytes`;
     // `enqueue_local_tarball` only reads it (copied into the filename store).
     let task = enqueue_local_tarball(
@@ -292,9 +294,14 @@ pub fn enqueue_git_for_checkout(
     // active union field. Copy out so the value no longer borrows
     // `*resolution` while `*this` is mutably reborrowed below.
     let repository: Repository = *unsafe { &resolution.value.git };
-    let url = this.lockfile.str(&repository.repo);
+    // PORT NOTE: reshaped for borrowck — `url`/`resolved` borrow
+    // `this.lockfile.buffers.string_bytes`; route through a raw root.
+    let this_ptr: *mut PackageManager = this;
+    // SAFETY: the enqueue callees copy these slices into the filename store
+    // and never resize `string_bytes` while they are live.
+    let url = unsafe { &*this_ptr }.lockfile.str(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
-    let resolved = this.lockfile.str(&repository.resolved);
+    let resolved = unsafe { &*this_ptr }.lockfile.str(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
     let checkout_queue = this.task_queue.get_or_put(checkout_id).expect("unreachable");
     if !checkout_queue.found_existing {
@@ -308,10 +315,6 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-        // PORT NOTE: reshaped for borrowck — `alias`/`resolved` borrow
-        // `this.lockfile.buffers.string_bytes`; split via raw root so the
-        // `&mut PackageManager` is reachable (the callee only reads them).
-        let this_ptr: *mut PackageManager = this;
         // SAFETY: `enqueue_git_checkout` copies `alias`/`resolved` into the
         // filename store and never resizes `string_bytes` while they are live.
         let task = enqueue_git_checkout(
@@ -340,8 +343,9 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
+        // SAFETY: see `this_ptr` note above.
         let task = enqueue_git_clone(
-            this,
+            unsafe { &mut *this_ptr },
             clone_id,
             alias,
             &repository,
@@ -460,7 +464,13 @@ pub fn enqueue_dependency_to_root(
             break 'brk id;
         }
 
-        let mut builder = this.lockfile.string_builder();
+        // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
+        // takes `&mut PackageManager`; `builder` already borrows
+        // `this.lockfile`. Detach `this` via a raw pointer for the call
+        // (Zig passes both freely).
+        let this_ptr: *mut PackageManager = this;
+        // SAFETY: see note above; sole live `&mut PackageManager`.
+        let mut builder = unsafe { &mut *this_ptr }.lockfile.string_builder();
         let dummy = Dependency {
             name: SemverString::init(name, name),
             name_hash: Semver::string::Builder::string_hash(name),
@@ -473,11 +483,6 @@ pub fn enqueue_dependency_to_root(
             return DependencyToEnqueue::Failure(err.into());
         }
 
-        // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
-        // takes `&mut PackageManager`; `builder` already borrows
-        // `this.lockfile`. Detach `this` via a raw pointer for the call
-        // (Zig passes both freely).
-        let this_ptr: *mut PackageManager = this;
         // SAFETY: `builder` borrows `this.lockfile.buffers.string_bytes`;
         // `clone_with_different_buffers` only reads `this.options` /
         // `this.workspace_package_json_cache`, never the string buffer.
@@ -1252,6 +1257,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 )?;
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
+                let needs_ctx =
+                    this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
                 let entry = this
                     .task_queue
                     .get_or_put_context(checkout_id, ())
@@ -1259,7 +1266,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if !entry.found_existing {
                     *entry.value_ptr = TaskCallbackList::default();
                 }
-                if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+                if needs_ctx {
                     entry.value_ptr.push(ctx);
                 }
 
@@ -1274,8 +1281,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                this.task_batch.push(ThreadPool::Batch::from(enqueue_git_checkout(
-                    this,
+                // SAFETY: see `this_ptr` note above.
+                let task = enqueue_git_checkout(
+                    unsafe { &mut *this_ptr },
                     checkout_id,
                     repo_fd,
                     id,
@@ -1283,7 +1291,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     res,
                     &resolved,
                     None,
-                )));
+                );
+                this.task_batch.push(ThreadPool::Batch::from(task));
             } else {
                 let entry = this
                     .task_queue
@@ -1305,9 +1314,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
 
-                this.task_batch.push(ThreadPool::Batch::from(enqueue_git_clone(
-                    this, clone_id, alias, dep, id, dependency, &res, None,
-                )));
+                // SAFETY: see `this_ptr` note above.
+                let task = enqueue_git_clone(
+                    unsafe { &mut *this_ptr },
+                    clone_id,
+                    alias,
+                    &dep,
+                    id,
+                    dependency,
+                    &res,
+                    None,
+                );
+                this.task_batch.push(ThreadPool::Batch::from(task));
             }
             Ok(())
         }
@@ -1887,14 +1905,12 @@ fn enqueue_local_tarball(
         // SAFETY: `workspace_res.tag == Workspace` checked above.
         let workspace_path = unsafe { workspace_res.value.workspace }
             .slice(this.lockfile.buffers.string_bytes.as_slice());
-        break 'tarball_path (
-            Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                FileSystem::instance().top_level_dir(),
-                &mut abs_buf,
-                &[workspace_path, path],
-            ),
-            false,
+        let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+            FileSystem::instance().top_level_dir(),
+            &mut abs_buf,
+            &[workspace_path, path],
         );
+        break 'tarball_path (joined, false);
     };
 
     let task = this.preallocated_resolve_tasks.get();

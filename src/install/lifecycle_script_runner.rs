@@ -11,7 +11,9 @@ use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeL
 use crate::PackageManager;
 use bun_event_loop::AnyEventLoop;
 use bun_io::heap as io_heap;
-use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle, FilePollFlag, PosixFlags};
+use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle};
+#[cfg(unix)]
+use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
@@ -378,15 +380,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.handle_exit(status);
     }
 
+    /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
+    /// Only called from the `#[cfg(unix)]` branch of [`spawn_next_script_inner`]; on Windows
+    /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
+    #[cfg(unix)]
     fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
         output.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
         output.flags.remove(
             PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
         );
 
-        if cfg!(debug_assertions) {
-            // TODO(port): Environment.allow_assert gate — these call into bun_sys and panic on
-            // failure; keep behind debug_assertions.
+        #[cfg(debug_assertions)]
+        {
             let flags = bun_sys::get_fcntl_flags(fd).expect("Failed to get fcntl flags");
             debug_assert!(flags & bun_sys::O::NONBLOCK as isize != 0);
 
@@ -1016,11 +1021,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
         }
 
-        // PORT NOTE: Zig called `OutputReader.deinit()` here; the Rust
-        // `PosixBufferedReader` has no `deinit` (cleanup is `close()` + drop of
-        // the owned `Vec`). The reassignment below drops the old buffers.
-        self.stdout.close();
-        self.stderr.close();
+        self.stdout.deinit();
+        self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
     }

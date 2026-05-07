@@ -2101,16 +2101,23 @@ impl<'a> ValueBufferer<'a> {
 
                 if is_pending {
                     if let AnyBlob::Blob(blob) = &mut input {
-                        let global = self.global;
-                        blob.do_read_file_internal(
-                            self as *mut Self,
-                            // PORT NOTE: comptime fn-param → fn pointer; the generic `H`
-                            // is `*mut Self` so the callback receives the raw context.
-                            |sink, bytes| {
-                                // SAFETY: `sink` was set from `self as *mut Self` above and
+                        // PORT NOTE: Zig `comptime Function: anytype` becomes a ZST
+                        // `InternalReadFileFn<C>` impl so `do_read_file_internal` can
+                        // monomorphize a `fn(*mut c_void, ReadFileResultType)` thunk.
+                        struct LoadFileAdapter;
+                        impl<'b> blob::InternalReadFileFn<ValueBufferer<'b>> for LoadFileAdapter {
+                            fn call(
+                                sink: *mut ValueBufferer<'b>,
+                                bytes: blob::read_file::ReadFileResultType,
+                            ) {
+                                // SAFETY: `sink` was set from `self as *mut Self` below and
                                 // outlives the read (ValueBufferer is heap-pinned by caller).
-                                Self::on_finished_loading_file(unsafe { &mut *sink }, bytes)
-                            },
+                                unsafe { &mut *sink }.on_finished_loading_file(bytes);
+                            }
+                        }
+                        let global = self.global;
+                        blob.do_read_file_internal::<Self, LoadFileAdapter>(
+                            self as *mut Self,
                             global,
                         );
                     }

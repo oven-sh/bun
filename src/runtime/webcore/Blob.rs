@@ -4611,6 +4611,22 @@ use bun_jsc::{StringJsc as _, ZigStringJsc as _, zig_string_to_external_u16};
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
 
+/// RAII owner for a leaked `Box<[u8]>` passed across the
+/// `to_*_with_bytes::<Lifetime::Temporary>` boundary as `*mut [u8]`. Stores
+/// the raw pointer and reconstructs/drops the `Box` only at scope end so
+/// interior `&[u8]` borrows of the same allocation remain valid until then
+/// (constructing the `Box` eagerly would assert uniqueness and invalidate
+/// them under Stacked Borrows).
+struct TemporaryBytes(*mut [u8]);
+impl Drop for TemporaryBytes {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: only constructed when `LIFETIME == Temporary`, where the
+        // caller passed ownership of a leaked default-allocator `Box<[u8]>`.
+        unsafe { drop(Box::from_raw(self.0)) };
+    }
+}
+
 impl Blob {
     /// `raw_bytes` is a raw `*mut [u8]` (not `&[u8]`) so the
     /// `LIFETIME == Temporary` branch can `Box::from_raw` it with the

@@ -27,7 +27,7 @@ use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
 use bun_string::{strings, MutableString};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_threading::Channel;
 use bun_which::which;
 

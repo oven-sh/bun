@@ -713,7 +713,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         let bun_exe = match bun_core::self_exe_path() {
             Ok(p) => p,
             Err(_) => {
-                return Err(global.throw("Failed to get bun executable path"));
+                return Err(global.throw(format_args!("Failed to get bun executable path")));
             }
         };
         if bun_str::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
@@ -1343,30 +1343,6 @@ impl CronJob {
         }
     }
 
-    /// Wrap an existing heap-allocated `*mut CronJob` in a fresh JS wrapper.
-    /// `JsClass::to_js` boxes by value; `register()` already produced the
-    /// `Box::into_raw` pointer (it needs the address before wrapping for the
-    /// timer/cron_jobs list), so bind `${T}__create` directly — same extern the
-    /// `#[JsClass]` proc-macro emits (generate-classes.ts).
-    fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        // `*mut CronJob` is opaque to C++ (linked by symbol name only); the
-        // pointee's Rust layout never crosses the FFI boundary — silence the
-        // improper_ctypes layout lint.
-        #[allow(improper_ctypes)]
-        unsafe extern "C" {
-            // Must match the signature `#[bun_jsc::JsClass]` already emitted for
-            // `CronJob__create` (clashing_extern_declarations).
-            #[link_name = "CronJob__create"]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut CronJob) -> JSValue;
-        }
-        // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer.
-        // Ownership of one ref transfers to the C++ wrapper (released via
-        // `finalize` → `deref`). `as_mut_ptr` derives `*mut` via `UnsafeCell`.
-        // The C++ side treats the pointer opaquely; the Rust-side extern uses
-        // `*mut CronJob` so it lines up with the `#[JsClass]`-generated decl.
-        unsafe { __create(global.as_mut_ptr(), this) }
-    }
-
     fn release_pending_ref(this: *mut Self) {
         // SAFETY: caller holds at least one ref.
         let this_ref = unsafe { &mut *this };
@@ -1698,7 +1674,9 @@ impl CronJob {
             vm.rare_data().cron_jobs.push(job as *mut () as *mut _);
         }
 
-        let js_value = Self::to_js_ptr(job, global);
+        // SAFETY: `job` is a fresh `Box::into_raw` pointer; ownership of one
+        // ref transfers to the C++ wrapper (released via `finalize` → `deref`).
+        let js_value = unsafe { Self::to_js_ptr(job, global) };
         job_ref.this_value.set_strong(js_value, global);
         js::cron_set_cached(js_value, global, schedule_arg);
         js::callback_set_cached(js_value, global, callback_arg.with_async_context_if_needed(global));

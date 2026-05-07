@@ -951,18 +951,20 @@ impl Response {
         // §raw-ptr) — borrow it for the duration of args parsing.
         let mut args = bun_jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &args_list.ptr[0..args_list.len]);
 
-        let mut response = Response {
-            body: Body { value: BodyValue::Empty },
-            init: Init { status_code: 200, ..Default::default() },
-            ..Default::default()
-        };
         // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
         // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
-        // releases its refs on `?`. `Body` has NO `Drop`, but the only
-        // payloads it can hold here are `Empty` / `InternalBlob{Vec}` /
-        // `WTFStringImpl{Arc}` whose own field drop glue frees the buffers; so
-        // dropping `response` on `?` matches Zig's cleanup. On success the
-        // value is moved into `Box::new` and not dropped here.
+        // releases its refs on `?`. `Body` has NO `Drop` and its
+        // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
+        // stack value in a scopeguard that calls `body.reset()` (Zig's
+        // `body.deinit`) on early return; disarmed before `Box::into_raw`.
+        let mut response = scopeguard::guard(
+            Response {
+                body: Body { value: BodyValue::Empty },
+                init: Init { status_code: 200, ..Default::default() },
+                ..Default::default()
+            },
+            |mut r| r.body.reset(),
+        );
         let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
 
         if !json_value.is_empty() {
@@ -1035,6 +1037,8 @@ impl Response {
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(HTTPHeaderName::ContentType, json_mime.value.as_ref(), global_this)?;
+        // Disarm the body-reset guard: all fallible ops have succeeded.
+        let response = scopeguard::ScopeGuard::into_inner(response);
         // Ownership transfers to the JSC wrapper (freed via `finalize`).
         let ptr = Box::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.

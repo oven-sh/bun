@@ -121,7 +121,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     // derive emits the `${T}Class__construct` shim that calls
     // `<Self>::constructor` directly.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw_invalid_arguments("ResumableSink is not constructable"))
+        Err(global.throw_invalid_arguments(format_args!("ResumableSink is not constructable")))
     }
 
     pub fn init(
@@ -263,7 +263,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         if args.len() < 2 {
             return Err(global_this
-                .throw_invalid_arguments("ResumableSink.setHandlers requires at least 2 arguments"));
+                .throw_invalid_arguments(format_args!("ResumableSink.setHandlers requires at least 2 arguments")));
         }
 
         let ondrain = args[0];
@@ -312,13 +312,13 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         if args.len() < 1 {
             return Err(global_this
-                .throw_invalid_arguments("ResumableSink.write requires at least 1 argument"));
+                .throw_invalid_arguments(format_args!("ResumableSink.write requires at least 1 argument")));
         }
 
         let buffer = args[0];
         let Some(sb) = StringOrBuffer::from_js(global_this, buffer)? else {
             return Err(global_this
-                .throw_invalid_arguments("ResumableSink.write requires a string or buffer"));
+                .throw_invalid_arguments(format_args!("ResumableSink.write requires a string or buffer")));
         };
 
         // PORT NOTE: `defer sb.deinit()` deleted — StringOrBuffer impls Drop.

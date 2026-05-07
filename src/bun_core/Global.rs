@@ -180,6 +180,46 @@ pub enum SignalCode {
 }
 impl SignalCode {
     pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
+
+    /// Zig: `SignalCode.name(self) ?[]const u8` — maps a signal to its
+    /// canonical `"SIGxxx"` name. The bun_core enum is exhaustive (1..=31),
+    /// so every variant has a name; the `Option` in bun_sys exists only for
+    /// the open-ended `enum(u8) { _, }` newtype port.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SIGHUP => "SIGHUP",
+            Self::SIGINT => "SIGINT",
+            Self::SIGQUIT => "SIGQUIT",
+            Self::SIGILL => "SIGILL",
+            Self::SIGTRAP => "SIGTRAP",
+            Self::SIGABRT => "SIGABRT",
+            Self::SIGBUS => "SIGBUS",
+            Self::SIGFPE => "SIGFPE",
+            Self::SIGKILL => "SIGKILL",
+            Self::SIGUSR1 => "SIGUSR1",
+            Self::SIGSEGV => "SIGSEGV",
+            Self::SIGUSR2 => "SIGUSR2",
+            Self::SIGPIPE => "SIGPIPE",
+            Self::SIGALRM => "SIGALRM",
+            Self::SIGTERM => "SIGTERM",
+            Self::SIG16 => "SIG16",
+            Self::SIGCHLD => "SIGCHLD",
+            Self::SIGCONT => "SIGCONT",
+            Self::SIGSTOP => "SIGSTOP",
+            Self::SIGTSTP => "SIGTSTP",
+            Self::SIGTTIN => "SIGTTIN",
+            Self::SIGTTOU => "SIGTTOU",
+            Self::SIGURG => "SIGURG",
+            Self::SIGXCPU => "SIGXCPU",
+            Self::SIGXFSZ => "SIGXFSZ",
+            Self::SIGVTALRM => "SIGVTALRM",
+            Self::SIGPROF => "SIGPROF",
+            Self::SIGWINCH => "SIGWINCH",
+            Self::SIGIO => "SIGIO",
+            Self::SIGPWR => "SIGPWR",
+            Self::SIGSYS => "SIGSYS",
+        }
+    }
 }
 
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────

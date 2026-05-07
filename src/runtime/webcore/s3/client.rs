@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_collections::ByteList;
+use bun_http::HeadersExt as _;
 use bun_string::MutableString;
 #[allow(unused_imports)]
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};

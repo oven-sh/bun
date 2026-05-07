@@ -596,7 +596,7 @@ impl Subprocess<'_> {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<*mut Self> {
-        Err(global_object.throw("Cannot construct Subprocess"))
+        Err(global_object.throw(format_args!("Cannot construct Subprocess")))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -683,7 +683,8 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd = refd;
-        let uws_loop = self.global_this().bun_vm().uws_loop();
+        // SAFETY: `bun_vm()` returns the live VM owning `global_this`; mutator-thread only.
+        let uws_loop = unsafe { (*self.global_this().bun_vm()).uws_loop() };
         let delta: i32 = if refd { 1 } else { -1 };
         // SAFETY: single JS thread; `timer_all()` points into the boxed
         // per-thread `RuntimeState`.
@@ -964,7 +965,7 @@ impl Subprocess<'_> {
         self.set_event_loop_timer_refd(false);
 
         // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread only.
-        unsafe { (*jsc_vm).on_subprocess_exit(process as *const Process as *mut c_void) };
+        unsafe { (*jsc_vm).on_subprocess_exit(process as *const Process as *mut Process) };
 
         #[cfg(windows)]
         if self.flags.contains(Flags::OWNS_TERMINAL) {
@@ -1508,7 +1509,7 @@ pub mod testing_apis {
     ) -> JsResult<JSValue> {
         let [subprocess_value, kind_value] = callframe.arguments_as_array::<2>();
         let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw("first argument must be a Subprocess"));
+            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
         };
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         let subprocess = unsafe { &mut *subprocess_ptr };
@@ -1520,7 +1521,7 @@ pub mod testing_apis {
         } else if kind_str.eql_comptime(b"stderr") {
             &mut subprocess.stderr
         } else {
-            return Err(global_this.throw("second argument must be 'stdout' or 'stderr'"));
+            return Err(global_this.throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
         let Readable::Pipe(pipe) = out else {

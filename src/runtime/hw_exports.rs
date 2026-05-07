@@ -215,7 +215,7 @@ pub(crate) mod sql_hooks {
         cache.get_or_create_opts(*opts, err).unwrap_or(core::ptr::null_mut())
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
-        match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value) {
+        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
             Ok(Some(cfg)) => Box::into_raw(Box::new(cfg)) as *mut c_void,
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {
@@ -365,7 +365,7 @@ pub extern "C" fn bindgen_BunObject_dispatchBraces1(
     // `to_utf8()` and never derefs the handle.
     let input = unsafe { *arg_input };
     let opts = unsafe { *arg_options };
-    bun_jsc::host_fn::to_js_host_call(global, core::panic::Location::caller(), || {
+    bun_jsc::host_fn::to_js_host_call(global, || {
         crate::api::bun_object::braces(global, input, opts)
     })
 }

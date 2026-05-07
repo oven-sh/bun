@@ -759,7 +759,7 @@ impl Style {
             return Ok(Style::JavascriptDefined(Strong::create(value, global)));
         }
 
-        Err(global.throw_invalid_arguments(STYLE_ERROR_MESSAGE))
+        Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
     }
 }
 
@@ -1845,14 +1845,14 @@ impl JSFrameworkRouter {
     ) -> JsResult<Box<JSFrameworkRouter>> {
         let opts = callframe.arguments_as_array::<1>()[0];
         if !opts.is_object() {
-            return Err(global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "FrameworkRouter needs an object as it's first argument",
-            ));
+            )));
         }
 
         let root: bun_str::zig_string::Slice = match opts.get(global, "root")? {
             Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
-            _ => return Err(global.throw_invalid_arguments("Missing options.root")),
+            _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
         let style = Style::from_js(
@@ -2045,7 +2045,7 @@ impl JSFrameworkRouter {
 
         if frame.arguments_count() < 2 {
             return Err(
-                global.throw_invalid_arguments("parseRoutePattern takes two arguments")
+                global.throw_invalid_arguments(format_args!("parseRoutePattern takes two arguments"))
             );
         }
 

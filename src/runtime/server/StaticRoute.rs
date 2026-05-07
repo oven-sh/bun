@@ -7,7 +7,7 @@ use core::mem::size_of;
 use bun_core::Error;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::{append_etag, Options as HeadersFromOptions};
-use bun_http::{Headers, Method};
+use bun_http::{Headers, HeadersExt, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::HeaderEntryField;
 use bun_http_types::MimeType::MimeType;
@@ -86,7 +86,9 @@ impl StaticRoute {
 
     /// Ownership of `blob` is transferred to this function.
     pub fn init_from_any_blob(blob: &AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
-        let mut headers = Headers::from(
+        // UFCS: `Headers::from` would resolve to `core::convert::From::from`
+        // (prelude); the two-arg constructor lives on `HeadersExt`.
+        let mut headers = <Headers as HeadersExt>::from(
             options.headers.map(fetch_headers_ref),
             HeadersFromOptions { body: Some(any_blob_ref(blob)) },
         );
@@ -212,7 +214,7 @@ impl StaticRoute {
             }
 
             let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                Headers::from(
+                <Headers as HeadersExt>::from(
                     Some(fetch_headers_ref(h)),
                     HeadersFromOptions { body: Some(any_blob_ref(&blob)) },
                 )

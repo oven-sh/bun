@@ -434,12 +434,9 @@ impl HotReloadEvent {
         dev: &mut DevServer,
         entry_points: &mut EntryPointList,
     ) {
-        dev.graph_safety_lock.lock();
-        // PORT NOTE: erase to raw ptr so the guard closure doesn't hold a unique
-        // borrow of `dev` for the rest of the scope (Zig `defer` had no aliasing).
-        let lock_ptr: *mut ThreadLock = &mut dev.graph_safety_lock;
-        // SAFETY: `lock_ptr` points into `*dev`, which outlives `_g`.
-        let _g = scopeguard::guard((), move |_| unsafe { (*lock_ptr).unlock() });
+        // RAII: `ThreadLockGuard` stores a raw `*mut ThreadLock` and unlocks on
+        // drop, so it does not hold a unique borrow of `dev` for the scope.
+        let _g = dev.graph_safety_lock.guard();
 
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {

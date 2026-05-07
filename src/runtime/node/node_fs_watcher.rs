@@ -8,7 +8,7 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    ConcurrentTask, EventLoop, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine, ZigString,
+    ConcurrentTask, EventLoop, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine,
 };
 use bun_paths::resolve_path as Path;
 use bun_str::strings;
@@ -685,7 +685,7 @@ impl FSWatcher {
                     Err(_) => return, // TODO: properly propagate exception upwards
                 };
             } else if self.encoding == Encoding::Utf8 {
-                filename = ZigString::from_utf8(file_name).to_js(global_object);
+                filename = bun_string::ZigString::from_utf8(file_name).to_js(global_object);
             } else {
                 // convert to desired encoding
                 filename = match Encoder::to_string(file_name, global_object, self.encoding) {

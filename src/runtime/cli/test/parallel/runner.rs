@@ -99,7 +99,7 @@ pub fn run_as_coordinator(
 
     // Owned NUL-terminated path bytes (Zig: `[:0]const u8` from allocPrintSentinel).
     // ZStr is a borrow header; we must own the backing storage here.
-    let mut worker_tmpdir: Option<Box<[u8]>> = None;
+    let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {

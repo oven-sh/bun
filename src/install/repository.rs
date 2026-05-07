@@ -188,27 +188,14 @@ impl SloppyGlobalGitConfig {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Repository {
-    pub owner: String,
-    pub repo: String,
-    pub committish: String,
-    pub resolved: String,
-    pub package_name: String,
-}
-
-impl Default for Repository {
-    fn default() -> Self {
-        Self {
-            owner: String::default(),
-            repo: String::default(),
-            committish: String::default(),
-            resolved: String::default(),
-            package_name: String::default(),
-        }
-    }
-}
+// MOVE_DOWN: data struct + Default + buffer-relative `order`/`count`/`clone`/
+// `eql` now live in `bun_install_types::resolver_hooks` so the resolver and
+// `Resolution.Value`/`Dependency.Version.Value` can name a real type. The
+// install-tier behaviour below (parsing, formatting, git CLI, download/
+// checkout) is provided as an extension trait so existing
+// `repo.method(...)` / `Repository::method(...)` call sites keep resolving
+// once `RepositoryExt` is in scope.
+pub use bun_install_types::resolver_hooks::Repository;
 
 pub struct SharedEnv {
     env: Option<bun_dotenv::Map>,

@@ -427,9 +427,12 @@ impl FetchTasklet {
         }
 
         if !success {
-            // PORT NOTE: `defer err.deinit()` handled by Drop — `err` is dropped at scope exit
-            // or moved into `to_error_instance`; explicit need_deinit bookkeeping removed.
-            let mut err = self.on_reject();
+            // Zig: `var need_deinit = true; defer if (need_deinit) err.deinit();` — `ValueError`
+            // has no `Drop` (it's reset-in-place, see Body.rs), so the Strong installed by
+            // `to_js` would leak on the sink-cancel / no-response / `?` exits. Hold it in a
+            // scopeguard and defuse via `into_inner` when ownership is transferred to
+            // `to_error_instance` (the `need_deinit = false` arm).
+            let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(global_this) {
@@ -451,6 +454,8 @@ impl FetchTasklet {
             }
             // if we are buffering resolve the promise
             if let Some(response) = self.get_current_response() {
+                // body value now owns the error (Zig: `need_deinit = false`)
+                let err = scopeguard::ScopeGuard::into_inner(err);
                 // SAFETY: response is alive (native ref or weak hit)
                 let body = unsafe { (*response).get_body_value() };
                 // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
@@ -712,9 +717,13 @@ impl FetchTasklet {
                 // SAFETY: sink alive while self.sink is Some
                 unsafe { (*sink).cancel(err_js) };
             }
-            // PORT NOTE: Zig accessed value.JSValue (the Strong inside the union) directly
-            // after `to_js`; here `to_js` already consumed/converted, so wrap the result.
-            StrongOptional::create(err_js, global_this)
+            // `to_js` leaves `value` in the `JSValue(Strong)` state (Body.rs:547). Move
+            // that Strong out (Zig: `break :brk value.JSValue`) instead of allocating a
+            // second one — `ValueError` has no `Drop`, so the inner Strong would leak.
+            let BodyValueError::JSValue(strong) = value else {
+                unreachable!("ValueError::to_js leaves self in JSValue state");
+            };
+            strong
         };
 
         promise_value.ensure_still_alive();

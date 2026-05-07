@@ -750,7 +750,7 @@ impl Linux {
 
     fn thread_main(manager: &'static PathWatcherManager) {
         use bun_sys::linux::IN;
-        Output::Source::configure_named_thread("fs.watch");
+        Output::Source::configure_named_thread(zstr!("fs.watch"));
         let plat: *mut Linux = manager.platform.get();
         // SAFETY: `fd` and `running` are set in `init()` before this thread spawns and
         // the fields themselves are never reassigned afterwards. We borrow only these
@@ -760,20 +760,23 @@ impl Linux {
         let fd = unsafe { (*plat).fd };
         let running: &AtomicBool = unsafe { &(*plat).running };
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        // TODO(port): align(InotifyEvent) — ensure buf alignment for ptr cast below.
-        let mut buf = [0u8; 64 * 1024];
+        // 4-byte alignment for `InotifyEvent` header — ensured via `#[repr(align(4))]`.
+        #[repr(C, align(4))]
+        struct AlignedBuf([u8; 64 * 1024]);
+        let mut buf: Box<AlignedBuf> = Box::new(AlignedBuf([0u8; 64 * 1024]));
         let mut path_buf = PathBuffer::uninit();
 
         while running.load(Ordering::Acquire) {
-            let rc = sys::syscall::read(fd.native(), buf.as_mut_ptr(), buf.len());
+            // SAFETY: FFI; buf is valid for buf.0.len() bytes; fd is the inotify fd.
+            let rc = unsafe { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
             match sys::get_errno(rc) {
                 sys::E::SUCCESS => {}
-                sys::E::AGAIN | sys::E::INTR => continue,
+                sys::E::EAGAIN | sys::E::EINTR => continue,
                 errno => {
                     // Fatal: surface to every watcher, then exit the thread.
                     let err = sys::Error {
-                        errno: (errno as u32) as _,
-                        syscall: Syscall::Read,
+                        errno: errno as _,
+                        syscall: Tag::read,
                         ..Default::default()
                     };
                     manager.mutex.lock();

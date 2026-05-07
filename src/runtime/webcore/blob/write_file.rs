@@ -101,7 +101,7 @@ impl FileOpener for WriteFile {
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
     fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
-    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+    fn set_system_error(&mut self, e: bun_sys::SystemError) { self.system_error = Some(e.into()); }
     fn set_errno_if_present(&mut self, e: bun_core::Error) { self.errno = Some(e); }
     fn set_opened_fd_if_present(&mut self, fd: Fd) { self.opened_fd = fd; }
 }

@@ -6062,6 +6062,10 @@ impl NodeFS {
     }
 
     fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+        // Zig stores `len` as `u63` so the `i64` cast is always in range; mask to
+        // the same `u63` envelope here rather than `try_from().unwrap()`-panicking
+        // on a hostile `> i64::MAX` value.
+        let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
         #[cfg(windows)]
         {
             let file = sys::open(path.slice_z(&mut self.sync_error_buf), sys::O::WRONLY | flags, 0o644);
@@ -6070,20 +6074,21 @@ impl NodeFS {
                 return Maybe::Err(sys::Error { errno: e.errno, path: path.slice().into(), syscall: sys::Tag::truncate, ..Default::default() });
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
-            return match Syscall::ftruncate(fd, i64::try_from(len).unwrap()) {
+            return match Syscall::ftruncate(fd, len_i64) {
                 Maybe::Ok(r) => Maybe::Ok(r),
                 Maybe::Err(err) => Maybe::Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
             };
         }
         let _ = flags;
         // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-        Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), i64::try_from(len).unwrap()) }, sys::Tag::truncate, path.slice())
+        Maybe::<ret::Truncate>::errno_sys_p(unsafe { libc::truncate(path.slice_z(&mut self.sync_error_buf).as_ptr().cast(), len_i64) }, sys::Tag::truncate, path.slice())
             .unwrap_or(Maybe::Ok(()))
     }
 
     pub fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {
         match &args.path {
-            PathOrFileDescriptor::Fd(fd) => Syscall::ftruncate(*fd, i64::try_from(args.len).unwrap()),
+            // Zig: `args.len` is `u63`; mask off the top bit so the i64 cast can't panic.
+            PathOrFileDescriptor::Fd(fd) => Syscall::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64),
             PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
         }
     }

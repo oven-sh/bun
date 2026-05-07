@@ -804,8 +804,8 @@ impl ReadFile {
                         && !self.read_eof
                     {
                         match bun_core::is_readable(self.opened_fd) {
-                            bun_core::PollFlag::not_ready => {}
-                            bun_core::PollFlag::ready | bun_core::PollFlag::hup => continue,
+                            bun_core::Pollable::NotReady => {}
+                            bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
                         }
                     }
                     self.read_eof = false;
@@ -830,7 +830,9 @@ impl ReadFile {
         if self.buffer.len() + 16_000 < self.buffer.capacity() {
             self.buffer.shrink_to_fit();
         }
-        self.byte_store = ByteStore::init(self.buffer.as_slice());
+        // PORT NOTE: Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
+        // a non-owning alias of `buffer`. Rust `Bytes` is owning, and `then()`
+        // delivers `self.buffer` directly, so skip the alias to avoid a double-free.
         self.on_finish();
     }
 }

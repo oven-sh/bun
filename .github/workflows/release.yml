@@ -206,12 +206,13 @@ jobs:
           push-to-fork: oven-sh/DefinitelyTyped
           branch: ${{env.BUN_VERSION}}
   docker:
-    name: Release to Dockerhub
+    name: Release to Dockerhub and GHCR
     runs-on: ubuntu-latest
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
       contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -241,7 +242,9 @@ jobs:
         name: Setup Docker metadata
         uses: docker/metadata-action@v5
         with:
-          images: oven/bun
+          images: |
+            oven/bun
+            ghcr.io/${{ github.repository_owner }}/bun
           flavor: |
             latest=false
           tags: |
@@ -255,7 +258,13 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Push to Docker
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to Docker and GHCR
         uses: docker/build-push-action@v6
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}

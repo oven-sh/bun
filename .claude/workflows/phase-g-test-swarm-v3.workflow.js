@@ -97,9 +97,22 @@ Never git reset/checkout/stash/rebase/pull. **Commit explicit paths:** \`git -c 
 
 let history = [];
 
-// ── Isolate (once) ──
+// ── Isolate (once) — PRESERVE existing commits (rebase, never reset) ──
 const iso = await agent(
-  `Set up isolated shard ${SHARD}. Worktree: \`if test -d ${WT}; then git -C ${WT} fetch origin claude/phase-a-port && git -C ${WT} reset --hard origin/claude/phase-a-port; else git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} origin/claude/phase-a-port; fi\`. Full isolation — own build/. Return {ok:bool}.`,
+  `Set up isolated shard ${SHARD}. **Preserve existing commits** — never reset.
+
+\`\`\`sh
+if test -d ${WT}; then
+  git -C ${WT} fetch origin claude/phase-a-port
+  # rebase shard's commits onto latest origin (preserve local work)
+  git -C ${WT} rebase origin/claude/phase-a-port || git -C ${WT} rebase --abort
+else
+  git -C /root/bun-5 worktree add -b claude/phase-g-tswarm-s${SHARD} ${WT} origin/claude/phase-a-port
+fi
+# push branch so orchestrator can merge anytime (commits durable)
+git -C ${WT} push -u origin claude/phase-g-tswarm-s${SHARD} 2>/dev/null || true
+\`\`\`
+Full isolation — own build/. Return {ok:bool}.`,
   {
     label: `isolate-s${SHARD}`,
     phase: "Build",
@@ -260,6 +273,12 @@ Return {applied:N, commit}.`,
             { label: `apply:${f.file.split("/").pop()}`, phase: "Apply", schema: APPLY_S },
           )
         : vr,
+  );
+
+  // Push branch after each round so commits are durable + orchestrator can merge mid-flight
+  await agent(
+    `Push shard ${SHARD} branch (round ${round} done). \`git -C ${WT} push origin claude/phase-g-tswarm-s${SHARD} 2>&1 | tail -1\`. Return {ok:true}.`,
+    { label: `push-s${SHARD}-r${round}`, phase: "Apply", model: "haiku" },
   );
 
   history.push({

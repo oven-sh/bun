@@ -1305,7 +1305,9 @@ impl FFI {
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
         for function in compile_c.symbols.map.values_mut() {
-            let function_name = function.base_name.as_ref().unwrap();
+            // PORT NOTE: clone the name before `compile(&mut self)` so the
+            // immutable borrow of `function.base_name` doesn't overlap.
+            let function_name = function.base_name.clone().unwrap();
 
             if let Err(err) = function.compile(napi_env) {
                 if !global_this.has_exception() {
@@ -3249,7 +3251,11 @@ pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'a napi::NapiEnv> {
+) -> Option<&'static napi::NapiEnv> {
+    // Return is `'static`, not `'a` — the env is heap-allocated by C++
+    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
+    // to `'a` (the iterator borrow) is over-restrictive and blocks the
+    // immediate-after `values_mut()` loop at every call site.
     for function in functions {
         if function.needs_napi_env() {
             // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM

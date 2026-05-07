@@ -3058,7 +3058,7 @@ impl<'a> LinkerContext<'a> {
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
-                                bstr::BStr::new(&self.get_source(next_tracker.source_index.get()).path.pretty),
+                                bstr::BStr::new(&source.path.pretty),
                             ),
                         ).expect("unreachable");
                     }

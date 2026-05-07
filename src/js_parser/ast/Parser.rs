@@ -207,9 +207,9 @@ impl<'a> Options<'a> {
 }
 
 // ── live `Parser::init` (round-E unblock) ─────────────────────────────────
-// `Lexer::init` borrows `log` mutably for the lexer's lifetime. Zig held two
-// aliasing `*Log` pointers; Rust forbids two live `&'a mut Log`, so `Parser`
-// stores a `NonNull<Log>` and the unique `&'a mut` lives in the lexer.
+// Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
+// `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
+// Stacked-Borrows tag is invalidated when accesses interleave.
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
@@ -218,17 +218,10 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        // Derive the raw pointer *first* so it is the provenance parent of the
-        // `&'a mut Log` handed to the lexer. If the original `log` reference
-        // were moved into `Lexer::init` after deriving `log_ptr` from a
-        // reborrow, the lexer's first write through that parent `&mut` would
-        // pop `log_ptr`'s tag under Stacked Borrows, invalidating every later
-        // `self.log.as_{ref,mut}()` (see `log_mut`).
-        let log_ptr = core::ptr::NonNull::from(log);
-        // SAFETY: `log_ptr` was just created from a live `&'a mut Log`; the
-        // reborrow handed to the lexer is a child of `log_ptr` and lives for
-        // `'a`.
-        let lexer = js_lexer::Lexer::init(unsafe { &mut *log_ptr.as_ptr() }, source, bump)?;
+        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        // Copy the lexer's `NonNull<Log>` so both handles share one provenance
+        // chain (the `&'a mut Log` was consumed by `Lexer::init`).
+        let log_ptr = lexer.log;
         Ok(Parser {
             options,
             bump,

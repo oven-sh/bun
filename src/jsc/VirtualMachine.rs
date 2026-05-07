@@ -3687,9 +3687,46 @@ impl VirtualMachine {
         Ok(())
     }
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
-    /// VirtualMachine.zig:2109. Only the `RuntimeHooks` dispatch is real; the
-    /// remaining field deinits are gated on their `()` placeholders widening.
+    /// VirtualMachine.zig:2109.
     pub fn destroy(&mut self) {
+        // PORT NOTE: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
+        // is the deinit body; take()+drop runs it without dropping `self`.
+        drop(core::mem::take(&mut self.auto_killer));
+
+        // PORT NOTE: Zig frees the thread-local `source_code_printer` static
+        // in `deinit`; here it's `SOURCE_CODE_PRINTER` (boxed via
+        // `ensure_source_code_printer`).
+        if let Some(printer) = SOURCE_CODE_PRINTER.with(|p| p.take()) {
+            // SAFETY: `printer` was produced by `Box::into_raw` in
+            // `ensure_source_code_printer` and is exclusively owned by this
+            // thread's VM.
+            drop(unsafe { Box::from_raw(printer.as_ptr()) });
+        }
+
+        // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
+        // each stored map and `deinit()`s the sibling `saved_source_map_table`.
+        drop(core::mem::take(&mut self.source_mappings));
+
+        if let Some(rare) = self.rare_data.take() {
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: hook contract — `self` is the live per-thread VM.
+                unsafe { (hooks.cron_clear_all_for_vm)(self as *mut _) };
+            }
+            // Paired with `rare_data()`'s register_root_region. Without this,
+            // every terminated Worker leaves a stale LSAN root entry pointing
+            // into a freed arena.
+            bun_core::asan::unregister_root_region(
+                core::ptr::from_ref::<RareData>(&*rare).cast(),
+                core::mem::size_of::<RareData>(),
+            );
+            drop(rare);
+        }
+
+        // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
+        // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
+        drop(core::mem::take(&mut self.proxy_env_storage));
+        self.overridden_main.deinit();
+
         // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;
         // here they live in the high-tier `RuntimeState` box, so dispatch the
         // reclaim through the hook. PERF(port): was inline switch.
@@ -3700,10 +3737,6 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(self as *mut _, state) };
         }
-        // TODO(port): rest of spec VirtualMachine.zig:2109 `deinit` —
-        // `auto_killer.deinit()`, `source_mappings.deinit()`,
-        // `rare_data.deinit()`, `proxy_env_storage.deinit()`,
-        // `overridden_main.deinit()`. Gated on those fields' real types.
         self.has_terminated = true;
     }
     /// Spec VirtualMachine.zig:2134 `printException`.

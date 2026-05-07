@@ -73,6 +73,19 @@ impl<T> GenList<T> {
     }
 }
 
+/// Bindgen option-structs for `BunObject.bind.ts` (`GeneratedBindings.zig`).
+pub mod bun_object {
+    /// `gen.BunObject.BracesOptions` — `#[repr(C)]` extern struct passed by
+    /// pointer from the C++ dispatch shim. Field order matches
+    /// `GeneratedBindings.zig` (`parse`, `tokenize`).
+    #[repr(C)]
+    #[derive(Default, Clone, Copy)]
+    pub struct BracesOptions {
+        pub parse: bool,
+        pub tokenize: bool,
+    }
+}
+
 // Shorthand for the bindgen string payload. The real generator hands back a
 // `bun.String` / `WTFStringImpl`; downstream code only calls `.length()` /
 // `.to_utf8()` / `.to_owned_slice_z()` on it, all of which `bun_string::String`

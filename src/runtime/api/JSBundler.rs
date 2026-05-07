@@ -1342,8 +1342,11 @@ pub mod js_bundler {
 
     // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
-    // on them directly (`on_resolve_async`/`on_load_async`). The runtime adds
-    // the JS-thread plumbing on top via the extension traits below.
+    // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
+    // `run_on_js_thread()` are also inherent methods there — they only need
+    // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
+    // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
+    // C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
         Resolve, MiniImportRecord, ResolveSuccess, ResolveValue,
         Load, LoadSuccess, LoadValue,
@@ -1354,47 +1357,6 @@ pub mod js_bundler {
     unsafe fn bv2_plugin(bv2: *mut BundleV2<'static>) -> *mut Plugin {
         // `Plugin` is the shared `bun_bundler` opaque — no cast needed.
         unsafe { (*bv2).plugins.unwrap().as_ptr() }
-    }
-
-    /// JS-thread plumbing for `Resolve` (upstream owns `init`/`dispatch`).
-    pub trait ResolveJsExt {
-        fn dispatch_js(&mut self);
-        fn run_on_js_thread(&mut self);
-    }
-
-    impl ResolveJsExt for Resolve {
-        fn dispatch_js(&mut self) {
-            self.js_task = AnyTask {
-                ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
-                callback: resolve_run_on_js_thread_wrap,
-            };
-            let task = ConcurrentTask::create(self.js_task.task());
-            // SAFETY: bv2 is a valid backref set by BundleV2
-            unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
-        }
-
-        fn run_on_js_thread(&mut self) {
-            let kind = self.import_record.kind;
-            // PORT NOTE: reshaped for borrowck — capture the erased self pointer
-            // before borrowing fields immutably for the FFI call.
-            let self_ptr = self as *mut Self as *mut c_void;
-            // SAFETY: bv2 is a valid backref; plugins is Some when this runs
-            unsafe {
-                (*bv2_plugin(self.bv2)).match_on_resolve(
-                    &self.import_record.specifier,
-                    &self.import_record.namespace,
-                    &self.import_record.source_file,
-                    self_ptr,
-                    kind,
-                );
-            }
-        }
-    }
-
-    fn resolve_run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
-        // SAFETY: ctx was stored from `*mut Resolve` in `dispatch_js`.
-        unsafe { &mut *(ctx as *mut Resolve) }.run_on_js_thread();
-        Ok(())
     }
 
     // TODO(port): move to runtime_sys

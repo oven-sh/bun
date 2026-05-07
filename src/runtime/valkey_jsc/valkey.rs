@@ -80,11 +80,16 @@ pub enum Status {
     Connected,
 }
 
-pub fn is_active(this: &Status) -> bool {
-    match *this {
-        Status::Connected | Status::Connecting => true,
-        _ => false,
+impl Status {
+    #[inline]
+    pub fn is_active(self) -> bool {
+        matches!(self, Status::Connected | Status::Connecting)
     }
+}
+// Free-fn spelling kept for parity with Zig's `valkey.isActive(&status)`.
+#[inline]
+pub fn is_active(this: &Status) -> bool {
+    this.is_active()
 }
 
 pub use super::valkey_command_body as Command_;
@@ -163,6 +168,15 @@ impl TLS {
 impl Default for TLS {
     fn default() -> Self {
         TLS::None
+    }
+}
+
+// Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
+// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant —
+// matches Zig's tagged-union `==` semantics for tag checks.
+impl PartialEq for TLS {
+    fn eq(&self, other: &Self) -> bool {
+        core::mem::discriminant(self) == core::mem::discriminant(other)
     }
 }
 

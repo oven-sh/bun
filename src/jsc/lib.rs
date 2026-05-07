@@ -1611,7 +1611,7 @@ pub type ZigStringSlice = bun_string::ZigStringSlice;
 // inseparable from `bun_runtime` (streams/fetch). Code that needs to downcast
 // a `JSValue` to `Request`/`Response` lives in `bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
-#[path = "webcore_types.rs"] mod webcore_types;
+#[path = "webcore_types.rs"] pub mod webcore_types;
 #[path = "node_path.rs"] pub mod node_path;
 
 /// `jsc.WebCore` (jsc.zig:163, deprecated alias) — only the data-shape subset
@@ -1619,12 +1619,12 @@ pub type ZigStringSlice = bun_string::ZigStringSlice;
 /// full API surface.
 #[allow(non_snake_case)]
 pub mod WebCore {
-    pub use super::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
-    pub use super::webcore_types::store::Store;
+    pub use crate::webcore_types::store::Store;
+    pub use crate::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
 }
 /// Lower-case alias + nested `blob` namespace (Zig: `jsc.webcore.blob.Store`).
 pub mod webcore {
-    pub use super::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
+    pub use crate::webcore_types::{Blob, BuildArtifact, SizeType, MAX_SIZE};
     pub mod blob {
         pub use crate::webcore_types::store::*;
         pub use crate::webcore_types::{SizeType, MAX_SIZE};
@@ -1632,13 +1632,13 @@ pub mod webcore {
 }
 /// `jsc.API` (jsc.zig:164, deprecated alias) — only `BuildArtifact` is hoisted.
 pub mod api {
-    pub use super::webcore_types::BuildArtifact;
+    pub use crate::webcore_types::BuildArtifact;
 }
 /// `jsc.Node` (jsc.zig:165, deprecated alias) — `PathLike`/`PathOrFileDescriptor`
 /// hoisted to this tier; full `bun.api.node` lives in `bun_runtime::node`.
 #[allow(non_snake_case)]
 pub mod Node {
-    pub use super::node_path::*;
+    pub use crate::node_path::*;
 }
 pub use self::Node as node;
 

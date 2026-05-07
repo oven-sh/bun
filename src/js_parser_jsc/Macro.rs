@@ -233,13 +233,19 @@ impl MacroContext {
         // `holdAPILock(ctx, fn(ctx))`. The Rust `run_with_api_lock` already
         // takes a closure, so the wrapper struct collapses into captures.
         let javascript_object = self.javascript_object;
+        // PORT NOTE: reshaped for borrowck — `self.bump` is shared-borrowed for
+        // the closure while `self.macros` was already released above; capture
+        // as a raw pointer so the closure does not extend `&mut self`.
+        let bump: *const bun_alloc::Arena = &self.bump;
         // SAFETY: `vm` is the per-thread VM, live for this call.
         let ret = unsafe { &*vm }.run_with_api_lock(|| {
             // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure.
+            // for the duration of this closure; `bump` points into `*self`,
+            // which outlives the closure and is not otherwise borrowed.
             Runner::run(
                 unsafe { &*macro_ },
                 log,
+                unsafe { &*bump },
                 function_name,
                 caller,
                 source,

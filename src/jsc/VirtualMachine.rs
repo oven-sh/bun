@@ -4322,10 +4322,11 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // PORT NOTE: `frames[j] = frame` — `ZigStackFrame` is a
-                    // POD-ish FFI struct (BunStrings are bitwise-movable).
-                    // SAFETY: i, j < frames_len; copy_within handles i==j.
-                    frames_buf.copy_within(i..=i, j);
+                    // PORT NOTE: `frames[j] = frame`. `ZigStackFrame` impls
+                    // `Drop` so `copy_within` is unavailable; swap instead —
+                    // the discarded tail past `j` is never read after we
+                    // truncate `frames_len` below.
+                    frames_buf.swap(j, i);
                     j += 1;
                 }
                 exception.stack.frames_len = j as u8;

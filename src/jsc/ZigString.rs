@@ -136,6 +136,25 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
     unsafe { ZigString__toExternalU16(ptr, len, global) }
 }
 
+// LAYERING: `bun_string::String::init` (and friends) accept `bun_string::ZigString`;
+// this crate's `ZigString` is `#[repr(C)]`-identical (same `{ *const u8, usize }`
+// layout, same tag-bit scheme). Provide the lossless cast so JSC-side views can be
+// fed straight into `bun_string::String` without an extra copy.
+impl From<ZigString> for bun_string::ZigString {
+    #[inline]
+    fn from(z: ZigString) -> Self {
+        // SAFETY: both are `#[repr(C)] struct { *const u8, usize }` with identical
+        // pointer-tag encoding (see `bun_string::ZigString` and the struct above).
+        unsafe { core::mem::transmute::<ZigString, bun_string::ZigString>(z) }
+    }
+}
+impl From<ZigString> for bun_string::String {
+    #[inline]
+    fn from(z: ZigString) -> Self {
+        bun_string::String::init(bun_string::ZigString::from(z))
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `JSValue` / `JSGlobalObject` surface has landed; bytemuck +
 // `bun_string::encoding::Encoding` + simdutf are in the dep graph. The

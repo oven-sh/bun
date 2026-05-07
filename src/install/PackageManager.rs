@@ -834,20 +834,13 @@ impl PackageManager {
     }
 
     pub fn http_proxy(&mut self, url: &URL<'_>) -> Option<URL<'static>> {
-        // SAFETY (lifetime extension): the returned `URL` borrows env-var
-        // values from `self.env()`'s hash map. The env loader is a
-        // heap-allocated `Loader<'static>` reached through `self.env:
-        // NonNull<_>` that is set once during `init()` and never freed for
-        // the lifetime of the process (Zig: `*DotEnv.Loader` BACKREF). All
-        // callers feed the result into `AsyncHTTP::init`, whose
-        // `Options.http_proxy` is `Option<URL<'static>>` because the HTTP
-        // thread reads it concurrently — Zig passes the same raw slices
-        // under the same ownership contract. The `'u` tie to the *input*
-        // `url` in the previous signature was spurious: `get_http_proxy_for`
-        // only reads `url.is_http()` / `hostname` / `host` for NO_PROXY
-        // matching and never stores them.
-        let proxy = self.env_mut().get_http_proxy_for(url);
-        unsafe { core::mem::transmute::<Option<URL<'_>>, Option<URL<'static>>>(proxy) }
+        // `self.env` is `NonNull<dot_env::Loader<'static>>`; `get_http_proxy_for`
+        // returns `Option<URL<'a>>` where `'a` is the loader's map lifetime —
+        // i.e. `'static` here. The lifetime contract (env-map values are
+        // process-lifetime `Box<[u8]>`) is encapsulated in `bun_dotenv`, not at
+        // every call site (PORTING.md §Forbidden: never transmute to mint
+        // `'static`).
+        self.env_mut().get_http_proxy_for(url)
     }
 
     pub fn tls_reject_unauthorized(&mut self) -> bool {

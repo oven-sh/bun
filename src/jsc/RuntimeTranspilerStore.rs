@@ -840,7 +840,7 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                should_close_input_file_fd = false;
+                should_close_input_file_fd.set(false);
                 if !import_watcher.is_null() {
                     // SAFETY: import_watcher is live; add_file is thread-safe via watcher mutex.
                     let _ = unsafe { &mut *import_watcher }.add_file::<true>(

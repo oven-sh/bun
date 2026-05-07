@@ -59,7 +59,10 @@ pub mod Classes {
     pub use crate::image as Image;
     pub use crate::api::bun::secure_context as SecureContext;
     pub use crate::shell::Interpreter as ShellInterpreter;
-    pub use crate::shell::ParsedShellScript;
+    // `crate::shell::ParsedShellScript` is a `(())` placeholder left over from
+    // the Phase-A scaffold; the real struct lives in the `parsed_shell_script`
+    // submodule. Re-export the real one so codegen sees the correct payload.
+    pub use crate::shell::parsed_shell_script::ParsedShellScript;
     pub use crate::api::js_bundler::JSBundler as Bundler;
     pub use Bundler as JSBundler;
     pub use crate::api::js_transpiler as Transpiler;

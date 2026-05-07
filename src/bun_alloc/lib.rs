@@ -1805,14 +1805,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         &mut self,
         value: A,
     ) -> core::result::Result<&mut [u8], AllocError> {
-        let (ptr, len) = {
-            let appended = self.append(value)?;
-            (appended.as_ptr() as *mut u8, appended.len())
-        };
-        // SAFETY: `appended` pointed into storage owned by `*self` (backing_buf or a
-        // process-lifetime mimalloc region); we hold `&mut self` so no other borrow of that
-        // region exists, and the shared borrow was dropped above.
-        Ok(unsafe { Self::editable_slice(ptr, len) })
+        let _guard = self.mutex.lock();
+        let (ptr, len) = self.do_append(value)?;
+        // SAFETY: `ptr` came from `out.as_mut_ptr()` inside `do_append` (write provenance)
+        // and points into storage owned by `*self` (backing_buf or a process-lifetime
+        // mimalloc region); we hold `&mut self` so no other live borrow of that region
+        // exists.
+        Ok(unsafe { core::slice::from_raw_parts_mut(ptr, len) })
     }
 
     pub fn get_mutable(&mut self, len: usize) -> core::result::Result<&mut [u8], AllocError> {

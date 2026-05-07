@@ -3070,31 +3070,30 @@ impl JestPrettyFormat {
     {
         match flags.promise() {
             expect::Promise::Resolves => {
-                matcher.add_for_new_line(b"promise resolved to ".len());
+                matcher.amf_add_for_new_line(b"promise resolved to ".len());
                 writer.write_all(b"promise resolved to ");
             }
             expect::Promise::Rejects => {
-                matcher.add_for_new_line(b"promise rejected to ".len());
+                matcher.amf_add_for_new_line(b"promise rejected to ".len());
                 writer.write_all(b"promise rejected to ");
             }
             expect::Promise::None => {}
         }
     }
 
-    pub fn print_asymmetric_matcher<
-        W: bun_io::Write,
-        const FORMAT: Tag,
-        const ENABLE_ANSI_COLORS: bool,
-    >(
+    pub fn print_asymmetric_matcher<M, W, const ENABLE_ANSI_COLORS: bool>(
         // the Formatter instance
-        this: &mut Formatter<'_>,
+        this: &mut M,
         // The WrappedWriter (caller's instance — `failed` propagates back)
         writer: &mut WrappedWriter<'_, W>,
         // Buf used to print strings
-        name_buf: [u8; 512],
+        name_buf: &[u8; 512],
         value: JSValue,
-    ) -> JsResult<bool> {
-        let _ = FORMAT;
+    ) -> JsResult<bool>
+    where
+        M: AsymmetricMatcherFormatter,
+        W: bun_io::Write + ?Sized,
+    {
         // PORT NOTE: Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
         // writer, which alias. In Rust that would be two live `&mut W` to the same target
         // (UB / borrowck violation), so we accept only the wrapped writer and reach the

@@ -186,11 +186,13 @@ enum RegisterState {
 impl BufferedReaderParent for CronRegisterJob {
     const HAS_ON_READ_CHUNK: bool = false;
     unsafe fn on_reader_done(this: *mut Self) {
-        // SAFETY: `this` is the `set_parent` ctx; single JS thread.
-        unsafe { &mut *this }.on_reader_done()
+        // SAFETY: `this` is the `set_parent` ctx; single JS thread. Forward as
+        // raw ptr — `maybe_finished` may free `this`.
+        unsafe { <Self as CronJobBase>::on_reader_done(this) }
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        unsafe { &mut *this }.on_reader_error(err)
+        // SAFETY: see `on_reader_done`.
+        unsafe { <Self as CronJobBase>::on_reader_error(this, err) }
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()

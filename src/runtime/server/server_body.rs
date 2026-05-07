@@ -686,7 +686,7 @@ impl AnyRoute {
         // SAFETY: init_from_any_blob returns a freshly Box::into_raw'd StaticRoute (rc=1).
         Ok(AnyRoute::Static(unsafe {
             NonNull::new_unchecked(StaticRoute::init_from_any_blob(
-                &AnyBlob::Blob(blob),
+                AnyBlob::Blob(blob),
                 super::static_route::InitFromBytesOptions { server: None, headers, ..Default::default() },
             ))
         }))

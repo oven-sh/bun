@@ -162,9 +162,7 @@ pub fn bun_revoke_object_url(
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(port): export shim under C name "jsFunctionResolveObjectURL".
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "jsFunctionResolveObjectURL")]
+#[bun_jsc::host_fn(export = "jsFunctionResolveObjectURL")]
 pub fn js_function_resolve_object_url(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,

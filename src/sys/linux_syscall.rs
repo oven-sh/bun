@@ -303,14 +303,9 @@ pub unsafe fn pwritev(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> R
 // getdents64). These keep the *libc-convention* return shape (`-1` on error
 // with thread-local errno set) so existing callers in `bun_aio`/`bun_runtime`
 // that decode via `GetErrno for isize` continue to work unchanged. The syscall
-// itself is raw — only the errno write touches libc TLS.
+// itself is raw; glibc's `syscall(2)` trampoline writes thread-local errno on
+// `-errno` returns, which callers decode via `GetErrno for isize`.
 // ──────────────────────────────────────────────────────────────────────────
-
-#[inline(always)]
-unsafe fn set_errno(e: i32) {
-    // SAFETY: `__errno_location()` returns a valid thread-local `*mut c_int`.
-    unsafe { *libc::__errno_location() = e; }
-}
 
 /// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
 ///
@@ -336,98 +331,58 @@ pub unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
     unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
-// Cross-crate layout pin: we reinterpret `*mut libc::epoll_event` as
-// `*const rustix::event::epoll::Event` below. Both mirror the kernel UAPI
-// struct (packed on x86_64, natural on aarch64), but that is an undocumented
-// coincidence — fail the build loudly if either crate ever diverges.
-const _: () = assert!(
-    core::mem::size_of::<libc::epoll_event>()
-        == core::mem::size_of::<rustix::event::epoll::Event>()
-);
-const _: () = assert!(
-    core::mem::align_of::<libc::epoll_event>()
-        == core::mem::align_of::<rustix::event::epoll::Event>()
-);
-
 /// Raw `epoll_ctl(2)` — libc-convention return.
+///
+/// Routed via `libc::syscall(SYS_epoll_ctl, ..)` rather than rustix's typed
+/// `epoll::add/modify/delete` because the typed API would require:
+///   (a) constructing `BorrowedFd` for `epfd`/`fd` — UB if a caller probes
+///       with `-1` (the niche value), whereas the kernel returns EBADF;
+///   (b) reinterpreting `*mut libc::epoll_event` as rustix's `Event` and
+///       reading its fields — a cross-crate layout pun whose soundness
+///       depends on `EventData`/`EventFlags` having no invalid bit-patterns;
+///   (c) synthesizing EINVAL for unknown `op` values ourselves rather than
+///       letting the kernel reject them.
+/// Passing the raw quad straight through avoids all three and matches Zig's
+/// `std.os.linux.epoll_ctl` 1:1.
 #[inline]
 pub unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_event) -> i32 {
-    // rustix's typed `epoll::add/modify/delete` would force callers to rebuild
-    // `EventData`/`EventFlags`; instead route the existing `(op, *event)` shape
-    // through the matching rustix call. `event` may be null for CTL_DEL.
-    let epfd_b = unsafe { bfd(epfd) };
-    let fd_b = unsafe { bfd(fd) };
-    let r: rustix::io::Result<()> = match op {
-        libc::EPOLL_CTL_DEL => rustix::event::epoll::delete(epfd_b, fd_b),
-        libc::EPOLL_CTL_ADD | libc::EPOLL_CTL_MOD => {
-            // SAFETY: ADD/MOD require a valid event; caller upholds this
-            // (matches `epoll_ctl(2)` contract). Layout equivalence is
-            // statically asserted above.
-            let ev = unsafe { &*(event as *const rustix::event::epoll::Event) };
-            let data = ev.data;
-            let flags = ev.flags;
-            if op == libc::EPOLL_CTL_ADD {
-                rustix::event::epoll::add(epfd_b, fd_b, data, flags)
-            } else {
-                rustix::event::epoll::modify(epfd_b, fd_b, data, flags)
-            }
-        }
-        // Unknown op: surface the kernel's EINVAL rather than silently
-        // aliasing to MOD (previous else-arm behavior).
-        _ => Err(Errno::INVAL),
-    };
-    match r {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_errno(raw(e)) };
-            -1
-        }
-    }
+    // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
+    // may be null for CTL_DEL (kernel ignores it).
+    unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 
 /// Raw `sendfile(2)` — libc-convention return.
+///
+/// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
+/// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
+/// constructing a niche-invalid `BorrowedFd`, and (b) `offset` stays a raw
+/// `*mut loff_t` with no `&mut u64` type-pun. Matches Zig's
+/// `std.os.linux.sendfile` 1:1.
 #[inline]
 pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
-    let out = unsafe { bfd(out_fd) };
-    let inp = unsafe { bfd(in_fd) };
-    let off_ref: Option<&mut u64> = if offset.is_null() {
-        None
-    } else {
-        // SAFETY: caller passed a valid `*mut i64`; kernel treats it as `loff_t`.
-        Some(unsafe { &mut *(offset as *mut u64) })
-    };
-    match rustix::fs::sendfile(out, inp, off_ref, count) {
-        Ok(n) => n as isize,
-        Err(e) => {
-            unsafe { set_errno(raw(e)) };
-            -1
-        }
-    }
+    // SAFETY: raw `sendfile(2)`; kernel validates fds; `offset` may be null.
+    unsafe { libc::syscall(libc::SYS_sendfile, out_fd, in_fd, offset, count) as isize }
 }
 
 /// Raw `copy_file_range(2)` — libc-convention return.
+///
+/// Routed via `libc::syscall(SYS_copy_file_range, ..)` rather than rustix's
+/// `fs::copy_file_range` because the rustix wrapper hard-codes `flags = 0`.
+/// The Zig `std.os.linux.copy_file_range` and the pre-refactor path both
+/// forward `flags` verbatim so the kernel can EINVAL future flag bits;
+/// preserve that behavior exactly. Also avoids the `BorrowedFd` niche hazard
+/// and `*mut i64 → &mut u64` type-pun on the offset pointers.
 #[inline]
 pub unsafe fn copy_file_range(
     in_: i32, off_in: *mut i64, out: i32, off_out: *mut i64, len: usize, flags: u32,
 ) -> isize {
-    // rustix's wrapper hard-codes `flags = 0` (the only value any shipping
-    // kernel accepts). The Zig `std.os.linux.copy_file_range` and the
-    // pre-refactor `libc::syscall` path both forward `flags` verbatim, so a
-    // future flag bit passed through here would otherwise be silently
-    // dropped instead of EINVAL-ing. Catch that divergence in debug builds.
-    debug_assert_eq!(flags, 0, "copy_file_range: non-zero flags dropped by rustix wrapper");
-    let inp = unsafe { bfd(in_) };
-    let out = unsafe { bfd(out) };
-    let oi: Option<&mut u64> =
-        if off_in.is_null() { None } else { Some(unsafe { &mut *(off_in as *mut u64) }) };
-    let oo: Option<&mut u64> =
-        if off_out.is_null() { None } else { Some(unsafe { &mut *(off_out as *mut u64) }) };
-    match rustix::fs::copy_file_range(inp, oi, out, oo, len) {
-        Ok(n) => n as isize,
-        Err(e) => {
-            unsafe { set_errno(raw(e)) };
-            -1
-        }
+    // SAFETY: raw `copy_file_range(2)`; kernel validates fds; offset ptrs may
+    // be null.
+    unsafe {
+        libc::syscall(
+            libc::SYS_copy_file_range,
+            in_, off_in, out, off_out, len, flags as libc::c_long,
+        ) as isize
     }
 }
 

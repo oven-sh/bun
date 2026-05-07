@@ -52,35 +52,38 @@ describe("throwPretty color handling", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    return stdout + stderr;
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: stdout + stderr, exitCode };
   }
 
   test("NO_COLOR strips all ANSI SGR sequences from the error message", async () => {
-    const out = await run({ NO_COLOR: "1", FORCE_COLOR: undefined });
+    const { out, exitCode } = await run({ NO_COLOR: "1", FORCE_COLOR: undefined });
     // The error body must be present...
     expect(out).toContain("expect(received).toBe(expected)");
     expect(out).toContain("Expected: 2");
     expect(out).toContain("Received: 1");
     // ...and contain no escape bytes at all.
     expect(out.includes(ESC)).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
   test("FORCE_COLOR keeps ANSI SGR sequences in the error message", async () => {
-    const out = await run({ FORCE_COLOR: "1", NO_COLOR: undefined });
+    const { out, exitCode } = await run({ FORCE_COLOR: "1", NO_COLOR: undefined });
     // `received` is wrapped in <red>...</r>; `expected` in <green>...</r>.
     expect(out).toContain(`${ESC}[31mreceived`);
     expect(out).toContain(`${ESC}[32mexpected`);
     expect(out).toContain(`${ESC}[32m2${ESC}[0m`);
     expect(out).toContain(`${ESC}[31m1${ESC}[0m`);
+    expect(exitCode).toBe(1);
   });
 
   test("NO_COLOR output matches prettyFmt(fmt, false) exactly for the error body", async () => {
-    const out = await run({ NO_COLOR: "1", FORCE_COLOR: undefined });
+    const { out, exitCode } = await run({ NO_COLOR: "1", FORCE_COLOR: undefined });
     // This is the exact text `Output.prettyFmt(fmt, false)` would have
     // produced for the toBe failure format string. It must survive the
     // strip-after-format path unchanged.
     const expectedBody = "expect(received).toBe(expected)\n\nExpected: 2\nReceived: 1\n";
     expect(out).toContain(expectedBody);
+    expect(exitCode).toBe(1);
   });
 });

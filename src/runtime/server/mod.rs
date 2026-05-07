@@ -1085,11 +1085,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.poll_ref.is_active() {
             return;
         }
-        // TODO(b2-blocked): self.poll_ref.ref_(self.vm);
+        self.poll_ref
+            .ref_(jsc::VirtualMachine::event_loop_ctx(self.vm as *mut _));
     }
 
     pub fn unref(&mut self) {
-        // TODO(b2-blocked): self.poll_ref.unref(self.vm);
+        self.poll_ref
+            .unref(jsc::VirtualMachine::event_loop_ctx(self.vm as *mut _));
     }
 
     pub fn stop_listening(&mut self, abrupt: bool) {

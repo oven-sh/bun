@@ -395,11 +395,11 @@ pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 /// `BunTest` (Zig: `*BunTest` aliases freely; Rust requires `UnsafeCell` for
 /// any write reachable through a shared/`*const` path).
 #[repr(transparent)]
-pub struct BunTestCell(UnsafeCell<BunTest<'static>>);
+pub struct BunTestCell(UnsafeCell<BunTest>);
 
 impl BunTestCell {
     #[inline]
-    pub fn new(bt: BunTest<'static>) -> Rc<Self> {
+    pub fn new(bt: BunTest) -> Rc<Self> {
         Rc::new(Self(UnsafeCell::new(bt)))
     }
 
@@ -417,7 +417,7 @@ impl BunTestCell {
     /// for long-lived handles that span re-entrant calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get(&self) -> &mut BunTest<'static> {
+    pub fn get(&self) -> &mut BunTest {
         // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
         unsafe { &mut *self.0.get() }
     }
@@ -426,15 +426,15 @@ impl BunTestCell {
     /// holding a live `&mut` (Stacked-Borrows-safe: raw ptrs do not assert
     /// uniqueness).
     #[inline]
-    pub fn as_ptr(&self) -> *mut BunTest<'static> {
+    pub fn as_ptr(&self) -> *mut BunTest {
         self.0.get()
     }
 }
 
 impl core::ops::Deref for BunTestCell {
-    type Target = BunTest<'static>;
+    type Target = BunTest;
     #[inline]
-    fn deref(&self) -> &BunTest<'static> {
+    fn deref(&self) -> &BunTest {
         // SAFETY: shared read through `UnsafeCell`; single-threaded — caller
         // must not hold a live `&mut` from `.get()` concurrently.
         unsafe { &*self.0.get() }
@@ -448,7 +448,7 @@ impl core::ops::Deref for BunTestCell {
 /// # Safety
 /// Caller must uphold the aliasing contract documented on [`BunTestCell::get`].
 #[inline]
-pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest<'static> {
+pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
 
@@ -520,17 +520,15 @@ impl BunTestRoot {
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
         // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
         // needed because BunTest stores a backref to BunTestRoot.
-        // SAFETY: erase the `'1` borrow lifetime to `'static` for storage in
-        // `BunTestCell(UnsafeCell<BunTest<'static>>)`. Zig stores
-        // `?*CommandLineReporter` (raw, untracked); the reporter is the global
-        // `CommandLineReporter` owned by `test_command::exec` which outlives
-        // every `BunTest`. `exit_file()` nulls this before the file is dropped.
-        let reporter_static: &'static CommandLineReporter =
-            unsafe { &*(reporter as *mut CommandLineReporter as *const CommandLineReporter) };
+        // PORT NOTE: Zig stores `?*CommandLineReporter` (raw, untracked); the
+        // reporter is the global `CommandLineReporter` owned by
+        // `test_command::exec` which outlives every `BunTest`. `exit_file()`
+        // nulls this before the file is dropped.
+        let reporter_ptr = NonNull::from(&mut *reporter);
         let bun_test = BunTestCell::new(BunTest::init(
             stable_root,
             file_id,
-            Some(reporter_static),
+            Some(reporter_ptr),
             default_concurrent,
             first_last,
         ));
@@ -549,7 +547,7 @@ impl BunTestRoot {
         self.active_file = None; // drops the Rc (deinit)
     }
 
-    pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest<'static>> {
+    pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
         // SAFETY: vm is the live per-thread VM (from `JSGlobalObject::bun_vm()`).
         if unsafe { (*vm).is_in_preload } {
             return None;
@@ -649,11 +647,11 @@ pub struct BunTest {
     pub execution: Execution::Execution,
 }
 
-impl<'a> BunTest<'a> {
+impl BunTest {
     pub fn init(
         bun_test_root: *mut BunTestRoot,
         file_id: FileId,
-        reporter: Option<&'a CommandLineReporter>,
+        reporter: Option<NonNull<CommandLineReporter>>,
         default_concurrent: bool,
         first_last: FirstLast,
     ) -> Self {
@@ -1309,7 +1307,7 @@ impl<'a> BunTest<'a> {
     }
 }
 
-impl<'a> Drop for BunTest<'a> {
+impl Drop for BunTest {
     fn drop(&mut self) {
         let _g = group_begin!();
 

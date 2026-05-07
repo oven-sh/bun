@@ -40,8 +40,8 @@ macro_rules! log {
 /// Zig: `pub fn NewReadFileHandler(comptime Function: anytype) type`
 ///
 /// `F` provides the comptime callback that converts the read bytes to a JSValue.
-// TODO(port): comptime fn-value param — model `Function` as a trait so each
-// instantiation monomorphizes like the Zig type-generator did.
+/// Modelled as a trait so each instantiation monomorphizes like the Zig
+/// type-generator did.
 pub trait ReadFileToJs {
     fn call(
         b: &mut Blob,
@@ -1290,6 +1290,6 @@ impl<C: ReadFileCompletion> ReadFileUvHandler for C {
 // PORT STATUS
 //   source:     src/runtime/webcore/blob/read_file.zig (829 lines)
 //   confidence: medium
-//   todos:      7
+//   todos:      5
 //   notes:      ReadFileRead.buf models Zig's owned `[]u8` as &'static mut + is_temporary flag — Phase B should swap to a typed handoff (Box<[u8]> / ByteStore).
 // ──────────────────────────────────────────────────────────────────────────

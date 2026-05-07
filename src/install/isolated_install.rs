@@ -1992,7 +1992,6 @@ pub fn install_isolated_packages(
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(PackageInstall::supported_method() as u8),
-            // TODO(port): .init(PackageInstall.supported_method) — verify atomic enum init
             is_new_bun_modules,
             global_store_path: global_store_path.as_deref().map(|b: &[u8]| -> &bun_str::ZStr {
                 // SAFETY: `global_store_path` was built with a trailing NUL above.
@@ -2307,10 +2306,9 @@ pub fn install_isolated_packages(
                                     Output::err(
                                         err,
                                         "failed to enqueue package for download: {}@{}",
-                                        format_args!(
-                                            "{}@{}",
+                                        (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto)
+                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
                                         ),
                                     );
                                     Output::flush();
@@ -2531,8 +2529,6 @@ fn hex_lower(bytes: &[u8]) -> impl core::fmt::Display + '_ {
     HexLower(bytes)
 }
 
-// TODO(port): VersionTag / ResolutionTag are placeholder names for the enum
-// tags on Dependency.Version and Resolution. Phase B: import the real types.
 use crate::dependency::VersionTag;
 use crate::resolution::Tag as ResolutionTag;
 

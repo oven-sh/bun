@@ -1117,10 +1117,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `BundleV2::init`). Transpiler/AST allocations stay in `bump`.
         let heap = Arena::new();
 
-        // SAFETY: `thread_pool` is the leaked `WorkPool` singleton (`OnceLock`-
-        // backed, process-lifetime). `BundleV2::init` only converts it to
-        // `*mut` for `worker_pool`; no `&mut` uniqueness is actually required.
-        let worker_pool = unsafe { thread_pool.as_mut() };
+        // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
+        // process-lifetime, concurrently read by worker threads). Do NOT
+        // materialize `&mut` from it — its provenance is `&'static`, so even a
+        // never-written-through `&mut` is UB under Stacked Borrows. Keep it raw
+        // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
+        let worker_pool = NonNull::new(thread_pool);
 
         let mut bv2 = BundleV2::init(
             transpiler, None, bump, event_loop, false, worker_pool, heap,

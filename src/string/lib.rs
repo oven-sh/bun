@@ -366,6 +366,39 @@ impl String {
         if self.tag == Tag::WTFStringImpl {
             unsafe { BunString__toThreadSafe(self) }
         }
+        debug_assert!(self.is_thread_safe());
+    }
+    /// True iff this `String` may be sent to / shared with another thread
+    /// without racing the WTF `StringImpl`'s non-atomic refcount: every tag
+    /// except `WTFStringImpl` is inert (raw slice / static / dead), and a
+    /// WTF-backed string is safe iff its impl reports `isThreadSafe()`.
+    ///
+    /// Call sites that move a `String` across a thread boundary must ensure
+    /// this holds (typically by calling [`to_thread_safe`] first); see the
+    /// `Send`/`Sync` SAFETY comment for the full contract.
+    #[inline]
+    pub fn is_thread_safe(&self) -> bool {
+        if self.tag == Tag::WTFStringImpl {
+            // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
+            unsafe { (*self.value.wtf).is_thread_safe() }
+        } else {
+            true
+        }
+    }
+    /// Debug-only guard for the `Send`/`Sync` contract: panics if this
+    /// `String` wraps a non-thread-safe `WTF::StringImpl`. Intended for the
+    /// hand-off point where a `String` is stored into a value that will cross
+    /// threads (worker task payloads, channel sends, `Arc`-shared state) —
+    /// the Rust spelling of Zig's `bun.assert(str.isThreadSafe())` before a
+    /// thread-pool dispatch.
+    #[inline(always)]
+    #[track_caller]
+    pub fn debug_assert_thread_safe(&self) {
+        debug_assert!(
+            self.is_thread_safe(),
+            "bun_string::String crosses thread boundary with non-thread-safe \
+             WTF::StringImpl (non-atomic refcount); call `to_thread_safe()` first"
+        );
     }
     pub fn to_int32(&self) -> Option<i32> {
         let v = unsafe { BunString__toInt32(self) };
@@ -1007,12 +1040,22 @@ impl bun_core::OptionsEnvArg for String {
 impl Default for String {
     #[inline] fn default() -> Self { Self::EMPTY }
 }
-// SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or static/dead).
-// Thread-safety of the underlying WTF impl is gated by `to_thread_safe()` at
-// the call site (matches Zig `bun.String` and the C++ `BunString` ABI).
-// AUDIT: technically over-broad — a non-thread-safe `StringImpl` sent across
-// threads would race its non-atomic refcount. Kept to match the Zig/JSC FFI
-// contract; tightening would require a `ThreadSafeString` newtype split.
+// SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or a borrowed
+// `ZigString` slice / static / dead sentinel). All non-WTF tags are trivially
+// `Send + Sync` (no interior mutability, no refcount). The WTF tag is the
+// hazard: `WTF::StringImpl`'s refcount is non-atomic unless the impl was
+// created thread-safe, so sending/sharing a non-thread-safe impl across
+// threads and then `ref_()`/`deref()`ing it is a data race.
+//
+// We keep the blanket impls to match the Zig `bun.String` / C++ `BunString`
+// FFI contract (the type must round-trip by value through `extern "C"` and sit
+// in `Send + Sync` containers), and instead enforce the invariant at the
+// boundary: any code that moves a `String` to another thread MUST first call
+// [`String::to_thread_safe`] (or otherwise guarantee [`String::is_thread_safe`]
+// returns `true`). [`String::debug_assert_thread_safe`] is the debug-build
+// checkpoint for that hand-off; `to_thread_safe()` itself asserts its own
+// postcondition. A `ThreadSafeString` newtype split would make this static,
+// but is deferred until the FFI surface can be reshaped.
 unsafe impl Send for String {}
 unsafe impl Sync for String {}
 

@@ -15,8 +15,29 @@ use core::alloc::{AllocError, Allocator, Layout};
 use core::ffi::c_void;
 use core::mem::{self, MaybeUninit};
 use core::ptr::{self, NonNull};
+#[cfg(debug_assertions)]
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::mimalloc;
+
+// ── Debug-only thread-ownership guard (Zig: `bun.safety.ThreadLock`) ──────
+//
+// `bun_alloc` sits below `bun_core` in the crate graph, so we cannot reuse
+// `bun_core::ThreadLock`. This is the minimal subset needed to mirror Zig's
+// `ci_assert` same-thread check on the `mi_heap_*` allocation paths: a per-
+// thread monotone id stamped at `MimallocArena::new()` and asserted on every
+// alloc/realloc. `mi_free` is documented thread-safe and is left unchecked.
+
+#[cfg(debug_assertions)]
+#[inline]
+fn current_thread_id() -> u64 {
+    // Portable thread-unique id without `ThreadId::as_u64` (unstable) or
+    // platform syscalls: each thread takes a fresh nonzero counter value the
+    // first time it asks.
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    std::thread_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
+    ID.with(|id| *id)
+}
 
 /// A mimalloc heap. Owns a `mi_heap_t`; all allocations are bulk-freed on
 /// `Drop` (Zig: `MimallocArena.deinit` → `mi_heap_destroy`).
@@ -26,6 +47,11 @@ use crate::mimalloc;
 /// free + realloc — the thing `bumpalo::Bump` cannot do.
 pub struct MimallocArena {
     heap: NonNull<mimalloc::Heap>,
+    /// Zig: `thread_lock: bun.safety.ThreadLock` (debug-only). Stamped on
+    /// `new()`/`reset()`; asserted on every `mi_heap_*` alloc/realloc path.
+    /// Compiles out in release so the struct stays one pointer wide.
+    #[cfg(debug_assertions)]
+    owning_thread: AtomicU64,
 }
 
 // SAFETY: mimalloc heaps are not generally thread-safe for allocation from
@@ -35,12 +61,13 @@ pub struct MimallocArena {
 // `MimallocArena` being passed to thread-pool workers); concurrent `&self`
 // allocation across threads is the caller's responsibility, same as Zig.
 unsafe impl Send for MimallocArena {}
-// AUDIT(unsound): `Sync` is over-broad — `mi_heap_*` allocation is NOT safe
-// under concurrent `&self`. Kept because the bundler embeds `&MimallocArena`
-// in `Send + Sync` contexts but only ever allocates from the owning thread.
-// Proposed fix: add a debug `ThreadLock` to `alloc`/`realloc` (mirroring Zig)
-// so cross-thread allocation panics in debug, or split a `Sync`-only
-// `MimallocArenaFreeHandle` for the cross-thread `mi_free` path.
+// SAFETY: `Sync` is required because the bundler embeds `&MimallocArena` in
+// `Send + Sync` contexts (worker tasks hold a shared ref for `mi_free` /
+// `owns_ptr`), but `mi_heap_malloc*`/`mi_heap_realloc*` are NOT safe under
+// concurrent `&self`. The contract — enforced by `assert_owning_thread()` in
+// debug builds, mirroring Zig's `ci_assert` `ThreadLock` — is that only the
+// thread that constructed (or last `reset()`) the arena may allocate from it.
+// Cross-thread `deallocate` is permitted (mimalloc `mi_free` is thread-safe).
 unsafe impl Sync for MimallocArena {}
 
 impl Default for MimallocArena {
@@ -57,7 +84,29 @@ impl MimallocArena {
         // SAFETY: FFI call with no preconditions.
         let heap = unsafe { mimalloc::mi_heap_new() };
         let heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
-        Self { heap }
+        Self {
+            heap,
+            #[cfg(debug_assertions)]
+            owning_thread: AtomicU64::new(current_thread_id()),
+        }
+    }
+
+    /// Zig: `Borrowed.assertThreadLock()` — debug-only check that the calling
+    /// thread is the one that constructed (or last `reset()`) this arena.
+    /// Guards every `mi_heap_*` allocation path so the over-broad `Sync` impl
+    /// cannot silently corrupt mimalloc's per-heap free lists.
+    #[inline(always)]
+    fn assert_owning_thread(&self) {
+        #[cfg(debug_assertions)]
+        {
+            let owner = self.owning_thread.load(Ordering::Relaxed);
+            let cur = current_thread_id();
+            debug_assert_eq!(
+                owner, cur,
+                "MimallocArena: mi_heap_* allocation on thread {cur}, \
+                 but heap is owned by thread {owner} (mi_heap is not Sync for alloc)"
+            );
+        }
     }
 
     /// Alias for [`Self::new`] — matches the Zig spelling.
@@ -85,6 +134,12 @@ impl MimallocArena {
         unsafe { mimalloc::mi_heap_destroy(self.heap.as_ptr()) };
         let heap = unsafe { mimalloc::mi_heap_new() };
         self.heap = NonNull::new(heap).unwrap_or_else(|| crate::out_of_memory());
+        // `&mut self` proves exclusive access; re-stamp the debug thread-lock
+        // so an arena `Send`-moved to a worker and then reset there may
+        // allocate on that worker (Zig has no equivalent because its
+        // `MimallocArena` is not moved post-init).
+        #[cfg(debug_assertions)]
+        self.owning_thread.store(current_thread_id(), Ordering::Relaxed);
     }
 
     /// Zig: `MimallocArena.gc()` → `mi_heap_collect(heap, false)`.
@@ -151,6 +206,7 @@ impl MimallocArena {
     /// `alignment > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`.
     #[inline]
     fn aligned_alloc(&self, len: usize, align: usize) -> *mut u8 {
+        self.assert_owning_thread();
         let heap = self.heap.as_ptr();
         // SAFETY: `heap` is live.
         let p = unsafe {
@@ -183,6 +239,7 @@ impl MimallocArena {
     /// Zig: `vtable_remap` — `mi_heap_realloc_aligned`.
     #[inline]
     pub fn remap(&self, ptr: NonNull<u8>, new_len: usize, align: usize) -> *mut u8 {
+        self.assert_owning_thread();
         // SAFETY: `self.heap` is live; `ptr` was allocated by this heap (or by
         // any mimalloc heap — `mi_free`/realloc accept cross-heap pointers).
         unsafe {
@@ -369,6 +426,7 @@ unsafe impl Allocator for &MimallocArena {
 
     #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        self.assert_owning_thread();
         let heap = self.heap.as_ptr();
         // SAFETY: `heap` is live.
         let p = unsafe {
@@ -412,6 +470,7 @@ unsafe impl Allocator for &MimallocArena {
         _old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        self.assert_owning_thread();
         // SAFETY: caller contract — `ptr` was allocated by this allocator with
         // `_old`; `new.size() >= _old.size()`.
         let p = unsafe {
@@ -435,6 +494,7 @@ unsafe impl Allocator for &MimallocArena {
         _old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        self.assert_owning_thread();
         // SAFETY: see `grow`.
         let p = unsafe {
             mimalloc::mi_heap_rezalloc_aligned(
@@ -457,6 +517,7 @@ unsafe impl Allocator for &MimallocArena {
         _old: Layout,
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
+        self.assert_owning_thread();
         // SAFETY: see `grow`; `new.size() <= _old.size()`.
         let p = unsafe {
             mimalloc::mi_heap_realloc_aligned(
@@ -658,7 +719,9 @@ impl<'a, T> ArenaVecExt<'a, T> for Vec<T, &'a MimallocArena> {
 // PORT STATUS
 //   source:     src/bun_alloc/MimallocArena.zig (292 lines)
 //   confidence: high
-//   notes:      `Borrowed`/`Default`/`ThreadLock` debug scaffolding dropped —
-//               Rust's `&MimallocArena` borrow + `Send` bound covers ownership;
-//               `getThreadLocalDefault` lives in `basic.rs` as `C_ALLOCATOR`.
+//   notes:      `Borrowed`/`Default` scaffolding dropped — Rust's
+//               `&MimallocArena` borrow + `Send` bound covers ownership;
+//               `ThreadLock` is mirrored as the debug-only `owning_thread`
+//               field guarding alloc/realloc; `getThreadLocalDefault` lives
+//               in `basic.rs` as `C_ALLOCATOR`.
 // ──────────────────────────────────────────────────────────────────────────

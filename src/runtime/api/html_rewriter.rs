@@ -119,7 +119,7 @@ fn eat_content_args(
     call_frame: &CallFrame,
 ) -> JsResult<(ZigString, Option<ContentOptions>)> {
     let args = call_frame.arguments_old::<2>();
-    let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+    let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
     let content = eat_zig_string(&mut iter, global)?;
     let opts = eat_content_options(&mut iter, global)?;
     Ok((content, opts))
@@ -377,7 +377,7 @@ impl HTMLRewriter {
 
     pub fn on(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let selector_name = eat_zig_string(&mut iter, global)?;
         let listener = eat_js_value(&mut iter, global)?;
         self.on_(global, selector_name, call_frame, listener)
@@ -385,14 +385,14 @@ impl HTMLRewriter {
 
     pub fn on_document(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let listener = eat_js_value(&mut iter, global)?;
         self.on_document_(global, listener, call_frame)
     }
 
     pub fn transform(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let response_value = eat_js_value(&mut iter, global)?;
         self.transform_(global, response_value)
     }
@@ -2504,28 +2504,28 @@ impl Element {
 
     pub fn on_end_tag(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let function = eat_js_value(&mut iter, global)?;
         self.on_end_tag_(global, function, call_frame)
     }
 
     pub fn get_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         self.get_attribute_(global, name)
     }
 
     pub fn has_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         Ok(self.has_attribute_(global, name))
     }
 
     pub fn set_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<2>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         let value = eat_zig_string(&mut iter, global)?;
         Ok(self.set_attribute_(call_frame, global, name, value))
@@ -2533,7 +2533,7 @@ impl Element {
 
     pub fn remove_attribute(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments_old::<1>();
-        let mut iter = ArgumentsSlice::init(unsafe { &*global.bun_vm() }, args.slice());
+        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
         let name = eat_zig_string(&mut iter, global)?;
         Ok(self.remove_attribute_(call_frame, global, name))
     }

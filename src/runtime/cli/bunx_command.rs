@@ -1129,12 +1129,12 @@ impl BunxCommand {
         );
         env_loader.map.put(b"BUN_INTERNAL_BUNX_INSTALL", b"true").expect("oom");
 
+        let envp = env_loader.map.create_null_delimited_env_map()?;
+
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: argv_to_use.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
 
-            // TODO(port): wire `this_transpiler.env.map.create_null_delimited_env_map()` once
-            // its return type matches `Option<*const *const c_char>`.
-            envp: None,
+            envp: Some(envp.as_ptr() as *const *const ::core::ffi::c_char),
 
             cwd: Box::<[u8]>::from(bunx_cache_dir),
             stderr: proc_sync::SyncStdio::Inherit,

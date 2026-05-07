@@ -446,14 +446,13 @@ impl StringOrBuffer {
         }
 
         if value.is_string() {
-            let str = bun_str::String::from_js(value, global)?;
-            // str.deref() on Drop
+            let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global)?);
             if str.is_empty() {
                 return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
             }
 
             use crate::webcore::encoding::BunStringEncode as _;
-            let out = str.encode(encoding);
+            let out = str.get().encode(encoding);
             global.vm().report_extra_memory(out.len());
 
             return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
@@ -596,8 +595,7 @@ impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
         // TODO(port): ComptimeStringMap::fromJSCaseInsensitive — emulated via
         // to_owned_slice + ASCII-lowercase phf lookup.
-        let str = bun_str::String::from_js(value, global)?;
-        // str.deref() on Drop
+        let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global)?);
         Ok(Self::from(str.to_utf8().slice()))
     }
 
@@ -621,8 +619,7 @@ impl Encoding {
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Option<Encoding>> {
-        let str = bun_str::String::from_js(value, global_object)?;
-        // str.deref() on Drop
+        let str = bun_str::OwnedString::new(bun_str::String::from_js(value, global_object)?);
         if str.is_empty() {
             return Ok(Some(default));
         }

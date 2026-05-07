@@ -530,6 +530,14 @@ impl JSValue {
         // SAFETY: pure FFI conversion (BigInt / cell fallback).
         unsafe { JSC__JSValue__toInt64(self) }
     }
+    /// `JSValue.toU32()` (JSValue.zig:2160) — clamp `toInt64()` into
+    /// `[0, u32::MAX]`. Negative → 0, overflow → `u32::MAX`. Distinct from
+    /// JS `ToUint32` (which wraps modulo 2³²); this is a Bun-side saturating
+    /// helper used by matchers/bindings that want a non-negative count.
+    #[inline]
+    pub fn to_u32(self) -> u32 {
+        self.to_int64().clamp(0, u32::MAX as i64) as u32
+    }
     /// `JSValue.isUInt32AsAnyInt()` (JSValue.zig) — true iff this value is a
     /// non-negative integer (Int32 fast-path or integral double in u32 range).
     #[inline]

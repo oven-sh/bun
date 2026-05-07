@@ -702,7 +702,7 @@ fn tokenize_args(
                 }
             }
 
-            LongOptionAndValue => {
+            TokenSubtype::LongOptionAndValue => {
                 // e.g. --foo=barconst
                 let equal_index = arg.index_of_ascii_char(b'=');
                 let long_option = arg.substring_with_len(2, equal_index.unwrap());
@@ -721,7 +721,7 @@ fn tokenize_args(
                 }))?;
             }
 
-            Positional => {
+            TokenSubtype::Positional => {
                 ctx.handle_token(Token::Positional {
                     index,
                     value: arg_ref,
@@ -819,7 +819,7 @@ impl<'a> ParseArgsState<'a> {
             obj.put(global, ZigString::static_("kind"), kind_jsvalue);
             match &token_generic {
                 Token::Option(token) => {
-                    obj.put(global, ZigString::static_("index"), JSValue::js_number(token.index));
+                    obj.put(global, ZigString::static_("index"), JSValue::js_number(token.index as f64));
                     obj.put(global, ZigString::static_("name"), token.name.as_js_value(global)?);
                     obj.put(
                         global,

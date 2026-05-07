@@ -380,6 +380,7 @@ pub fn install_isolated_packages(
                 install_root_dependencies,
                 manager,
                 lockfile,
+                resolutions,
             ) {
                 continue;
             }
@@ -720,6 +721,7 @@ pub fn install_isolated_packages(
                         install_root_dependencies,
                         manager,
                         lockfile,
+                        resolutions,
                     ) {
                         continue;
                     }

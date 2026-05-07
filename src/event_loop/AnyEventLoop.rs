@@ -378,6 +378,19 @@ impl EventLoopTask {
     }
 }
 
+/// RAII pairing for [`EventLoopHandle::enter`] / [`EventLoopHandle::exit`].
+/// Construct via [`EventLoopHandle::entered`]. `EventLoopHandle` is `Copy`, so
+/// the guard owns its own copy and the caller may keep using the handle.
+#[must_use = "dropping immediately exits the event loop scope"]
+pub struct EnteredEventLoop(EventLoopHandle);
+
+impl Drop for EnteredEventLoop {
+    #[inline]
+    fn drop(&mut self) {
+        self.0.exit();
+    }
+}
+
 impl EventLoopHandle {
     /// Wrap an erased `*mut jsc::EventLoop`. The vtable is read from the
     /// global `JS_EVENT_LOOP_VTABLE` static (registered by `bun_runtime::init()`).

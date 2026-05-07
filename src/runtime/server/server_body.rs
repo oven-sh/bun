@@ -902,6 +902,18 @@ impl ServePlugins {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
+    /// Bump the refcount and return an RAII guard that derefs on `Drop`.
+    ///
+    /// # Safety
+    /// `this` must originate from [`ServePlugins::init`] (carry `Box::into_raw`
+    /// provenance) so the eventual `deref_` can free it.
+    #[inline]
+    unsafe fn guard_ref(this: *const Self) -> ServePluginsRef {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_() };
+        ServePluginsRef(this)
+    }
+
     /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
     ///
     /// Takes a raw pointer (not `&self`) so the original `Box::into_raw` provenance

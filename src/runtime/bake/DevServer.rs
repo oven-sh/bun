@@ -2288,12 +2288,11 @@ impl DevServer {
                     let bundle_index: u32 = route_bundle_index.get();
                     let generation: u32 = route_bundle.client_script_generation;
                     // TODO(port): bun.String.createFormat with raw bytes-as-hex
-                    let s = BunString::create_format(format_args!(
+                    let s = OwnedString::new(BunString::create_format(format_args!(
                         concat!("/_bun/client", "/route-{:x}{:x}.js"),
                         // TODO(port): Zig used asBytes() (LE-layout hex), not numeric hex
                         bundle_index, generation,
-                    ));
-                    let _deref = scopeguard::guard((), |_| s.deref());
+                    )));
                     let js = s.to_js(global)?;
                     framework_bundle.cached_client_bundle_url = jsc::StrongOptional::create(js, global);
                     break 'str js;

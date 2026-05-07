@@ -433,12 +433,41 @@ impl Default for Features {
 
 impl Features {
     /// Map a `compat::Feature` enum variant to the same-named `Features` bitflag.
-    /// TODO(port): Zig did this via `@field(feature, @tagName(compat_feature))` reflection.
-    /// Phase B must fill in the variant → flag arms (only the variants that share a name
-    /// with a Features flag are ever passed at the comptime call sites).
-    pub fn from_compat(_compat_feature: css::compat::Feature) -> Features {
-        // TODO(port): proc-macro or hand-written match over compat::Feature variants
-        unreachable!("TODO(port): Features::from_compat mapping")
+    ///
+    /// Zig did this via `@field(feature, @tagName(compat_feature)) = true` reflection
+    /// inside `shouldCompileSame` (a `comptime` parameter, so a non-matching variant
+    /// was a compile error). Rust takes the variant at runtime, so the table is
+    /// hand-written: every `compat::Feature` whose snake_case tag matches a
+    /// `Features` field gets an arm; any other variant is a programmer error.
+    pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
+        use css::compat::Feature;
+        match compat_feature {
+            Feature::Nesting => Features::NESTING,
+            Feature::NotSelectorList => Features::NOT_SELECTOR_LIST,
+            Feature::DirSelector => Features::DIR_SELECTOR,
+            Feature::LangSelectorList => Features::LANG_SELECTOR_LIST,
+            Feature::IsSelector => Features::IS_SELECTOR,
+            Feature::TextDecorationThicknessPercent => Features::TEXT_DECORATION_THICKNESS_PERCENT,
+            Feature::MediaIntervalSyntax => Features::MEDIA_INTERVAL_SYNTAX,
+            Feature::MediaRangeSyntax => Features::MEDIA_RANGE_SYNTAX,
+            Feature::CustomMediaQueries => Features::CUSTOM_MEDIA_QUERIES,
+            Feature::ClampFunction => Features::CLAMP_FUNCTION,
+            Feature::ColorFunction => Features::COLOR_FUNCTION,
+            Feature::OklabColors => Features::OKLAB_COLORS,
+            Feature::LabColors => Features::LAB_COLORS,
+            Feature::P3Colors => Features::P3_COLORS,
+            Feature::HexAlphaColors => Features::HEX_ALPHA_COLORS,
+            Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
+            Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
+            Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
+            // Zig: `@field` on a tag with no matching `Features` field is a
+            // *compile* error; in Rust the equivalent guard is a runtime
+            // unreachable since `compat_feature` is no longer `comptime`.
+            _ => unreachable!(
+                "compat::Feature::{:?} has no same-named targets::Features flag",
+                compat_feature
+            ),
+        }
     }
 }
 
@@ -446,6 +475,6 @@ impl Features {
 // PORT STATUS
 //   source:     src/css/targets.zig (349 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      should_compile_same needs compat::Feature→Features mapping (Zig @field reflection); BROWSER_DEFAULT uses LazyLock (Zig comptime); labeled-block borrow of entries_buf may need reshaping for borrowck; local parse_ascii_u* helpers stand in for bun_str::strings::parse_int
+//   todos:      3
+//   notes:      BROWSER_DEFAULT uses LazyLock (Zig comptime); labeled-block borrow of entries_buf may need reshaping for borrowck; local parse_ascii_u* helpers stand in for bun_str::strings::parse_int
 // ──────────────────────────────────────────────────────────────────────────

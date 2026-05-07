@@ -63,18 +63,28 @@ impl AnyTask {
 // Zig: `pub fn New(comptime Type: type, comptime Callback: anytype) type { return struct { ... } }`
 //
 // The Zig version monomorphizes a `wrap` shim per (Type, Callback) pair so that
-// `AnyTask` only needs to store one erased fn pointer. Rust cannot take a function
-// value as a const generic on stable, so the `Callback` parameter cannot be expressed
-// 1:1 here.
+// `AnyTask` only needs to store one erased fn pointer. Stable Rust cannot take a
+// function value as a const generic, so `Callback` is supplied via the
+// [`AnyTaskCallback`] trait instead — `New::<T>::wrap` is then a real
+// monomorphized `fn(*mut c_void) -> JsResult<()>` storable in
+// [`AnyTask::callback`], exactly like Zig's `wrap`.
 //
-// TODO(port): Phase B — pick one:
-//   (a) require `T: AnyTaskCallback` (trait with `fn run(&mut self) -> JsResult<()>`)
-//       so `wrap::<T>` is a real monomorphized fn pointer, or
-//   (b) have callers hand-write the `*mut c_void -> JsResult<()>` shim and call
-//       `AnyTask { ctx, callback }` directly (most call sites already know their type).
+// Call sites that bound a one-off closure in Zig (`AnyTask.New(T, &someFn)`)
+// either `impl AnyTaskCallback for T` or build `AnyTask { ctx, callback }`
+// directly with a hand-written shim — both are equivalent.
+
+/// Supplies the `comptime Callback` that Zig's `AnyTask.New(Type, Callback)`
+/// captured. Implement this on `T` and `New::<T>::wrap` becomes the type-erased
+/// trampoline stored in [`AnyTask::callback`].
+pub trait AnyTaskCallback {
+    /// Zig: `Callback(@as(*Type, @ptrCast(@alignCast(this.?))))`.
+    /// `this` is the exact pointer passed to [`New::init`].
+    fn run_any_task(this: *mut Self) -> JsResult<()>;
+}
+
 pub struct New<T>(PhantomData<fn(*mut T)>);
 
-impl<T> New<T> {
+impl<T: AnyTaskCallback> New<T> {
     pub fn init(ctx: &mut T) -> AnyTask {
         AnyTask {
             callback: Self::wrap,
@@ -83,21 +93,20 @@ impl<T> New<T> {
     }
 
     pub fn wrap(this: *mut c_void) -> JsResult<()> {
-        // SAFETY: `this` was stored from a `*mut T` in `init` above.
+        // SAFETY: `this` was stored from a `*mut T` in `init` above; Zig's
+        // `@ptrCast(@alignCast(this.?))` is the same cast.
         let this: *mut T = this.cast::<T>();
         debug_assert!(!this.is_null());
-        // PERF(port): was `@call(bun.callmod_inline, Callback, .{this})` — profile in Phase B
-        // TODO(port): invoke the comptime `Callback` here once the trait/const-generic
-        // strategy is chosen (see comment on `New` above).
-        let _ = this;
-        unreachable!("TODO(port): comptime Callback dispatch");
+        // PERF(port): was `@call(bun.callmod_inline, Callback, .{this})` — the
+        // trait call is statically dispatched and inlines identically.
+        <T as AnyTaskCallback>::run_any_task(this)
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/event_loop/AnyTask.zig (38 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      `New`'s `comptime Callback: anytype` has no stable Rust const-generic equivalent; Phase B must pick trait-based dispatch or inline shims at call sites.
+//   confidence: high
+//   todos:      1
+//   notes:      `New`'s `comptime Callback: anytype` mapped to `AnyTaskCallback` trait so `wrap::<T>` is a real monomorphized fn pointer.
 // ──────────────────────────────────────────────────────────────────────────

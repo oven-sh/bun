@@ -6919,6 +6919,10 @@ impl<'a> Resolver<'a> {
             }
         }
 
+        // PORT NOTE: 1:1 with Zig — `resolver.zig` ends this function with
+        // `bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for
+        // non-root packages", .{})`. The non-root path is genuinely unimplemented
+        // in the Zig source; this is not a porting stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
     }
 

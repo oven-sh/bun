@@ -885,13 +885,13 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct WrappedWriter<'w, W: bun_io::Write> {
+pub struct WrappedWriter<'w, W: bun_io::Write + ?Sized> {
     pub ctx: &'w mut W,
     pub failed: bool,
     pub estimated_line_length: Option<&'w mut usize>,
 }
 
-impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
+impl<'w, W: bun_io::Write + ?Sized> WrappedWriter<'w, W> {
     pub fn new(ctx: &'w mut W) -> Self {
         Self { ctx, failed: false, estimated_line_length: None }
     }

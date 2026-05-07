@@ -14,10 +14,6 @@ use std::collections::HashMap;
 
 pub use bun_mimalloc_sys::mimalloc;
 
-// ── debug-log no-ops (real impl in bun_core; T0 alloc < core so stub here) ──
-#[macro_export] macro_rules! declare_scope { ($($t:tt)*) => {}; }
-#[macro_export] macro_rules! scoped_log { ($($t:tt)*) => {}; }
-
 // ── Allocator vtable (mirrors std.mem.Allocator) ──────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -39,10 +39,7 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
             // Binding functions can return `error.OutOfMemory` and `error.JSError`.
             // Others like `error.Overflow` from `std.math.add` must be converted.
             // Remember to be descriptive.
-            Err(global.throw_pretty(
-                "Integer overflow while adding",
-                format_args!("Integer overflow while adding"),
-            ))
+            Err(global.throw_pretty(format_args!("Integer overflow while adding")))
         }
     }
 }

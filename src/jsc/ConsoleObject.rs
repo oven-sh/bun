@@ -4756,13 +4756,10 @@ pub mod formatter {
                             if needs_space { writer.space(); }
                             needs_space = false;
 
-                            // TODO(port): `bun.String.trunc(128)` — `bun_string::String`
-                            // has no `trunc` yet. Prop names are short in practice;
-                            // print untruncated until the helper lands.
                             writer.print(format_args!(
                                 "{}{}{}={}",
                                 pf!("<r><blue>"),
-                                prop,
+                                prop.trunc(128),
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));

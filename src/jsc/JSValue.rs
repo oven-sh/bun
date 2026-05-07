@@ -11,6 +11,7 @@
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 
+use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     bun_string_jsc, ffi, host_fn, AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator,
     JSGlobalObject, JSInternalPromise, JSObject, JSPromise, JSString, JSType, JsClass, JsError,
@@ -1181,25 +1182,10 @@ impl Drop for Protected {
     fn drop(&mut self) { self.0.unprotect(); }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `JSValue.Hash` — `std.hash_map` adapter for using JSValue as a key
-// (Zig: JSValue.zig). Hashes the raw encoded bit-pattern.
-// ──────────────────────────────────────────────────────────────────────────
-pub mod js_value_hash {
-    use super::JSValue;
-    #[derive(Default, Clone, Copy)]
-    pub struct Hash;
-    impl Hash {
-        #[inline] pub fn hash(_: &Self, v: JSValue) -> u64 {
-            bun_wyhash::hash(&v.0.to_ne_bytes())
-        }
-        #[inline] pub fn eql(_: &Self, a: JSValue, b: JSValue) -> bool { a.0 == b.0 }
-    }
-}
-impl JSValue {
-    #[allow(non_upper_case_globals)]
-    pub const Hash: js_value_hash::Hash = js_value_hash::Hash;
-}
+// `JSValue.Hash` (Zig: `std.hash_map` Context adapter) is just
+// `core::hash::Hash` in Rust — hash the raw encoded bit-pattern. Callers that
+// want wyhash supply it as the map's `BuildHasher`, not via a Zig-style
+// context struct.
 impl core::hash::Hash for JSValue {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) { self.0.hash(state) }
 }
@@ -1409,7 +1395,6 @@ unsafe extern "C" {
         ctx: *mut c_void,
         deallocator: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
     ) -> JSValue;
-    fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, ctx: *mut c_void);
     fn JSC__JSValue__dateInstanceFromNullTerminatedString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
     fn JSC__JSValue__dateInstanceFromNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
     fn JSC__JSValue__fromInt64NoTruncate(global: *const JSGlobalObject, i: i64) -> JSValue;

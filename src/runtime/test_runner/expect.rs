@@ -2394,7 +2394,7 @@ impl ExpectCustomAsymmetricMatcher {
         &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
-        writer: &mut impl bun_io::Write,
+        writer: &mut (impl bun_io::Write + ?Sized),
         dont_throw: bool,
     ) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set (mixes JsError and io::Error)

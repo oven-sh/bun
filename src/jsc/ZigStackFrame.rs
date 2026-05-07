@@ -172,7 +172,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                 };
                 if not_root && source_slice.starts_with(self.root_path) {
                     let root_path = strings::without_trailing_slash(self.root_path);
-                    let relative_path = strings::paths::without_leading_path_separator(
+                    let relative_path = strings::without_leading_path_separator(
                         &source_slice[self.root_path.len()..],
                     );
                     f.write_str(Output::pretty_fmt!("<d>", true))?;

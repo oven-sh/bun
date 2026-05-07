@@ -43,17 +43,6 @@ impl GlobalObjectRef for crate::JSGlobalObject {
     }
 }
 
-impl GlobalObjectRef for crate::js_global_object::JSGlobalObject {
-    #[inline]
-    fn as_global_ptr(&self) -> *mut c_void {
-        self as *const Self as *mut c_void
-    }
-    #[inline]
-    fn throw_js_value(&self, value: JSValue) -> JsError {
-        self.throw_value(value)
-    }
-}
-
 type ErrorCodeInt = u16;
 
 /// `@import("ErrorCode").Error` — `enum(u16)` in Zig codegen, `Bun::ErrorCode`

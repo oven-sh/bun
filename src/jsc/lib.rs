@@ -195,8 +195,8 @@ pub mod schema_api {
 #[path = "JSValue.rs"] pub mod js_value;
 
 pub use self::js_value::{
-    js_value_hash, BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum,
-    JSValue, PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, ProxyInternalField,
+    BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
+    PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, ProxyInternalField,
     SerializedFlags, SerializedScriptValue,
 };
 

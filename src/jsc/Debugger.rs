@@ -232,13 +232,14 @@ impl Debugger {
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
         // SAFETY: `this` is the live per-thread VM; short-lived `&mut`.
-        let Some(debugger) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+        let Some(dbg) = (unsafe { (*this).debugger.as_deref_mut() }) else {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
-        if !debugger.must_block_until_connected {
+        if !dbg.must_block_until_connected {
             return;
         }
+        let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
         // Spec: `defer debugger.must_block_until_connected = false;`
         let _reset = scopeguard::guard(this, |this| {
             // SAFETY: `this` is the live per-thread VM; deferred to scope exit.
@@ -260,13 +261,11 @@ impl Debugger {
                 "waitForDebugger: {}",
                 bun_core::Output::ElapsedFormatter {
                     colors: bun_core::Output::enable_ansi_colors_stderr(),
-                    duration_ns: (bun_core::nano_timestamp() - bun_core::start_time()) as u64,
+                    duration_ns: (bun_core::time::nano_timestamp() - bun_core::start_time()) as u64,
                 }
             );
         }
 
-        let ctx_id = debugger.script_execution_context_id;
-        let wait = debugger.wait_for_connection;
         // SAFETY: `Bun__ensureDebugger` is the C++ inspector setup hook;
         // `ctx_id` was returned by `Bun__createJSDebugger` in `create()`.
         unsafe { Bun__ensureDebugger(ctx_id, wait != Wait::Off) };
@@ -325,7 +324,7 @@ impl Debugger {
                         bun_core::scoped_log!(
                             debugger,
                             "waited: {}ns",
-                            (bun_core::nano_timestamp() - bun_core::start_time()) as i64
+                            (bun_core::time::nano_timestamp() - bun_core::start_time()) as i64
                         );
                     }
                 }
@@ -356,7 +355,7 @@ impl Debugger {
                         bun_core::scoped_log!(
                             debugger,
                             "waited: {}ns",
-                            (bun_core::nano_timestamp() - bun_core::start_time()) as i64
+                            (bun_core::time::nano_timestamp() - bun_core::start_time()) as i64
                         );
                     }
 
@@ -397,10 +396,10 @@ impl Debugger {
 
         // SAFETY: `this` is the live per-thread VM; caller (high-tier
         // `ensure_debugger`) populated `debugger` before calling.
-        let debugger = unsafe { (*this).debugger.as_deref_mut() }
+        let dbg = unsafe { (*this).debugger.as_deref_mut() }
             .expect("Debugger::create: vm.debugger is None");
         // SAFETY: `global_object` is a live opaque JSC handle.
-        debugger.script_execution_context_id =
+        dbg.script_execution_context_id =
             unsafe { Bun__createJSDebugger(global_object as *const _ as *mut _) };
 
         // SAFETY: `this` is the live per-thread VM; short-lived borrow.
@@ -431,10 +430,10 @@ impl Debugger {
 
         // Re-borrow after `ensure_waker` (which may touch `*this`).
         // SAFETY: `this` is the live per-thread VM.
-        let debugger = unsafe { (*this).debugger.as_deref_mut() }.unwrap();
-        if debugger.wait_for_connection != Wait::Off {
-            debugger.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-            debugger.must_block_until_connected = true;
+        let dbg = unsafe { (*this).debugger.as_deref_mut() }.unwrap();
+        if dbg.wait_for_connection != Wait::Off {
+            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+            dbg.must_block_until_connected = true;
         }
         Ok(())
     }
@@ -623,12 +622,12 @@ pub extern "C" fn Debugger__didConnect() {
     // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
     // on the JS thread. Spec: `this.debugger.?` would safety-panic; we early-
     // return defensively (extern "C" — unwinding is UB).
-    let Some(debugger) = (unsafe { (*this).debugger.as_deref_mut() }) else {
+    let Some(dbg) = (unsafe { (*this).debugger.as_deref_mut() }) else {
         return;
     };
-    if debugger.wait_for_connection != Wait::Off {
-        debugger.wait_for_connection = Wait::Off;
-        debugger.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+    if dbg.wait_for_connection != Wait::Off {
+        dbg.wait_for_connection = Wait::Off;
+        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         // SAFETY: `event_loop()` returns the raw `*mut EventLoop` slot; live
         // for VM lifetime. `wakeup()` takes `&self` (thread-safe).
         unsafe { (*(*this).event_loop()).wakeup() };

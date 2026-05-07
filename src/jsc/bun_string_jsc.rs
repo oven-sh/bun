@@ -355,26 +355,23 @@ pub mod unicode_testing_apis {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(global_this.throw(
-                "toUTF16AllocSentinel: expected 1 argument",
-                format_args!("toUTF16AllocSentinel: expected 1 argument"),
-            ));
+            return Err(global_this.throw(format_args!(
+                "toUTF16AllocSentinel: expected 1 argument"
+            )));
         }
         let Some(array_buffer) = arguments[0].as_array_buffer(global_this) else {
-            return Err(global_this.throw(
-                "toUTF16AllocSentinel: expected a Uint8Array",
-                format_args!("toUTF16AllocSentinel: expected a Uint8Array"),
-            ));
+            return Err(global_this.throw(format_args!(
+                "toUTF16AllocSentinel: expected a Uint8Array"
+            )));
         };
         let bytes = array_buffer.byte_slice();
 
         let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
             Ok(r) => r,
             Err(err) => {
-                return Err(global_this.throw(
-                    "toUTF16AllocForReal failed",
-                    format_args!("{err:?} toUTF16AllocForReal failed"),
-                ));
+                return Err(
+                    global_this.throw(format_args!("{err:?} toUTF16AllocForReal failed"))
+                );
             }
         };
 

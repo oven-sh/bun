@@ -47,5 +47,5 @@ impl DeferredError {
 //   source:     src/jsc/DeferredError.zig (34 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      `from` collapses (comptime fmt, args: anytype) into fmt::Arguments; bun_str::String to_*_instance methods need StringJsc ext trait in this crate
+//   notes:      `from` collapses (comptime fmt, args: anytype) into fmt::Arguments; to_*_instance reached via StringJsc/ZigStringJsc ext traits
 // ──────────────────────────────────────────────────────────────────────────

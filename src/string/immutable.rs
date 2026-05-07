@@ -3324,6 +3324,11 @@ pub fn without_trailing_slash(this: &[u8]) -> &[u8] {
     href
 }
 
+// Zig: `pub const withoutLeadingPathSeparator = paths_.withoutLeadingPathSeparator;`
+// (immutable.zig:2377) — re-export from the `paths` submodule so callers can use
+// `strings::without_leading_path_separator` directly, matching the Zig namespace.
+pub use paths::without_leading_path_separator;
+
 /// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
 /// followed by at least one more byte (Zig: `s.len > 2`).
 #[inline]

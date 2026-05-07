@@ -16,6 +16,7 @@ use bun_standalone_graph::StandaloneModuleGraph;
 use bun_js_parser::ast::Index;
 use bun_options_types::schema::api; // bun.schema.api
 use crate::webcore::Blob;
+use crate::webcore::blob::BlobExt;
 use bun_collections::{StringHashMap, StringSet, StringMap, StringArrayHashMap};
 use bun_string::MutableString;
 
@@ -984,9 +985,10 @@ pub mod js_bundler {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
-                        return Err(global_this.throw_invalid_arguments(
-                            &format!("define \"{}\" must be a JSON string", prop),
-                        ));
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "define \"{}\" must be a JSON string",
+                            prop
+                        )));
                     }
 
                     let mut val = ZigString::init(b"");
@@ -1425,7 +1427,7 @@ pub mod js_bundler {
         global: *mut JSGlobalObject,
     ) -> JSValue {
         // SAFETY: called from C++ with valid pointers
-        unsafe { jsc::to_js_host_call(&*global, (&mut *load).on_defer(&*global)) }
+        unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
     // TODO(port): move to runtime_sys
@@ -1882,7 +1884,7 @@ impl BuildArtifact {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // PERF(port): was @call(bun.callmod_inline, ...)
-        Blob::get_text(&mut this.blob, global_this, callframe)
+        this.blob.get_text(global_this, callframe)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1891,7 +1893,7 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Blob::get_json(&mut this.blob, global_this, callframe)
+        this.blob.get_json(global_this, callframe)
     }
 
     #[bun_jsc::host_fn(method)]

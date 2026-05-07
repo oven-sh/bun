@@ -207,9 +207,9 @@ mod static_adapters {
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
-            return Err(g.throw_invalid_arguments(
+            return Err(g.throw_invalid_arguments(format_args!(
                 "expected string, buffer, TypedArray, or Blob",
-            ));
+            )));
         };
         let output = if a1.is_undefined_or_null() {
             None
@@ -430,7 +430,7 @@ pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     use bun_jsc::StringJsc as _;
     let arguments = callframe.arguments_old::<1>();
     if arguments.len < 1 {
-        return Err(global_this.throw("shell escape expected at least 1 argument"));
+        return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
     }
 
     let jsval = arguments.ptr[0];

@@ -1236,8 +1236,8 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
 
         let args = &parent.args;
         let result = node_fs._copy_single_file_sync(
-            this.src,
-            this.dest,
+            this.src(),
+            this.dest(),
             constants::Copyfile::from_raw(
                 if args.flags.error_on_exist || !args.flags.force { constants::COPYFILE_EXCL } else { 0i32 },
             ),
@@ -1254,32 +1254,22 @@ impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
                     parent.finish_concurrently(result);
                 }
                 Maybe::Ok(_) => {
-                    parent.on_copy(this.src, this.dest);
+                    parent.on_copy(this.src(), this.dest());
                 }
             }
         }
 
-        // SAFETY: `this` was Box::leak'd in create(); destroyed exactly once here
+        // SAFETY: `this` was `Box::into_raw`'d in create(); destroyed exactly once here.
         unsafe { Self::destroy(this as *mut Self) };
         // Must be the very last use of the parent: when the count reaches
         // zero, runFromJSThread is enqueued and may destroy the parent.
         NewAsyncCpTask::on_subtask_done(cp_task);
     }
 
-    /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
+    /// SAFETY: `this` must be the pointer `Box::into_raw`'d in `create()`; called exactly once.
     pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is a live Box-leaked allocation
-        let this_ref = unsafe { &mut *this };
-        // There is only one path buffer for both paths. 2 extra bytes are the nulls at the end of each
-        let total_len = this_ref.src.len() + this_ref.dest.len() + 2;
-        // SAFETY: src.ptr is the start of a heap allocation of `total_len` OSPathChar
-        unsafe {
-            drop(Box::from_raw(core::slice::from_raw_parts_mut(
-                this_ref.src.as_ptr() as *mut OSPathChar,
-                total_len,
-            )));
-        }
-        // SAFETY: paired with Box::leak in create()
+        // SAFETY: paired with `Box::into_raw` in `create()`. Dropping the box
+        // also frees the owned `path_buf` (the single `<src>\0<dest>\0` buffer).
         drop(unsafe { Box::from_raw(this) });
     }
 }

@@ -856,9 +856,10 @@ impl RunCommand {
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
-        // `vm.main` is a BACKREF (`*const [u8]`); `entry_path` borrows the
-        // standalone graph's `entryPoint().name` (process-lifetime).
-        vm.set_main(entry_path);
+        // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
+        // buffer; the `Box` is moved into `RUN` below (heap address stable
+        // across the move), so the backref stays valid for process lifetime.
+        vm.set_main(&entry_path);
 
         // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so

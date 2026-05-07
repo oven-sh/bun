@@ -3138,6 +3138,7 @@ impl VirtualMachine {
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
+            transform_options: opts.args,
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,

@@ -38,14 +38,11 @@ where
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     // PORT NOTE: Zig `slice.items(.field)` → derive(MultiArrayElement)-generated `items_<field>()`.
-    // PORT NOTE: reshaped for borrowck — Zig's `MultiArrayList.Slice.items(.field)`
-    // hands out independent column slices; the Rust trait borrows `&packages_slice`
-    // for each, so we can't hold multiple typed-slice locals concurrently. Index
-    // per-use instead (same memory access pattern, just no aliased borrows).
-    debug_assert!({
-        let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
-        workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root
-    });
+    let workspace_res = &packages_slice.items_resolution()[workspace_package_id as usize];
+    let names = packages_slice.items_name();
+    let pkg_metas = packages_slice.items_meta();
+    debug_assert!(workspace_res.tag == resolution::Tag::Workspace || workspace_res.tag == resolution::Tag::Root);
+    let resolutions_list = packages_slice.items_resolutions();
     let mut printed_section_header = false;
     let mut printed_update = false;
 
@@ -269,7 +266,8 @@ where
             (
                 bstr::BStr::new(dependency.name.slice(string_buf)),
                 update_info.version.fmt(update_info.version_buf),
-                update_info.resolution.value.npm.version.fmt(string_buf),
+                // SAFETY: `update_info` is only constructed when `resolution.tag == Npm`.
+                unsafe { update_info.resolution.value.npm }.version.fmt(string_buf),
             ),
         ),
     )?;
@@ -547,7 +545,11 @@ where
                     bin,
                     i: 0,
                     done: false,
+                    dir_iterator: None,
                     package_name: name,
+                    // PORT NOTE: Zig default `bun.invalid_fd.stdDir()` — never read on
+                    // the .map/.file/.named_file paths this arm covers.
+                    destination_node_modules: SysDir::from_fd(Fd::INVALID),
                     buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),

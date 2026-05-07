@@ -68,10 +68,11 @@ impl UntrustedCommand {
         // reads `load_result.serializer_result` (no `ok.lockfile` deref) and
         // writes through `manager.lockfile`, which is the same heap allocation
         // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
-        // here. Consumes `load_lockfile` so the borrow ends.
-        unsafe { update_lockfile_if_needed(&mut *pm_raw, load_lockfile)? };
+        // here.
+        unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
+        drop(load_lockfile);
 
-        // SAFETY: `load_lockfile` consumed above; `pm_raw` is the only path to
+        // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
         // the singleton for the rest of this fn (same as the original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         // SAFETY: `pm.log` is the non-null `*mut logger::Log` set at

@@ -566,6 +566,93 @@ impl DevServer {
                 resp.end(b"", false);
             }
         }
+        Ok(())
+    }
+
+    /// DevServer.zig `getOrPutRouteBundle` (DevServer.zig:3256).
+    pub fn get_or_put_route_bundle(
+        &mut self,
+        route: route_bundle::UnresolvedIndex<'_>,
+    ) -> Result<route_bundle::Index, bun_alloc::AllocError> {
+        // Fast path: already registered.
+        if let Some(existing) = match &route {
+            route_bundle::UnresolvedIndex::Framework(route_index) => {
+                self.router.route_ptr(*route_index).bundle
+            }
+            route_bundle::UnresolvedIndex::Html(html) => html.dev_server_id,
+        } {
+            return Ok(existing);
+        }
+
+        self.graph_safety_lock.lock();
+        let _unlock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
+
+        let bundle_index = route_bundle::Index::init(self.route_bundles.len() as u32);
+
+        let data = match &route {
+            route_bundle::UnresolvedIndex::Framework(route_index) => {
+                route_bundle::Data::Framework(route_bundle::Framework {
+                    route_index: *route_index,
+                    evaluate_failure: None,
+                    cached_module_list: jsc::StrongOptional::empty(),
+                    cached_client_bundle_url: jsc::StrongOptional::empty(),
+                    cached_css_file_array: jsc::StrongOptional::empty(),
+                })
+            }
+            route_bundle::UnresolvedIndex::Html(html) => {
+                let incremental_graph_index = self
+                    .client_graph
+                    .insert_stale_extra(&html.bundle.path, false, true)?;
+                self.client_graph.bundled_files.values_mut()
+                    [incremental_graph_index.get() as usize]
+                    .html_route_bundle_index = Some(bundle_index);
+                // SAFETY: `html` is a live IntrusiveRc-managed allocation;
+                // matched by the `deref` in `route_bundle::Html` drop.
+                unsafe {
+                    bun_ptr::RefCount::<crate::server::html_bundle::HTMLBundleRoute>::ref_(
+                        *html as *const _ as *mut _,
+                    )
+                };
+                route_bundle::Data::Html(route_bundle::Html {
+                    html_bundle: *html as *const _ as *mut _,
+                    bundled_file: incremental_graph_index,
+                    script_injection_offset: None,
+                    cached_response: None,
+                    bundled_html_text: None,
+                })
+            }
+        };
+
+        self.route_bundles.push(route_bundle::RouteBundle {
+            data,
+            client_script_generation: {
+                let mut buf = [0u8; 4];
+                bun_core::csprng(&mut buf);
+                u32::from_ne_bytes(buf)
+            },
+            server_state: route_bundle::State::Unqueued,
+            client_bundle: None,
+            active_viewers: 0,
+        });
+
+        // Write the index back to the route's slot.
+        match route {
+            route_bundle::UnresolvedIndex::Framework(route_index) => {
+                self.router.route_ptr_mut(route_index).bundle = Some(bundle_index);
+            }
+            route_bundle::UnresolvedIndex::Html(html) => {
+                // PORT NOTE: `UnresolvedIndex::Html` borrows `&HTMLBundleRoute`
+                // (LIFETIMES.tsv BORROW_PARAM); Zig stored a `*HTMLBundle.Route`
+                // and mutated through it. Cast to obtain the writable slot —
+                // the route outlives this call and is single-threaded here.
+                // SAFETY: see PORT NOTE above; no other &mut alias active.
+                unsafe {
+                    (*(html as *const _ as *mut crate::server::html_bundle::HTMLBundleRoute))
+                        .dev_server_id = Some(bundle_index);
+                }
+            }
+        }
+        Ok(bundle_index)
     }
 
     /// DevServer.zig `onAssetRequest` — serves `/_bun/asset/{hash}.ext`.

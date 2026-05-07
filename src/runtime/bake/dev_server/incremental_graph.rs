@@ -247,9 +247,8 @@ struct TempLookup {
 /// `bake.Side` so `File` resolves to `ServerFile`/`ClientFile`. Mirrored here
 /// via `adt_const_params` on `bake::Side`; `File` itself is still the folded
 /// union (see TODO above) until a trait dispatch picks the per-side layout.
-/// Default `SIDE = Server` keeps not-yet-annotated call sites compiling.
 #[derive(Default)]
-pub struct IncrementalGraph<const SIDE: bake::Side = { bake::Side::Server }> {
+pub struct IncrementalGraph<const SIDE: bake::Side> {
     /// Keys are absolute paths for the "file" namespace (owned). Index = `FileIndex`.
     pub bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
@@ -259,7 +258,7 @@ pub struct IncrementalGraph<const SIDE: bake::Side = { bake::Side::Server }> {
     /// Start of a file's "imports" linked list (files this file imports).
     pub first_import: Vec<Option<EdgeIndex>>,
     /// Edge storage; indices into this are `EdgeIndex`.
-    pub edges: Vec<Edge>,
+    pub edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub edges_free_list: Vec<EdgeIndex>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
@@ -355,7 +354,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.stale_files.bytes().len();
         graph += self.first_dep.capacity() * size_of::<Option<EdgeIndex>>();
         graph += self.first_import.capacity() * size_of::<Option<EdgeIndex>>();
-        graph += self.edges.capacity() * size_of::<Edge>();
+        graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
         match SIDE {
             Side::Client => {
@@ -430,7 +429,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    fn new_edge(&mut self, edge: Edge) -> Result<EdgeIndex, bun_alloc::AllocError> {
+    fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_alloc::AllocError> {
         if let Some(index) = self.edges_free_list.pop() {
             self.edges[index.get() as usize] = edge;
             return Ok(index);

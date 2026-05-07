@@ -2485,6 +2485,5 @@ pub extern "C" fn Bun__BodyValueBufferer__onRejectStream(
 // PORT STATUS
 //   source:     src/runtime/webcore/Body.zig (1833 lines)
 //   confidence: medium
-//   todos:      26
-//   notes:      Value/PendingValue carry <'a> from JSC_BORROW global per LIFETIMES.tsv — cascades widely; Mixin reshaped to trait (BodyMixin + BodyOwnerJs); WTFStringImpl mapped to Arc<> per TSV but is intrusively refcounted (verify); several borrowck reshapes around &mut self in match arms; deinit() renamed reset() (in-place state transition, not Drop); ValueBufferer callback receives bitwise ValueError copies to match Zig — ownership needs Phase B audit.
+//   notes:      Mixin reshaped to trait (BodyMixin + BodyOwnerJs); WTFStringImpl mapped to Arc<> per TSV but is intrusively refcounted (verify); several borrowck reshapes around &mut self in match arms; deinit() renamed reset() (in-place state transition, not Drop); ValueBufferer callback receives ref-bumped ValueError dupes (Zig passed bitwise copies — ownership audited).
 // ──────────────────────────────────────────────────────────────────────────

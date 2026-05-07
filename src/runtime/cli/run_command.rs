@@ -273,12 +273,6 @@ impl RunCommand {
                                 }
 
                                 // implicit yarn commands
-                                // TODO(b2-blocked): `crate::cli::list_of_yarn_commands`
-                                // is ``-gated (duplicate phf_set! keys).
-                                // Until it un-gates, fall through (don't rewrite the
-                                // bare-subcommand form) so we never misclassify an
-                                // actual yarn builtin as a script.
-                                
                                 if !crate::cli::list_of_yarn_commands::ALL_YARN_COMMANDS
                                     .contains(yarn_cmd)
                                 {
@@ -396,13 +390,8 @@ impl RunCommand {
 
         for part in passthrough {
             copy_script.push(b' ');
-            // PORT NOTE: `crate::shell::needs_escape_utf8_ascii_latin1` /
-            // `escape_8bit` live in `shell_body.rs`, which is ``.
-            // Until the shell-escape surface re-exports, use the inlined
-            // byte-identical copies in `shell_escape_inline` so the live path
-            // is never lossy (run_command.zig:233-239).
-            if shell_escape_inline::needs_escape_utf8_ascii_latin1(part) {
-                shell_escape_inline::escape_8bit(part, &mut copy_script, true);
+            if needs_escape_utf8_ascii_latin1(part) {
+                escape_8bit::<true>(part, &mut copy_script).unwrap_or_oom();
                 continue;
             }
             copy_script.extend_from_slice(part);

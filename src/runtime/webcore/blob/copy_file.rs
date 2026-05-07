@@ -76,6 +76,7 @@ impl MkdirpTarget for CopyFile<'_> {
 }
 
 impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
     fn run(&mut self) {
         self.run_async();
     }

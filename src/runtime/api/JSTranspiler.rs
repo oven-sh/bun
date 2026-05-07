@@ -710,6 +710,7 @@ pub type AsyncTransformTask<'a> =
 pub type AsyncTransformEventLoopTask<'a> = AsyncTransformTask<'a>;
 
 impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncTransformTask;
     fn run(&mut self) {
         TransformTask::run(self)
     }

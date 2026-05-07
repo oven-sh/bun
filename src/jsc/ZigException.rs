@@ -2,16 +2,16 @@ use core::ffi::{c_int, c_void};
 use core::mem::MaybeUninit;
 use core::ptr;
 
-use bun_str::String;
+use bun_string::String;
 use bun_url::URL as ZigURL;
 use crate::schema_api as api;
 
-use bun_jsc::{
-    Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, VirtualMachine, ZigStackFrame,
-    ZigStackTrace,
+use crate::module_loader::ModuleLoader;
+use crate::virtual_machine::VirtualMachine;
+use crate::{
+    Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace,
 };
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn ZigException__collectSourceLines(
         js_value: JSValue,
@@ -106,20 +106,20 @@ impl ZigException {
         root_path: &[u8],
         origin: Option<&ZigURL>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let name_slice = self.name.to_utf8();
         let message_slice = self.message.to_utf8();
 
         let name = name_slice.slice();
         let message = message_slice.slice();
-        // PORT NOTE: `defer name_slice.deinit()` / `defer message_slice.deinit()` deleted —
-        // `Utf8Slice` drops at scope exit.
+        // PORT NOTE: `defer name_slice.deinit()` / `defer message_slice.deinit()` —
+        // `ZigStringSlice` drops at scope exit.
 
         let mut is_empty = true;
         let mut api_exception = api::JsException {
-            runtime_type: self.runtime_type as u16,
-            code: self.r#type as u16,
-            // TODO(port): verify integer width of runtime_type/code in api::JsException
+            // PORT NOTE: `@intFromEnum` — JSRuntimeType/JSErrorCode are
+            // transparent newtypes over u16/u8 (non-exhaustive Zig enums).
+            runtime_type: self.runtime_type.0,
+            code: u16::from(self.r#type.0),
             ..Default::default()
         };
 
@@ -154,8 +154,7 @@ pub struct Holder {
     pub frames: [ZigStackFrame; Self::FRAME_COUNT],
     pub loaded: bool,
     // PORT NOTE: Zig had `= undefined` (never read until `loaded` flips and
-    // `zig_exception()` writes it). `ZigException` has enum fields, so `zeroed()`
-    // is forbidden — use MaybeUninit and gate access on `loaded`.
+    // `zig_exception()` writes it). Use MaybeUninit and gate access on `loaded`.
     pub zig_exception: MaybeUninit<ZigException>,
     pub need_to_clear_parser_arena_on_deinit: bool,
 }
@@ -164,12 +163,12 @@ impl Holder {
     const FRAME_COUNT: usize = 32;
     pub const SOURCE_LINES_COUNT: usize = 6;
 
-    // TODO(port): Zig had `pub const Zero: Holder`; Rust const requires
-    // `String::EMPTY` / `ZigStackFrame::ZERO` to be `const`. Using a fn for now.
+    // PORT NOTE: Zig had `pub const Zero: Holder`; Rust const requires every
+    // initializer to be const-evaluable. Using a fn instead.
     pub fn zero() -> Self {
         Self {
             // PORT NOTE: `[ZigStackFrame::ZERO; N]` would require `Copy`;
-            // mirror the Zig `@memset` via from_fn (no `zeroed()` — type has enum/tagged fields).
+            // mirror the Zig `@memset` via from_fn.
             frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
             source_lines: core::array::from_fn(|_| String::EMPTY),
@@ -190,30 +189,31 @@ impl Holder {
             unsafe { self.zig_exception.assume_init_mut() }.deinit();
         }
         if self.need_to_clear_parser_arena_on_deinit {
-            vm.module_loader.reset_arena(vm);
-            // TODO(port): reshaped for borrowck — `vm.module_loader.reset_arena(vm)`
-            // borrows `vm` twice; Phase B may need `VirtualMachine::reset_module_loader_arena`.
+            // PORT NOTE: reshaped for borrowck — Zig `vm.module_loader.resetArena(vm)`
+            // would borrow `vm` twice; the Rust port made `reset_arena` an
+            // associated fn on `ModuleLoader` taking only `&mut VirtualMachine`.
+            ModuleLoader::reset_arena(vm);
         }
     }
 
     pub fn zig_exception(&mut self) -> &mut ZigException {
         if !self.loaded {
             self.zig_exception.write(ZigException {
-                // SAFETY: JSErrorCode is #[repr(u8)]; 255 is the "unknown" sentinel.
-                // TODO(port): verify JSErrorCode repr width
-                r#type: unsafe { core::mem::transmute::<u8, JSErrorCode>(255) },
-                runtime_type: JSRuntimeType::Nothing,
+                // Zig: `@as(JSErrorCode, @enumFromInt(255))` — non-exhaustive
+                // enum(u8) → transparent newtype, so just construct directly.
+                r#type: JSErrorCode(255),
+                runtime_type: JSRuntimeType::NOTHING,
                 name: String::EMPTY,
                 message: String::EMPTY,
                 exception: ptr::null_mut(),
                 stack: ZigStackTrace {
                     source_lines_ptr: self.source_lines.as_mut_ptr(),
                     source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
-                    source_lines_len: u8::try_from(Self::SOURCE_LINES_COUNT).unwrap(),
-                    source_lines_to_collect: u8::try_from(Self::SOURCE_LINES_COUNT).unwrap(),
+                    source_lines_len: Self::SOURCE_LINES_COUNT as u8,
+                    source_lines_to_collect: Self::SOURCE_LINES_COUNT as u8,
                     frames_ptr: self.frames.as_mut_ptr(),
                     frames_len: 0,
-                    frames_cap: u8::try_from(Self::FRAME_COUNT).unwrap(),
+                    frames_cap: Self::FRAME_COUNT as u8,
                     referenced_source_provider: None,
                 },
                 errno: 0,
@@ -236,7 +236,7 @@ impl Holder {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/ZigException.zig (183 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      #[repr(C)] FFI payload; deinit kept explicit (not Drop) due to `loaded` gate + vm param; Holder::Zero const → fn zero(); Holder.zig_exception is MaybeUninit (Zig `= undefined`, gated by `loaded`); api::JsException field types need verification.
+//   confidence: high
+//   todos:      0
+//   notes:      #[repr(C)] FFI payload; deinit kept explicit (not Drop) due to `loaded` gate + vm param; Holder::Zero const → fn zero(); Holder.zig_exception is MaybeUninit (Zig `= undefined`, gated by `loaded`).
 // ──────────────────────────────────────────────────────────────────────────

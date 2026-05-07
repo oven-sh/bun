@@ -253,10 +253,11 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 #[track_caller]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
-    src: &'static Location<'static>,
     f: impl FnOnce() -> JsResult<JSValue>,
 ) -> JSValue {
-    let scope = jsc::ExceptionValidationScope::new(global_this, src);
+    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
+    // caller's `Location` into `ExceptionValidationScope::init` automatically.
+    let mut scope = jsc::ExceptionValidationScope::init(global_this);
 
     let returned: JsResult<JSValue> = f();
     let normal = match returned {

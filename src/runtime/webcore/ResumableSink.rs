@@ -77,11 +77,17 @@ pub struct ResumableSink<Js: ResumableSinkJs, Context: ResumableSinkContext> {
 impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Context> {
     /// Borrow the owning [`JSGlobalObject`].
     ///
+    /// Returns a reference whose lifetime is **decoupled** from `&self` so
+    /// callers can hold it across `&mut self` mutations (the global is an
+    /// independent heap object — borrowing `self` to read a raw pointer field
+    /// imposes no aliasing constraint on the pointee). The `'g` bound is left
+    /// to inference; in practice it is the enclosing function body.
+    ///
     /// SAFETY: `global_this` is set in [`Self::init_exact_refs`] from a live
     /// `&JSGlobalObject` and the global outlives every JS object (and thus
     /// every `m_ctx` payload) it allocates.
     #[inline]
-    fn global(&self) -> &JSGlobalObject {
+    fn global<'g>(&self) -> &'g JSGlobalObject {
         unsafe { &*self.global_this }
     }
 

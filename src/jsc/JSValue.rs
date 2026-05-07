@@ -230,6 +230,19 @@ impl JSValue {
         // SAFETY: pure FFI predicate.
         unsafe { JSC__JSValue__isAnyInt(self) }
     }
+    /// ECMA-262 20.1.2.3 `Number.isInteger` (JSValue.zig:124).
+    #[inline] pub fn is_integer(self) -> bool {
+        if self.is_int32() {
+            return true;
+        }
+        if self.is_double() {
+            let num = self.as_double();
+            if num.is_finite() && num.trunc() == num {
+                return true;
+            }
+        }
+        false
+    }
     #[inline] pub fn is_string(self) -> bool {
         self.is_cell() && self.js_type().is_string_like()
     }
@@ -595,6 +608,20 @@ impl JSValue {
         }
         // SAFETY: pure FFI conversion (BigInt / cell fallback).
         unsafe { JSC__JSValue__toInt64(self) }
+    }
+    /// `JSValue.asInt52()` (JSValue.zig:2116) — saturating-truncate
+    /// `as_number()` into i52 range, returned widened to i64. NaN → 0;
+    /// out-of-range / ±Inf saturate to i52 MIN/MAX.
+    #[inline]
+    pub fn as_int52(self) -> i64 {
+        debug_assert!(self.is_number());
+        const I52_MIN: i64 = -(1 << 51);
+        const I52_MAX: i64 = (1 << 51) - 1;
+        let num = self.as_number();
+        if num.is_nan() { return 0; }
+        if num <= I52_MIN as f64 { return I52_MIN; }
+        if num >= I52_MAX as f64 { return I52_MAX; }
+        num as i64
     }
     /// `JSValue.toU32()` (JSValue.zig:2160) — clamp `toInt64()` into
     /// `[0, u32::MAX]`. Negative → 0, overflow → `u32::MAX`. Distinct from

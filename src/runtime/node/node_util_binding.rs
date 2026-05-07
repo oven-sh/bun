@@ -243,19 +243,23 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
     // Non-AST crate: arena dropped; Map/Loader/to_slice use global allocator and Drop.
 
-    let str = content.as_string().to_slice(global);
+    // SAFETY: `validate_string` above guarantees `content` is a string ⇒
+    // `as_string()` returns a non-null JSString cell, live for the duration of
+    // this host call (rooted on the JS call stack via `frame`).
+    let str = unsafe { &*content.as_string() }.to_slice(global);
 
     let mut map = envloader::Map::init();
     let mut p = envloader::Loader::init(&mut map);
-    p.load_from_string(str.slice(), true, false)?;
+    p.load_from_string::<true, false>(str.slice())?;
+    drop(p);
 
     let obj = JSValue::create_empty_object(global, map.map.count());
     debug_assert_eq!(map.map.keys().len(), map.map.values().len());
-    for (k, v) in map.map.keys().iter().zip(map.map.values()) {
+    for (k, v) in map.map.keys().iter().zip(map.map.values().iter()) {
         obj.put(
             global,
             ZigString::init_utf8(k),
-            bun_string_jsc::create_utf8_for_js(global, v.value)?,
+            bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }
     Ok(obj)

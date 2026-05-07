@@ -500,9 +500,7 @@ impl JSMySQLConnection {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-        // no other live borrow in this scope. Cast through the local opaque
-        // [`VirtualMachine`] view so `rare_data()` exposes the SQL-side accessors
-        // (`ssl_ctx_cache`, `mysql_group`) instead of `bun_jsc`'s placeholder.
+        // no other live borrow in this scope.
         let vm = unsafe { &mut *(global_object.bun_vm() as *mut VirtualMachine) };
         let arguments = callframe.arguments();
         let hostname_str = arguments[0].to_bun_string(global_object)?;
@@ -552,7 +550,6 @@ impl JSMySQLConnection {
             // connection / reconnect shares one `SSL_CTX*` per distinct config.
             let mut err = uws::create_bun_socket_error_t::none;
             secure = vm
-                .rare_data()
                 .ssl_ctx_cache()
                 .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {

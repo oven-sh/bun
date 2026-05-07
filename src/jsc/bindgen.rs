@@ -389,14 +389,4 @@ impl<T: ExternalSharedDescriptor> BindgenOptionalRepr for BindgenExternalShared<
 }
 
 pub type BindgenArrayBuffer = BindgenExternalShared<jsc::JSCArrayBuffer>;
-
-// PORT NOTE (layering): `BindgenBlob = BindgenExternalShared<webcore::Blob>` cannot
-// live in `bun_jsc` because `Blob` is defined in `bun_runtime`, which depends on
-// `bun_jsc`. The alias is defined alongside `Blob` in `bun_runtime::webcore` instead.
-
-// ──────────────────────────────────────────────────────────────────────────
-// PORT STATUS
-//   source:     src/jsc/bindgen.zig (254 lines)
-//   confidence: medium
-//   notes:      Heavy comptime reflection (@hasDecl/@Type/@typeInfo) reshaped into Bindgen/BindgenOptionalRepr traits; BindgenUnion + variadic ExternTaggedUnion are emitted per-arity by the bindgen TS codegen instead of a generic combinator; BindgenArray type-identity fast-path gated on `SAME_REPR` const; ExternType layouts use Option<NonNull<T>>/raw *mut T for single-word FFI ABI; BindgenBlob moved to bun_runtime (cycle break).
-// ──────────────────────────────────────────────────────────────────────────
+pub type BindgenBlob = BindgenExternalShared<crate::webcore::Blob>;

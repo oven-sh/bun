@@ -276,7 +276,7 @@ pub fn writeOutputFilesToDisk(
 
                         break :brk options.OutputFile.init(.{
                             .output_path = bun.default_allocator.dupe(u8, source_provider_url_str.slice()) catch unreachable,
-                            .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
+                            .input_path = bun.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path}) catch unreachable,
                             .input_loader = .file,
                             .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                             .output_kind = .bytecode,

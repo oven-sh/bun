@@ -760,7 +760,7 @@ pub fn fromDOMFormData(
     // Always allocate content_type with the default allocator so deinit() can
     // free it unconditionally; the only caller passes bun.default_allocator
     // anyway, but don't rely on that.
-    blob.content_type = std.fmt.allocPrint(bun.default_allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
+    blob.content_type = bun.fmt.allocPrint(bun.default_allocator, "multipart/form-data; boundary={s}", .{boundary}) catch |err| bun.handleOom(err);
     blob.content_type_allocated = true;
     blob.content_type_was_set = true;
 

@@ -227,7 +227,7 @@ pub fn generateChunksInParallel(
             chunk_visit_map.setAll(false);
             chunk.template.placeholder.hash = hash.digest();
 
-            const rel_path = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{f}", .{chunk.template}));
+            const rel_path = bun.handleOom(bun.fmt.allocPrint(c.allocator(), "{f}", .{chunk.template}));
             bun.path.platformToPosixInPlace(u8, rel_path);
 
             if ((try path_names_map.getOrPut(rel_path)).found_existing) {
@@ -295,7 +295,7 @@ pub fn generateChunksInParallel(
                 try c.log.addMsg(.{
                     .kind = .note,
                     .data = .{
-                        .text = try std.fmt.allocPrint(bun.default_allocator, name ++ " naming is '{s}', consider adding '[hash]' to make filenames unique", .{template}),
+                        .text = try bun.fmt.allocPrint(bun.default_allocator, name ++ " naming is '{s}', consider adding '[hash]' to make filenames unique", .{template}),
                     },
                 });
             }
@@ -323,7 +323,7 @@ pub fn generateChunksInParallel(
                 else
                     c.options.public_path;
                 const normalizer = bun.bundle_v2.cheapPrefixNormalizer(public_path, ch.final_rel_path);
-                const resolved = std.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch |err| bun.handleOom(err);
+                const resolved = bun.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch |err| bun.handleOom(err);
                 unique_key_to_path.put(ch.unique_key, resolved) catch |err| bun.handleOom(err);
             }
         }
@@ -624,7 +624,7 @@ pub fn generateChunksInParallel(
 
                             break :brk options.OutputFile.init(.{
                                 .output_path = bun.handleOom(bun.default_allocator.dupe(u8, source_provider_url_str.slice())),
-                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path})),
+                                .input_path = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path})),
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(bytecode) else null,
                                 .output_kind = .bytecode,
@@ -663,8 +663,8 @@ pub fn generateChunksInParallel(
                     if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                         if (chunk.content.javascript.module_info_bytes) |module_info_bytes| {
                             break :brk options.OutputFile.init(.{
-                                .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
-                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
+                                .output_path = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
+                                .input_path = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(module_info_bytes) else null,
                                 .output_kind = .module_info,

@@ -19,6 +19,7 @@ Conventions:
 | ------------------------------------------------------------ | ------------------------------------ |
 | `std.base64`                                                 | `bun.base64`                         |
 | `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`              |
+| `std.fmt.allocPrint` / `std.fmt.allocPrintSentinel`          | `bun.fmt.allocPrint` / `bun.fmt.allocPrintSentinel` |
 | `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
 | `std.fs.File`                                                | `bun.sys.File`                       |
 | `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |

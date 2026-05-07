@@ -625,7 +625,7 @@ pub const StandaloneModuleGraph = struct {
         }
 
         pub fn failFmt(comptime fmt: []const u8, args: anytype) CompileResult {
-            return .{ .err = .{ .message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args)) } };
+            return .{ .err = .{ .message = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, fmt, args)) } };
         }
 
         pub fn deinit(this: *const @This()) void {
@@ -1117,7 +1117,7 @@ pub const StandaloneModuleGraph = struct {
             }
         else blk: {
             var exe_path_buf: bun.PathBuffer = undefined;
-            const version_str = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "{f}", .{target}, 0));
+            const version_str = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "{f}", .{target}, 0));
             defer allocator.free(version_str);
 
             var needs_download: bool = true;

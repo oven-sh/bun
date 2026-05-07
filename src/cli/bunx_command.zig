@@ -467,13 +467,13 @@ pub const BunxCommand = struct {
                 //
                 // But the requested version will contain the url.
                 // The colon will break all platforms.
-                std.fmt.allocPrint(ctx.allocator, "{s}@{s}@{d}", .{
+                bun.fmt.allocPrint(ctx.allocator, "{s}@{s}@{d}", .{
                     initial_bin_name,
                     @tagName(update_request.version.tag),
                     bun.hash(update_request.name) +% bun.hash(display_version),
                 })
             else
-                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
+                try bun.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
                     update_request.name,
                     display_version,
                 });
@@ -484,7 +484,7 @@ pub const BunxCommand = struct {
         // result_package_name -> used for path 'node_modules/{what}/package.json'
         const install_param, const result_package_name = if (update_request.name.len != 0)
             .{
-                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
+                try bun.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
                     update_request.name,
                     display_version,
                 }),
@@ -495,7 +495,7 @@ pub const BunxCommand = struct {
             // to be the same as the calculated initial bin name. This allows us to have a predictable
             // node_modules folder structure.
             .{
-                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
+                try bun.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
                     initial_bin_name,
                     display_version,
                 }),
@@ -547,7 +547,7 @@ pub const BunxCommand = struct {
         // If this format changes, please update cache clearing code in package_manager_command.zig
         const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
-            inline else => |path_is_nonzero| try std.fmt.allocPrint(
+            inline else => |path_is_nonzero| try bun.fmt.allocPrint(
                 ctx.allocator,
                 bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin{s}{s}"),
                 .{

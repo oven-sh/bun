@@ -461,10 +461,10 @@ pub const WhyCommand = struct {
                 const is_dep_last = dep_idx == sorted_dependents.len - 1;
                 const prefix_char = if (is_dep_last) "└─ " else "├─ ";
 
-                const full_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, prefix_char });
+                const full_prefix = try bun.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, prefix_char });
                 printPackageWithType(full_prefix, &dep);
 
-                const next_prefix = try std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, if (is_dep_last) "   " else "│  " });
+                const next_prefix = try bun.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ prefix, if (is_dep_last) "   " else "│  " });
 
                 const print_break_line = is_dep_last and sorted_dependents.len > 1 and !printed_break_line;
                 try printDependencyTree(ctx, dep.pkg_id, next_prefix, depth + 1, printed_break_line or print_break_line, dep.workspace);

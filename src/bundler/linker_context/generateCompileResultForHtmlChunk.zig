@@ -164,7 +164,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             var html_appender = std.heap.stackFallback(256, bun.default_allocator);
             const allocator = html_appender.get();
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                const script = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
                 defer allocator.free(script);
                 try endTag.before(script, true);
             }
@@ -175,18 +175,18 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             if (this.compile_to_standalone_html) {
                 // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                    const style_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
+                    const style_tag = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(style_tag);
                 }
             } else {
                 // Put CSS before JS to reduce chances of flash of unstyled content
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                    const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
+                    const link_tag = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(link_tag);
                 }
                 if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
                     // type="module" scripts do not block rendering, so it is okay to put them in head
-                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
+                    const script = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(script);
                 }
             }
@@ -297,7 +297,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             if (!html_loader.added_body_script) {
                 if (html_loader.compile_to_standalone_html) {
                     if (html_loader.chunk.getJSChunkForHTML(html_loader.chunks)) |js_chunk| {
-                        const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                        const script = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
                         defer allocator.free(script);
                         bun.handleOom(html_loader.output.appendSlice(script));
                     }

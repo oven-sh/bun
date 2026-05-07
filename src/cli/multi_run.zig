@@ -434,7 +434,7 @@ fn addScriptConfigs(
     const group_start = configs.items.len;
 
     const label = if (label_prefix) |prefix|
-        try std.fmt.allocPrint(allocator, "{s}:{s}", .{ prefix, raw_name })
+        try bun.fmt.allocPrint(allocator, "{s}:{s}", .{ prefix, raw_name })
     else
         raw_name;
 
@@ -442,8 +442,8 @@ fn addScriptConfigs(
 
     if (script_content) |content| {
         // It's a package.json script - check for pre/post
-        const pre_name = try std.fmt.allocPrint(allocator, "pre{s}", .{raw_name});
-        const post_name = try std.fmt.allocPrint(allocator, "post{s}", .{raw_name});
+        const pre_name = try bun.fmt.allocPrint(allocator, "pre{s}", .{raw_name});
+        const post_name = try bun.fmt.allocPrint(allocator, "post{s}", .{raw_name});
 
         const pre_content = if (scripts_map) |sm| sm.get(pre_name) else null;
         const post_content = if (scripts_map) |sm| sm.get(post_name) else null;
@@ -493,7 +493,7 @@ fn addScriptConfigs(
             const bun_path = bun.selfExePath() catch "bun";
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
-            const cmd_str = try std.fmt.allocPrint(allocator, "\"{s}\" {s}" ++ "\x00", .{ bun_path, raw_name });
+            const cmd_str = try bun.fmt.allocPrint(allocator, "\"{s}\" {s}" ++ "\x00", .{ bun_path, raw_name });
             break :brk cmd_str[0 .. cmd_str.len - 1 :0];
         } else try allocator.dupeZ(u8, raw_name);
         try configs.append(.{

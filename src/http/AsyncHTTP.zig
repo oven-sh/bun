@@ -233,7 +233,7 @@ pub fn init(
                 defer password_alloc.free(password);
 
                 // concat user and password
-                const auth = std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }) catch unreachable;
+                const auth = bun.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }) catch unreachable;
                 defer allocator.free(auth);
                 const size = std.base64.standard.Encoder.calcSize(auth.len);
                 var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
@@ -310,7 +310,7 @@ fn reset(this: *AsyncHTTP) !void {
                 defer password_alloc.free(password);
 
                 // concat user and password
-                const auth = std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }) catch unreachable;
+                const auth = bun.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }) catch unreachable;
                 defer this.allocator.free(auth);
                 const size = std.base64.standard.Encoder.calcSize(auth.len);
                 var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;

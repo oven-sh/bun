@@ -75,7 +75,7 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
 
                     // clobber, there isn't data
-                    try pkg_map.put(try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{
+                    try pkg_map.put(try bun.fmt.allocPrint(allocator, "{s}{s}{s}", .{
                         node.relative_path,
                         if (node.depth == 0) "" else "/",
                         dep.name.slice(buf),

@@ -186,7 +186,7 @@ pub const JunitReporter = struct {
                     if (bun.env_var.GITHUB_SERVER_URL.get()) |github_server_url| {
                         if (bun.env_var.GITHUB_REPOSITORY.get()) |github_repository| {
                             if (github_run_id.len > 0 and github_server_url.len > 0 and github_repository.len > 0) {
-                                break :brk try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}", .{ github_server_url, github_repository, github_run_id });
+                                break :brk try bun.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}", .{ github_server_url, github_repository, github_run_id });
                             }
                         }
                     }
@@ -345,7 +345,7 @@ pub const JunitReporter = struct {
         const elapsed_time_seconds = elapsed_time_ms_f64 / std.time.ms_per_s;
 
         // Insert the summary attributes
-        const summary = try std.fmt.allocPrint(allocator,
+        const summary = try bun.fmt.allocPrint(allocator,
             \\tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}" hostname="{s}"
         , .{
             suite_info.metrics.test_cases,
@@ -531,7 +531,7 @@ pub const JunitReporter = struct {
             const allocator = stack_fallback_allocator.get();
             const metrics = this.total_metrics;
             const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
-            const summary = try std.fmt.allocPrint(allocator,
+            const summary = try bun.fmt.allocPrint(allocator,
                 \\tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}"
             , .{
                 metrics.test_cases,

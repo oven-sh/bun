@@ -419,7 +419,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = bun.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -483,7 +483,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = bun.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -633,7 +633,7 @@ fn getAST(
                 //
                 // To avoid a mutex, the actual insertion of the asset to DevServer
                 // is done on the bundler thread.
-                try std.fmt.allocPrint(
+                try bun.fmt.allocPrint(
                     allocator,
                     bun.bake.DevServer.asset_prefix ++ "/{s}{s}",
                     .{
@@ -642,7 +642,7 @@ fn getAST(
                     },
                 )
             else
-                try std.fmt.allocPrint(
+                try bun.fmt.allocPrint(
                     allocator,
                     "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },

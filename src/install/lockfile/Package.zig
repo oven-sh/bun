@@ -1246,7 +1246,7 @@ pub fn Package(comptime SemverIntType: type) type {
                         var notes = try allocator.alloc(logger.Data, 1);
 
                         notes[0] = .{
-                            .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
+                            .text = try bun.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
                             .location = logger.Location.initOrNull(source, source.rangeOfString(entry.value_ptr.*)),
                         };
 

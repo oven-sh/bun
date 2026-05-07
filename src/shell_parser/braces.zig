@@ -374,7 +374,7 @@ pub const Parser = struct {
     }
 
     fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {
-        const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
+        const error_msg = try bun.fmt.allocPrint(self.alloc, fmt, args);
         try self.errors.append(.{ .msg = error_msg });
     }
 };

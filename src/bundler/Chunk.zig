@@ -555,7 +555,7 @@ pub const Chunk = struct {
                     const buffer = brk: {
                         if (enable_source_map_shifts and FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
-                            const debug_id_fmt = std.fmt.allocPrint(
+                            const debug_id_fmt = bun.fmt.allocPrint(
                                 graph.heap.allocator(),
                                 "\n//# debugId={f}\n",
                                 .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},

@@ -579,7 +579,7 @@ pub fn LowerDecorators(
             var inner_class_ref: Ref = class_name_ref;
             if (!is_expr) {
                 const cns = p.symbols.items[class_name_ref.innerIndex()].original_name;
-                inner_class_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{cns}) catch unreachable);
+                inner_class_ref = newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}", .{cns}) catch unreachable);
             }
 
             const class_decorators = class.ts_decorators;
@@ -627,7 +627,7 @@ pub fn LowerDecorators(
                     const dec_name = if (dec_counter == 1)
                         "_dec"
                     else
-                        std.fmt.allocPrint(p.allocator, "_dec{d}", .{dec_counter}) catch unreachable;
+                        bun.fmt.allocPrint(p.allocator, "_dec{d}", .{dec_counter}) catch unreachable;
                     const dec_ref = newSym(p, .other, dec_name);
                     prop_dec_refs.put(p.allocator, prop_idx, dec_ref) catch unreachable;
                     if (is_expr) {
@@ -640,7 +640,7 @@ pub fn LowerDecorators(
                     const key_name = if (computed_key_counter == 1)
                         "_computedKey"
                     else
-                        std.fmt.allocPrint(p.allocator, "_computedKey{d}", .{computed_key_counter}) catch unreachable;
+                        bun.fmt.allocPrint(p.allocator, "_computedKey{d}", .{computed_key_counter}) catch unreachable;
                     const key_ref = newSym(p, .other, key_name);
                     computed_key_refs.put(p.allocator, prop_idx, key_ref) catch unreachable;
                     if (is_expr) {
@@ -760,9 +760,9 @@ pub fn LowerDecorators(
                             const nk = methodKind(prop);
                             const existing = private_lowered_map.get(npriv_inner);
                             const ws_ref = if (existing) |ex| ex.storage_ref else brk: {
-                                break :brk newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable);
+                                break :brk newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable);
                             };
-                            const fn_nm = std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ npriv_orig[1..], fnSuffix(nk) }) catch unreachable;
+                            const fn_nm = bun.fmt.allocPrint(p.allocator, "_{s}{s}", .{ npriv_orig[1..], fnSuffix(nk) }) catch unreachable;
                             const fn_ref = newSym(p, .other, fn_nm);
 
                             var new_info = if (existing) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref };
@@ -788,7 +788,7 @@ pub fn LowerDecorators(
                             continue;
                         } else {
                             // Non-decorated private field → WeakMap
-                            const wm_nm = std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable;
+                            const wm_nm = bun.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable;
                             const wm_ref = newSym(p, .other, wm_nm);
                             private_lowered_map.put(p.allocator, npriv_inner, .{ .storage_ref = wm_ref }) catch unreachable;
                             prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
@@ -820,8 +820,8 @@ pub fn LowerDecorators(
                     if (prop.kind == .auto_accessor) {
                         const accessor_name = brk: {
                             if (prop.key.?.data == .e_string)
-                                break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
-                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
+                                break :brk bun.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
+                            const name = bun.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
                             accessor_storage_counter += 1;
                             break :brk name;
                         };
@@ -933,9 +933,9 @@ pub fn LowerDecorators(
                     if (k >= 1 and k <= 3) {
                         // Decorated private method/getter/setter → WeakSet
                         const existing = private_lowered_map.get(priv_inner);
-                        const ws_ref = if (existing) |ex| ex.storage_ref else newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const ws_ref = if (existing) |ex| ex.storage_ref else newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
                         private_storage_ref = ws_ref;
-                        const fn_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ private_orig[1..], fnSuffix(k) }) catch unreachable);
+                        const fn_ref = newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}{s}", .{ private_orig[1..], fnSuffix(k) }) catch unreachable);
                         private_method_fn_ref = fn_ref;
 
                         var new_info = if (existing) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref };
@@ -950,16 +950,16 @@ pub fn LowerDecorators(
                         dec_arg_count = 6;
                     } else if (k == 5) {
                         // Decorated private field → WeakMap
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const wm_ref = newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
                         private_storage_ref = wm_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{ .storage_ref = wm_ref }) catch unreachable;
                         prefix_stmts.append(varDecl(p, wm_ref, newWeakMapExpr(p, loc), loc)) catch unreachable;
                         dec_arg_count = 5;
                     } else if (k == 4) {
                         // Decorated private auto-accessor → WeakMap + descriptor
-                        const wm_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
+                        const wm_ref = newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable);
                         private_storage_ref = wm_ref;
-                        const acc_ref = newSym(p, .other, std.fmt.allocPrint(p.allocator, "_{s}_acc", .{private_orig[1..]}) catch unreachable);
+                        const acc_ref = newSym(p, .other, bun.fmt.allocPrint(p.allocator, "_{s}_acc", .{private_orig[1..]}) catch unreachable);
                         private_method_fn_ref = acc_ref;
                         private_lowered_map.put(p.allocator, priv_inner, .{
                             .storage_ref = wm_ref,
@@ -972,8 +972,8 @@ pub fn LowerDecorators(
                     // Decorated public auto-accessor → WeakMap
                     const accessor_name = brk: {
                         if (key_expr.data == .e_string)
-                            break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
-                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
+                            break :brk bun.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
+                        const name = bun.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
                         accessor_storage_counter += 1;
                         break :brk name;
                     };

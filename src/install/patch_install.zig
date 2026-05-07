@@ -289,7 +289,7 @@ pub const PatchTask = struct {
         const resolution_label, const resolution_tag = brk: {
             // TODO: fix this threadsafety issue.
             const resolution = &this.manager.lockfile.packages.items(.resolution)[patch.pkg_id];
-            break :brk .{ bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
+            break :brk .{ bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{f}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
         };
         defer this.manager.allocator.free(resolution_label);
 

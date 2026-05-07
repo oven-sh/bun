@@ -3547,7 +3547,7 @@ pub const Resolver = struct {
         var channel = try resolver.getChannelOrError(globalThis);
 
         // This string will be freed in `CAresNameInfo.deinit`
-        const cache_name = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }));
+        const cache_name = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}|{d}", .{ addr_s, port }));
 
         const key = GetNameInfoRequest.PendingCacheKey.init(cache_name);
         var cache = resolver.getOrPutIntoResolvePendingCache(

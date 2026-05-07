@@ -1782,7 +1782,7 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
     for (trace.instruction_addresses[0..trace.index]) |addr| {
         const line = StackLine.fromAddress(addr, &name_bytes) orelse
             continue;
-        try argv.append(try std.fmt.allocPrint(alloc, "0x{X}", .{line.address}));
+        try argv.append(try bun.fmt.allocPrint(alloc, "0x{X}", .{line.address}));
     }
 
     var child = std.process.Child.init(argv.items, alloc);

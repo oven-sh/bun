@@ -452,7 +452,7 @@ pub fn doPatchCommit(
         Global.crash();
     }
 
-    const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
+    const patch_key = bun.handleOom(bun.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
     const patchfile_path = bun.handleOom(manager.allocator.dupe(u8, path_in_patches_dir));
     _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
 
@@ -633,7 +633,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = bun.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -671,7 +671,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{f}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = bun.fmt.allocPrint(sfballoc, "{s}@{f}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {

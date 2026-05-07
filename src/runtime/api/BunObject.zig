@@ -261,7 +261,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
     if (opts.tokenize) {
-        const str = bun.handleOom(std.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(lexer_output.tokens.items[0..], .{})}));
+        const str = bun.handleOom(bun.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(lexer_output.tokens.items[0..], .{})}));
         defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(global);
@@ -271,7 +271,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
         const ast_node = parser.parse() catch |err| {
             return global.throwError(err, "failed to parse braces");
         };
-        const str = bun.handleOom(std.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(ast_node, .{})}));
+        const str = bun.handleOom(bun.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(ast_node, .{})}));
         defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(global);

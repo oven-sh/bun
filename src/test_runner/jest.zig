@@ -457,7 +457,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = bun.handleOom(std.fmt.allocPrint(allocator, "{d}", .{test_idx}));
+                    const test_index_str = bun.handleOom(bun.fmt.allocPrint(allocator, "{d}", .{test_idx}));
                     defer allocator.free(test_index_str);
                     bun.handleOom(list.appendSlice(test_index_str));
                     idx += 1;

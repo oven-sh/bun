@@ -1061,7 +1061,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     if (opts.port != null and opts.origin == null) {
-        opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
+        opts.origin = try bun.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
     }
 
     const output_dir: ?string = null;

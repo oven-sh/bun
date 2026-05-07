@@ -603,7 +603,7 @@ pub inline fn getWriter(this: *@This()) NewWriter(MySQLConnection.Writer) {
     return this.#connection.writer();
 }
 fn failFmt(this: *@This(), error_code: AnyMySQLError.Error, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
+    const message = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = AnyMySQLError.mysqlErrorToJS(this.#globalObject, message, error_code);

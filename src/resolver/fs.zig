@@ -555,7 +555,7 @@ pub const FileSystem = struct {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => {
                     if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
-                        return std.fmt.allocPrint(
+                        return bun.fmt.allocPrint(
                             bun.default_allocator,
                             "{s}\\Temp",
                             .{strings.withoutTrailingSlash(windir)},
@@ -572,7 +572,7 @@ pub const FileSystem = struct {
                     var tmp_buf: bun.PathBuffer = undefined;
                     const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                     const root = bun.path.windowsFilesystemRoot(cwd);
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         bun.default_allocator,
                         "{s}\\Windows\\Temp",
                         .{strings.withoutTrailingSlash(root)},
@@ -1949,7 +1949,7 @@ pub const Path = struct {
     }
 
     pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {
-        return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
+        return try bun.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
     }
 
     pub fn init(text: string) Path {

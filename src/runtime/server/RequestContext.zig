@@ -437,7 +437,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const fallback_container = arena_allocator.create(Api.FallbackMessageContainer) catch unreachable;
             defer arena_allocator.destroy(fallback_container);
             fallback_container.* = Api.FallbackMessageContainer{
-                .message = std.fmt.allocPrint(arena_allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
+                .message = bun.fmt.allocPrint(arena_allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.get().transpiler.fs.top_level_dir,

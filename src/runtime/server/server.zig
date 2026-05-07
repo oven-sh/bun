@@ -1483,7 +1483,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 },
             };
 
-            const buf = try std.fmt.allocPrint(default_allocator, "{f}", .{fmt});
+            const buf = try bun.fmt.allocPrint(default_allocator, "{f}", .{fmt});
             defer default_allocator.free(buf);
 
             return bun.String.cloneUTF8(buf);
@@ -1971,7 +1971,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (comptime !has_h3) unreachable;
             this.h3_listener = socket;
             if (socket) |s| {
-                this.h3_alt_svc = std.fmt.allocPrintSentinel(
+                this.h3_alt_svc = bun.fmt.allocPrintSentinel(
                     bun.default_allocator,
                     "h3=\":{d}\"; ma=86400",
                     .{s.getLocalPort()},
@@ -2726,7 +2726,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             //     uuid: string,
             //   }
             // }
-            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {f}, \"uuid\": \"{f}\" }} }}", .{
+            const json_string = bun.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {f}, \"uuid\": \"{f}\" }} }}", .{
                 bun.fmt.formatJSONStringUTF8(this.dev_server.?.root, .{}),
                 uuid,
             }) catch |err| bun.handleOom(err);

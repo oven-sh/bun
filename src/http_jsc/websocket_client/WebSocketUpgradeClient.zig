@@ -1444,7 +1444,7 @@ fn buildRequestBody(
     // Build request with user overrides
     if (user_host) |h| {
         return .{
-            .body = try std.fmt.allocPrint(
+            .body = try bun.fmt.allocPrint(
                 allocator,
                 "GET {s} HTTP/1.1\r\n" ++
                     "Host: {s}\r\n" ++
@@ -1462,7 +1462,7 @@ fn buildRequestBody(
     }
 
     return .{
-        .body = try std.fmt.allocPrint(
+        .body = try bun.fmt.allocPrint(
             allocator,
             "GET {s} HTTP/1.1\r\n" ++
                 "Host: {f}\r\n" ++

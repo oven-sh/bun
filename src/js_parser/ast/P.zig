@@ -1121,7 +1121,7 @@ pub fn NewParser_(
                 // Duplicate exports are an error
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
-                    .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
+                    .text = try bun.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
                     .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
@@ -2377,7 +2377,7 @@ pub fn NewParser_(
                                                 logger.rangeData(
                                                     p.source,
                                                     r,
-                                                    std.fmt.allocPrint(
+                                                    bun.fmt.allocPrint(
                                                         allocator,
                                                         "{s} was originally declared here",
                                                         .{name},
@@ -2985,7 +2985,7 @@ pub fn NewParser_(
         }
 
         pub fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
-            const identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
+            const identifier = try bun.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
 
             const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
 
@@ -3208,8 +3208,8 @@ pub fn NewParser_(
                 .with_statement => "With statements",
                 .delete_bare_name => "\"delete\" of a bare identifier",
                 .for_in_var_init => "Variable initializers within for-in loops",
-                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name \"{s}\"", .{detail}),
-                .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
+                .eval_or_arguments => try bun.fmt.allocPrint(p.allocator, "Declarations with the name \"{s}\"", .{detail}),
+                .reserved_word => try bun.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
                 .legacy_octal_literal => "Legacy octal literals",
                 .legacy_octal_escape => "Legacy octal escape sequences",
                 .if_else_function_stmt => "Function declarations inside if statements",
@@ -3239,13 +3239,13 @@ pub fn NewParser_(
                     else => {},
                 }
                 if (why.len == 0) {
-                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
+                    why = try bun.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
                 }
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.rangeData(p.source, where, why);
-                try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
+                try p.log.addRangeErrorWithNotes(p.source, r, try bun.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with the ESM output format due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try bun.fmt.allocPrint(p.allocator, "{s} cannot be used with the ESM output format due to strict mode", .{text}));
             }
         }
 
@@ -5753,7 +5753,7 @@ pub fn NewParser_(
         pub fn generateTempRefWithScope(p: *P, default_name: ?string, scope: *Scope) Ref {
             const name = (if (p.willUseRenamer()) default_name else null) orelse brk: {
                 p.temp_ref_count += 1;
-                break :brk bun.handleOom(std.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}));
+                break :brk bun.handleOom(bun.fmt.allocPrint(p.allocator, "__bun_temp_ref_{x}$", .{p.temp_ref_count}));
             };
             const ref = bun.handleOom(p.newSymbol(.other, name));
 
@@ -6630,7 +6630,7 @@ pub fn NewParser_(
                 if (p.options.bundle and (p.options.code_splitting or p.needsWrapperRef(parts.items))) {
                     break :brk p.newSymbol(
                         .other,
-                        std.fmt.allocPrint(
+                        bun.fmt.allocPrint(
                             p.allocator,
                             "require_{f}",
                             .{p.source.fmtIdentifier()},

@@ -382,33 +382,33 @@ pub const PmVersionCommand = struct {
 
         switch (version_type) {
             .patch => {
-                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch + 1 });
+                return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch + 1 });
             },
             .minor => {
-                return try std.fmt.allocPrint(allocator, "{d}.{d}.0", .{ new_version.major, new_version.minor + 1 });
+                return try bun.fmt.allocPrint(allocator, "{d}.{d}.0", .{ new_version.major, new_version.minor + 1 });
             },
             .major => {
-                return try std.fmt.allocPrint(allocator, "{d}.0.0", .{new_version.major + 1});
+                return try bun.fmt.allocPrint(allocator, "{d}.0.0", .{new_version.major + 1});
             },
             .prepatch => {
                 if (preid.len > 0) {
-                    return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch + 1, preid });
+                    return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch + 1, preid });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch + 1 });
+                    return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch + 1 });
                 }
             },
             .preminor => {
                 if (preid.len > 0) {
-                    return try std.fmt.allocPrint(allocator, "{d}.{d}.0-{s}.0", .{ new_version.major, new_version.minor + 1, preid });
+                    return try bun.fmt.allocPrint(allocator, "{d}.{d}.0-{s}.0", .{ new_version.major, new_version.minor + 1, preid });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{d}.{d}.0-0", .{ new_version.major, new_version.minor + 1 });
+                    return try bun.fmt.allocPrint(allocator, "{d}.{d}.0-0", .{ new_version.major, new_version.minor + 1 });
                 }
             },
             .premajor => {
                 if (preid.len > 0) {
-                    return try std.fmt.allocPrint(allocator, "{d}.0.0-{s}.0", .{ new_version.major + 1, preid });
+                    return try bun.fmt.allocPrint(allocator, "{d}.0.0-{s}.0", .{ new_version.major + 1, preid });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{d}.0.0-0", .{new_version.major + 1});
+                    return try bun.fmt.allocPrint(allocator, "{d}.0.0-0", .{new_version.major + 1});
                 }
             },
             .prerelease => {
@@ -419,31 +419,31 @@ pub const PmVersionCommand = struct {
                     if (strings.lastIndexOfChar(current_prerelease, '.')) |dot_index| {
                         const number_str = current_prerelease[dot_index + 1 ..];
                         const next_num = std.fmt.parseInt(u32, number_str, 10) catch 0;
-                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, identifier, next_num + 1 });
+                        return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, identifier, next_num + 1 });
                     } else {
                         const num = std.fmt.parseInt(u32, current_prerelease, 10) catch null;
                         if (num) |n| {
                             if (preid.len > 0) {
-                                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, preid, n + 1 });
+                                return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.{d}", .{ new_version.major, new_version.minor, new_version.patch, preid, n + 1 });
                             } else {
-                                return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{d}", .{ new_version.major, new_version.minor, new_version.patch, n + 1 });
+                                return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{d}", .{ new_version.major, new_version.minor, new_version.patch, n + 1 });
                             }
                         } else {
-                            return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.1", .{ new_version.major, new_version.minor, new_version.patch, identifier });
+                            return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.1", .{ new_version.major, new_version.minor, new_version.patch, identifier });
                         }
                     }
                 } else {
                     new_version.patch += 1;
                     if (preid.len > 0) {
-                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch, preid });
+                        return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-{s}.0", .{ new_version.major, new_version.minor, new_version.patch, preid });
                     } else {
-                        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch });
+                        return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}-0", .{ new_version.major, new_version.minor, new_version.patch });
                     }
                 }
             },
             else => {},
         }
-        return try std.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
+        return try bun.fmt.allocPrint(allocator, "{d}.{d}.{d}", .{ new_version.major, new_version.minor, new_version.patch });
     }
 
     fn isGitClean(cwd: []const u8) bun.OOM!bool {
@@ -564,7 +564,7 @@ pub const PmVersionCommand = struct {
         const commit_message = if (custom_message) |msg|
             try std.mem.replaceOwned(u8, allocator, msg, "%s", version)
         else
-            try std.fmt.allocPrint(allocator, "v{s}", .{version});
+            try bun.fmt.allocPrint(allocator, "v{s}", .{version});
         defer allocator.free(commit_message);
 
         const commit_proc = bun.spawnSync(&.{
@@ -595,7 +595,7 @@ pub const PmVersionCommand = struct {
             },
         }
 
-        const tag_name = try std.fmt.allocPrint(allocator, "v{s}", .{version});
+        const tag_name = try bun.fmt.allocPrint(allocator, "v{s}", .{version});
         defer allocator.free(tag_name);
 
         const tag_proc = bun.spawnSync(&.{

@@ -746,7 +746,7 @@ pub const ShellSubprocess = struct {
                 const key = entry.key_ptr.*.slice();
                 const value = entry.value_ptr.*.slice();
 
-                var line = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "{s}={s}", .{ key, value }, 0));
+                var line = bun.handleOom(bun.fmt.allocPrintSentinel(allocator, "{s}={s}", .{ key, value }, 0));
 
                 if (bun.strings.eqlComptime(key, "PATH")) {
                     this.PATH = bun.asByteSlice(line["PATH=".len..]);
@@ -870,7 +870,7 @@ pub const ShellSubprocess = struct {
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
             spawn_options.deinit();
-            return .{ .err = .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
+            return .{ .err = .{ .custom = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
         }) {
             .err => |err| {
                 spawn_options.deinit();

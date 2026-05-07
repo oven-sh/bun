@@ -789,7 +789,7 @@ pub fn taskErrorToString(this: *Builtin, comptime kind: Kind, err: anytype) []co
 pub fn fmtErrorArena(this: *Builtin, comptime kind: ?Kind, comptime fmt_: []const u8, args: anytype) []u8 {
     const cmd_str = comptime if (kind) |k| @tagName(k) ++ ": " else "";
     const fmt = cmd_str ++ fmt_;
-    return bun.handleOom(std.fmt.allocPrint(this.arena.allocator(), fmt, args));
+    return bun.handleOom(bun.fmt.allocPrint(this.arena.allocator(), fmt, args));
 }
 
 // --- Shell Builtin Commands ---

@@ -130,7 +130,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         .data = if (task.ctx.transpiler.options.dev_server != null)
             data.other_source.path.pretty
         else
-            try std.fmt.allocPrint(b.allocator, "{f}S{d:0>8}", .{
+            try bun.fmt.allocPrint(b.allocator, "{f}S{d:0>8}", .{
                 bun.fmt.hexIntLower(task.ctx.unique_key),
                 data.other_source.index.get(),
             }),
@@ -142,7 +142,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         // This error message is taken from
         // https://github.com/facebook/react/blob/c5b9375767e2c4102d7e5559d383523736f1c902/packages/react-server-dom-webpack/src/ReactFlightWebpackNodeLoader.js#L323-L354
         const err_msg_string = try if (is_default)
-            std.fmt.allocPrint(
+            bun.fmt.allocPrint(
                 b.allocator,
                 "Attempted to call the default export of {[module_path]s} from " ++
                     "the server, but it's on the client. It's not possible to invoke a " ++
@@ -151,7 +151,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
                 .{ .module_path = data.other_source.path.pretty },
             )
         else
-            std.fmt.allocPrint(
+            bun.fmt.allocPrint(
                 b.allocator,
                 "Attempted to call {[key]s}() from the server but {[key]s} " ++
                     "is on the client. It's not possible to invoke a client function from " ++

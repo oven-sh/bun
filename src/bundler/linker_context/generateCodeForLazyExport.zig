@@ -363,7 +363,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const generated = try this.generateNamedExportInFile(
                     source_index,
                     module_ref,
-                    try std.fmt.allocPrint(
+                    try bun.fmt.allocPrint(
                         this.allocator(),
                         "{f}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},

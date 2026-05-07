@@ -209,7 +209,7 @@ fn NewLexer_(
                 return;
             }
 
-            const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
+            const errorMessage = bun.fmt.allocPrint(self.allocator, format, args) catch unreachable;
             try self.log.addRangeError(&self.source, r, errorMessage);
             self.prev_error_loc = r.loc;
 
@@ -226,7 +226,7 @@ fn NewLexer_(
                 return;
             }
 
-            const errorMessage = std.fmt.allocPrint(self.allocator, format, args) catch unreachable;
+            const errorMessage = bun.fmt.allocPrint(self.allocator, format, args) catch unreachable;
             try self.log.addRangeErrorWithNotes(
                 &self.source,
                 r,

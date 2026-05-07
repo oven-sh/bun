@@ -246,7 +246,7 @@ pub fn editUpdateNoArgs(
                         if (manager.options.do.update_to_latest) {
                             // is it an aliased package
                             const temp_version = if (alias_at_index) |at_index|
-                                bun.handleOom(std.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}))
+                                bun.handleOom(bun.fmt.allocPrint(allocator, "{s}@latest", .{version_literal[0..at_index]}))
                             else
                                 bun.handleOom(allocator.dupe(u8, "latest"));
 
@@ -299,7 +299,7 @@ pub fn editUpdateNoArgs(
                                     const new_version = new_version: {
                                         const version_fmt = resolution.value.npm.version.fmt(string_buf);
                                         if (options.exact_versions) {
-                                            break :new_version try std.fmt.allocPrint(allocator, "{f}", .{version_fmt});
+                                            break :new_version try bun.fmt.allocPrint(allocator, "{f}", .{version_fmt});
                                         }
 
                                         const version_literal = version_literal: {
@@ -312,9 +312,9 @@ pub fn editUpdateNoArgs(
 
                                         const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
                                         break :new_version try switch (pinned_version) {
-                                            .patch => std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
-                                            .minor => std.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
-                                            .major => std.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
+                                            .patch => bun.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+                                            .minor => bun.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
+                                            .major => bun.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
                                         };
                                     };
 
@@ -325,7 +325,7 @@ pub fn editUpdateNoArgs(
                                         // e.g. "dep": "npm:@foo/bar@1.2.3"
                                         if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
                                             dep.value = Expr.allocate(allocator, E.String, .{
-                                                .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                                .data = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{
                                                     dep_literal[0..at_index],
                                                     new_version,
                                                 }),
@@ -704,7 +704,7 @@ pub fn edit(
                             const new_version = new_version: {
                                 const version_fmt = resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
                                 if (options.exact_versions) {
-                                    break :new_version try std.fmt.allocPrint(allocator, "{f}", .{version_fmt});
+                                    break :new_version try bun.fmt.allocPrint(allocator, "{f}", .{version_fmt});
                                 }
 
                                 const version_literal = version_literal: {
@@ -719,9 +719,9 @@ pub fn edit(
 
                                 const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
                                 break :new_version try switch (pinned_version) {
-                                    .patch => std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
-                                    .minor => std.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
-                                    .major => std.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
+                                    .patch => bun.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+                                    .minor => bun.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
+                                    .major => bun.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
                                 };
                             };
 
@@ -729,7 +729,7 @@ pub fn edit(
                                 const dep_literal = entry.value.original_version_literal;
 
                                 if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                    break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                    break :npm try bun.fmt.allocPrint(allocator, "{s}@{s}", .{
                                         dep_literal[0..at_index],
                                         new_version,
                                     });
@@ -743,7 +743,7 @@ pub fn edit(
                         (manager.subcommand == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
                     {
                         const new_version = try switch (options.exact_versions) {
-                            inline else => |exact_versions| std.fmt.allocPrint(
+                            inline else => |exact_versions| bun.fmt.allocPrint(
                                 allocator,
                                 if (comptime exact_versions) "{f}" else "^{f}",
                                 .{
@@ -755,7 +755,7 @@ pub fn edit(
                         if (request.version.tag == .npm and request.version.value.npm.is_alias) {
                             const dep_literal = request.version.literal.slice(request.version_buf);
                             if (strings.indexOfChar(dep_literal, '@')) |at_index| {
-                                break :npm try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                break :npm try bun.fmt.allocPrint(allocator, "{s}@{s}", .{
                                     dep_literal[0..at_index],
                                     new_version,
                                 });

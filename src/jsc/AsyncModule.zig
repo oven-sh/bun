@@ -466,37 +466,37 @@ pub const AsyncModule = struct {
         const globalThis = this.globalThis;
 
         const msg: []u8 = try switch (result.err) {
-            error.PackageManifestHTTP400 => std.fmt.allocPrint(
+            error.PackageManifestHTTP400 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 400 while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
             ),
-            error.PackageManifestHTTP401 => std.fmt.allocPrint(
+            error.PackageManifestHTTP401 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 401 while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
             ),
-            error.PackageManifestHTTP402 => std.fmt.allocPrint(
+            error.PackageManifestHTTP402 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 402 while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
             ),
-            error.PackageManifestHTTP403 => std.fmt.allocPrint(
+            error.PackageManifestHTTP403 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 403 while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
             ),
-            error.PackageManifestHTTP404 => std.fmt.allocPrint(
+            error.PackageManifestHTTP404 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "Package '{s}' was not found",
                 .{result.name},
             ),
-            error.PackageManifestHTTP4xx => std.fmt.allocPrint(
+            error.PackageManifestHTTP4xx => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 4xx while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
             ),
-            error.PackageManifestHTTP5xx => std.fmt.allocPrint(
+            error.PackageManifestHTTP5xx => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 5xx while resolving package '{s}' at '{s}'",
                 .{ result.name, result.url },
@@ -509,13 +509,13 @@ pub const AsyncModule = struct {
                 else
                     "No match found";
 
-                break :brk std.fmt.allocPrint(
+                break :brk bun.fmt.allocPrint(
                     bun.default_allocator,
                     "{s} '{s}' for package '{s}' (but package exists)",
                     .{ prefix, vm.packageManager().lockfile.str(&result.version.literal), result.name },
                 );
             },
-            else => |err| std.fmt.allocPrint(
+            else => |err| bun.fmt.allocPrint(
                 bun.default_allocator,
                 "{s} resolving package '{s}' at '{s}'",
                 .{ bun.asByteSlice(@errorName(err)), result.name, result.url },
@@ -564,47 +564,47 @@ pub const AsyncModule = struct {
         };
 
         const msg: []u8 = try switch (result.err) {
-            error.TarballHTTP400 => std.fmt.allocPrint(
+            error.TarballHTTP400 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 400 downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP401 => std.fmt.allocPrint(
+            error.TarballHTTP401 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 401 downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP402 => std.fmt.allocPrint(
+            error.TarballHTTP402 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 402 downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP403 => std.fmt.allocPrint(
+            error.TarballHTTP403 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 403 downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP404 => std.fmt.allocPrint(
+            error.TarballHTTP404 => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 404 downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP4xx => std.fmt.allocPrint(
+            error.TarballHTTP4xx => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 4xx downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballHTTP5xx => std.fmt.allocPrint(
+            error.TarballHTTP5xx => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "HTTP 5xx downloading package '{s}@{f}'",
                 msg_args,
             ),
-            error.TarballFailedToExtract => std.fmt.allocPrint(
+            error.TarballFailedToExtract => bun.fmt.allocPrint(
                 bun.default_allocator,
                 "Failed to extract tarball for package '{s}@{f}'",
                 msg_args,
             ),
-            else => |err| std.fmt.allocPrint(
+            else => |err| bun.fmt.allocPrint(
                 bun.default_allocator,
                 "{s} downloading package '{s}@{f}'",
                 .{

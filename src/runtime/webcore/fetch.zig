@@ -694,7 +694,7 @@ fn fetchImpl(
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
                         defer href.deref();
-                        const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
+                        const buffer = try bun.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
                         url = ZigURL.parse(buffer[0..url.href.len]);
                         if (url.isFile()) {
                             url_type = URLType.file;
@@ -721,7 +721,7 @@ fn fetchImpl(
                                         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                                     }
                                     defer href.deref();
-                                    const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
+                                    const buffer = try bun.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
                                     url = ZigURL.parse(buffer[0..url.href.len]);
                                     if (url.isFile()) {
                                         url_type = URLType.file;

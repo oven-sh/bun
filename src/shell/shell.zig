@@ -175,13 +175,13 @@ pub const GlobalJS = struct {
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args)) },
+            .invalid_arguments = .{ .val = bun.handleOom(bun.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args)) },
         };
     }
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg})),
+            .todo = bun.handleOom(bun.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg})),
         };
     }
 
@@ -190,14 +190,14 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
+        const str = bun.handleOom(bun.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args));
+        const str = bun.handleOom(bun.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args));
         return .{
             .custom = str,
         };
@@ -258,18 +258,18 @@ pub const GlobalMini = struct {
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg})),
+            .todo = bun.handleOom(bun.fmt.allocPrint(this.mini.allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args)) },
+            .invalid_arguments = .{ .val = bun.handleOom(bun.fmt.allocPrint(this.allocator(), fmt, args)) },
         };
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}));
+        const str = bun.handleOom(bun.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
@@ -294,7 +294,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args));
+        const str = bun.handleOom(bun.fmt.allocPrint(this.allocator(), fmt, args));
         return .{
             .custom = str,
         };
@@ -2118,12 +2118,12 @@ pub const Parser = struct {
     }
 
     fn add_error(self: *Parser, comptime fmt: []const u8, args: anytype) !void {
-        const error_msg = try std.fmt.allocPrint(self.alloc, fmt, args);
+        const error_msg = try bun.fmt.allocPrint(self.alloc, fmt, args);
         try self.errors.append(.{ .msg = error_msg });
     }
 
     fn add_error_expected_pipeline_item(self: *Parser, kind: AST.Expr.Tag) !void {
-        const error_msg = try std.fmt.allocPrint(self.alloc, "Expected a command, assignment, or subshell but got: {s}", .{@tagName(kind)});
+        const error_msg = try bun.fmt.allocPrint(self.alloc, "Expected a command, assignment, or subshell but got: {s}", .{@tagName(kind)});
         try self.errors.append(.{ .msg = error_msg });
     }
 };
@@ -4622,7 +4622,7 @@ pub const TestingAPIs = struct {
             try test_tokens.append(test_tok);
         }
 
-        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
+        const str = bun.handleOom(bun.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -4680,7 +4680,7 @@ pub const TestingAPIs = struct {
             return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
-        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(script_ast, .{})}));
+        const str = bun.handleOom(bun.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(script_ast, .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         return bun.String.createUTF8ForJS(globalThis, str);

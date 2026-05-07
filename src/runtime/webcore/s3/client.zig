@@ -70,10 +70,10 @@ pub fn downloadSlice(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
+            break :brk bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
         }
         if (offset == 0) break :brk null;
-        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
+        break :brk bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
     };
 
     try S3SimpleRequest.executeSimpleS3Request(this, .{
@@ -544,10 +544,10 @@ pub fn downloadStream(
             if (size_ > 0) {
                 end -= 1;
             }
-            break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
+            break :brk bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "bytes={}-{}", .{ offset, end }));
         }
         if (offset == 0) break :brk null;
-        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
+        break :brk bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
     };
 
     var result = this.signRequest(.{

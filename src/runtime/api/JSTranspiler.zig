@@ -94,7 +94,7 @@ pub const Config = struct {
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values.appendAssumeCapacity(std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable);
+                    values.appendAssumeCapacity(bun.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable);
                 }
 
                 this.transform.define = api.StringMap{
@@ -114,7 +114,7 @@ pub const Config = struct {
                     try external.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) break :external;
                     var single_external = allocator.alloc(string, 1) catch unreachable;
-                    single_external[0] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
+                    single_external[0] = bun.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                     this.transform.external = single_external;
                 } else if (toplevel_type.isArray()) {
                     const count = try external.getLength(globalThis);
@@ -131,7 +131,7 @@ pub const Config = struct {
                         var zig_str = jsc.ZigString.init("");
                         try entry.toZigString(&zig_str, globalThis);
                         if (zig_str.len == 0) continue;
-                        externals[i] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
+                        externals[i] = bun.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                         i += 1;
                     }
 
@@ -638,7 +638,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = try std.fmt.allocPrint(allocator, "{f}", .{try value.getZigString(globalThis)}),
+            .data = try bun.fmt.allocPrint(allocator, "{f}", .{try value.getZigString(globalThis)}),
         };
         const out = try allocator.create(JSAst.E.String);
         out.* = str;
@@ -795,7 +795,7 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
     // If code starts with { and doesn't end with ; it might be an object literal
     // that would otherwise be parsed as a block statement
     const processed_code: []const u8 = if (this.config.repl_mode and isLikelyObjectLiteral(code))
-        std.fmt.allocPrint(allocator, "({s})", .{code}) catch code
+        bun.fmt.allocPrint(allocator, "({s})", .{code}) catch code
     else
         code;
 

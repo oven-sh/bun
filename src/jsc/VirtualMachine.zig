@@ -2038,13 +2038,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                         .data = logger.rangeData(
                             null,
                             logger.Range.None,
-                            std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{f}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
+                            bun.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{f}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
                         ),
                     };
                 }
 
                 break :brk logger.Msg{
-                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {f}", .{ @errorName(err), specifier }) catch unreachable),
+                    .data = logger.rangeData(null, logger.Range.None, bun.fmt.allocPrint(globalThis.allocator(), "{s} while building {f}", .{ @errorName(err), specifier }) catch unreachable),
                 };
             };
             {
@@ -2095,7 +2095,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 globalThis.createAggregateError(
                     errors,
                     &ZigString.init(
-                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{f}\"", .{
+                        bun.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{f}\"", .{
                             errors.len,
                             specifier,
                         }) catch unreachable,

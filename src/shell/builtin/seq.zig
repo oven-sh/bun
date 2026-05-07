@@ -89,7 +89,7 @@ fn do(this: *@This()) Yield {
     defer arena.deinit();
 
     while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
-        const str = bun.handleOom(std.fmt.allocPrint(arena.allocator(), "{d}", .{current}));
+        const str = bun.handleOom(bun.fmt.allocPrint(arena.allocator(), "{d}", .{current}));
         defer _ = arena.reset(.retain_capacity);
         _ = this.print(str);
         _ = this.print(this.separator);

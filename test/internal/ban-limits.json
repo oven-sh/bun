@@ -34,6 +34,8 @@
   "std.debug.dumpStackTrace": 0,
   "std.debug.print": 0,
   "std.enums.tagName(": 2,
+  "std.fmt.allocPrint(": 2,
+  "std.fmt.allocPrintSentinel(": 1,
   "std.fs.Dir": 164,
   "std.fs.File": 90,
   "std.fs.cwd": 109,

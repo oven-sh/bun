@@ -1217,7 +1217,7 @@ pub const CreateCommand = struct {
 
                 //         _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
 
-                //         create_react_app_entry_point_path = std.fmt.allocPrint(
+                //         create_react_app_entry_point_path = bun.fmt.allocPrint(
                 //             ctx.allocator,
                 //             "./{s}",
 
@@ -1975,7 +1975,7 @@ pub const Example = struct {
 
         if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
+                headers_buf = try bun.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
                     .{

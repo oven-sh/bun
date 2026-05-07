@@ -1812,6 +1812,203 @@ pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatte
     return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name, .msg = options.msg };
 }
 
+/// Drop-in replacement for `std.fmt.allocPrint` that collapses the
+/// common "string concatenation" case into a single shared runtime
+/// function instead of a fresh `Writer.print` monomorphization per
+/// (fmt, args-tuple) pair.
+///
+/// When `fmt` consists solely of literal text and bare `{s}`
+/// placeholders (no width/precision/alignment, no `{{`/`}}` escapes),
+/// the call is lowered to `bun.strings.concat` over a flat array of
+/// slices. All such call sites — `"{s}@{s}"`, `"_{s}"`, `"{s}.exe"`,
+/// `"workspace:{s}"`, and so on — share one instantiation.
+///
+/// Any other format string forwards to `std.fmt.allocPrint` unchanged.
+pub fn allocPrint(
+    allocator: std.mem.Allocator,
+    comptime format: []const u8,
+    args: anytype,
+) std.mem.Allocator.Error![]u8 {
+    const plan = comptime parseConcatPlan(format, @TypeOf(args));
+    if (plan) |segments| {
+        if (comptime segments.len == 0) {
+            return allocator.alloc(u8, 0);
+        }
+        var parts: [segments.len][]const u8 = undefined;
+        fillConcatParts(segments, args, &parts);
+        return bun.strings.concat(allocator, &parts);
+    }
+    return std.fmt.allocPrint(allocator, format, args);
+}
+
+/// Sentinel-terminated counterpart to `allocPrint`. See `allocPrint`.
+pub fn allocPrintZ(
+    allocator: std.mem.Allocator,
+    comptime format: []const u8,
+    args: anytype,
+) std.mem.Allocator.Error![:0]u8 {
+    return allocPrintSentinel(allocator, format, args, 0);
+}
+
+/// Drop-in replacement for `std.fmt.allocPrintSentinel`. See `allocPrint`.
+pub fn allocPrintSentinel(
+    allocator: std.mem.Allocator,
+    comptime format: []const u8,
+    args: anytype,
+    comptime sentinel: u8,
+) std.mem.Allocator.Error![:sentinel]u8 {
+    const plan = comptime parseConcatPlan(format, @TypeOf(args));
+    if (plan) |segments| {
+        var parts: [segments.len][]const u8 = undefined;
+        fillConcatParts(segments, args, &parts);
+        return concatSentinel(allocator, &parts, sentinel);
+    }
+    return std.fmt.allocPrintSentinel(allocator, format, args, sentinel);
+}
+
+const ConcatSegment = union(enum) {
+    literal: []const u8,
+    arg: usize,
+};
+
+inline fn fillConcatParts(
+    comptime segments: []const ConcatSegment,
+    args: anytype,
+    parts: *[segments.len][]const u8,
+) void {
+    const fields = @typeInfo(@TypeOf(args)).@"struct".fields;
+    inline for (segments, 0..) |segment, i| {
+        parts[i] = switch (segment) {
+            .literal => |lit| lit,
+            .arg => |arg_idx| concatArgSlice(@field(args, fields[arg_idx].name)),
+        };
+    }
+}
+
+/// Coerce a `{s}`-compatible argument to `[]const u8`. Mirrors the set of
+/// types `std.fmt`'s `{s}` specifier accepts.
+inline fn concatArgSlice(value: anytype) []const u8 {
+    const T = @TypeOf(value);
+    return switch (@typeInfo(T)) {
+        .pointer => |info| switch (info.size) {
+            .many, .c => std.mem.span(value),
+            else => value,
+        },
+        else => value,
+    };
+}
+
+/// Concatenate string slices into a freshly-allocated, sentinel-terminated
+/// buffer. Shared by all `allocPrintSentinel` fast-path call sites.
+fn concatSentinel(
+    allocator: std.mem.Allocator,
+    parts: []const []const u8,
+    comptime sentinel: u8,
+) std.mem.Allocator.Error![:sentinel]u8 {
+    var len: usize = 0;
+    for (parts) |p| len += p.len;
+    const out = try allocator.allocSentinel(u8, len, sentinel);
+    var remain: []u8 = out;
+    for (parts) |p| {
+        @memcpy(remain[0..p.len], p);
+        remain = remain[p.len..];
+    }
+    bun.unsafeAssert(remain.len == 0);
+    return out;
+}
+
+/// Comptime-parse `format`. Returns a list of literal/arg segments when the
+/// format string is a pure `{s}`-concat pattern, or `null` to fall through
+/// to `std.fmt`.
+fn parseConcatPlan(comptime format: []const u8, comptime Args: type) ?[]const ConcatSegment {
+    const args_info = @typeInfo(Args);
+    if (args_info != .@"struct") return null;
+    const fields = args_info.@"struct".fields;
+
+    comptime var segments: []const ConcatSegment = &.{};
+    comptime var arg_idx: usize = 0;
+    comptime var i: usize = 0;
+
+    @setEvalBranchQuota(format.len * 100 + 1000);
+
+    inline while (i < format.len) {
+        const start = i;
+        inline while (i < format.len and format[i] != '{' and format[i] != '}') : (i += 1) {}
+        if (i > start) {
+            segments = segments ++ [_]ConcatSegment{.{ .literal = format[start..i] }};
+        }
+        if (i >= format.len) break;
+
+        // A brace. `std.fmt` unescapes `{{`/`}}`; rather than duplicate that
+        // logic we let `std.fmt` handle any format string containing escapes.
+        if (i + 1 < format.len and format[i + 1] == format[i]) return null;
+        if (format[i] == '}') return null; // stray close brace → defer to std.fmt error
+
+        // `{`: only the bare `{s}` placeholder is fast-pathed. Anything else
+        // (width, precision, positional, `{d}`, `{f}`, `{any}`, ...) falls
+        // through.
+        if (i + 2 < format.len and format[i + 1] == 's' and format[i + 2] == '}') {
+            if (arg_idx >= fields.len) return null;
+            // `{s}` on a by-value array would require taking the address of a
+            // temporary; defer to std.fmt for that uncommon case.
+            if (@typeInfo(fields[arg_idx].type) == .array) return null;
+            segments = segments ++ [_]ConcatSegment{.{ .arg = arg_idx }};
+            arg_idx += 1;
+            i += 3;
+            continue;
+        }
+        return null;
+    }
+
+    if (arg_idx != fields.len) return null;
+
+    const final = segments;
+    return final;
+}
+
+test "allocPrint concat fast path parity with std.fmt" {
+    const gpa = std.testing.allocator;
+    const name: []const u8 = "lodash";
+    const version: []const u8 = "4.17.21";
+
+    // Pure-{s} patterns should be fast-pathed and match std.fmt output.
+    inline for (.{
+        .{ "{s}@{s}", .{ name, version } },
+        .{ "_{s}", .{name} },
+        .{ "{s}", .{name} },
+        .{ "{s}/{s}", .{ name, version } },
+        .{ "workspace:{s}", .{name} },
+        .{ "{s}.exe", .{name} },
+        .{ "", .{} },
+        .{ "no placeholders", .{} },
+    }) |case| {
+        // Must be classified as fast-path.
+        try std.testing.expect(parseConcatPlan(case[0], @TypeOf(case[1])) != null);
+
+        const ours = try allocPrint(gpa, case[0], case[1]);
+        defer gpa.free(ours);
+        const theirs = try std.fmt.allocPrint(gpa, case[0], case[1]);
+        defer gpa.free(theirs);
+        try std.testing.expectEqualStrings(theirs, ours);
+
+        const ours_z = try allocPrintSentinel(gpa, case[0], case[1], 0);
+        defer gpa.free(ours_z);
+        try std.testing.expectEqualStrings(theirs, ours_z);
+        try std.testing.expectEqual(@as(u8, 0), ours_z.ptr[ours_z.len]);
+    }
+
+    // Non-{s} / escaped / optioned formats must fall through to std.fmt.
+    try std.testing.expect(parseConcatPlan("{d}", @TypeOf(.{@as(u32, 0)})) == null);
+    try std.testing.expect(parseConcatPlan("{{literal}}", @TypeOf(.{})) == null);
+    try std.testing.expect(parseConcatPlan("{s:5}", @TypeOf(.{name})) == null);
+    try std.testing.expect(parseConcatPlan("{f}", @TypeOf(.{name})) == null);
+
+    // And still produce correct output via the fall-through.
+    const braces = try allocPrint(gpa, "{{a}}", .{});
+    defer gpa.free(braces);
+    try std.testing.expectEqualStrings("{a}", braces);
+}
+
 /// esbuild has an 8 character truncation of a base32 encoded bytes. this
 /// is not exactly that, but it will appear as such. the character list
 /// chosen omits similar characters in the unlikely case someone is

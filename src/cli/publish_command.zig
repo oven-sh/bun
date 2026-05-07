@@ -935,15 +935,15 @@ pub const PublishCommand = struct {
 
         const version_without_build_tag = Dependency.withoutBuildTag(package_version);
 
-        const integrity_fmt = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)});
+        const integrity_fmt = try bun.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)});
 
-        try json.setString(allocator, "_id", try std.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
+        try json.setString(allocator, "_id", try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
         try json.setString(allocator, "_integrity", integrity_fmt);
         try json.setString(allocator, "_nodeVersion", Environment.reported_nodejs_version);
         // TODO: npm version
         try json.setString(allocator, "_npmVersion", "10.8.3");
         try json.setString(allocator, "integrity", integrity_fmt);
-        try json.setString(allocator, "shasum", try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
+        try json.setString(allocator, "shasum", try bun.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}));
 
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
@@ -954,7 +954,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)}) },
+                .{ .data = try bun.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -966,7 +966,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
+                .{ .data = try bun.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -979,7 +979,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{f}", .{
+                    .data = try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{f}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
@@ -1210,7 +1210,7 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
+                            const join = try bun.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,

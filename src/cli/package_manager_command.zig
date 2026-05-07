@@ -277,7 +277,7 @@ pub const PackageManagerCommand = struct {
                     var iter = tmp_dir.iterate();
 
                     // This is to match 'bunx_command.BunxCommand.exec's logic
-                    const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
+                    const prefix = try bun.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
                         if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
                     });
 
@@ -528,7 +528,7 @@ fn printNodeModulesFolderStructure(
     for (sorted_dependencies, 0..) |dependency_id, index| {
         const package_name = dependencies[dependency_id].name.slice(string_bytes);
         const fmt = "{s}" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str ++ "node_modules";
-        const possible_path = try std.fmt.allocPrint(allocator, fmt, .{ directory.relative_path, package_name });
+        const possible_path = try bun.fmt.allocPrint(allocator, fmt, .{ directory.relative_path, package_name });
         defer allocator.free(possible_path);
 
         if (index + 1 == sorted_dependencies.len) {

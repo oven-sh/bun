@@ -31,7 +31,7 @@ pub const ZigStackFrame = extern struct {
         }
 
         if (!this.source_url.isEmpty()) {
-            frame.file = try std.fmt.allocPrint(allocator, "{f}", .{this.sourceURLFormatter(root_path, origin, true, false)});
+            frame.file = try bun.fmt.allocPrint(allocator, "{f}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position = this.position;

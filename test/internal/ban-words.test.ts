@@ -21,6 +21,8 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead" },
+  "std.fmt.allocPrint(": { reason: "Use bun.fmt.allocPrint: it routes pure-{s} format strings through a shared concat to cut per-call-site monomorphizations (binary size)" },
+  "std.fmt.allocPrintSentinel(": { reason: "Use bun.fmt.allocPrintSentinel: it routes pure-{s} format strings through a shared concat to cut per-call-site monomorphizations (binary size)" },
   "std.unicode": { reason: "Use bun.strings instead" },
   "std.Thread.Mutex": {reason: "Use bun.Mutex instead" },
   ".jsBoolean(true)": { reason: "Use .true instead" },

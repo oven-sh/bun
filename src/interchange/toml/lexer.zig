@@ -113,7 +113,7 @@ pub const Lexer = struct {
             return;
         }
 
-        const errorMessage = std.fmt.allocPrint(self.log.msgs.allocator, format, args) catch unreachable;
+        const errorMessage = bun.fmt.allocPrint(self.log.msgs.allocator, format, args) catch unreachable;
         try self.log.addErrorOpts(errorMessage, .{
             .source = &self.source,
             .loc = r.loc,

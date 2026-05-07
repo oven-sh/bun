@@ -260,7 +260,7 @@ pub const Parser = struct {
                     return "[Object object]";
                 },
                 else => {
-                    const str = try std.fmt.allocPrint(arena_allocator, "{f}", .{ToStringFormatter{ .d = json_val.data }});
+                    const str = try bun.fmt.allocPrint(arena_allocator, "{f}", .{ToStringFormatter{ .d = json_val.data }});
                     if (comptime usage == .section) return singleStrRope(ropealloc, str);
                     return str;
                 },

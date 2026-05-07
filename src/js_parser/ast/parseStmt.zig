@@ -370,7 +370,7 @@ pub fn ParseStmt(
                         const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
                         const path_name = fs.PathName.init(parsedPath.text);
                         const namespace_ref = p.storeNameInRef(
-                            std.fmt.allocPrint(
+                            bun.fmt.allocPrint(
                                 p.allocator,
                                 "import_{f}",
                                 .{

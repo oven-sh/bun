@@ -565,7 +565,7 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
             return .{ .expansion = this };
         }
 
-        const msg = bun.handleOom(std.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}));
+        const msg = bun.handleOom(bun.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}));
         this.state = .{
             .err = bun.shell.ShellErr{
                 .custom = msg,

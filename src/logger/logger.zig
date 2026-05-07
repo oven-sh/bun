@@ -780,7 +780,7 @@ pub const Log = struct {
 
     pub inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
         return switch (Output.enable_ansi_colors_stderr) {
-            inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
+            inline else => |enable_ansi_colors| bun.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
     }
 
@@ -1188,7 +1188,7 @@ pub const Log = struct {
         notes[0] = rangeData(
             source,
             source.rangeOfIdentifier(old_loc),
-            try std.fmt.allocPrint(allocator, "\"{s}\" was originally declared here", .{name}),
+            try bun.fmt.allocPrint(allocator, "\"{s}\" was originally declared here", .{name}),
         );
 
         try self.addRangeErrorFmtWithNotes(

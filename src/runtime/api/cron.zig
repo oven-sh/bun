@@ -31,7 +31,7 @@ fn CronJobBase(comptime Self: type) type {
             bun.assert(this.remaining_fds > 0);
             this.remaining_fds -= 1;
             if (this.err_msg == null)
-                this.err_msg = std.fmt.allocPrint(bun.default_allocator, "Failed to read process output: {s}", .{@tagName(err.getErrno())}) catch null;
+                this.err_msg = bun.fmt.allocPrint(bun.default_allocator, "Failed to read process output: {s}", .{@tagName(err.getErrno())}) catch null;
             this.maybeFinished();
         }
 
@@ -78,7 +78,7 @@ pub const CronRegisterJob = struct {
 
     fn setErr(this: *CronRegisterJob, comptime fmt: []const u8, args: anytype) void {
         if (this.err_msg == null)
-            this.err_msg = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch null;
+            this.err_msg = bun.fmt.allocPrint(bun.default_allocator, fmt, args) catch null;
     }
 
     fn maybeFinished(this: *CronRegisterJob) void {
@@ -225,7 +225,7 @@ pub const CronRegisterJob = struct {
         };
 
         // Build new entry with single-quoted paths to prevent shell injection
-        const new_entry = std.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}\n{s} '{s}' run --cron-title={s} --cron-period='{s}' '{s}'\n", .{
+        const new_entry = bun.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}\n{s} '{s}' run --cron-title={s} --cron-period='{s}' '{s}'\n", .{
             this.title, this.schedule, this.bun_exe, this.title, this.schedule, this.abs_path,
         }) catch {
             this.setErr("Out of memory", .{});
@@ -288,7 +288,7 @@ pub const CronRegisterJob = struct {
             return;
         };
 
-        const launch_agents_dir = std.fmt.allocPrint(bun.default_allocator, "{s}/Library/LaunchAgents", .{home}) catch {
+        const launch_agents_dir = bun.fmt.allocPrint(bun.default_allocator, "{s}/Library/LaunchAgents", .{home}) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -333,7 +333,7 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(xml_sched);
 
-        const plist = std.fmt.allocPrint(bun.default_allocator,
+        const plist = bun.fmt.allocPrint(bun.default_allocator,
             \\<?xml version="1.0" encoding="UTF-8"?>
             \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             \\<plist version="1.0">
@@ -574,7 +574,7 @@ pub const CronRemoveJob = struct {
 
     fn setErr(this: *CronRemoveJob, comptime fmt: []const u8, args: anytype) void {
         if (this.err_msg == null)
-            this.err_msg = std.fmt.allocPrint(bun.default_allocator, fmt, args) catch null;
+            this.err_msg = bun.fmt.allocPrint(bun.default_allocator, fmt, args) catch null;
     }
 
     fn maybeFinished(this: *CronRemoveJob) void {
@@ -1285,7 +1285,7 @@ fn validateTitle(title: []const u8) bool {
 
 /// Filter crontab content, removing any entry with matching title marker.
 fn filterCrontab(content: []const u8, title: [:0]const u8, result: *std.array_list.Managed(u8)) !void {
-    const marker = try std.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}", .{title});
+    const marker = try bun.fmt.allocPrint(bun.default_allocator, "# bun-cron: {s}", .{title});
     defer bun.default_allocator.free(marker);
     var skip_next = false;
     var lines = std.mem.splitScalar(u8, content, '\n');
@@ -1424,7 +1424,7 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
 }
 
 fn appendCalendarKey(result: *std.array_list.Managed(u8), key: []const u8, val: i32) !void {
-    const line = try std.fmt.allocPrint(bun.default_allocator, "        <key>{s}</key>\n        <integer>{d}</integer>\n", .{ key, val });
+    const line = try bun.fmt.allocPrint(bun.default_allocator, "        <key>{s}</key>\n        <integer>{d}</integer>\n", .{ key, val });
     defer bun.default_allocator.free(line);
     try result.appendSlice(line);
 }
@@ -1610,7 +1610,7 @@ fn cronToTaskXml(
     const xml_path = try xmlEscape(abs_path);
     defer allocator.free(xml_path);
 
-    const action_xml = try std.fmt.allocPrint(allocator,
+    const action_xml = try bun.fmt.allocPrint(allocator,
         \\  </Triggers>
         \\  <Principals>
         \\    <Principal>
@@ -1750,7 +1750,7 @@ fn computeStepInterval(comptime T: type, bits: T, _: u7, max: u7) ?u32 {
 }
 
 fn allocPrintZ(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) std.mem.Allocator.Error![:0]const u8 {
-    return std.fmt.allocPrintSentinel(allocator, fmt, args, 0);
+    return bun.fmt.allocPrintSentinel(allocator, fmt, args, 0);
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.

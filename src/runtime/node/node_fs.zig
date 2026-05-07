@@ -6075,7 +6075,7 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {f}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
+            const buf = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "Failed to watch file {f}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((jsc.SystemError{
                 .message = bun.String.init(buf),

@@ -131,7 +131,7 @@ pub fn writeSourcemapToDisk(
 
     try source_maps.put(
         allocator,
-        try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+        try bun.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
         OutputFile.Index.init(@intCast(source_map_index)),
     );
 }
@@ -146,7 +146,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     Output.flush();
     var unresolved_config_entry_point = if (ctx.args.entry_points.len > 0) ctx.args.entry_points[0] else "./bun.app";
     if (bun.resolver.isPackagePath(unresolved_config_entry_point)) {
-        unresolved_config_entry_point = try std.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
+        unresolved_config_entry_point = try bun.fmt.allocPrint(ctx.allocator, "./{s}", .{unresolved_config_entry_point});
     }
 
     const config_entry_point = b.resolver.resolve(cwd, unresolved_config_entry_point, .entry_point_build) catch |err| {
@@ -425,7 +425,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
                         try output_module_map.put(
                             allocator,
-                            try std.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
+                            try bun.fmt.allocPrint(allocator, "bake:/{s}", .{without_prefix}),
                             OutputFile.Index.init(@intCast(i)),
                         );
                     },

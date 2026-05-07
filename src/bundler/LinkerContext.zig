@@ -818,7 +818,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
+                try bun.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -1002,7 +1002,7 @@ pub const LinkerContext = struct {
                                 const source = &input_files[other_source_index];
                                 tla_pretty_path = source.path.pretty;
                                 notes.append(Logger.Data{
-                                    .text = bun.handleOom(std.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path})),
+                                    .text = bun.handleOom(bun.fmt.allocPrint(c.allocator(), "The top-level await in {s} is here:", .{tla_pretty_path})),
                                     .location = .initOrNull(source, parent_result_tla_keyword),
                                 }) catch |err| bun.handleOom(err);
                                 break;
@@ -1018,7 +1018,7 @@ pub const LinkerContext = struct {
                             other_source_index = parent_tla_check.parent;
 
                             try notes.append(Logger.Data{
-                                .text = try std.fmt.allocPrint(c.allocator(), "The file {s} imports the file {s} here:", .{
+                                .text = try bun.fmt.allocPrint(c.allocator(), "The file {s} imports the file {s} here:", .{
                                     input_files[parent_source_index].path.pretty,
                                     input_files[other_source_index].path.pretty,
                                 }),
@@ -1029,9 +1029,9 @@ pub const LinkerContext = struct {
                         const source: *const Logger.Source = &input_files[source_index];
                         const imported_pretty_path = source.path.pretty;
                         const text: string = if (strings.eql(imported_pretty_path, tla_pretty_path))
-                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
+                            try bun.fmt.allocPrint(c.allocator(), "This require call is not allowed because the imported file \"{s}\" contains a top-level await", .{imported_pretty_path})
                         else
-                            try std.fmt.allocPrint(c.allocator(), "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
+                            try bun.fmt.allocPrint(c.allocator(), "This require call is not allowed because the transitive dependency \"{s}\" contains a top-level await", .{tla_pretty_path});
 
                         try c.log.addRangeErrorWithNotes(source, record.range, text, notes.items);
                     }
@@ -1470,7 +1470,7 @@ pub const LinkerContext = struct {
                             false,
                         );
 
-                        const final_generated_name = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{s}_{s}", .{ original_name, path_hash }));
+                        const final_generated_name = bun.handleOom(bun.fmt.allocPrint(c.allocator(), "{s}_{s}", .{ original_name, path_hash }));
                         bun.handleOom(c.mangled_props.put(c.allocator(), ref, final_generated_name));
                     }
                 }

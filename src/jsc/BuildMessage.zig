@@ -29,7 +29,7 @@ pub const BuildMessage = struct {
     }
 
     pub fn toStringFn(this: *BuildMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-        const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
+        const text = bun.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);

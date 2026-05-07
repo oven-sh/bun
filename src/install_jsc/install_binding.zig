@@ -47,7 +47,7 @@ pub const bun_install_js_bindings = struct {
             .ok => {},
         }
 
-        const stringified = bun.handleOom(std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(lockfile, .{
+        const stringified = bun.handleOom(bun.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(lockfile, .{
             .whitespace = .indent_2,
             .emit_null_optional_fields = true,
             .emit_nonportable_numbers_as_strings = true,

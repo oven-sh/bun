@@ -73,37 +73,37 @@ pub const ResolveMessage = struct {
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind) !string {
         if (import_kind != .require_resolve and bun.strings.hasPrefixComptime(specifier, "node:")) {
             // This matches Node.js exactly.
-            return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
+            return try bun.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
         }
         switch (err) {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
-                    return try std.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
+                    return try bun.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
                 }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });
+                    return try bun.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module '{s}' from '{s}'", .{ specifier, referrer });
+                    return try bun.fmt.allocPrint(allocator, "Cannot find module '{s}' from '{s}'", .{ specifier, referrer });
                 }
             },
             error.InvalidDataURL => {
-                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
+                return try bun.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             error.InvalidURL => {
-                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
+                return try bun.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
+                    return try bun.fmt.allocPrint(allocator, "{s} while resolving package '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
+                    return try bun.fmt.allocPrint(allocator, "{s} while resolving '{s}' from '{s}'", .{ @errorName(err), specifier, referrer });
                 }
             },
         }
     }
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-        const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
+        const text = bun.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);

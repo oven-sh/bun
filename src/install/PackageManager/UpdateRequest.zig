@@ -87,7 +87,7 @@ pub fn parseWithError(
         }
         switch (subcommand) {
             .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
-                input = std.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;
+                input = bun.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;
             },
             else => {},
         }

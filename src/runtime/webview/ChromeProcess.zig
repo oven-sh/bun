@@ -216,7 +216,7 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     //   non-cft: chrome-linux/headless_shell   (linux arm64 only)
     const arch = if (comptime bun.Environment.isAarch64) "arm64" else "x64";
     const plat = if (comptime bun.Environment.isMac) "mac" else "linux";
-    const subdir_cft = std.fmt.allocPrint(alloc, "chrome-headless-shell-{s}-{s}/chrome-headless-shell", .{ plat, arch }) catch return null;
+    const subdir_cft = bun.fmt.allocPrint(alloc, "chrome-headless-shell-{s}-{s}/chrome-headless-shell", .{ plat, arch }) catch return null;
     defer alloc.free(subdir_cft);
 
     const bin_buf = bun.path_buffer_pool.get();
@@ -277,12 +277,12 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
     // the default profile (~/Library/Application Support/Google/Chrome) and
     // aborts if a real Chrome is already running.
     const dataDir = if (userDataDir) |d|
-        try std.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{d}, 0)
+        try bun.fmt.allocPrintSentinel(alloc, "--user-data-dir={s}", .{d}, 0)
     else blk: {
         // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
         // multiple Bun.WebView instances in one process share the Chrome.
         const pid: u32 = @intCast(std.c.getpid());
-        break :blk try std.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{pid}, 0);
+        break :blk try bun.fmt.allocPrintSentinel(alloc, "--user-data-dir=/tmp/bun-chrome-{d}", .{pid}, 0);
     };
 
     var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .{};

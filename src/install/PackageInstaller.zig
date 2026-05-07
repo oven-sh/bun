@@ -809,7 +809,7 @@ pub const PackageInstaller = struct {
             if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };
             var sfa = std.heap.stackFallback(1024, this.lockfile.allocator);
             const alloc = sfa.get();
-            const name_and_version = std.fmt.allocPrint(alloc, "{s}@{s}", .{
+            const name_and_version = bun.fmt.allocPrint(alloc, "{s}@{s}", .{
                 pkg_name.slice(this.lockfile.buffers.string_bytes.items),
                 package_version,
             }) catch unreachable;

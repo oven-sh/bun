@@ -211,12 +211,12 @@ pub const URL = struct {
         const has_uplevels = std.mem.indexOf(u8, dirname, "../") != null;
 
         if (has_uplevels) {
-            return try std.fmt.allocPrint(allocator, "{s}/abs:{s}", .{ this.origin, absolute_path });
+            return try bun.fmt.allocPrint(allocator, "{s}/abs:{s}", .{ this.origin, absolute_path });
         } else {
             var out: [2048]u8 = undefined;
 
             const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
-            return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
+            return try bun.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
         }
     }
 

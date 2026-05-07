@@ -1391,7 +1391,7 @@ pub const RunCommand = struct {
             const ext: []const u8 = if (bun.strings.endsWith(d.url, ".png")) ".png" else if (bun.strings.endsWith(d.url, ".jpg") or bun.strings.endsWith(d.url, ".jpeg")) ".jpg" else if (bun.strings.endsWith(d.url, ".gif")) ".gif" else if (bun.strings.endsWith(d.url, ".webp")) ".webp" else ".bin";
             var name_buf: [64]u8 = undefined;
             const name = std.fmt.bufPrint(&name_buf, "bun-md-{x}{s}", .{ bun.fastRandom(), ext }) catch continue;
-            const path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
+            const path = bun.fmt.allocPrint(allocator, "{s}/{s}", .{ tmpdir, name }) catch continue;
 
             const fd = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o600)) {
                 .result => |f| f,
@@ -1760,7 +1760,7 @@ pub const RunCommand = struct {
                     this_transpiler.env.map.put("npm_lifecycle_event", target_name) catch unreachable;
 
                     // allocate enough to hold "post${scriptname}"
-                    var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "\x00pre{s}", .{target_name});
+                    var temp_script_buffer = try bun.fmt.allocPrint(ctx.allocator, "\x00pre{s}", .{target_name});
                     defer ctx.allocator.free(temp_script_buffer);
 
                     const package_json_path = root_dir_info.enclosing_package_json.?.source.path.text;

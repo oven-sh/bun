@@ -270,7 +270,7 @@ pub fn initWatchTrigger(allocator: std.mem.Allocator) void {
         var rng = std.Random.DefaultPrng.init(@as(u64, @bitCast(std.time.milliTimestamp())) ^
             @as(u64, @intCast(std.c.getpid())));
         const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
-        const fresh = bun.handleOom(std.fmt.allocPrintSentinel(
+        const fresh = bun.handleOom(bun.fmt.allocPrintSentinel(
             allocator,
             "{s}{c}.bun-test-changed-{x}.trigger",
             .{ strings.withoutTrailingSlash(tmpdir), std.fs.path.sep, rng.random().int(u64) },

@@ -634,7 +634,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
 
     if (written > 0) {
         const message = output_buf[0..written];
-        zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
+        zig_str = ZigString.init(bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
         var encoded_str = zig_str.withEncoding();
         encoded_str.markGlobal();
 

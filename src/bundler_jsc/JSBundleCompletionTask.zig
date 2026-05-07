@@ -140,11 +140,11 @@ pub const JSBundleCompletionTask = struct {
             .parse = true,
             .import_source = .{
                 .development = if (config.jsx.import_source.len > 0)
-                    try std.fmt.allocPrint(alloc, "{s}/jsx-dev-runtime", .{config.jsx.import_source})
+                    try bun.fmt.allocPrint(alloc, "{s}/jsx-dev-runtime", .{config.jsx.import_source})
                 else
                     "react/jsx-dev-runtime",
                 .production = if (config.jsx.import_source.len > 0)
-                    try std.fmt.allocPrint(alloc, "{s}/jsx-runtime", .{config.jsx.import_source})
+                    try bun.fmt.allocPrint(alloc, "{s}/jsx-runtime", .{config.jsx.import_source})
                 else
                     "react/jsx-runtime",
             },
@@ -269,7 +269,7 @@ pub const JSBundleCompletionTask = struct {
 
         // Add .exe extension for Windows targets if not already present
         if (compile_options.compile_target.os == .windows and !strings.hasSuffixComptime(full_outfile_path, ".exe")) {
-            full_outfile_path = std.fmt.allocPrint(bun.default_allocator, "{s}.exe", .{full_outfile_path}) catch |err| bun.handleOom(err);
+            full_outfile_path = bun.fmt.allocPrint(bun.default_allocator, "{s}.exe", .{full_outfile_path}) catch |err| bun.handleOom(err);
         } else {
             full_outfile_path = bun.handleOom(bun.default_allocator.dupe(u8, full_outfile_path));
         }
@@ -375,12 +375,12 @@ pub const JSBundleCompletionTask = struct {
                     const map_basename = if (current.dest_path.len > 0)
                         bun.path.basename(current.dest_path)
                     else
-                        bun.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
+                        bun.path.basename(bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
 
                     const sourcemap_full_path = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
                         bun.handleOom(bun.default_allocator.dupe(u8, map_basename))
                     else
-                        bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}{c}{s}", .{ dirname, std.fs.path.sep, map_basename }));
+                        bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s}{c}{s}", .{ dirname, std.fs.path.sep, map_basename }));
 
                     // Write the sourcemap file to disk next to the executable
                     var pathbuf: bun.PathBuffer = undefined;

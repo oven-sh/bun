@@ -516,7 +516,7 @@ pub const PackCommand = struct {
         dir_subpath: string,
         entry_name: string,
     ) OOM!stringZ {
-        return std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
+        return bun.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
             dir_subpath,
             if (dir_subpath.len == 0) "" else "/",
             entry_name,
@@ -721,7 +721,7 @@ pub const PackCommand = struct {
 
                                 const dep_name = dep.key.?.asString(ctx.allocator) orelse continue;
 
-                                const dep_subpath = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}/node_modules/{s}", .{
+                                const dep_subpath = try bun.fmt.allocPrintSentinel(ctx.allocator, "{s}/node_modules/{s}", .{
                                     dir_subpath,
                                     dep_name,
                                 }, 0);
@@ -2187,7 +2187,7 @@ pub const PackCommand = struct {
                                                 allocator,
                                                 E.String,
                                                 .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{f}", .{
+                                                    .data = try bun.fmt.allocPrint(allocator, "{s}{f}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",

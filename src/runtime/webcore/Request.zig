@@ -534,7 +534,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     };
                 } else {
                     // slow path
-                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{f}{s}", .{
+                    const temp_url = try bun.fmt.allocPrint(bun.default_allocator, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,

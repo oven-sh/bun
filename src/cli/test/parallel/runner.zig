@@ -41,7 +41,7 @@ pub fn runAsCoordinator(
     }
     defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {};
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
-        const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{
+        const dir = try bun.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{
             bun.fs.FileSystem.RealFS.getDefaultTempDir(),
             if (bun.Environment.isWindows) std.os.windows.GetCurrentProcessId() else std.c.getpid(),
         }, 0);
@@ -66,7 +66,7 @@ pub fn runAsCoordinator(
     // and POSIX getenv() returns the first match.
     const envps = try arena.allocator().alloc([:null]?[*:0]const u8, K);
     for (envps, 0..) |*envp, i| {
-        const id = try std.fmt.allocPrint(arena.allocator(), "{d}", .{i + 1});
+        const id = try bun.fmt.allocPrint(arena.allocator(), "{d}", .{i + 1});
         bun.handleOom(vm.transpiler.env.map.put("JEST_WORKER_ID", id));
         bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_ID", id));
         envp.* = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
@@ -152,7 +152,7 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
 
     const printZ = struct {
         fn f(a: std.mem.Allocator, comptime fmt: []const u8, args: anytype) ![*:0]const u8 {
-            return (try std.fmt.allocPrintSentinel(a, fmt, args, 0)).ptr;
+            return (try bun.fmt.allocPrintSentinel(a, fmt, args, 0)).ptr;
         }
     }.f;
 
@@ -398,7 +398,7 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
         else
             @intCast(std.c.getpid());
         if (reporter.reporters.junit) |junit| {
-            const path = bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0));
+            const path = bun.handleOom(bun.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0));
             if (junit.current_file.len > 0) junit.endTestSuite() catch {};
             if (junit.writeToFile(path)) |_| {
                 worker_frame.begin(.junit_file);
@@ -409,7 +409,7 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
             }
         }
         if (ctx.test_options.coverage.enabled) {
-            const path = bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0));
+            const path = bun.handleOom(bun.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0));
             if (reporter.writeLcovOnly(vm, &ctx.test_options.coverage, path)) |_| {
                 worker_frame.begin(.coverage_file);
                 worker_frame.str(path);

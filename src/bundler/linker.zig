@@ -321,7 +321,7 @@ pub const Linker = struct {
                 if (strings.eqlComptime(namespace, "node")) {
                     if (comptime Environment.isDebug) bun.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
-                    return Fs.Path.init(try std.fmt.allocPrint(
+                    return Fs.Path.init(try bun.fmt.allocPrint(
                         linker.allocator,
                         // assumption: already starts with "node:"
                         "{s}/{s}",

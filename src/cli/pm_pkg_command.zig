@@ -149,7 +149,7 @@ pub const PmPkgCommand = struct {
             if (getJsonValue(ctx.allocator, pkg.root, key, if (args.len > 1) 4 else 2)) |value| {
                 if (args.len > 1) {
                     if (strings.lastIndexOfChar(value, '}')) |last_index| {
-                        const new_value = try std.fmt.allocPrint(ctx.allocator, "{s}  {s}", .{ value[0..last_index], value[last_index..] });
+                        const new_value = try bun.fmt.allocPrint(ctx.allocator, "{s}  {s}", .{ value[0..last_index], value[last_index..] });
                         try results.put(key, new_value);
                         continue;
                     }
@@ -331,9 +331,9 @@ pub const PmPkgCommand = struct {
             },
             .e_number => |n| {
                 if (@floor(n.value) == n.value) {
-                    return try std.fmt.allocPrint(allocator, "{d:.0}", .{n.value});
+                    return try bun.fmt.allocPrint(allocator, "{d:.0}", .{n.value});
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{d}", .{n.value});
+                    return try bun.fmt.allocPrint(allocator, "{d}", .{n.value});
                 }
             },
             .e_null => {

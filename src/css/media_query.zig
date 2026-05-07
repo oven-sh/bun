@@ -1485,7 +1485,7 @@ pub fn MediaFeatureName(comptime FeatureId: type) type {
             const final_name = if (is_webkit) name: {
                 // PERF: stack buffer here?
                 free_str = true;
-                break :name bun.handleOom(std.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}));
+                break :name bun.handleOom(bun.fmt.allocPrint(input.allocator(), "-webkit-{s}", .{name}));
             } else name;
 
             defer if (is_webkit) {

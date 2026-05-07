@@ -263,7 +263,7 @@ pub const Result = struct {
 
             try log.addMsg(Msg{
                 .kind = .err,
-                .data = logger.rangeData(_source, r, std.fmt.allocPrint(m.notes.allocator, fmt, args)),
+                .data = logger.rangeData(_source, r, bun.fmt.allocPrint(m.notes.allocator, fmt, args)),
                 .notes = try m.toOwnedSlice(),
             });
         }
@@ -336,7 +336,7 @@ pub const DebugLogs = struct {
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) void {
         @branchHint(.cold);
-        return d.addNote(std.fmt.allocPrint(d.notes.allocator, fmt, args) catch unreachable);
+        return d.addNote(bun.fmt.allocPrint(d.notes.allocator, fmt, args) catch unreachable);
     }
 };
 
@@ -2525,7 +2525,7 @@ pub const Resolver = struct {
                                     const index_query = dir_entries.get(file_name);
                                     if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
                                         if (r.debug_logs) |*debug| {
-                                            missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                            missing_suffix = bun.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
                                             defer r.allocator.free(missing_suffix);
                                             const parts = [_]string{ package_json.name, package_subpath };
                                             debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
@@ -4123,7 +4123,7 @@ pub const Resolver = struct {
                         var symlink = entry.symlink(rfs, r.store_fd);
                         if (symlink.len > 0) {
                             if (r.debug_logs) |*logs| {
-                                logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
+                                logs.addNote(bun.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             info.abs_real_path = symlink;
                         } else if (parent_.abs_real_path.len > 0) {
@@ -4132,7 +4132,7 @@ pub const Resolver = struct {
                             symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename))) catch unreachable;
 
                             if (r.debug_logs) |*logs| {
-                                logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
+                                logs.addNote(bun.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             lookup.entry.cache.symlink = PathString.init(symlink);
                             info.abs_real_path = symlink;

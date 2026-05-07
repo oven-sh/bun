@@ -1440,7 +1440,7 @@ pub fn definesFromTransformOptions(
                     } else if (strings.eqlComptime(node_env, "test")) {
                         break :brk "\"test\"";
                     } else {
-                        break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                        break :brk try bun.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
                     }
                 }
             }

@@ -17,7 +17,7 @@ pub const Version = struct {
             if (strings.eqlComptime(this.tag, "canary")) {
                 const Cli = @import("./cli.zig");
 
-                return std.fmt.allocPrint(
+                return bun.fmt.allocPrint(
                     bun.default_allocator,
                     "bun-canary-timestamp-{f}",
                     .{
@@ -131,7 +131,7 @@ pub const UpgradeCommand = struct {
 
         if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
+                headers_buf = try bun.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
                     .{
@@ -561,7 +561,7 @@ pub const UpgradeCommand = struct {
                     }
                 } else if (comptime Environment.isWindows) {
                     // Run a powershell script to unzip the file
-                    const unzip_script = try std.fmt.allocPrint(
+                    const unzip_script = try bun.fmt.allocPrint(
                         ctx.allocator,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{f}\" \"{f}\" -Force",
                         .{
@@ -759,7 +759,7 @@ pub const UpgradeCommand = struct {
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
                     current_executable_buf[target_dir_.len] = '\\';
-                    outdated_filename = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}\\{s}.outdated", .{
+                    outdated_filename = try bun.fmt.allocPrintSentinel(ctx.allocator, "{s}\\{s}.outdated", .{
                         target_dirname,
                         target_filename,
                     }, 0);

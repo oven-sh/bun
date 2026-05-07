@@ -354,7 +354,7 @@ pub const Registry = struct {
 
             if (needs_normalize) {
                 url = URL.parse(
-                    try std.fmt.allocPrint(allocator, "{s}://{f}/{s}/", .{
+                    try bun.fmt.allocPrint(allocator, "{s}://{f}/{s}/", .{
                         url.displayProtocol(),
                         url.displayHost(),
                         strings.trim(url.pathname, "/"),

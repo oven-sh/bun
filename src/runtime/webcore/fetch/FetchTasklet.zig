@@ -1125,7 +1125,7 @@ pub const FetchTasklet = struct {
                 // `fetch(url, { proxy: "..." })` option.
                 if (env_proxy.href.len > 0) {
                     const old_url_len = url.href.len;
-                    const new_buffer = try std.fmt.allocPrint(bun.default_allocator, "{s}{s}", .{ fetch_tasklet.url_proxy_buffer, env_proxy.href });
+                    const new_buffer = try bun.fmt.allocPrint(bun.default_allocator, "{s}{s}", .{ fetch_tasklet.url_proxy_buffer, env_proxy.href });
                     if (fetch_tasklet.url_proxy_buffer.len > 0) {
                         bun.default_allocator.free(fetch_tasklet.url_proxy_buffer);
                     }

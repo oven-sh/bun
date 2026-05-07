@@ -1283,20 +1283,20 @@ pub const BundleV2 = struct {
                 if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
 
                 const client_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
+                    .data = try bun.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                     }),
                 });
                 const ssr_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
+                    .data = try bun.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         ssr_index,
                     }),
                 });
 
                 for (keys, client_manifest_items) |export_name_string, *client_item| {
-                    const server_key_string = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}#{s}", .{
+                    const server_key_string = try bun.fmt.allocPrint(alloc, "{f}S{d:0>8}#{s}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                         export_name_string,
@@ -1805,7 +1805,7 @@ pub const BundleV2 = struct {
                         if (template.needs(.target)) {
                             template.placeholder.target = @tagName(target);
                         }
-                        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{template}));
+                        break :brk bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{f}", .{template}));
                     };
 
                     const loader = loaders[index];
@@ -3285,7 +3285,7 @@ pub const BundleV2 = struct {
                         const hash = dev_server.assets.getHash(path.text) orelse @panic("cached asset not found");
                         import_record.path.text = path.text;
                         import_record.path.namespace = "file";
-                        import_record.path.pretty = std.fmt.allocPrint(this.allocator(), bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
+                        import_record.path.pretty = bun.fmt.allocPrint(this.allocator(), bun.bake.DevServer.asset_prefix ++ "/{s}{s}", .{
                             &std.fmt.bytesToHex(std.mem.asBytes(&hash), .lower),
                             std.fs.path.extension(path.text),
                         }) catch |err| bun.handleOom(err);
@@ -3511,7 +3511,7 @@ pub const BundleV2 = struct {
         var js_parser_options = bun.js_parser.Parser.Options.init(this.transpilerForTarget(target).options.jsx, .html);
         js_parser_options.bundle = true;
 
-        const unique_key = try std.fmt.allocPrint(this.allocator(), "{f}H{d:0>8}", .{
+        const unique_key = try bun.fmt.allocPrint(this.allocator(), "{f}H{d:0>8}", .{
             bun.fmt.hexIntLower(this.unique_key),
             graph.html_imports.server_source_indices.len,
         });

@@ -488,7 +488,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
         }
 
         const message = if (status_message_slice.len > 0) status_message_slice.slice() else "HM";
-        const status_message = bun.handleOom(std.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }));
+        const status_message = bun.handleOom(bun.fmt.allocPrint(allocator, "{d} {s}", .{ status_code, message }));
         defer allocator.free(status_message);
         writeHeadInternal(this.raw_response.?, globalObject, status_message, headers_object_value);
         break :do_it;

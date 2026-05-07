@@ -64,7 +64,7 @@ pub fn Err(comptime T: type) type {
                 .kind = .err,
                 .data = .{
                     .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
-                    .text = try std.fmt.allocPrint(allocator, "{f}", .{this.kind}),
+                    .text = try bun.fmt.allocPrint(allocator, "{f}", .{this.kind}),
                 },
             });
 

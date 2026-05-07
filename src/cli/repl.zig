@@ -1495,7 +1495,7 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     // If code starts with { (after whitespace) and doesn't end with ;
     const is_object_literal = isLikelyObjectLiteral(code);
     const processed_code = if (is_object_literal)
-        std.fmt.allocPrint(self.allocator, "({s})", .{code}) catch return null
+        bun.fmt.allocPrint(self.allocator, "({s})", .{code}) catch return null
     else
         code;
     defer if (is_object_literal) self.allocator.free(processed_code);

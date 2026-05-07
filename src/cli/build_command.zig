@@ -334,7 +334,7 @@ pub const BuildCommand = struct {
             }
 
             if (ctx.bundler_options.outdir.len == 0 and outfile.len > 0 and !ctx.bundler_options.compile) {
-                this_transpiler.options.entry_naming = try std.fmt.allocPrint(allocator, "./{s}", .{
+                this_transpiler.options.entry_naming = try bun.fmt.allocPrint(allocator, "./{s}", .{
                     std.fs.path.basename(outfile),
                 });
                 if (std.fs.path.dirname(outfile)) |dir|
@@ -511,7 +511,7 @@ pub const BuildCommand = struct {
                 }
 
                 if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
-                    outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
+                    outfile = try bun.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
                 } else if (was_renamed_from_index and !bun.strings.eqlComptime(outfile, "index")) {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
                     if (bun.sys.directoryExistsAt(bun.FD.fromStdDir(root_dir), outfile).asValue() orelse false) {
@@ -562,9 +562,9 @@ pub const BuildCommand = struct {
                             else brk: {
                                 const exe_base = bun.path.basename(outfile);
                                 break :brk if (compile_target.os == .windows and !strings.hasSuffixComptime(exe_base, ".exe"))
-                                    try std.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
+                                    try bun.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
                                 else
-                                    try std.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
+                                    try bun.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
                             };
 
                             // root_dir already points to the outfile's parent directory,

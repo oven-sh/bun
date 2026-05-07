@@ -176,7 +176,7 @@ pub const YarnLock = struct {
                     owner = path_without_commit[0..slash_idx];
                     repo = path_without_commit[slash_idx + 1 ..];
                 }
-                url = try std.fmt.allocPrint(
+                url = try bun.fmt.allocPrint(
                     self.allocator,
                     "https://github.com/{s}",
                     .{path_without_commit},
@@ -494,7 +494,7 @@ fn processDeps(
     while (deps_it.next()) |dep| {
         const dep_name = dep.key_ptr.*;
         const dep_version = dep.value_ptr.*;
-        const dep_spec = try std.fmt.allocPrint(
+        const dep_spec = try bun.fmt.allocPrint(
             temp_allocator,
             "{s}@{s}",
             .{ dep_name, dep_version },
@@ -1014,7 +1014,7 @@ pub fn migrateYarnLockfile(
 
     if (root_dependencies.items.len > 0) {
         for (root_dependencies.items) |dep| {
-            const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep.name, dep.version });
+            const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep.name, dep.version });
             defer allocator.free(dep_spec);
 
             var found_idx: ?usize = null;
@@ -1156,7 +1156,7 @@ pub fn migrateYarnLockfile(
                 while (deps_it.next()) |dep| {
                     const dep_name = dep.key_ptr.*;
                     const dep_version = dep.value_ptr.*;
-                    const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version });
+                    const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version });
                     defer allocator.free(dep_spec);
 
                     if (yarn_lock.findEntryBySpec(dep_spec)) |dep_entry| {
@@ -1185,7 +1185,7 @@ pub fn migrateYarnLockfile(
     }
 
     for (root_dependencies.items) |dep| {
-        const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep.name, dep.version });
+        const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep.name, dep.version });
         defer allocator.free(dep_spec);
 
         for (yarn_lock.entries.items, 0..) |entry, idx| {
@@ -1257,7 +1257,7 @@ pub fn migrateYarnLockfile(
             }
 
             if (!found_in_index) {
-                const fallback_name = try std.fmt.allocPrint(allocator, "{s}#{}", .{ base_name, package_id });
+                const fallback_name = try bun.fmt.allocPrint(allocator, "{s}#{}", .{ base_name, package_id });
                 defer allocator.free(fallback_name);
 
                 const fallback_hash = stringHash(fallback_name);
@@ -1340,7 +1340,7 @@ pub fn migrateYarnLockfile(
                         if (dep_package_id != package_id) {
                             const parent_name = package_names[dep_package_id];
 
-                            const potential_name = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, base_name });
+                            const potential_name = try bun.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, base_name });
 
                             var name_already_used = false;
                             var value_iter = scoped_names.valueIterator();
@@ -1373,7 +1373,7 @@ pub fn migrateYarnLockfile(
                 },
                 else => "unknown",
             };
-            scoped_name = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ base_name, version_str });
+            scoped_name = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ base_name, version_str });
         }
 
         if (scoped_name) |final_scoped_name| {
@@ -1455,7 +1455,7 @@ pub fn migrateYarnLockfile(
 
             try this.buffers.dependencies.append(allocator, dep);
 
-            const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ root_dep.name, root_dep.version });
+            const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ root_dep.name, root_dep.version });
             defer allocator.free(dep_spec);
 
             if (spec_to_package_id.get(dep_spec)) |pkg_id| {
@@ -1513,7 +1513,7 @@ pub fn migrateYarnLockfile(
                     .behavior = .{ .prod = true },
                 });
 
-                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
                 defer allocator.free(dep_spec);
 
                 if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {
@@ -1557,7 +1557,7 @@ pub fn migrateYarnLockfile(
                     .behavior = .{ .optional = true },
                 });
 
-                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
                 defer allocator.free(dep_spec);
 
                 if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {
@@ -1601,7 +1601,7 @@ pub fn migrateYarnLockfile(
                     .behavior = .{ .peer = true },
                 });
 
-                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
                 defer allocator.free(dep_spec);
 
                 if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {
@@ -1645,7 +1645,7 @@ pub fn migrateYarnLockfile(
                     .behavior = .{ .dev = true },
                 });
 
-                const dep_spec = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
+                const dep_spec = try bun.fmt.allocPrint(allocator, "{s}@{s}", .{ dep_name, dep_version_literal });
                 defer allocator.free(dep_spec);
 
                 if (spec_to_package_id.get(dep_spec)) |res_pkg_id| {

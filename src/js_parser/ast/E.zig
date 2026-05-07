@@ -444,7 +444,7 @@ pub const Number = struct {
                     double_digit[abs];
             }
 
-            return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+            return bun.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
         }
 
         if (std.math.isNan(value)) {

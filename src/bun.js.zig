@@ -218,7 +218,7 @@ pub const Run = struct {
             defer bun.default_allocator.free(escaped_path);
             const escaped_period = try escapeForJSString(bun.default_allocator, ctx.runtime_options.cron_period);
             defer bun.default_allocator.free(escaped_period);
-            const cron_script = try std.fmt.allocPrint(bun.default_allocator,
+            const cron_script = try bun.fmt.allocPrint(bun.default_allocator,
                 \\const mod = await import("{s}");
                 \\const scheduled = (mod.default || mod).scheduled;
                 \\if (typeof scheduled !== "function") throw new Error("Module does not export default.scheduled()");

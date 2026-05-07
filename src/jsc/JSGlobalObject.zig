@@ -502,7 +502,7 @@ pub const JSGlobalObject = opaque {
         // Avoid tiny extra allocation
         var stack = std.heap.stackFallback(128, bun.default_allocator);
         const allocator_ = stack.get();
-        const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
+        const buffer = try bun.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
         const str = ZigString.initUTF8(buffer);
         const err_value = str.toErrorInstance(this);
@@ -1008,7 +1008,7 @@ pub const JSGlobalObject = opaque {
             var fallback = std.heap.stackFallback(256, bun.default_allocator);
             var alloc = fallback.get();
 
-            const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;
+            const buf = bun.fmt.allocPrint(alloc, fmt, args) catch unreachable;
             var zig_str = jsc.ZigString.init(buf);
             zig_str.detectEncoding();
             // it alwayas clones

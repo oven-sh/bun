@@ -1019,13 +1019,13 @@ pub fn fromJS(
             defer bun.default_allocator.free(@constCast(original_base_uri));
             if (needsBrackets) {
                 args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
+                    bun.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
                         protocol,
                         hostname,
                         strings.trimLeadingChar(args.base_url.pathname, '/'),
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
+                    bun.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
                         protocol,
                         hostname,
                         port,
@@ -1033,13 +1033,13 @@ pub fn fromJS(
                     })) catch unreachable;
             } else {
                 args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
+                    bun.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
                         protocol,
                         hostname,
                         strings.trimLeadingChar(args.base_url.pathname, '/'),
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
+                    bun.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
                         protocol,
                         hostname,
                         port,
@@ -1058,20 +1058,20 @@ pub fn fromJS(
         const protocol: string = if (args.ssl_config != null) "https" else "http";
         if (needsBrackets) {
             args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
+                bun.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
                     protocol,
                     hostname,
                 })
             else
-                std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
+                bun.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, port })) catch unreachable;
         } else {
             args.base_uri = (if ((port == 80 and args.ssl_config == null) or (port == 443 and args.ssl_config != null))
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
+                bun.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
                     protocol,
                     hostname,
                 })
             else
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
+                bun.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, port })) catch unreachable;
         }
 
         if (!strings.isAllASCII(hostname)) {

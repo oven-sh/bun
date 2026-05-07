@@ -851,7 +851,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "git@{s}:{s}/{s}.git{s}{s}",
                         .{ self.domain(), user.?, project, cmsh_sep, cmsh },
@@ -869,7 +869,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         allocator,
                         "git@{s}:{s}.git{s}{s}",
                         .{ self.domain(), project, cmsh_sep, cmsh },
@@ -898,7 +898,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "git+ssh://git@{s}/{s}/{s}.git{s}{s}",
                         .{ self.domain(), user.?, project, cmsh_sep, cmsh },
@@ -916,7 +916,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         allocator,
                         "git+ssh://git@{s}/{s}.git{s}{s}",
                         .{ self.domain(), project, cmsh_sep, cmsh },
@@ -950,7 +950,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "git+https://{s}{s}{s}/{s}/{s}.git{s}{s}",
                         .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
@@ -971,7 +971,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "git+https://{s}/{s}.git{s}{s}",
                         .{ self.domain(), project, cmsh_sep, cmsh },
@@ -992,7 +992,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "https://{s}/{s}/{s}.git{s}{s}",
                         .{ self.domain(), user.?, project, cmsh_sep, cmsh },
@@ -1022,7 +1022,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "{s}{s}/{s}{s}{s}",
                         .{ self.shortcut(), user.?, project, cmsh_sep, cmsh },
@@ -1041,7 +1041,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         alloc,
                         "{s}{s}{s}{s}",
                         .{ self.shortcut(), project, cmsh_sep, cmsh },
@@ -1449,7 +1449,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         allocator,
                         "git://{s}{s}{s}/{s}/{s}.git{s}{s}",
                         .{ auth_str, auth_sep, self.domain(), user.?, project, cmsh_sep, cmsh },
@@ -1470,7 +1470,7 @@ const HostProvider = enum {
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
 
-                    return std.fmt.allocPrint(
+                    return bun.fmt.allocPrint(
                         allocator,
                         "git://{s}/{s}.git{s}{s}",
                         .{ self.domain(), project, cmsh_sep, cmsh },

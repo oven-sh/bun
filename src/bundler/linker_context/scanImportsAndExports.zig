@@ -1142,7 +1142,7 @@ fn validateComposesFromProperties(
                             entry.value_ptr.range,
                             bun.handleOom(Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name})),
                         ),
-                        .{ .text = std.fmt.allocPrint(
+                        .{ .text = bun.fmt.allocPrint(
                             v.allocator,
                             "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
                                 "The value of the {f} property for {f} may change unpredictably as the code is edited. " ++

@@ -346,7 +346,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 }
 
 pub fn failFmt(this: *PostgresSQLConnection, code: []const u8, comptime fmt: [:0]const u8, args: anytype) void {
-    const message = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, fmt, args));
+    const message = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, fmt, args));
     defer bun.default_allocator.free(message);
 
     const err = createPostgresError(this.globalObject, message, .{ .code = code }) catch |e| this.globalObject.takeError(e);
@@ -1679,7 +1679,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     defer bun.z_allocator.free(server_salt_decoded_base64);
                     try sasl.computeSaltedPassword(server_salt_decoded_base64, iteration_count, this);
 
-                    const auth_string = try std.fmt.allocPrint(
+                    const auth_string = try bun.fmt.allocPrint(
                         bun.z_allocator,
                         "n=*,r={s},r={s},s={s},i={s},c=biws,r={s}",
                         .{
@@ -1703,7 +1703,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     var client_key_xor_base64_buf = std.mem.zeroes([bun.base64.encodeLenFromSize(32)]u8);
                     const xor_base64_len = bun.base64.encode(&client_key_xor_base64_buf, &client_key_xor_buffer);
 
-                    const payload = try std.fmt.allocPrint(
+                    const payload = try bun.fmt.allocPrint(
                         bun.z_allocator,
                         "c=biws,r={s},p={s}",
                         .{ cont.r, client_key_xor_base64_buf[0..xor_base64_len] },

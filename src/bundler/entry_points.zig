@@ -39,7 +39,7 @@ pub const FallbackEntryPoint = struct {
             if (count < entry.code_buffer.len) {
                 code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
             } else {
-                code = try std.fmt.allocPrint(transpiler.allocator, fmt, args);
+                code = try bun.fmt.allocPrint(transpiler.allocator, fmt, args);
             }
         } else {
             const fmt =
@@ -55,7 +55,7 @@ pub const FallbackEntryPoint = struct {
             if (count < entry.code_buffer.len) {
                 code = try std.fmt.bufPrint(&entry.code_buffer, fmt, args);
             } else {
-                code = try std.fmt.allocPrint(transpiler.allocator, fmt, args);
+                code = try bun.fmt.allocPrint(transpiler.allocator, fmt, args);
             }
         }
 
@@ -175,7 +175,7 @@ pub const ServerEntryPoint = struct {
         const allocator = bun.default_allocator;
         const code = brk: {
             if (is_hot_reload_enabled) {
-                break :brk try std.fmt.allocPrint(
+                break :brk try bun.fmt.allocPrint(
                     allocator,
                     \\// @bun
                     \\import * as start from '{f}';
@@ -215,7 +215,7 @@ pub const ServerEntryPoint = struct {
                     },
                 );
             }
-            break :brk try std.fmt.allocPrint(
+            break :brk try bun.fmt.allocPrint(
                 allocator,
                 \\// @bun
                 \\import * as start from "{f}";

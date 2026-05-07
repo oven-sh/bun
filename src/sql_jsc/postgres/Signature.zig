@@ -91,7 +91,7 @@ pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_valu
         return error.InvalidQueryBinding;
     }
     // max u64 length is 20, max prepared_statement_name length is 63
-    const prepared_statement_name = if (unnamed) "" else try std.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
+    const prepared_statement_name = if (unnamed) "" else try bun.fmt.allocPrint(bun.default_allocator, "P{s}${d}", .{ name.items[0..@min(40, name.items.len)], prepared_statement_id });
 
     return Signature{
         .prepared_statement_name = prepared_statement_name,

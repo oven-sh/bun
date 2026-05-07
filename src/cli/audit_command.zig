@@ -282,7 +282,7 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, pr
             continue;
         }
 
-        const ver_str = try std.fmt.allocPrint(allocator, "{f}", .{res.value.npm.version.fmt(buf)});
+        const ver_str = try bun.fmt.allocPrint(allocator, "{f}", .{res.value.npm.version.fmt(buf)});
 
         var found_package: ?*@TypeOf(packages_list.items[0]) = null;
         for (packages_list.items) |*item| {
@@ -374,7 +374,7 @@ fn sendAuditRequest(allocator: std.mem.Allocator, pm: *PackageManager, body: []c
         headers.appendFmt("authorization", "Basic {s}", .{pm.options.scope.auth});
     }
 
-    const url_str = try std.fmt.allocPrint(allocator, "{s}/-/npm/v1/security/advisories/bulk", .{strings.withoutTrailingSlash(pm.options.scope.url.href)});
+    const url_str = try bun.fmt.allocPrint(allocator, "{s}/-/npm/v1/security/advisories/bulk", .{strings.withoutTrailingSlash(pm.options.scope.url.href)});
     defer allocator.free(url_str);
     const url = URL.parse(url_str);
 
@@ -438,7 +438,7 @@ fn parseVulnerability(allocator: std.mem.Allocator, package_name: []const u8, vu
                             }
                         } else if (value.data == .e_number) {
                             if (std.mem.eql(u8, field_name, "id")) {
-                                vulnerability.id = try std.fmt.allocPrint(allocator, "{d}", .{@as(u64, @intFromFloat(value.data.e_number.value))});
+                                vulnerability.id = try bun.fmt.allocPrint(allocator, "{d}", .{@as(u64, @intFromFloat(value.data.e_number.value))});
                             }
                         }
                     }
@@ -495,7 +495,7 @@ fn findDependencyPaths(
                     .is_direct = false,
                 };
 
-                const workspace_prefix = try std.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
+                const workspace_prefix = try bun.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
                 try workspace_path.path.append(workspace_prefix);
                 try workspace_path.path.append(try allocator.dupe(u8, target_package));
                 try paths.append(workspace_path);
@@ -576,7 +576,7 @@ fn findDependencyPaths(
             }
 
             if (workspace_name_for_dep) |workspace_name| {
-                const workspace_prefix = try std.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
+                const workspace_prefix = try bun.fmt.allocPrint(allocator, "workspace:{s}", .{workspace_name});
                 try path.path.insert(0, workspace_prefix);
             }
 

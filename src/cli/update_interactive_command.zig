@@ -448,7 +448,7 @@ pub const UpdateInteractiveCommand = struct {
             if (pkg.is_catalog) {
                 // Store catalog updates for later processing
                 const catalog_key = if (pkg.catalog_name) |catalog_name|
-                    try std.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, catalog_name })
+                    try bun.fmt.allocPrint(bun.default_allocator, "{s}:{s}", .{ pkg.name, catalog_name })
                 else
                     pkg.name;
 
@@ -1433,7 +1433,7 @@ pub const UpdateInteractiveCommand = struct {
                     const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                         pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
                     const package_url = if (Output.enable_ansi_colors_stdout and uses_default_registry)
-                        try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
+                        try bun.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
                             if (selected) {
                                 if (pkg.use_latest) {
                                     break :brk pkg.latest_version;
@@ -2011,17 +2011,17 @@ fn preserveVersionPrefix(original_version: string, new_version: string, allocato
             const second_char = orig_version[1];
             if ((first_char == '>' or first_char == '<') and second_char == '=') {
                 if (alias) |a| {
-                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
+                    return try bun.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
                 }
-                return try std.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
+                return try bun.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
             }
             if (alias) |a| {
-                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
+                return try bun.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
             }
-            return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+            return try bun.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
         }
         if (alias) |a| {
-            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
+            return try bun.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
         }
     }
     return try allocator.dupe(u8, new_version);

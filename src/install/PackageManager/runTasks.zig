@@ -1168,7 +1168,7 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
     const repo = this.lockfile.str(&repository.repo);
     const committish = this.lockfile.str(&repository.committish);
 
-    return std.fmt.allocPrint(
+    return bun.fmt.allocPrint(
         this.allocator,
         "{s}/repos/{s}/{s}{s}tarball/{s}",
         .{

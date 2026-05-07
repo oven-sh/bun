@@ -123,7 +123,7 @@ pub const CssModule = struct {
 
         this.references.put(
             allocator,
-            bun.handleOom(std.fmt.allocPrint(allocator, "--{s}", .{the_hash})),
+            bun.handleOom(bun.fmt.allocPrint(allocator, "--{s}", .{the_hash})),
             reference,
         ) catch |err| bun.handleOom(err);
 
@@ -396,7 +396,7 @@ pub fn hash(allocator: Allocator, comptime fmt: []const u8, args: anytype, at_st
     var stack_fallback = std.heap.stackFallback(128, allocator);
     const fmt_alloc = if (count <= 128) stack_fallback.get() else allocator;
     var hasher = bun.Wyhash11.init(0);
-    var fmt_str = bun.handleOom(std.fmt.allocPrint(fmt_alloc, fmt, args));
+    var fmt_str = bun.handleOom(bun.fmt.allocPrint(fmt_alloc, fmt, args));
     hasher.update(fmt_str);
 
     const h: u32 = @truncate(hasher.final());

@@ -1162,7 +1162,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
             return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toZigString(), value_bunstr.toZigString() }).throw();
         }
 
-        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, value_bunstr.toZigString() }, 0);
+        const line = try bun.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, value_bunstr.toZigString() }, 0);
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);

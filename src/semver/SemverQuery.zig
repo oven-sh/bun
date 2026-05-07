@@ -173,7 +173,7 @@ pub const Group = struct {
     }
 
     pub fn jsonStringify(this: *const Group, writer: anytype) !void {
-        const temp = try std.fmt.allocPrint(bun.default_allocator, "{f}", .{this.fmt()});
+        const temp = try bun.fmt.allocPrint(bun.default_allocator, "{f}", .{this.fmt()});
         defer bun.default_allocator.free(temp);
         try std.json.encodeJsonString(temp, .{}, writer);
     }

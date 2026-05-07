@@ -109,7 +109,7 @@ fn insert(
     const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
         try dev.allocator().dupe(u8, specifier)
     else
-        try std.fmt.allocPrint(dev.allocator(), "./{s}", .{specifier});
+        try bun.fmt.allocPrint(dev.allocator(), "./{s}", .{specifier});
     errdefer dev.allocator().free(specifier_cloned);
 
     if (gop.found_existing) {

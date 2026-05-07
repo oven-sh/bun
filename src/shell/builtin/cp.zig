@@ -475,12 +475,12 @@ pub const ShellCpTask = struct {
 
         // Any source directory without -R is an error
         if (src_is_dir and !this.opts.recursive) {
-            const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}));
+            const errmsg = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src}));
             return .{ .custom = errmsg };
         }
 
         if (!src_is_dir and bun.strings.eql(src, tgt)) {
-            const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }));
+            const errmsg = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s} and {s} are identical (not copied)", .{ this.src, this.src }));
             return .{ .custom = errmsg };
         }
 
@@ -518,15 +518,15 @@ pub const ShellCpTask = struct {
             } else if (this.operands == 2) {
                 // source_dir -> new_target_dir
             } else {
-                const errmsg = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}));
+                const errmsg = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "directory {s} does not exist", .{this.tgt}));
                 return .{ .custom = errmsg };
             }
             copying_many = true;
         }
         // Handle the "3rd synopsis": source_files... -> target
         else {
-            if (src_is_dir) return .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src})) };
-            if (!tgt_exists or !tgt_is_dir) return .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt})) };
+            if (src_is_dir) return .{ .custom = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s} is a directory (not copied)", .{this.src})) };
+            if (!tgt_exists or !tgt_is_dir) return .{ .custom = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{s} is not a directory", .{this.tgt})) };
             const basename = ResolvePath.basename(src[0..src.len]);
             const parts: []const []const u8 = &.{
                 tgt[0..tgt.len],

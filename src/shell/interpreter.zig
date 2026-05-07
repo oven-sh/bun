@@ -886,7 +886,7 @@ pub const Interpreter = struct {
                 test_tokens.append(test_tok) catch @panic("OOPS");
             }
 
-            const str = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
+            const str = bun.handleOom(bun.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
             defer bun.default_allocator.free(str);
             debug("Tokens: {s}", .{str});
         }

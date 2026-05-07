@@ -2147,7 +2147,7 @@ pub fn create_shell_interpreter(
     global: &crate::jsc::JSGlobalObject,
     callframe: &crate::jsc::CallFrame,
 ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-    use crate::jsc::{ArgumentsSlice, JSValue, JsClass as _};
+    use crate::jsc::{ArgumentsSlice, JsClass as _};
     use crate::shell::parsed_shell_script::ParsedShellScript;
 
     let arguments_ = callframe.arguments_old::<3>();

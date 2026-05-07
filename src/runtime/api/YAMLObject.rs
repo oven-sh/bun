@@ -153,7 +153,9 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
     }
 
     if !replacer.is_undefined_or_null() {
-        return Err(global.throw("YAML.stringify does not support the replacer argument"));
+        return Err(global.throw(format_args!(
+            "YAML.stringify does not support the replacer argument"
+        )));
     }
 
     // PERF(port): was bun.AllocationScope (debug-tracked allocator) — global mimalloc in Phase A
@@ -354,7 +356,7 @@ impl Stringifier {
 
         if unwrapped.is_big_int() {
             return Err(global
-                .throw("YAML.stringify cannot serialize BigInt")
+                .throw(format_args!("YAML.stringify cannot serialize BigInt"))
                 .into());
         }
 
@@ -481,7 +483,7 @@ impl Stringifier {
 
         if unwrapped.is_big_int() {
             return Err(global
-                .throw("YAML.stringify cannot serialize BigInt")
+                .throw(format_args!("YAML.stringify cannot serialize BigInt"))
                 .into());
         }
 

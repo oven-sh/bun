@@ -1054,12 +1054,12 @@ impl Readable {
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
                 Stdio::Memfd(_) => Readable::Ignore,
-                Stdio::Pipe => {
-                    Readable::Pipe(PipeReader::create(event_loop, process, result, None, out_type))
-                }
+                Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                    event_loop, process, result, None, out_type, interp,
+                )),
                 Stdio::ArrayBuffer(array_buffer) => {
                     let readable = Readable::Pipe(PipeReader::create(
-                        event_loop, process, result, None, out_type,
+                        event_loop, process, result, None, out_type, interp,
                     ));
                     if let Readable::Pipe(pipe) = &readable {
                         // TODO(port): Arc interior mutability for buffered_output.

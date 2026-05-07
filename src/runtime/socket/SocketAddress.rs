@@ -361,7 +361,7 @@ impl SocketAddress {
                     flowinfo: options.flowlabel.unwrap_or(0),
                     addr: [0u8; 16], // undefined → overwritten below
                     scope_id: 0,
-                    ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
+                    ..inet::sockaddr_in6::ZEROED
                 };
                 if let Some(address_str) = options.address {
                     presentation = address_str;
@@ -778,18 +778,18 @@ pub union sockaddr {
 }
 
 impl sockaddr {
-    pub fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
+    pub const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
         sockaddr {
             sin: inet::sockaddr_in {
-                family: AF::INET.int(),
+                family: inet::AF_INET as inet::sa_family_t,
                 port: port_,
                 addr,
-                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in is #[repr(C)] POD; covers .zero padding
+                ..inet::sockaddr_in::ZEROED
             },
         }
     }
 
-    pub fn v6(
+    pub const fn v6(
         port_: inet::in_port_t,
         addr: [u8; 16],
         // set to 0 if you don't care
@@ -799,12 +799,12 @@ impl sockaddr {
     ) -> sockaddr {
         sockaddr {
             sin6: inet::sockaddr_in6 {
-                family: AF::INET6.int(),
+                family: inet::AF_INET6 as inet::sa_family_t,
                 port: port_,
                 flowinfo,
                 scope_id,
                 addr,
-                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
+                ..inet::sockaddr_in6::ZEROED
             },
         }
     }

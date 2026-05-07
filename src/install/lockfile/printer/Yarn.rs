@@ -7,7 +7,7 @@ use bun_semver::String as SemverString;
 use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::Dependency;
-use bun_install::dependency::{self, Behavior};
+use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::Lockfile;
 use bun_install::lockfile::package;
 use crate::lockfile_real::package::Alphabetizer;

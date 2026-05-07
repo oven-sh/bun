@@ -302,7 +302,9 @@ pub mod entry {
         // Zig default: `.empty`
         pub parents: Vec<Id>,
         // Zig default: `.init(.link_package)`
-        // TODO(port): std.atomic.Value(Installer.Task.Step) — need atomic-enum wrapper; using AtomicU32 placeholder.
+        // PORT NOTE: `std.atomic.Value(Installer.Task.Step)` → `AtomicU32` storing
+        // the `#[repr(u8)]` discriminant. Loads/stores go through `Step as u32` /
+        // `Step::from_u32` (see Installer.rs); no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`

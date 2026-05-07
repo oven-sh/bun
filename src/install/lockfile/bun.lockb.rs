@@ -502,13 +502,11 @@ pub fn load(
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
                 // PORT NOTE: reshaped for borrowck — `Context.buffer` borrows
-                // `lockfile.buffers` while we also need `&mut lockfile.overrides`.
-                // `string_bytes` is not reallocated in this block, so a raw-ptr
-                // slice view is sound (matches Zig's aliased pointers).
-                let string_bytes: &[u8] = unsafe {
-                    let s = lockfile.buffers.string_bytes.as_slice();
-                    core::slice::from_raw_parts(s.as_ptr(), s.len())
-                };
+                // `lockfile.buffers.string_bytes` while we also need
+                // `&mut lockfile.overrides`. Split the disjoint fields up front so
+                // borrowck sees sibling borrows (no raw-ptr provenance laundering).
+                let Lockfile { buffers, overrides, .. } = &mut *lockfile;
+                let string_bytes: &[u8] = buffers.string_bytes.as_slice();
                 debug_assert_eq!(overrides_name_hashes.len(), override_versions_external.len());
                 for (name, value) in overrides_name_hashes
                     .iter()
@@ -520,8 +518,7 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     // PERF(port): was assume_capacity
-                    lockfile
-                        .overrides
+                    overrides
                         .map
                         .put_assume_capacity(*name, dependency::to_dependency(*value, &mut context));
                 }

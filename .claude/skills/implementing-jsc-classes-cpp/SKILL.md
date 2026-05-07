@@ -29,10 +29,8 @@ static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) {
         return nullptr;
     return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMyClassT.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMyClassT = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMyClassT.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMyClassT = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForMyClassT; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForMyClassT; });
 }
 ```
 

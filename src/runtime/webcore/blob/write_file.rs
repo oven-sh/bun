@@ -1087,14 +1087,16 @@ impl WriteFileWaitFromLockedValueTask {
         // SAFETY: `global_this` was set from a live `&JSGlobalObject` when this
         // task was scheduled; the global outlives every `Body::Value` callback.
         let global_this = unsafe { &*this_ref.global_this };
-        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a bitwise copy
-        // with no ref bump and no dtor. `dupe()` here adds +1; in the consuming
-        // arms that extra ref is balanced by `Box::from_raw(this)` dropping
-        // `this.file_blob` (-1, which Zig's `bun.destroy` does not do). In the
-        // `Locked` arm `this` is kept alive for the next callback and the local
-        // `file_blob` drops the +1 at scope exit, leaving `this.file_blob`
-        // intact — net zero either way.
-        let mut file_blob = this_ref.file_blob.dupe();
+        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
+        // bitwise copy — both bindings alias the same `*Store` with no ref
+        // bump, and `bun.destroy(this)` later frees raw memory without running
+        // field destructors. In Rust `Box::from_raw(this)` *does* drop fields,
+        // so leaving the `StoreRef` in `this.file_blob` would double-deref it.
+        // Move ownership out instead; the `Locked` arm — the only path that
+        // keeps `this` alive for a future callback — moves it back so the next
+        // `then()` invocation sees an intact `file_blob`. This also avoids the
+        // throwaway `content_type`/`name` clones that `Blob::dupe()` performs.
+        let mut file_blob = core::mem::take(&mut this_ref.file_blob);
         match value {
             body::Value::Error(err_ref) => {
                 let err = err_ref.to_js(global_this);

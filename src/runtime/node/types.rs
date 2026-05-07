@@ -253,8 +253,10 @@ impl Drop for StringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
-                // TODO(port): if SliceWithUnderlyingString gains Drop, this becomes implicit.
-                str.deinit();
+                // `SliceWithUnderlyingString` has no `Drop` (its `underlying:
+                // bun_str::String` is `Copy`); take ownership and consume via
+                // `deinit()` so the WTF refcount is released.
+                core::mem::take(str).deinit();
             }
             Self::EncodedSlice(_encoded) => {
                 // ZigStringSlice has Drop; cleanup is implicit.
@@ -341,18 +343,12 @@ impl StringOrBuffer {
     pub fn deinit_and_unprotect(&mut self) {
         // Alternate cleanup path (unprotects JS-side buffers); leaves `self`
         // empty so the subsequent Drop is a no-op.
-        match self {
-            Self::ThreadsafeString(str) | Self::String(str) => {
-                // TODO(port): if SliceWithUnderlyingString gains Drop, this becomes implicit.
-                str.deinit();
-            }
-            Self::Buffer(buffer) => {
-                buffer.buffer.value.unprotect();
-            }
-            Self::EncodedSlice(encoded) => {
-                *encoded = ZigStringSlice::default();
-            }
+        if let Self::Buffer(buffer) = self {
+            buffer.buffer.value.unprotect();
         }
+        // Reassigning runs `Drop` on the old value, releasing
+        // `SliceWithUnderlyingString` / `EncodedSlice` exactly as Zig's
+        // `deinitAndUnprotect` does for those arms.
         *self = Self::EMPTY;
     }
 

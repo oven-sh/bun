@@ -202,12 +202,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if ptask_ptr.is_null() {
             break;
         }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. PORT NOTE: queue node is typed as the `crate::PatchTask` stub
-        // (intrusive `next` carrier); cast to the real `patch_install::PatchTask`
-        // it was pushed as so the body can read the `Callback` enum.
-        let ptask_real_ptr: *mut PatchTask = ptask_ptr.cast();
-        let ptask = unsafe { &mut *ptask_real_ptr };
+        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        let ptask = unsafe { &mut *ptask_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
         }

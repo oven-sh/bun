@@ -1361,7 +1361,7 @@ unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
 ) {
     // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
     // route; uWS guarantees they are non-null in handler callbacks.
-    let dev = unsafe { &mut *(ud as *mut DevServer<'static>) };
+    let dev = unsafe { &mut *(ud as *mut DevServer) };
     let req = unsafe { &mut *(req as *mut Request) };
     let resp = if SSL {
         AnyResponse::SSL(res as *mut bun_uws_sys::TLSResponse)
@@ -1647,7 +1647,7 @@ impl RequestEnsureRouteBundledCtx {
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
         let resp = self.resp;
         let dev = self.dev_mut();
-        let requests_array: *mut deferred_request::List<'_> = match bundle_field {
+        let requests_array: *mut deferred_request::List = match bundle_field {
             BundleQueueType::CurrentBundle => &mut dev.current_bundle.as_mut().unwrap().requests,
             BundleQueueType::NextBundle => &mut dev.next_bundle.requests,
         };
@@ -6017,7 +6017,7 @@ impl UnrefSourceMapRequest {
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev: dev as *mut DevServer as *mut DevServer<'static>,
+            dev: dev as *mut DevServer as *mut DevServer,
             body: uws::BodyReaderMixin::init(),
         });
         // SAFETY: dev outlives the request

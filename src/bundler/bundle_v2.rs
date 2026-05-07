@@ -3799,27 +3799,18 @@ impl<'a> BundleV2<'a> {
                             bun_sys::Fd::INVALID
                         };
 
-                        // CYCLEBREAK GENUINE: `bun_watcher` is an erased
-                        // `Option<NonNull<()>>`; the `add_file` call goes through
-                        // the runtime-registered watcher hook.
-                        let hook = dispatch::WATCHER_HOOK.load(core::sync::atomic::Ordering::Acquire);
-                        if !hook.is_null() {
-                            // SAFETY: `hook` is a leaked `&'static WatcherVTable`
-                            // registered at runtime init; `watcher` is valid while
-                            // the bundle is running.
-                            let _ = unsafe {
-                                ((*hook).add_file)(
-                                    watcher_ptr.as_ptr(),
-                                    fd,
-                                    &load.path,
-                                    bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    code.loader,
-                                    bun_sys::Fd::INVALID,
-                                    None,
-                                    true,
-                                )
-                            };
-                        }
+                        // CYCLEBREAK GENUINE: `bun_watcher` carries the
+                        // `&'static WatcherVTable` alongside the erased owner.
+                        // Zig: `_ = this.bun_watcher.?.addFile(...) catch {};`
+                        let _ = watcher_ptr.add_file(
+                            fd,
+                            &load.path,
+                            bun_wyhash::hash(load.path.as_ref()) as u32,
+                            code.loader,
+                            bun_sys::Fd::INVALID,
+                            None,
+                            true,
+                        );
                     }
                 }
             }
@@ -4693,9 +4684,21 @@ impl<'a> BundleV2<'a> {
             let Ok(maybe_data_url) = DataURL::parse(&parse.path.text) else { return false };
             let Some(data_url) = maybe_data_url else { return false };
             let Ok(maybe_decoded) = data_url.decode_data() else { return false };
-            self.free_list.push(maybe_decoded.clone().into_boxed_slice());
-            // TODO(port): lifetime — leaked for &'static [u8]; tracked in free_list above.
-            parse.contents_or_fd = parse_task::ContentsOrFd::Contents(Box::leak(maybe_decoded.into_boxed_slice()));
+            // Zig: `this.free_list.append(decoded); parse.contents_or_fd = .{ .contents = decoded };`
+            // — the SAME allocation is both tracked for free at `deinit` and
+            // borrowed as the parse-task contents. `free_list` owns it for the
+            // bundle's lifetime; `ParseTask` is strictly shorter-lived, so the
+            // raw-slice borrow is sound. No clone, no leak.
+            self.free_list.push(maybe_decoded.into_boxed_slice());
+            // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
+            // (after all ParseTasks have completed); the `Box<[u8]>` is heap-stable.
+            let decoded: &'static [u8] = unsafe {
+                core::slice::from_raw_parts(
+                    self.free_list.last().unwrap().as_ptr(),
+                    self.free_list.last().unwrap().len(),
+                )
+            };
+            parse.contents_or_fd = parse_task::ContentsOrFd::Contents(decoded);
             parse.loader = Some(match data_url.decode_mime_type().category {
                 bun_http_types::MimeType::Category::Javascript => Loader::Js,
                 bun_http_types::MimeType::Category::Css => Loader::Css,

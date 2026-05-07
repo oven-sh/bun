@@ -1424,33 +1424,14 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     }
 }
 
-/// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Free function
-/// here because the `Style` enum is owned by the parent's inline
-/// `framework_router` mod (which has no inherent impl for it) and the full
-/// `FrameworkRouter.rs` draft is still ``-gated.
+/// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Thin
+/// forwarding shim — the real impl lives on `framework_router::Style::from_js`
+/// now that `FrameworkRouter.rs` is un-gated; kept so the call site in
+/// `Framework::from_js` reads the same as the Zig spec.
+#[inline]
 fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
-    if value.is_string() {
-        let str = value.to_bun_string(global)?;
-        if str.eql_comptime("nextjs-pages") {
-            return Ok(framework_router::Style::NextjsPages);
-        }
-        if str.eql_comptime("nextjs-app-ui") {
-            return Ok(framework_router::Style::NextjsAppUi);
-        }
-        if str.eql_comptime("nextjs-app-routes") {
-            return Ok(framework_router::Style::NextjsAppRoutes);
-        }
-        return Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")));
-    }
-    // TODO(b2-blocked): super::framework_router::Style::JavaScriptDefined —
-    // the JS-callback variant needs `jsc::Strong`; until that lands, only the
-    // built-in string styles are accepted.
-    Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
+    framework_router::Style::from_js(value, global)
 }
-
-/// `FrameworkRouter.Style.error_message` (FrameworkRouter.zig:470).
-const STYLE_ERROR_MESSAGE: &str =
-    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 fn get_optional_string(
     target: JSValue,
@@ -1659,12 +1640,6 @@ impl PatternBuffer {
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 
-    // `FrameworkRouter.Part` lives in the gated `FrameworkRouter.rs` draft
-    // (parent's inline `framework_router` mod only exposes `Style` +
-    // index newtypes). Gate `prepend_part` until `Part` un-gates; the only
-    // caller is `DevServer::finalize_bundle`, also gated.
-    // TODO(b2-blocked): super::framework_router::Part — un-gate FrameworkRouter.rs
-    
     pub fn prepend_part(&mut self, part: framework_router::Part) {
         match part {
             framework_router::Part::Text(text) => {

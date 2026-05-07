@@ -576,7 +576,7 @@ impl Config {
                 // defer iter.deinit() → Drop
 
                 if iter.len > 0 {
-                    let _ = replacements.ensure_unused_capacity(iter.len);
+                    bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
 
                     // We cannot set the exception before `?` because it could be
                     // a double free with the errdefer.
@@ -1501,7 +1501,7 @@ impl JSTranspiler {
 
         let mut buffer_writer = self.buffer_writer.take().unwrap_or_else(|| {
             let mut writer = JSPrinter::BufferWriter::init();
-            let _ = writer.buffer.grow_if_needed(code.len());
+            bun_core::handle_oom(writer.buffer.grow_if_needed(code.len()));
             // Zig: `writer.buffer.list.expandToCapacity()` — Vec<u8> can grow lazily; skip.
             writer
         });

@@ -15,6 +15,15 @@
     unused_imports,
     unused_unsafe,
     dead_code,
+    // The `${T}__fromJS`/`${T}__create` externs traffic in `*mut <RustStruct>`
+    // where the C++ side stores the value as `void* m_ctx` and never derefs it
+    // (see ZigGeneratedClasses.h `offsetOfWrapped`). The Rust payload's field
+    // layout is therefore irrelevant to the ABI, but rustc's improper_ctypes
+    // lint recurses into every field. Suppress here rather than forcing every
+    // `m_ctx` payload (and its transitive fields — `JsRef`, `Strong`, …) to be
+    // `#[repr(C)]` just to placate a lint about a pointer C++ treats as opaque.
+    improper_ctypes,
+    improper_ctypes_definitions,
     clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref,
     clippy::all

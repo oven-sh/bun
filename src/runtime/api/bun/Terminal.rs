@@ -30,72 +30,16 @@ use bun_sys::windows;
 
 bun_output::declare_scope!(Terminal, hidden);
 
-// Generated bindings
-// TODO(port): codegen — `jsc.Codegen.JSTerminal` becomes the `#[bun_jsc::JsClass]`
-// derive below; `toJS`/`fromJS`/`fromJSDirect` are emitted by that derive.
-// Until the `.classes.ts` generator gains a `.rs` output mode, hand-roll the
-// extern surface here (mirrors `js_class_module!` in `bun_jsc::generated`).
+// Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
+// emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
+// cached-value accessors; re-export here so callers continue to spell `js::*`
+// (matching Zig's `js.toJS`/`js.gc.set(.data, …)`).
 pub use self::js::{from_js, from_js_direct, to_js};
 pub mod js {
-    use bun_jsc::{JSGlobalObject, JSValue};
-
-    // `${TypeName}__fromJS` / `__fromJSDirect` / `__create` /
-    // `__getConstructor` — implemented in C++ by
-    // `src/codegen/generate-classes.ts` (`symbolName(typeName, name)` ⇒
-    // `${typeName}__${name}`). All use `JSC_CALLCONV`.
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    unsafe extern "sysv64" {
-        #[link_name = "Terminal__fromJS"]
-        fn __from_js(value: JSValue) -> *mut ();
-        #[link_name = "Terminal__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut ();
-        #[link_name = "Terminal__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
-        #[link_name = "Terminal__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    unsafe extern "C" {
-        #[link_name = "Terminal__fromJS"]
-        fn __from_js(value: JSValue) -> *mut ();
-        #[link_name = "Terminal__fromJSDirect"]
-        fn __from_js_direct(value: JSValue) -> *mut ();
-        #[link_name = "Terminal__create"]
-        fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
-        #[link_name = "Terminal__getConstructor"]
-        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-    }
-
-    #[inline]
-    pub fn from_js(value: JSValue) -> ::core::option::Option<*mut super::Terminal> {
-        // SAFETY: C++ side type-checks and returns `m_ctx` or null.
-        let ptr = unsafe { __from_js(value) };
-        if ptr.is_null() { None } else { Some(ptr.cast()) }
-    }
-
-    #[inline]
-    pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut super::Terminal> {
-        // SAFETY: see `from_js`.
-        let ptr = unsafe { __from_js_direct(value) };
-        if ptr.is_null() { None } else { Some(ptr.cast()) }
-    }
-
-    #[inline]
-    pub fn to_js(ptr: *mut super::Terminal, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is an opaque ZST FFI handle; `ptr` is a freshly
-        // boxed native payload (not yet owned by any wrapper).
-        unsafe { __create(global.as_ptr(), ptr.cast()) }
-    }
-
-    #[inline]
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        // SAFETY: `global` is an opaque ZST FFI handle.
-        unsafe { __get_constructor(global.as_ptr()) }
-    }
-
-    // `values: ["data", "exit", "drain"]` in Terminal.classes.ts → cached
-    // WriteBarrier slots accessed via `js.gc.get/set(.data, ...)` in Zig.
-    bun_jsc::codegen_cached_accessors!("Terminal"; data, exit, drain);
+    pub use crate::generated_classes::js_Terminal::{
+        data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
+        exit_set_cached, from_js, from_js_direct, get_constructor, to_js,
+    };
 
     /// Zig: `js.gc` — typed accessor for the `values:` slots.
     pub mod gc {

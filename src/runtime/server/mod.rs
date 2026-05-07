@@ -1184,13 +1184,41 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn deinit_if_we_can(&mut self) {
-        // httplog!("deinitIfWeCan {p} {p} {} {} {}", ...);
+        httplog!(
+            "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
+            self.pending_requests,
+            if self.listener.is_none() { "null" } else { "some" },
+            if self.has_active_web_sockets() { "active" } else { "no" },
+            self.flags.contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
+            if self.all_closed_promise.has_value() { "has" } else { "no" },
+            matches!(self.js_value, jsc::JsRef::Finalized),
+        );
 
-        // TODO(b2-blocked): first `if` block (server.zig:1600-1621) —
-        // `ServerAllConnectionsClosedTask::schedule(..)` once
-        // `bun_jsc::JSPromiseStrong::{has, value, create}` are real. Gates on
-        // `!HAS_HANDLED_ALL_CLOSED_PROMISE && all_closed_promise.strong.has()`.
+        let vm = self.vm_mut();
 
+        if self.pending_requests == 0
+            && !self.has_listener()
+            && !self.has_active_web_sockets()
+            && !self.flags.contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
+            && self.all_closed_promise.has_value()
+        {
+            httplog!("schedule other promise");
+            // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
+            // again before the task has run.
+            self.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
+
+            // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init() ran.
+            let global = unsafe { &*self.global_this };
+            ServerAllConnectionsClosedTask::schedule(
+                ServerAllConnectionsClosedTask {
+                    global_object: self.global_this,
+                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
+                    promise: jsc::JSPromiseStrong::from_value(self.all_closed_promise.value(), global),
+                    tracker: jsc::AsyncTaskTracker::init(vm),
+                },
+                vm,
+            );
+        }
         if self.pending_requests == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
@@ -1204,25 +1232,58 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // tests that check for DevServer memory soundness. Keeping the JS
             // binding alive should not pin `dev.memory_cost()` bytes.
             if let Some(dev) = self.dev_server.take() {
-                if let Some(_app) = self.app {
-                    // TODO(b2-blocked): bun_uws_sys::App::clear_routes.
+                if let Some(app) = self.app {
+                    // SAFETY: app is a live uws handle while self is alive.
+                    unsafe { (*app).clear_routes() };
                 }
                 drop(dev); // dev.deinit()
             }
 
             // Only free the memory if the JS reference has been freed too.
-            // TODO(b2-blocked): bun_jsc::JsRef — gate on `self.js_value == .finalized`
-            // once JsRef is the real enum (currently an opaque newtype).
-            // self.schedule_deinit();
+            if matches!(self.js_value, jsc::JsRef::Finalized) {
+                self.schedule_deinit();
+            }
         }
     }
 
     pub fn schedule_deinit(&mut self) {
         if self.flags.contains(ServerFlags::DEINIT_SCHEDULED) {
+            httplog!("scheduleDeinit (again)");
             return;
         }
         self.flags.insert(ServerFlags::DEINIT_SCHEDULED);
-        // TODO(b2-blocked): vm.enqueue_task_concurrent(AnyTask::new(self, deinit)).
+        httplog!("scheduleDeinit");
+
+        let vm = self.vm_mut();
+
+        if !self.flags.contains(ServerFlags::TERMINATED) {
+            // App.close can cause finalizers to run.
+            // scheduleDeinit can be called inside a finalizer.
+            // Therefore, we split it into two tasks.
+            self.flags.insert(ServerFlags::TERMINATED);
+            // PORT NOTE: Zig `AnyTask.New(App, App.close).init(app)` — Rust
+            // `AnyTask` stores an erased fn-ptr directly.
+            let app = self.app.unwrap();
+            let task = Box::into_raw(Box::new(bun_event_loop::AnyTask {
+                ctx: core::ptr::NonNull::new(app.cast()),
+                callback: |ctx| {
+                    // SAFETY: `ctx` is the `*mut NewApp<SSL>` stored above; the
+                    // app handle is kept alive until `deinit()` destroy()s it.
+                    unsafe { (*ctx.cast::<uws_sys::NewApp<SSL>>()).close() };
+                    Ok(())
+                },
+            }));
+            vm.enqueue_task(bun_event_loop::Task::init(task));
+        }
+
+        let task = Box::into_raw(Box::new(bun_event_loop::AnyTask {
+            ctx: core::ptr::NonNull::new((self as *mut Self).cast()),
+            callback: |ctx| {
+                Self::deinit(ctx.cast::<Self>());
+                Ok(())
+            },
+        }));
+        vm.enqueue_task(bun_event_loop::Task::init(task));
     }
 
     pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
@@ -1230,7 +1291,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return self.on_listen_failed();
         };
         self.listener = Some(socket);
-        // TODO(b2-blocked): vm.event_loop_handle = Async::Loop::get();
+        self.vm_mut().event_loop_handle = Some(bun_aio::Loop::get());
         if !SSL {
             // SAFETY: `socket` is a live uws ListenSocket FFI handle just bound
             // by `app.listen`; deref'd once to read the socket fd. `vm` is a
@@ -1267,7 +1328,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let port = unsafe { (*socket).get_local_port() };
         self.h3_listener = Some(socket);
         self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400").into_bytes().into_boxed_slice();
-        // TODO(b2-blocked): bun_analytics::Features::http3_server += 1;
+        // PORT NOTE: spec increments `Analytics.Features.http3_server`; that
+        // counter is not (yet) declared in `bun_analytics` (the Zig side
+        // dropped it too — see analytics.zig). No-op until it is.
     }
 
     // ─── deinit ──────────────────────────────────────────────────────────────
@@ -1821,8 +1884,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             // post-match `has_exception()` check below handles
                             // deinit + return ZERO.
                         }
-                        // TODO(b2-blocked): if !h1 { vm.event_loop_handle = AsyncLoop::get() }
-                        // — bun_jsc::VirtualMachine.event_loop_handle setter not yet exposed.
+                        if !unsafe { &*this }.config.h1 {
+                            // SAFETY: per-thread VM singleton; no aliasing `&mut`.
+                            unsafe { &mut *jsc::VirtualMachine::get() }.event_loop_handle =
+                                Some(bun_aio::Loop::get());
+                        }
                     }
                 }
             }

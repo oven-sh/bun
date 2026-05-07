@@ -1153,7 +1153,7 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
     // the redundant call is dropped.
     let mut data = scopeguard::guard(data, |mut d| d.deinit());
     let (out_arraybuffer, output) =
-        ArrayBuffer::alloc::<{ JSType::Uint8Array }>(global_this, u32::try_from(data.length).unwrap())?;
+        ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global_this, u32::try_from(data.length).unwrap())?;
 
     if !data.run(output) {
         // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.

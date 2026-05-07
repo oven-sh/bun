@@ -2121,16 +2121,16 @@ pub fn init_with_runtime_once(
             Ok(fs::EntriesOption::Err(e)) => {
                 Output::err(
                     e.canonical_error,
-                    "failed to read root directory: '{}'",
-                    format_args!("{}", bun_str::fmt::bstr(fs_instance.top_level_dir())),
+                    "failed to read root directory: '{s}'",
+                    (bstr::BStr::new(fs_instance.top_level_dir()),),
                 );
                 panic!("Failed to initialize package manager");
             }
             Err(err) => {
                 Output::err(
                     err,
-                    "failed to read root directory: '{}'",
-                    format_args!("{}", bun_str::fmt::bstr(fs_instance.top_level_dir())),
+                    "failed to read root directory: '{s}'",
+                    (bstr::BStr::new(fs_instance.top_level_dir()),),
                 );
                 panic!("Failed to initialize package manager");
             }

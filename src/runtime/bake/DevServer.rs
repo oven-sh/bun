@@ -1289,39 +1289,26 @@ impl DevServer<'_> {
     }
 }
 
-/// Handler dispatch table for `dev_route_tramp`. Zig used a comptime fn-ptr
-/// param to monomorphize one `extern "C"` trampoline per handler; Rust can't
-/// take a fn pointer as a const generic, so use a small `u8` id instead and
+/// Handler dispatch for `dev_route_tramp`. Zig used a comptime fn-ptr param to
+/// monomorphize one `extern "C"` trampoline per handler; Rust can't take a fn
+/// pointer as a const generic, so use a `ConstParamTy` enum instead and
 /// `match` inside the trampoline (the optimizer folds the constant `match`).
-type DevHandlerFn = fn(&mut DevServer<'static>, &mut Request, AnyResponse);
-const DEV_HANDLERS: &[DevHandlerFn] = &[
-    on_js_request,
-    on_asset_request,
-    on_src_request,
-    on_report_error_request,
-    on_unref_source_map_request,
-    on_not_found,
-    on_request,
-    #[cfg(feature = "bake_debugging_features")]
-    on_incremental_visualizer,
-    #[cfg(feature = "bake_debugging_features")]
-    on_memory_visualizer,
-];
-const fn dev_handler_id(f: DevHandlerFn) -> u8 {
-    // PORT NOTE: fn-pointer equality is not `const`; map by hand.
-    // The `route!` macro feeds these as `path`s so each call site picks one
-    // arm at compile time.
-    let _ = f;
-    // Rust forbids fn-ptr compare in `const fn`; instead the `route!` macro
-    // calls `dev_handler_id` only for documentation — actual dispatch goes
-    // through the table index below. To keep one source of truth, encode the
-    // index at the call site instead.
-    0
+#[derive(Copy, Clone, Eq, PartialEq, ::core::marker::ConstParamTy)]
+pub enum DevHandlerId {
+    JsRequest,
+    AssetRequest,
+    SrcRequest,
+    ReportError,
+    UnrefSourceMap,
+    NotFound,
+    Request,
+    IncrementalVisualizer,
+    MemoryVisualizer,
 }
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
-/// the raw `uws_res` as `AnyResponse`, then calls the handler at `ID`.
-unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: u8>(
+/// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
+unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,
@@ -1335,7 +1322,21 @@ unsafe extern "C" fn dev_route_tramp<const SSL: bool, const ID: u8>(
     } else {
         AnyResponse::TCP(res as *mut bun_uws_sys::TCPResponse)
     };
-    DEV_HANDLERS[ID as usize](dev, req, resp);
+    match ID {
+        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
+        DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
+        DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
+        DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
+        DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
+        DevHandlerId::NotFound => on_not_found(dev, req, resp),
+        DevHandlerId::Request => on_request(dev, req, resp),
+        #[cfg(feature = "bake_debugging_features")]
+        DevHandlerId::IncrementalVisualizer => on_incremental_visualizer(dev, req, resp),
+        #[cfg(feature = "bake_debugging_features")]
+        DevHandlerId::MemoryVisualizer => on_memory_visualizer(dev, req, resp),
+        #[cfg(not(feature = "bake_debugging_features"))]
+        DevHandlerId::IncrementalVisualizer | DevHandlerId::MemoryVisualizer => not_found(resp),
+    }
 }
 
 /// Adapter: `ErrorReportRequest::run` is typed against the keystone DevServer

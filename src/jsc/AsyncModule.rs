@@ -236,28 +236,15 @@ unsafe extern "C" {
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun_install::PackageManager` / `MultiArrayList` column-accessor /
-// `bun_bundler::linker`-dependent items — preserved verbatim from the Phase-A
-// draft. Un-gate piecewise once: (a) `MultiArrayList<PendingResolution>` gains
-// per-field column accessors (`items_tag` / `items_root_dependency_id` / …),
-// (b) `PackageManager::run_tasks` callback shape is fixed, (c)
-// `VirtualMachine.modules` widens from `()` → `Queue` so `Queue::vm()` is
-// sound, (d) `KeepAlive::ref_/unref` get a `&mut VirtualMachine` overload (or
-// the `EventLoopCtx` vtable for VM is installed).
-// ──────────────────────────────────────────────────────────────────────────
+use core::sync::atomic::Ordering;
+use std::io::Write as _;
 
-mod _gated_impl {
-    use super::*;
-    use core::sync::atomic::Ordering;
-    use std::io::Write as _;
+use bun_install::{self as install, PackageID, PackageManager};
+use bun_string::{self as bun_str, strings};
 
-    use bun_install::{self as install, PackageID, PackageManager};
-    use bun_string::{self as bun_str, strings};
+use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
-    use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
-
-    impl Queue {
+impl Queue {
         pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
             bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
             let mut module = AsyncModule::init(opts, global_object).expect("unreachable");

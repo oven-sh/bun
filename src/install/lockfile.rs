@@ -1684,7 +1684,13 @@ impl<'a> Printer<'a> {
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
         let fs = FileSystem::instance_mut();
-        let mut options = crate::PackageManagerOptionsStub {
+        // Zig loads `PackageManager.Options` from env/bunfig here. The Yarn
+        // printer reads no `options.*` field, so the load only matters for
+        // its side effects (`.env`/bunfig parsing into the process env). Load
+        // the real `package_manager_real::Options` for that side effect, then
+        // hand `Printer` the stub options shape (which is what `Printer` is
+        // typed against so `manager.options` slots in directly elsewhere).
+        let mut real_options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
         };
@@ -1708,8 +1714,12 @@ impl<'a> Printer<'a> {
             false,
         )?;
         let mut log = logger::Log::init();
-        options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
+        real_options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
 
+        let options = crate::PackageManagerOptionsStub {
+            max_concurrent_lifecycle_scripts: 1,
+            ..Default::default()
+        };
         let mut printer = Printer {
             lockfile,
             options: &options,

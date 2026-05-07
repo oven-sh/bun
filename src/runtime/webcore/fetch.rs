@@ -1977,17 +1977,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // PORT NOTE: `FetchOptions.{url,proxy}` are `ZigURL<'static>` borrowing the
     // `url_proxy_buffer: Box<[u8]>` stored alongside them — a self-referential
-    // struct. `FetchTasklet::get` re-parses these from the owned buffer it
-    // adopts, so detaching the borrow lifetime here is sound: the slices remain
-    // valid for the buffer's full lifetime, and the buffer outlives the URLs.
-    // SAFETY: `url`/`proxy` borrow `url_proxy_buffer`; we move all three into
-    // `FetchOptions` together, and `FetchTasklet` keeps the buffer alive for as
-    // long as the URLs are read.
+    // struct. `Vec::into_boxed_slice` may realloc when `cap > len` (the
+    // proxy-string path above triggers this), so the existing `url`/`proxy`
+    // slices may dangle after the conversion. Convert to `Box<[u8]>` first
+    // (stable heap address), then re-parse the URLs from the boxed buffer.
+    let url_len = url.href.len(); // fat-pointer len read; no deref
+    let has_proxy = proxy.is_some();
+    let url_proxy_boxed: Box<[u8]> =
+        core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
+    // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
+    // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the
+    // URLs are read. Erase the borrow to a raw slice so borrowck doesn't tie
+    // `url_static` to the local `url_proxy_boxed` binding.
+    let buf_ptr: *const [u8] = &*url_proxy_boxed;
     let url_static: ZigURL<'static> =
-        unsafe { core::mem::transmute::<ZigURL<'_>, ZigURL<'static>>(url) };
-    let proxy_static: Option<ZigURL<'static>> = proxy
-        .take()
-        .map(|p| unsafe { core::mem::transmute::<ZigURL<'_>, ZigURL<'static>>(p) });
+        ZigURL::parse(unsafe { &(*buf_ptr)[..url_len] });
+    let proxy_static: Option<ZigURL<'static>> = if has_proxy {
+        Some(ZigURL::parse(unsafe { &(*buf_ptr)[url_len..] }))
+    } else {
+        None
+    };
     // SAFETY: `global_this` is the thread-local Bun global; it outlives the
     // `FetchTasklet`. `FetchTasklet::queue` stores it as `&'static`.
     let global_static: &'static JSGlobalObject =
@@ -2006,8 +2015,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         verbose,
         proxy: proxy_static,
         proxy_headers: proxy_headers.take(),
-        url_proxy_buffer: core::mem::take(&mut url_proxy_buffer).into_boxed_slice(),
-        signal: signal.take().map(|p| p.as_ptr()),
+        url_proxy_buffer: url_proxy_boxed,
+        signal: signal.take(),
         global_this: Some(global_static),
         ssl_config: ssl_config.take(),
         hostname: hostname.take().map(|z| Box::<[u8]>::from(z.as_bytes())),

@@ -585,7 +585,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {
-                        let owner = serialized_failure::OwnerPacked::new(Side::Client, FileIndex(file_index.get()));
+                        let owner = serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
                         // SAFETY: sibling-field access via `owner()`.
                         let kv = unsafe { (*dev).bundling_failures.fetch_swap_remove(&owner) };
                         let kv = kv.unwrap_or_else(|| {
@@ -611,9 +611,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         } else {
                             Content::Asset(code)
                         };
+                        if source_map.is_some() {
+                            debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
+                        }
                         let sm = match source_map {
                             Some(mut sm) if sm.chunk.buffer.len() > 0 => {
-                                debug_assert!(html_route_bundle_index.is_none()); // suspect behind #17956
                                 packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
                                     &mut sm.chunk,
                                     sm.escaped_source.take().expect("escaped_source"),
@@ -781,7 +783,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Build a map from the existing import list. Later, entries that
         // were not marked as `.seen = true` will be freed.
-        let mut quick_lookup: ArrayHashMap<FileIndex, TempLookup> = ArrayHashMap::default();
+        let mut quick_lookup: ArrayHashMap<FileIndex<SIDE>, TempLookup> = ArrayHashMap::default();
         {
             let mut it = self.first_import[file_index.get() as usize];
             while let Some(edge_index) = it {
@@ -963,7 +965,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
         }
 
-        let gop = quick_lookup.get_or_put(FileIndex(imported_file_index.get()))?;
+        let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
             if gop.value_ptr.seen {
                 return Ok(EdgeAttachmentResult::Continue);

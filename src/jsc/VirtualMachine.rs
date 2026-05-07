@@ -4175,41 +4175,329 @@ impl VirtualMachine {
         allow_source_code_preview: bool,
     ) {
         // SAFETY: `global` valid for VM lifetime.
-        error_instance.to_zig_exception(unsafe { &*self.global }, exception);
-        let enable_source_code_preview = allow_source_code_preview
+        let global = unsafe { &*self.global };
+        error_instance.to_zig_exception(global, exception);
+        let mut enable_source_code_preview = allow_source_code_preview
             && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
                 .unwrap_or(false)
                 || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
                     .unwrap_or(false));
 
-        // PORT NOTE: the remaining ~200 lines of `remapZigException`
-        // (VirtualMachine.zig:3060-3263) walk `exception.stack.frames`,
-        // strip noisy builtin frames, resolve each frame through
-        // `resolve_source_mapping`, and (if `enable_source_code_preview`)
-        // populate `exception.stack.source_lines_*` from the original source.
-        // The frame-remap step is shared with `remap_stack_frame_positions`;
-        // delegate to it for the position rewrite.
-        //
-        // TODO(port): `ZigStackTrace` frame walk — body not yet ported.
-        // self.remap_stack_frame_positions(exception.stack.frames_ptr,
-        //     exception.stack.frames_len as usize);
-        let _ = &exception.stack;
-
-        // TODO(port): `NoisyBuiltinFunctionMap` filtering + source-line
-        // preview population (VirtualMachine.zig:3078-3263). Requires
-        // `bun_sourcemap::LineColumnTracker` + `ZigString.Slice` plumbing
-        // that is gated; flagged so Phase-B can fill in the preview path.
-        let _ = (
-            must_reset_parser_arena_later,
+        // PORT NOTE: Zig modeled the two `defer` blocks below at fn-top; in
+        // Rust we run them on the way out via this guard so every early
+        // `return` is covered.
+        struct Tail<'a> {
+            this: *mut VirtualMachine,
+            exception: *mut ZigException,
+            exception_list: Option<&'a mut ExceptionList>,
+            enable_source_code_preview: *const bool,
+            source_code_slice: *const Option<bun_string::ZigStringSlice>,
+        }
+        impl Drop for Tail<'_> {
+            fn drop(&mut self) {
+                // SAFETY: `this`/`exception` are stack-local raw ptrs taken
+                // before the body below reborrows them; no overlap at drop.
+                let this = unsafe { &mut *self.this };
+                let exception = unsafe { &mut *self.exception };
+                #[cfg(debug_assertions)]
+                {
+                    // SAFETY: stack-local raw ptrs; live for guard scope.
+                    let preview = unsafe { *self.enable_source_code_preview };
+                    let slice = unsafe { &*self.source_code_slice };
+                    if !preview && slice.is_some() {
+                        bun_core::Output::panic(
+                            "Do not collect source code when we don't need to",
+                            (),
+                        );
+                    }
+                    // SAFETY: `source_lines_numbers[0]` is always valid —
+                    // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
+                    if !preview && unsafe { *exception.stack.source_lines_numbers } != -1 {
+                        bun_core::Output::panic(
+                            "Do not collect source code when we don't need to",
+                            (),
+                        );
+                    }
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    let _ = (self.enable_source_code_preview, self.source_code_slice);
+                }
+                if let Some(list) = self.exception_list.take() {
+                    // SAFETY: `transpiler.fs` set during init; live for VM lifetime.
+                    let top_level_dir = unsafe { (*this.transpiler.fs).top_level_dir };
+                    // Zig `catch unreachable` — OOM-only.
+                    bun_core::handle_oom(
+                        exception.add_to_error_list(list, top_level_dir, Some(&this.origin)),
+                    );
+                }
+            }
+        }
+        let _tail = Tail {
+            this: self,
+            exception,
+            exception_list,
+            enable_source_code_preview: &enable_source_code_preview,
             source_code_slice,
-            enable_source_code_preview,
-        );
+        };
+        // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
+        // touch them until Drop, so no aliasing during the body.
+        let exception: &mut ZigException = unsafe { &mut *_tail.exception };
+        let source_code_slice: &mut Option<bun_string::ZigStringSlice> =
+            unsafe { &mut *(_tail.source_code_slice as *mut _) };
 
-        // Zig `defer if (exception_list) addToErrorList(...)`.
-        if let Some(_list) = exception_list {
-            // TODO(b2-cycle): `ZigException::add_to_error_list` — `ExceptionList`
-            // is `Vec<()>` placeholder.
-            let _ = (self.transpiler.fs, &self.origin);
+        /// Spec VirtualMachine.zig:3058 `NoisyBuiltinFunctionMap`.
+        fn is_noisy_builtin(name: &bun_string::String) -> bool {
+            name.eql_comptime("asyncModuleEvaluation")
+                || name.eql_comptime("link")
+                || name.eql_comptime("linkAndEvaluateModule")
+                || name.eql_comptime("moduleEvaluation")
+                || name.eql_comptime("processTicksAndRejections")
+        }
+        fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
+            f.source_url.eql_comptime("bun:wrap")
+                || f.function_name.eql_comptime("::bunternal::")
+        }
+        fn is_unknown_source(url: &bun_string::String) -> bool {
+            url.is_empty()
+                || url.eql_comptime("[unknown]")
+                || url.has_prefix_comptime(b"[source:")
+        }
+
+        // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
+        // backing buffer (ZigStackTrace contract).
+        let mut frames_len = exception.stack.frames_len as usize;
+        let frames_buf = unsafe {
+            core::slice::from_raw_parts_mut(exception.stack.frames_ptr, frames_len)
+        };
+
+        if self.hide_bun_stackframes {
+            let mut start_index: Option<usize> = None;
+            for (i, frame) in frames_buf.iter().enumerate() {
+                if is_hidden_frame(frame) {
+                    start_index = Some(i);
+                    break;
+                }
+                // Workaround for being unable to hide that specific frame
+                // without also hiding the frame before it.
+                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                    start_index = Some(0);
+                    break;
+                }
+            }
+            if let Some(k) = start_index {
+                let mut j = k;
+                for i in k..frames_len {
+                    let frame = &frames_buf[i];
+                    if is_hidden_frame(frame) {
+                        continue;
+                    }
+                    if is_unknown_source(&frame.source_url)
+                        && is_noisy_builtin(&frame.function_name)
+                    {
+                        continue;
+                    }
+                    // PORT NOTE: `frames[j] = frame` — `ZigStackFrame` is a
+                    // POD-ish FFI struct (BunStrings are bitwise-movable).
+                    // SAFETY: i, j < frames_len; copy_within handles i==j.
+                    frames_buf.copy_within(i..=i, j);
+                    j += 1;
+                }
+                exception.stack.frames_len = j as u8;
+                frames_len = j;
+            }
+        }
+
+        let frames = &mut frames_buf[..frames_len];
+        if frames.is_empty() {
+            return;
+        }
+
+        // Pick the top-most non-builtin frame for source preview.
+        let mut top: usize = 0;
+        let mut top_frame_is_builtin = false;
+        if self.hide_bun_stackframes {
+            for (i, frame) in frames.iter().enumerate() {
+                if frame.source_url.has_prefix_comptime(b"bun:")
+                    || frame.source_url.has_prefix_comptime(b"node:")
+                    || frame.source_url.is_empty()
+                    || frame.source_url.eql_comptime("native")
+                    || frame.source_url.eql_comptime("unknown")
+                    || frame.source_url.eql_comptime("[unknown]")
+                    || frame.source_url.has_prefix_comptime(b"[source:")
+                {
+                    top_frame_is_builtin = true;
+                    continue;
+                }
+                top = i;
+                top_frame_is_builtin = false;
+                break;
+            }
+        }
+
+        // Don't show source code preview for REPL frames — it would show the
+        // transformed IIFE wrapper code, not what the user typed.
+        if frames[top].source_url.eql_comptime("[repl]") {
+            enable_source_code_preview = false;
+        }
+
+        let top_source_url = frames[top].source_url.to_utf8();
+
+        // PORT NOTE: reshaped for borrowck — `resolve_source_mapping` borrows
+        // `&mut self`; the returned `Lookup<'_>` borrows `self.source_mappings`.
+        // We can't hold `&mut frames[top]` across that call, so reads/writes go
+        // through indices and the lookup is consumed before frame writes.
+        let already_remapped = frames[top].remapped;
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup<'_>> = if already_remapped {
+            Some(bun_sourcemap::mapping::Lookup {
+                mapping: bun_sourcemap::mapping::Mapping {
+                    generated: bun_sourcemap::LineColumnOffset::default(),
+                    original: bun_sourcemap::LineColumnOffset {
+                        lines: bun_sourcemap::Ordinal::from_zero_based(
+                            frames[top].position.line.zero_based().max(0),
+                        ),
+                        columns: bun_sourcemap::Ordinal::from_zero_based(
+                            frames[top].position.column.zero_based().max(0),
+                        ),
+                    },
+                    source_index: 0,
+                    name_index: -1,
+                },
+                source_map: None,
+                prefetched_source_code: None,
+                name: None,
+            })
+        } else {
+            self.resolve_source_mapping(
+                top_source_url.slice(),
+                frames[top].position.line,
+                frames[top].position.column,
+                bun_sourcemap::SourceContentHandling::SourceContents,
+            )
+        };
+
+        if let Some(lookup) = maybe_lookup {
+            let mapping = lookup.mapping;
+            // PORT NOTE: Zig `defer if (source_map) |map| map.deref();` —
+            // `ParsedSourceMap` is borrowed (`&'a`) in the Rust port; the
+            // ref-counted handle is owned by `self.source_mappings` and the
+            // `find_cache`, so no manual deref here.
+
+            if !already_remapped {
+                if let Some(src) = lookup.display_source_url_if_needed(top_source_url.slice()) {
+                    frames[top].source_url.deref();
+                    frames[top].source_url = src;
+                }
+            }
+
+            let code: bun_string::ZigStringSlice = 'code: {
+                if !enable_source_code_preview {
+                    break 'code bun_string::ZigStringSlice::EMPTY;
+                }
+                if !already_remapped
+                    && lookup.source_map.is_some_and(|m| m.is_external())
+                {
+                    if let Some(src) = lookup.get_source_code(top_source_url.slice()) {
+                        break 'code src;
+                    }
+                }
+                if top_frame_is_builtin {
+                    // Avoid printing "export default 'native'"
+                    break 'code bun_string::ZigStringSlice::EMPTY;
+                }
+                let mut log = logger::Log::default();
+                let Ok(original_source) = Self::fetch_without_on_load_plugins(
+                    self,
+                    global,
+                    frames[top].source_url.dupe_ref(),
+                    bun_string::String::empty(),
+                    &mut log,
+                    FetchFlags::PrintSource,
+                ) else {
+                    return;
+                };
+                *must_reset_parser_arena_later = true;
+                original_source.source_code.to_utf8()
+            };
+
+            if enable_source_code_preview && code.slice().is_empty() {
+                exception.collect_source_lines(error_instance, global);
+            }
+
+            frames[top].position.line =
+                bun_core::Ordinal::from_zero_based(mapping.original.lines.zero_based());
+            frames[top].position.column =
+                bun_core::Ordinal::from_zero_based(mapping.original.columns.zero_based());
+            exception.remapped = true;
+            frames[top].remapped = true;
+
+            let last_line = frames[top].position.line.zero_based().max(0);
+            if let Some(lines_buf) = bun_string::strings::get_lines_in_text::<
+                { crate::zig_exception::Holder::SOURCE_LINES_COUNT },
+            >(code.slice(), last_line as u32)
+            {
+                let lines = lines_buf.as_slice();
+                const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
+                // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
+                let source_lines = unsafe {
+                    core::slice::from_raw_parts_mut(exception.stack.source_lines_ptr, N)
+                };
+                let source_line_numbers = unsafe {
+                    core::slice::from_raw_parts_mut(exception.stack.source_lines_numbers, N)
+                };
+                for s in source_lines.iter_mut() {
+                    *s = bun_string::String::empty();
+                }
+                source_line_numbers.fill(0);
+
+                let take = lines.len().min(N);
+                let mut current_line_number = last_line;
+                for (i, line) in lines[..take].iter().enumerate() {
+                    // To minimize duplicate allocations, we use the same slice
+                    // as above — it should virtually always be UTF-8 and thus
+                    // not cloned.
+                    source_lines[i] = bun_string::String::init(*line);
+                    source_line_numbers[i] = current_line_number;
+                    current_line_number -= 1;
+                }
+                exception.stack.source_lines_len = take as u8;
+            }
+
+            if !code.slice().is_empty() {
+                *source_code_slice = Some(code);
+            }
+        } else if enable_source_code_preview {
+            exception.collect_source_lines(error_instance, global);
+        }
+
+        drop(top_source_url);
+
+        if frames.len() > 1 {
+            for i in 0..frames.len() {
+                if i == top || frames[i].position.is_invalid() {
+                    continue;
+                }
+                let source_url = frames[i].source_url.to_utf8();
+                if let Some(lookup) = self.resolve_source_mapping(
+                    source_url.slice(),
+                    frames[i].position.line,
+                    frames[i].position.column,
+                    bun_sourcemap::SourceContentHandling::NoSourceContents,
+                ) {
+                    if let Some(src) =
+                        lookup.display_source_url_if_needed(source_url.slice())
+                    {
+                        frames[i].source_url.deref();
+                        frames[i].source_url = src;
+                    }
+                    let mapping = lookup.mapping;
+                    frames[i].remapped = true;
+                    frames[i].position.line =
+                        bun_core::Ordinal::from_zero_based(mapping.original.lines.zero_based());
+                    frames[i].position.column =
+                        bun_core::Ordinal::from_zero_based(mapping.original.columns.zero_based());
+                }
+            }
         }
     }
 

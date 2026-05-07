@@ -1505,15 +1505,22 @@ pub mod js_bundler {
                 if (*ctx).completion.is_some() {
                     // .mini arm — `mini.enqueueTaskConcurrentWithExtraCtx(
                     //   Load, BundleV2, this, BundleV2.onNotifyDeferMini, .task)`.
-                    // The bundle-thread loop is type-erased; routing requires
-                    // `AnyEventLoop` to be reified on `BundleV2.r#loop`. Fail
-                    // loudly rather than mis-route onto the JS thread (which
-                    // would violate `thread_lock.assert_locked()` inside
-                    // `on_notify_defer`).
-                    bun_core::todo_panic!(
-                        "JSBundler.Load.onDefer: Mini-loop dispatch — BundleV2.r#loop \
-                         is erased; restore once AnyEventLoop is reified on the linker"
-                    );
+                    // The bundle thread for `Bun.build` runs a `MiniEventLoop`
+                    // stored erased in `linker.r#loop` (set by `BundleThread::run`,
+                    // same convention `ParseTask::callback` relies on).
+                    let mini = (*ctx)
+                        .r#loop()
+                        .expect("BundleThread sets linker.loop before parse begins")
+                        .cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
+                    // SAFETY: erased BACKREF to a live `MiniEventLoop` for the
+                    // duration of the bundle pass; `Load.task: [usize; 4]` is
+                    // reserved storage for `AnyTaskWithExtraContext`.
+                    (*mini.as_ptr())
+                        .enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                            self as *mut Load,
+                            on_notify_defer_mini_wrap,
+                            core::mem::offset_of!(Load, task),
+                        );
                 } else {
                     // .js arm — bake/DevServer; the bundle loop *is* the plugin
                     // host's JS loop, so `enqueue_on_js_loop_for_plugins` lands on

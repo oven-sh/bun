@@ -6,7 +6,7 @@ use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc,
 };
-use bun_str::{String as BunString, ZigString, ZigStringSlice};
+use bun_str::{OwnedString, String as BunString, ZigString, ZigStringSlice};
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 use bun_http_types::Method::Method;
@@ -192,7 +192,11 @@ const _: () = {
 pub struct Response {
     body: Body,
     init: Init,
-    url: BunString,
+    // PORT NOTE: `OwnedString` is `#[repr(transparent)]` over `BunString`, so
+    // the C ABI layout is unchanged. We use it (not raw `BunString`) so the
+    // field's drop glue actually releases the WTF refcount — `BunString` is
+    // `Copy` and has no `Drop`.
+    url: OwnedString,
     redirected: bool,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
@@ -213,7 +217,7 @@ impl Default for Response {
         Self {
             body: Body::default(),
             init: Init::default(),
-            url: BunString::empty(),
+            url: OwnedString::new(BunString::empty()),
             redirected: false,
             ref_count: 1,
             weak_ptr_data: WeakPtrData::EMPTY,

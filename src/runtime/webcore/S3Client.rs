@@ -724,13 +724,16 @@ impl S3Client {
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
         let store_ptr = blob.store.as_ref().unwrap().as_ptr();
-        // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`;
-        // Zig-semantics shared-mutable interior on the JS event-loop thread.
+        // SAFETY: see `S3Client::list_objects` — `store_ptr` live for `blob`
+        // and never null; parent `Store` passed as `NonNull` to avoid an
+        // SB-invalidating shared reborrow alongside the `&mut S3` receiver.
         unsafe {
-            (*store_ptr)
-                .data
-                .as_s3_mut()
-                .list_objects(&*store_ptr, global, object_keys, options)
+            (*store_ptr).data.as_s3_mut().list_objects(
+                NonNull::new_unchecked(store_ptr),
+                global,
+                object_keys,
+                options,
+            )
         }
     }
 }

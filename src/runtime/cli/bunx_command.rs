@@ -269,8 +269,8 @@ impl BunxCommand {
         let target_package_json = bun_sys::File { handle: target_package_json_fd };
 
         // TODO: make this better
-        let read_result = target_package_json.read_to_end();
-        let package_json_contents = read_result.unwrap()?;
+        let package_json_bytes = target_package_json.read_to_end()?;
+        let package_json_contents = package_json_bytes.as_slice();
         let source = bun_logger::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
         bun_js_parser::ast::expr::data::Store::create();

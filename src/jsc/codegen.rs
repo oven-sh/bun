@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 pub type CallbackGetterFn = unsafe extern "C" fn(JSValue) -> JSValue;
 pub type CallbackSetterFn = unsafe extern "C" fn(JSValue, JSValue);

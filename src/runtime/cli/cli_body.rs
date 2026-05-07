@@ -432,6 +432,9 @@ pub mod command {
                 ..Default::default()
             });
             GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
+            // Publish to the lower-tier accessor so crates below `bun_runtime`
+            // (e.g. `bun_jsc`) can read parsed runtime options without a cycle.
+            bun_options_types::Context::set_global(GLOBAL_CLI_CTX);
         }
 
         if bun_options_types::CommandTag::USES_GLOBAL_OPTIONS[COMMAND] {

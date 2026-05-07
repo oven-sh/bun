@@ -1886,11 +1886,12 @@ pub fn init(
                     ..Default::default()
                 }),
                 resolve_tasks: ResolveTaskQueue::default(),
-                // SAFETY: placeholder — Lockfile is NOT all-zero-valid POD. Zig leaves this
-                // `undefined` and immediately overwrites with `allocator.create(Lockfile)` below.
-                // TODO(port): replace with Box::<MaybeUninit<Lockfile>>::new_uninit() or
-                // construct via Lockfile::init_empty() directly here.
-                lockfile: Box::new(unsafe { core::mem::zeroed() }), // overwritten below
+                // Zig: `.lockfile = undefined` (uninit `*Lockfile`), then
+                // `manager.lockfile = try allocator.create(Lockfile)` immediately after the
+                // struct literal. `Lockfile` contains `HashMap`/`Vec`/`NonNull` fields, so a
+                // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
+                // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
+                lockfile: Box::new(Lockfile::default()),
                 root_package_json_file,
                 // .progress
                 event_loop: AnyEventLoop::init(),

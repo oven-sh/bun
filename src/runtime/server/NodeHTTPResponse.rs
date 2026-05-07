@@ -1576,7 +1576,6 @@ impl NodeHTTPResponse {
         // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
         // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
         debug_assert!(self.body_read_ref.has);
-        Ok(true)
     }
 
     pub fn write(

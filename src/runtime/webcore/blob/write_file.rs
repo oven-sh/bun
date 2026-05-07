@@ -329,12 +329,15 @@ impl WriteFile {
             cb_ctx = (*this).on_complete_ctx;
             system_error = (*this).system_error.take();
             total_written = (*this).total_written;
-            // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();`
-            // Release the store refs *explicitly* before reclaiming the Box —
-            // mirrors the spec's ordering and guarantees the byte buffer is
-            // freed even if a transitive `Drop` impl forgets a field.
-            (*this).bytes_blob.detach();
-            (*this).file_blob.detach();
+            // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
+            //       bun.destroy(this);`
+            // Folded into RAII: `Box::from_raw` runs `WriteFile`'s field-drop
+            // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
+            // StoreRef>` → `Store::deref()` — exactly one deref each, same as
+            // the spec. (An earlier explicit `detach()` here was a no-op; the
+            // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
+            // baseline RSS exceeding the fixture's 256 MB absolute threshold,
+            // not an unbalanced ref.)
             drop(Box::from_raw(this));
         }
 

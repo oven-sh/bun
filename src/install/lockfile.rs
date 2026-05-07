@@ -891,7 +891,7 @@ impl Lockfile {
                                 let sliced = external_version
                                     .value
                                     .sliced(string_builder.string_bytes.as_slice());
-                                dep.version = Dependency::parse(
+                                dep.version = dependency::parse(
                                     dep.name,
                                     dep.name_hash,
                                     sliced.slice,

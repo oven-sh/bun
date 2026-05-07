@@ -15,7 +15,7 @@ use crate::bun_json as JSON;
 use crate::{
     self as Install,
     dependency,
-    dependency::{Dependency, Behavior, Version as DependencyVersion, Tag as DependencyVersionTag, Value as DependencyVersionValue},
+    dependency::{Dependency, Behavior, Version as DependencyVersion, Value as DependencyVersionValue},
     bin::{Bin, Tag as BinTag},
     DependencyID,
     PackageID,
@@ -29,6 +29,12 @@ use crate::{
     Origin,
     Npm,
 };
+// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a Phase-A
+// duplicate enum (different nominal type) that does not unify with the
+// `bun_install_types::DependencyVersion::tag` field; use the install_types one
+// so assignments at the two `.tag = Workspace` sites type-check.
+use bun_install_types::DependencyVersionTag;
+use crate::repository::RepositoryExt as _;
 use crate::bin_real::ToJsonStyle;
 use crate::npm::Negatable;
 use crate::extract_tarball as ExtractTarball;
@@ -2656,12 +2662,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| {
-            if Dependency::is_less_than(bytes, a, b) { core::cmp::Ordering::Less }
-            else if Dependency::is_less_than(bytes, b, a) { core::cmp::Ordering::Greater }
-            else { core::cmp::Ordering::Equal }
-        });
-        // PERF(port): std.sort.pdq with isLessThan
+        // Zig: `std.sort.pdq(..., Dependency.isLessThan)`. `slice::sort_by` is
+        // also pattern-defeating quicksort; `Dependency::cmp` is the
+        // total-order form of `isLessThan` (behavior group, then name ASC).
+        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
     optional_peers_buf.clear();

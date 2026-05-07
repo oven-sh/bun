@@ -94,29 +94,13 @@ impl<'a> bun_io::Write for StreamType<'a> {
     }
 }
 
-/// Adapter: `buffers::write_array` / `buffers::save` / `package::serializer::save`
-/// take a separate `stream: &mut S` (PositionalStream) and `writer: &mut W`
-/// (`bun_io::Write`). Zig aliased both over the same buffer; Rust borrowck
-/// rejects two `&mut` to the same `StreamType`. The operations are strictly
-/// sequential (no interleaved reads through one alias while writing through the
-/// other), so a raw-pointer split is sound here — same as Zig's aliasing.
-macro_rules! split_stream {
-    ($stream:expr) => {{
-        let p = $stream as *mut StreamType<'_>;
-        // SAFETY: see doc above — sequential access, mirrors Zig aliasing.
-        (unsafe { &mut *p }, unsafe { &mut *p })
-    }};
-}
-
 #[inline]
 fn write_array<T>(
     stream: &mut StreamType<'_>,
     array: &[T],
 ) -> Result<(), Error> {
-    let (s, w) = split_stream!(stream);
     buffers::write_array(
-        s,
-        w,
+        stream,
         array,
         core::any::type_name::<T>(),
         size_of::<T>(),
@@ -210,21 +194,16 @@ pub fn save(
         }
     }
 
-    // TODO(port): Zig passes `StreamType` (type) + `stream` (value) + `@TypeOf(writer)` + `writer`
-    // as separate comptime/runtime args. In Rust the type params are inferred and the callees take
-    // `&mut S: PositionalStream` + `&mut W: Write`; both halves alias the same `StreamType` —
-    // see `split_stream!` doc.
-    {
-        let (s, w) = split_stream!(&mut stream);
-        // PORT NOTE: turbofish — `this.packages` is `PackageList = List<u64>`, but
-        // inference through `MultiArrayList<Package<_>>` is brittle when sibling
-        // generic types in the crate have errors. Pin SemverIntType explicitly.
-        package::serializer::save::<u64, _, _>(&this.packages, s, w)?;
-    }
-    {
-        let (s, w) = split_stream!(&mut stream);
-        buffers::save(this, options, s, w)?;
-    }
+    // PORT NOTE: Zig passes `StreamType` (type) + `stream` (value) +
+    // `@TypeOf(writer)` + `writer` as separate comptime/runtime args. In Rust the
+    // callees take a single `&mut S: PositionalStream + bun_io::Write` (both
+    // roles collapsed onto `StreamType`) — two `&mut` aliases of one object would
+    // be UB regardless of access order.
+    // PORT NOTE: turbofish — `this.packages` is `PackageList = List<u64>`, but
+    // inference through `MultiArrayList<Package<_>>` is brittle when sibling
+    // generic types in the crate have errors. Pin SemverIntType explicitly.
+    package::serializer::save::<u64, _>(&this.packages, &mut stream)?;
+    buffers::save(this, options, &mut stream)?;
     stream.write_int_u64_le(0)?;
 
     // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -758,5 +737,5 @@ pub fn load(
 //   source:     src/install/lockfile/bun.lockb.zig (640 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/read_array adapted via split_stream! aliasing; Dependency::Context.allocator field dropped
+//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/save + Package::Serializer::save take one `&mut (PositionalStream + Write)`; Dependency::Context.allocator field dropped
 // ──────────────────────────────────────────────────────────────────────────

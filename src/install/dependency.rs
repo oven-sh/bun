@@ -41,9 +41,10 @@ impl NpmAliasRegistry for PackageManager {
 // provided below as extension traits so existing `Type::method(...)` /
 // `value.method(...)` call sites resolve via UFCS once the trait is in scope.
 pub use bun_install_types::resolver_hooks::{
-    Behavior, Dependency, DependencyVersion as Version,
+    Behavior, Dependency, DependencyVersion as Version, DependencyVersionTag as Tag,
     DependencyVersionValue as Value, NpmInfo, TagInfo, TarballInfo, URI,
 };
+pub use crate::Features;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -56,27 +57,71 @@ pub enum URITag {
 // Dependency
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `#[repr(C)]` so this is layout-compatible with the resolver-side projection
-/// `bun_install_types::resolver_hooks::Dependency` (same field order; `Version`
-/// ↔ `DependencyVersion` overlay is asserted in `crate::auto_installer`).
-#[repr(C)]
+pub trait DependencyExt {
+    fn is_tarball(dependency: &[u8]) -> bool;
+    fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>);
+    fn unscoped_package_name(name: &[u8]) -> &[u8];
+    fn parse_with_optional_tag<'a, 'b>(
+        alias: String,
+        alias_hash: impl Into<Option<PackageNameHash>>,
+        dependency: &[u8],
+        tag: Option<version::Tag>,
+        sliced: &SlicedString,
+        log: impl Into<Option<&'a mut logger::Log>>,
+        package_manager: impl Into<Option<&'b mut PackageManager>>,
+    ) -> Option<Version>;
+    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool;
+    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering;
+    fn count_with_different_buffers<SB: StringBuilderLike>(
+        &self,
+        name_buf: &[u8],
+        version_buf: &[u8],
+        builder: &mut SB,
+    );
+    fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB);
+    fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+        &self,
+        package_manager: &mut PM,
+        buf: &[u8],
+        builder: &mut SB,
+    ) -> Result<Dependency, bun_core::Error>;
+    fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+        &self,
+        package_manager: &mut PM,
+        name_buf: &[u8],
+        version_buf: &[u8],
+        builder: &mut SB,
+    ) -> Result<Dependency, bun_core::Error>;
+    fn realname(&self) -> String;
+    fn is_aliased(&self, buf: &[u8]) -> bool;
+    fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
+    fn is_remote_tarball(dep: &[u8]) -> bool;
+    fn parse<'a, 'b>(
+        alias: String,
+        alias_hash: impl Into<Option<PackageNameHash>>,
+        dependency: &[u8],
+        sliced: &SlicedString,
+        log: impl Into<Option<&'a mut logger::Log>>,
+        manager: impl Into<Option<&'b mut PackageManager>>,
+    ) -> Option<Version>;
+}
 
-impl Dependency {
+impl DependencyExt for Dependency {
     /// Forwards to the module-level `is_tarball` (Zig: `Dependency.isTarball`).
     #[inline]
-    pub fn is_tarball(dependency: &[u8]) -> bool {
+    fn is_tarball(dependency: &[u8]) -> bool {
         is_tarball(dependency)
     }
 
     /// Forwards to the module-level free fn (Zig file-struct method:
     /// `Dependency.splitNameAndMaybeVersion`).
     #[inline]
-    pub fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
+    fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
         split_name_and_maybe_version(str)
     }
 
     /// Zig: `Dependency.unscopedPackageName`. Strips a leading `@scope/` if present.
-    pub fn unscoped_package_name(name: &[u8]) -> &[u8] {
+    fn unscoped_package_name(name: &[u8]) -> &[u8] {
         if name.is_empty() || name[0] != b'@' {
             return name;
         }
@@ -95,7 +140,7 @@ impl Dependency {
     /// pass both forms (`null` vs pointer) and the port keeps that ergonomics
     /// via `impl Into<Option<_>>`.
     #[inline]
-    pub fn parse_with_optional_tag<'a, 'b>(
+    fn parse_with_optional_tag<'a, 'b>(
         alias: String,
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
@@ -112,7 +157,7 @@ impl Dependency {
     /// 2. name ASC
     /// "name" must be ASC so that later, when we rebuild the lockfile
     /// we insert it back in reverse order without an extra sorting pass
-    pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
+    fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
             return behavior == Ordering::Less;
@@ -126,7 +171,7 @@ impl Dependency {
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
     /// accepts a strict-weak `lessThan`; Rust's sort requires a full
     /// `Ordering`). Same key as `is_less_than`: behavior group, then name ASC.
-    pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
+    fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
             return behavior;
@@ -134,7 +179,7 @@ impl Dependency {
         lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
 
-    pub fn count_with_different_buffers<SB: StringBuilderLike>(
+    fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
         name_buf: &[u8],
         version_buf: &[u8],
@@ -144,14 +189,14 @@ impl Dependency {
         builder.count(self.version.literal.slice(version_buf));
     }
 
-    pub fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB) {
+    fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB) {
         self.count_with_different_buffers(buf, buf, builder);
     }
 
     /// Zig: `Dependency.clone`. Renamed to `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
     /// rely on the trait method for shallow copy).
-    pub fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         buf: &[u8],
@@ -161,7 +206,7 @@ impl Dependency {
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
-    pub fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
+    fn clone_with_different_buffers<SB: StringBuilderLike, PM: NpmAliasRegistry>(
         &self,
         package_manager: &mut PM,
         name_buf: &[u8],
@@ -196,7 +241,7 @@ impl Dependency {
 
     /// Get the name of the package as it should appear in a remote registry.
     #[inline]
-    pub fn realname(&self) -> String {
+    fn realname(&self) -> String {
         // SAFETY: union field access guarded by tag
         unsafe {
             match self.version.tag {
@@ -211,7 +256,7 @@ impl Dependency {
     }
 
     #[inline]
-    pub fn is_aliased(&self, buf: &[u8]) -> bool {
+    fn is_aliased(&self, buf: &[u8]) -> bool {
         // SAFETY: union field access guarded by tag
         unsafe {
             match self.version.tag {
@@ -225,10 +270,32 @@ impl Dependency {
         }
     }
 
-    pub fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+    fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         self.name_hash == b.name_hash
             && self.name.len() == b.name.len()
             && self.version.eql(&b.version, lhs_buf, rhs_buf)
+    }
+    #[inline]
+    fn is_remote_tarball(dep: &[u8]) -> bool {
+        is_remote_tarball(dep)
+    }
+
+    /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
+    /// real port has it as a free fn. Delegate so downstream callers
+    /// (`bun_install_jsc`) keep type-checking.
+    ///
+    /// `alias_hash`, `log`, and `manager` accept either bare values or
+    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
+    #[inline]
+    fn parse<'a, 'b>(
+        alias: String,
+        alias_hash: impl Into<Option<PackageNameHash>>,
+        dependency: &[u8],
+        sliced: &SlicedString,
+        log: impl Into<Option<&'a mut logger::Log>>,
+        manager: impl Into<Option<&'b mut PackageManager>>,
+    ) -> Option<Version> {
+        parse(alias, alias_hash, dependency, sliced, log, manager)
     }
 }
 
@@ -402,30 +469,6 @@ pub mod version {
 pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
 }
-impl Dependency {
-    #[inline]
-    pub fn is_remote_tarball(dep: &[u8]) -> bool {
-        is_remote_tarball(dep)
-    }
-
-    /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
-    /// real port has it as a free fn. Delegate so downstream callers
-    /// (`bun_install_jsc`) keep type-checking.
-    ///
-    /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
-    #[inline]
-    pub fn parse<'a, 'b>(
-        alias: String,
-        alias_hash: impl Into<Option<PackageNameHash>>,
-        dependency: &[u8],
-        sliced: &SlicedString,
-        log: impl Into<Option<&'a mut logger::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
-    ) -> Option<Version> {
-        parse(alias, alias_hash, dependency, sliced, log, manager)
-    }
-}
 
 pub fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
     if let Some(at_index) = strings::index_of_char(str, b'@') {
@@ -543,34 +586,39 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 // Version
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `#[repr(C)]` so this overlays `bun_install_types::DependencyVersion` (same
-/// field order; `Value` is `#[repr(C)] union` ≤ 40 B, projected as `[u64; 5]`).
-#[repr(C)]
-
 pub type VersionExternal = [u8; 9];
 
-impl Version {
-    #[inline]
-    pub fn npm(&self) -> Option<&NpmInfo> {
-        if self.tag == Tag::Npm {
-            // SAFETY: tag-guarded union access
-            Some(unsafe { &*self.value.npm })
-        } else {
-            None
-        }
-    }
+pub trait VersionExt {
+    fn zeroed() -> Version;
+    fn clone_in<SB: StringBuilderLike>(
+        &self,
+        buf: &[u8],
+        builder: &mut SB,
+    ) -> Result<Version, bun_core::Error>;
+    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
+    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
+    fn to_version(
+        alias: String,
+        alias_hash: PackageNameHash,
+        bytes: VersionExternal,
+        ctx: &mut Context<'_>,
+    ) -> Version;
+    fn to_external(&self) -> VersionExternal;
+    fn eql(&self, rhs: &Version, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
+}
 
+impl VersionExt for Version {
     // Zig: `pub const zeroed = Version{};` — a const value. Rust can't const-init
     // (Default::default() isn't const), so callers should use `Version::zeroed()`
     // or `Version::default()` instead.
     #[inline]
-    pub fn zeroed() -> Version {
+    fn zeroed() -> Version {
         Version::default()
     }
 
     /// Zig: `Version.clone`. Renamed to `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone`.
-    pub fn clone_in<SB: StringBuilderLike>(
+    fn clone_in<SB: StringBuilderLike>(
         &self,
         buf: &[u8],
         builder: &mut SB,
@@ -584,12 +632,12 @@ impl Version {
         })
     }
 
-    pub fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
+    fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         debug_assert!(lhs.tag == rhs.tag);
         strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
     }
 
-    pub fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
+    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         let tag_order = lhs.tag.cmp(rhs.tag);
         if tag_order != Ordering::Equal {
             return tag_order == Ordering::Less;
@@ -598,7 +646,7 @@ impl Version {
         strings::cmp_strings_asc(&(),lhs.literal.slice(string_buf), rhs.literal.slice(string_buf))
     }
 
-    pub fn to_version(
+    fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
         bytes: VersionExternal,
@@ -625,7 +673,7 @@ impl Version {
     }
 
     #[inline]
-    pub fn to_external(&self) -> VersionExternal {
+    fn to_external(&self) -> VersionExternal {
         let mut bytes: VersionExternal = [0u8; 9];
         bytes[0] = self.tag as u8;
         bytes[1..9].copy_from_slice(&self.literal.bytes);
@@ -633,7 +681,7 @@ impl Version {
     }
 
     #[inline]
-    pub fn eql(&self, rhs: &Version, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+    fn eql(&self, rhs: &Version, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         if self.tag != rhs.tag {
             return false;
         }
@@ -681,40 +729,6 @@ impl Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName: "npm"/"dist_tag"/"github"/...
-pub enum Tag {
-    Uninitialized = 0,
-
-    /// Semver range
-    Npm = 1,
-
-    /// NPM dist tag, e.g. "latest"
-    DistTag = 2,
-
-    /// URI to a .tgz or .tar.gz
-    Tarball = 3,
-
-    /// Local folder
-    Folder = 4,
-
-    /// link:path
-    /// https://docs.npmjs.com/cli/v8/commands/npm-link#synopsis
-    /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
-    Symlink = 5,
-
-    /// Local path specified under `workspaces`
-    Workspace = 6,
-
-    /// Git Repository (via `git` CLI)
-    Git = 7,
-
-    /// GitHub Repository (via REST API)
-    Github = 8,
-
-    Catalog = 9,
-}
 
 pub static TAG_MAP: phf::Map<&'static [u8], Tag> = phf::phf_map! {
     b"npm" => Tag::Npm,
@@ -728,18 +742,24 @@ pub static TAG_MAP: phf::Map<&'static [u8], Tag> = phf::phf_map! {
     b"catalog" => Tag::Catalog,
 };
 
-impl Tag {
-    pub fn cmp(self, other: Tag) -> Ordering {
+pub trait TagExt {
+    fn cmp(self, other: Tag) -> Ordering;
+    fn is_npm(self) -> bool;
+    fn infer(dependency: &[u8]) -> Tag;
+}
+
+impl TagExt for Tag {
+    fn cmp(self, other: Tag) -> Ordering {
         // TODO: align with yarn
         (self as u8).cmp(&(other as u8))
     }
 
     #[inline]
-    pub fn is_npm(self) -> bool {
+    fn is_npm(self) -> bool {
         (self as u8) < 3
     }
 
-    pub fn infer(dependency: &[u8]) -> Tag {
+    fn infer(dependency: &[u8]) -> Tag {
         // empty string means `latest`
         if dependency.is_empty() {
             return Tag::DistTag;
@@ -1099,10 +1119,19 @@ impl Tag {
 
 
 
-impl Value {
+pub trait ValueExt {
+    fn clone_in<SB: StringBuilderLike>(
+        &self,
+        _tag: Tag,
+        _buf: &[u8],
+        _builder: &mut SB,
+    ) -> Result<Value, bun_core::Error>;
+}
+
+impl ValueExt for Value {
     // TODO(port): `clone` is called in Version::clone but not defined in
     // dependency.zig — likely lives elsewhere or relies on Zig copy semantics.
-    pub fn clone_in<SB: StringBuilderLike>(
+    fn clone_in<SB: StringBuilderLike>(
         &self,
         _tag: Tag,
         _buf: &[u8],
@@ -1631,7 +1660,6 @@ pub fn parse_with_tag(
 // share one nominal type. Re-export it here for `crate::dependency::Behavior`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_install_types::resolver_hooks::Behavior;
 
 // ──────────────────────────────────────────────────────────────────────────
 

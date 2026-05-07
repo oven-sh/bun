@@ -23,7 +23,8 @@ use crate::{
     TruncatedPackageNameHash, UpdateRequest,
 };
 use crate::bun_json::{Expr, ExprAccessors, ExprData};
-use crate::dependency::Behavior;
+use crate::dependency::{Behavior, DependencyExt as _};
+use crate::repository::RepositoryExt as _;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
 // stub that lib.rs exposes for downstream crates during the staged port.

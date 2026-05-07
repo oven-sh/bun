@@ -397,14 +397,14 @@ pub use external::ExternalStringMap;
 pub use external::VersionSlice;
 
 pub use integrity::Integrity;
-pub use dependency::Dependency;
+pub use dependency::{Dependency, DependencyExt, VersionExt, TagExt, ValueExt};
 pub use dependency::Behavior;
 
 pub use lockfile_real::bun_lock as TextLockfile;
 pub use patch_install as patch;
 pub use bin::Bin;
 
-pub use repository::Repository;
+pub use repository::{Repository, RepositoryExt};
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{

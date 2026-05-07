@@ -1700,8 +1700,12 @@ impl PathOrBlob {
         };
         if let Some(blob) = arg.as_::<Blob>() {
             // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` owned by the
-            // live JS wrapper; valid for the duration of this call. Zig: `blob.*`.
-            return Ok(PathOrBlob::Blob(unsafe { (*blob).dupe() }));
+            // live JS wrapper; valid for the duration of this call. Zig: `blob.*`
+            // — a raw bitwise copy with no ref bumps that callers never `deinit()`.
+            // `borrowed_view()` is the sound Rust spelling: it clones only the
+            // `StoreRef` (whose `Drop` balances the +1) and aliases `name`/
+            // `content_type`; `dupe()` would leak both since `Blob` has no `Drop`.
+            return Ok(PathOrBlob::Blob(unsafe { (*blob).borrowed_view() }));
         }
         Err(ctx.throw_invalid_argument_type_value(
             b"destination",

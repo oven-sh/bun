@@ -420,7 +420,7 @@ impl S3Ext for S3 {
 
     fn list_objects(
         &mut self,
-        store: &Store,
+        store: NonNull<Store>,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,

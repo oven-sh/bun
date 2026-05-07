@@ -2864,7 +2864,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             // active_connections=1 it holds is transferring to `raw`.
             this.this_value.downgrade();
         }
-        // PORT NOTE: reshaped for borrowck — `defer this.deref()` moved to end.
+        // Zig `defer this.deref()` — must run on EVERY exit past this point,
+        // including the `?` early-returns from `create_empty_array`/`put_index`
+        // below, or we leak one ref on the retired TCP wrapper. Hold a raw
+        // pointer so the guard doesn't conflict with the `&mut` uses that
+        // follow.
+        let _this_deref = scopeguard::guard(this as *mut Self, |p| {
+            // SAFETY: `this` is the JS-wrapper-owned allocation; the wrapper's
+            // +1 keeps it alive across the whole call regardless of which exit
+            // we take. Single JS thread.
+            unsafe { (*p).deref() };
+        });
+        // SAFETY: reborrow of the same allocation root the guard holds.
+        let this = unsafe { &mut *(this as *mut Self) };
         this.detach_native_callback();
         this.socket.detach();
 
@@ -2948,7 +2960,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;
         array.put_index(global, 1, tls_js_value)?;
-        this.deref();
+        // `this.deref()` runs via `_this_deref` scopeguard on return.
         Ok(array)
     }
 
@@ -3349,13 +3361,17 @@ impl DuplexUpgradeContext {
                 // still-queued `.StartTLS` → `onOpen` — and any further
                 // duplex events — skip the TLSSocket instead of calling
                 // `getHandlers()` on the freed allocation.
+                //
+                // `handleConnectError`'s `needs_deref` path consumes the
+                // owner's +1 we hold; do NOT let `IntrusiveRc::Drop` fire on
+                // top of that (over-deref → UAF on the JS wrapper's pointee).
+                let p = IntrusiveRc::into_raw(tls);
                 // SAFETY: intrusive refcount; single-threaded dispatch.
+                // `handle_connect_error` consumes the +1, so do NOT
+                // reconstruct the IntrusiveRc.
                 let _ = unsafe {
-                    (*tls.data.as_ptr())
-                        .handle_connect_error(sys::SystemErrno::ECONNREFUSED as c_int)
+                    (*p).handle_connect_error(sys::SystemErrno::ECONNREFUSED as c_int)
                 };
-                // Zig `tls.deref()` — IntrusiveRc::drop decrements.
-                drop(tls);
             }
         }
     }

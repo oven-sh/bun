@@ -1025,29 +1025,31 @@ unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
 }
 
 /// `graph.find(path).?.sourcemap.load()` — Spec VirtualMachine.zig:3875.
-/// Downcasts the resolver trait object to the concrete
-/// `bun_standalone_graph::Graph` (the only implementor) and lazily decodes the
+/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
+/// singleton accessor (proper write provenance) and lazily decodes the
 /// embedded source map for `path`. The returned `Arc` is the caller's strong
 /// ref (Zig's `map.ref()` is the `Arc::clone` the caller performs before
 /// caching it into `source_mappings`).
 ///
+/// PORT NOTE: do **not** thread the `&'static dyn StandaloneModuleGraph` from
+/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
+/// shared-ref provenance has no write permission, so the resulting `&mut` is
+/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
+/// hands out the `*mut` directly from the backing `UnsafeCell`, which is the
+/// same path every other mutating caller (`node_fs`, `Blob`) uses.
+///
 /// # Safety
-/// `graph` must be the process-lifetime trait object whose data pointer is a
-/// `bun_standalone_graph::Graph` (set in `init_with_module_graph`).
+/// Called on the JS thread; `Graph::find` / `LazySourceMap::load` only mutate
+/// the per-`File` lazy caches (sourcemap decode is serialized by `INIT_LOCK`).
 unsafe fn load_standalone_sourcemap(
-    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    // SAFETY: per fn contract — the trait-object data pointer IS the concrete
-    // `Graph`. `&mut` is sound: the graph is process-global and `find` /
-    // `LazySourceMap::load` only mutate per-file lazy caches under
-    // `INIT_LOCK`; this hook is called on the JS thread.
-    let graph = unsafe {
-        &mut *(graph as *const dyn bun_resolver::StandaloneModuleGraph
-            as *const bun_standalone_graph::Graph
-            as *mut bun_standalone_graph::Graph)
-    };
-    graph.find(path)?.sourcemap.load()
+    let graph = bun_standalone_graph::Graph::get()?;
+    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
+    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
+    // state; this hook runs on the JS thread and `LazySourceMap::load` is
+    // additionally guarded by its own `INIT_LOCK`.
+    unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
 /// `pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()` —

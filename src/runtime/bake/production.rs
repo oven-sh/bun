@@ -1434,10 +1434,11 @@ impl framework_router::InsertionHandler for EntryPointMap {
         _rel_path: &[u8],
         _fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
-        // PORT NOTE: Zig's `wrap()` only fills vtable slots for decls that exist
-        // on the wrapped type; `EntryPointMap` doesn't define
-        // `on_router_syntax_error`, so the slot was null and never invoked.
-        Ok(())
+        // Zig: `InsertionContext.wrap` generates a stub that panics when the
+        // wrapped type lacks `onRouterSyntaxError` (FrameworkRouter.zig:966).
+        // `EntryPointMap` does not define it, so a malformed route pattern
+        // during a production build must crash loudly rather than be dropped.
+        panic!("TODO: onRouterSyntaxError for EntryPointMap");
     }
 
     fn on_router_collision_error(

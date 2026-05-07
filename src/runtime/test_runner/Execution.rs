@@ -321,7 +321,7 @@ impl Execution {
     /// materializing a `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB.
     /// Callers must dereference at point-of-use into disjoint fields only, never holding the
     /// resulting `&mut BunTest` across any access through `self`.
-    fn bun_test(&mut self) -> NonNull<BunTest<'_>> {
+    fn bun_test(&mut self) -> NonNull<BunTest> {
         // SAFETY: self points to BunTest.execution (Execution is only ever constructed embedded in BunTest)
         unsafe {
             NonNull::new_unchecked(
@@ -349,9 +349,9 @@ impl Execution {
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        // blocked_on: bun_jsc::VirtualMachine::auto_killer (field is `()` placeholder upstream)
-                        // Zig: `globalThis.bunVM().auto_killer.kill()` → kill_count.processes
-                        let _ = global_this;
+                        // SAFETY: bun_vm() returns the live per-thread VM.
+                        let kill_count = unsafe { (*global_this.bun_vm()).auto_killer.kill() };
+                        let _ = kill_count.processes; // not yet reported here (Zig discards too)
                     }
                 }
             }
@@ -917,8 +917,9 @@ fn step_group_one(
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter.as_ref() {
-        reporter.jest.max_concurrency as usize
+    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
+        // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+        unsafe { reporter.as_ref() }.jest.max_concurrency as usize
     } else {
         debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
         20

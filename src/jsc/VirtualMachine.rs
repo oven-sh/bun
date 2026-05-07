@@ -1431,14 +1431,15 @@ pub struct RuntimeHooks {
     pub cron_clear_all_reload: unsafe fn(vm: *mut VirtualMachine),
     /// `graph.find(path).?.sourcemap.load()` — spec VirtualMachine.zig:3875.
     /// The concrete `bun_standalone_graph::Graph` / `File` / `LazySourceMap`
-    /// live above `bun_jsc`; the high tier downcasts the trait-object data
-    /// pointer and returns the lazily-decoded map (already strong-ref'd via
-    /// the returned `Arc`). [`resolve_source_mapping`] caches it into
-    /// `source_mappings` so subsequent lookups hit the fast path.
-    pub load_standalone_sourcemap: unsafe fn(
-        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
-        path: &[u8],
-    ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
+    /// live above `bun_jsc`; the high tier reaches them via the graph's own
+    /// `UnsafeCell` singleton accessor (NOT by downcasting the resolver trait
+    /// object — that shared-ref provenance is read-only and forming `&mut`
+    /// from it would be UB) and returns the lazily-decoded map (already
+    /// strong-ref'd via the returned `Arc`). [`resolve_source_mapping`]
+    /// caches it into `source_mappings` so subsequent lookups hit the fast
+    /// path. The caller gates the call on `vm.standalone_module_graph`.
+    pub load_standalone_sourcemap:
+        unsafe fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
     /// `bake::production::PerThread` source-map JSON lookup — spec
     /// sourcemap_jsc/source_provider.zig:24
     /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
@@ -5856,11 +5857,14 @@ impl VirtualMachine {
         // `bun_standalone_graph::{Graph,File,LazySourceMap}` (higher tier);
         // dispatch through [`RuntimeHooks::load_standalone_sourcemap`] per
         // §Dispatch (cold path — one-time decode then cached below).
-        let graph = self.standalone_module_graph?;
+        // Gate only — the hook reaches the concrete graph via its own
+        // `UnsafeCell` singleton (write-provenance), not via this read-only
+        // trait object.
+        let _ = self.standalone_module_graph?;
         let hooks = runtime_hooks()?;
-        // SAFETY: `graph` is the process-lifetime standalone graph trait
-        // object; hook downcasts to the concrete type on the high tier.
-        let map = unsafe { (hooks.load_standalone_sourcemap)(graph, path) }?;
+        // SAFETY: JS-thread call; hook mutates only per-`File` lazy caches
+        // under the standalone graph's internal `INIT_LOCK`.
+        let map = unsafe { (hooks.load_standalone_sourcemap)(path) }?;
 
         // Spec: `map.ref(); this.source_mappings.putValue(path, Value.init(map))`.
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong

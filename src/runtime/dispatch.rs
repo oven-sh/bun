@@ -942,10 +942,10 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // Spec: `BunTestPtr.cloneFromRawUnsafe(@fieldParentPtr("timer", self))`
             // — bumps the Rc refcount around the callback so the timer can
             // safely re-enter `BunTest::run`.
-            let container = container_of!(BunTest<'_>, timer);
+            let container = container_of!(BunTest, timer);
             // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
             // strong count is ≥1 (held by `Jest.active_file`).
-            // `BunTestCell` is a `UnsafeCell<BunTest<'static>>` newtype — same
+            // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
             // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
             // also the `Rc` payload pointer.
             let strong: BunTestPtr = unsafe {

@@ -569,13 +569,14 @@ impl BunTestRoot {
             // reach this while a `&mut BunTest` to the *same* cell payload is
             // live and reused afterward; materialising a sibling `&BunTest`
             // would pop the caller's Unique tag under Stacked Borrows. Read the
-            // reporter field via raw ptr instead — `Option<&_>` is `Copy`.
+            // reporter field via raw ptr instead — `Option<NonNull<_>>` is `Copy`.
             // SAFETY: single-threaded; `active_file` keeps the cell alive; raw
             // field read creates no intermediate `&BunTest`.
             let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
             if let Some(reporter) = reporter {
-                // `last_printed_dot` is `Cell<bool>` so the `&CommandLineReporter` borrow
-                // suffices — no `&mut` materialized through a shared ref (Zig used `*T`).
+                // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+                // `last_printed_dot` is `Cell<bool>` so a `&` borrow suffices.
+                let reporter = unsafe { reporter.as_ref() };
                 if reporter.reporters.dots && reporter.last_printed_dot.get() {
                     bun_core::pretty_error!("<r>\n");
                     Output::flush();
@@ -1033,7 +1034,8 @@ impl BunTest {
                 debug::dump_describe(&self.collection.root_scope)?;
 
                 let has_filter = if let Some(reporter) = self.reporter {
-                    reporter.jest.filter_regex.is_some()
+                    // SAFETY: reporter outlives every BunTest (see field doc).
+                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
                 } else {
                     false
                 };
@@ -1044,6 +1046,8 @@ impl BunTest {
                 // reproducible via --seed=N.
                 let mut per_file_prng: Option<bun_core::rand::DefaultPrng> = if let Some(reporter) = self.reporter {
                     'blk: {
+                        // SAFETY: reporter outlives every BunTest (see field doc).
+                        let reporter = unsafe { reporter.as_ref() };
                         let Some(seed) = reporter.jest.randomize_seed else { break 'blk None };
                         let path = reporter.jest.files.items_source()[self.file_id as usize].path.text;
                         // Basename only so the hash is platform-independent (path
@@ -1276,15 +1280,11 @@ impl BunTest {
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         ) {
-            // PORT NOTE: Zig stores `?*CommandLineReporter` (mutable). The Rust
-            // field is `Option<&'a CommandLineReporter>` so cast through raw to
-            // bump the counter — `CommandLineReporter` lives in an `UnsafeCell`-
-            // equivalent slot owned by `test_command::exec`; single-threaded.
             // SAFETY: reporter is Some (asserted by call sites that reach here);
-            // no other `&` to `jest.unhandled_errors_between_tests` is live.
+            // `NonNull<CommandLineReporter>` carries write provenance from
+            // `enter_file`'s `&mut`; single-threaded, no other borrow live.
             unsafe {
-                let reporter_mut = self.reporter.unwrap() as *const CommandLineReporter as *mut CommandLineReporter;
-                (*reporter_mut).jest.unhandled_errors_between_tests += 1;
+                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
             }
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",

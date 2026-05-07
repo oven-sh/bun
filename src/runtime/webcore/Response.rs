@@ -1237,16 +1237,19 @@ impl Response {
     }
 }
 
-// PORT NOTE: Zig had an explicit `Init.deinit()` (Response.zig:880-889) which deref'd
-// `headers` and `status_text`. In Rust those fields (`HeadersRef`, `BunString`)
-// each implement `Drop`, so auto-generated drop glue on `Init` performs the same
-// cleanup. No manual `impl Drop for Init` is required; callers that partially-move
-// fields out (e.g. Request::construct_into reading `response_init.headers`) still get
-// the remaining fields (`status_text`) dropped at scope end.
+// PORT NOTE: Zig had an explicit `Init.deinit()` (Response.zig:880-889) which
+// deref'd `headers` and `status_text`. In Rust, `headers: Option<HeadersRef>`
+// has `Drop` (releases the C++ ref) and `status_text: OwnedString` has `Drop`
+// (releases the WTF ref) — `BunString` itself is `Copy` and has NO `Drop`, so
+// the field MUST be `OwnedString` for auto-generated drop glue to perform the
+// same cleanup. We deliberately do NOT `impl Drop for Init` so struct-update
+// syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
+// (e.g. Request::construct_into reading `response_init.headers`) keep working;
+// the remaining `status_text` is still dropped at scope end via field drop glue.
 pub struct Init {
     pub headers: Option<HeadersRef>,
     pub status_code: u16,
-    pub status_text: BunString,
+    pub status_text: OwnedString,
     pub method: Method,
 }
 
@@ -1255,7 +1258,7 @@ impl Default for Init {
         Self {
             headers: None,
             status_code: 0,
-            status_text: BunString::empty(),
+            status_text: OwnedString::new(BunString::empty()),
             method: Method::GET,
         }
     }
@@ -1273,14 +1276,15 @@ impl Init {
         Ok(Init {
             headers,
             status_code: self.status_code,
-            status_text: self.status_text.clone(),
+            status_text: OwnedString::new(self.status_text.clone()),
             method: self.method,
         })
     }
 
     pub fn init(global_this: &JSGlobalObject, response_init: JSValue) -> JsResult<Option<Init>> {
         let mut result = Init { status_code: 200, ..Default::default() };
-        // errdefer result.deinit() — Init: Drop handles cleanup on `?` below
+        // errdefer result.deinit() — Init's drop glue (HeadersRef + OwnedString)
+        // handles cleanup on `?` below
 
         if !response_init.is_cell() {
             return Ok(None);
@@ -1361,7 +1365,7 @@ impl Init {
         }
 
         if let Some(status_text) = response_init.get_truthy(global_this, b"statusText")? {
-            result.status_text = BunString::from_js(status_text, global_this)?;
+            result.status_text = OwnedString::new(BunString::from_js(status_text, global_this)?);
         }
 
         if let Some(method_value) = response_init.get_truthy(global_this, b"method")? {

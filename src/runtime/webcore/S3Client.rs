@@ -232,8 +232,6 @@ where
             )
             .map_err(|_| core::fmt::Error)?;
         writer.write_str("\n")?;
-
-        formatter.indent_dec();
     }
 
     Ok(())

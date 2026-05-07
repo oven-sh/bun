@@ -124,6 +124,24 @@ impl<'a> BrotliReaderArrayList<'a> {
         Box::new(value)
     }
 
+    /// Shared access to the owned brotli decoder instance.
+    #[inline]
+    fn brotli(&self) -> &c::BrotliDecoder {
+        // SAFETY: `self.brotli` is set exactly once in `init_with_options`
+        // from `BrotliDecoder::create_instance` (never null), is never
+        // reassigned, and is freed only in `Drop`. The brotli C API does not
+        // call back into Rust, so no re-entrant aliasing is possible.
+        unsafe { &*self.brotli }
+    }
+
+    /// Exclusive access to the owned brotli decoder instance.
+    #[inline]
+    fn brotli_mut(&mut self) -> &mut c::BrotliDecoder {
+        // SAFETY: see `brotli()`. `&mut self` guarantees no other Rust
+        // reference to the decoder is live.
+        unsafe { &mut *self.brotli }
+    }
+
     pub fn new_with_options(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
@@ -364,8 +382,16 @@ impl BrotliCompressionStream {
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
         // TODO(port): narrow error set
         self.total_in += input.len();
-        let op = if last { self.finish_flush_op } else { self.flush_op };
-        let result = BrotliEncoder::compress_stream(self.brotli_mut(), op, input);
+        // NOTE: cannot route through `self.brotli_mut()` here — `result.output`
+        // borrows the encoder for the function's return lifetime, which would
+        // block the `self.state` write on the error path (NLL Problem Case #3;
+        // Polonius would accept it). Keep the field-level reborrow.
+        // SAFETY: see `brotli_mut()` — `self.brotli` is a live encoder instance.
+        let result = BrotliEncoder::compress_stream(
+            unsafe { &mut *self.brotli },
+            if last { self.finish_flush_op } else { self.flush_op },
+            input,
+        );
 
         if !result.success {
             self.state = CompressionState::Error;
@@ -397,12 +423,8 @@ impl BrotliCompressionStream {
         }
         self.state = CompressionState::End;
 
-        // SAFETY: self.brotli is a live encoder instance.
-        let result = BrotliEncoder::compress_stream(
-            unsafe { &mut *self.brotli },
-            self.finish_flush_op,
-            b"",
-        );
+        let op = self.finish_flush_op;
+        let result = BrotliEncoder::compress_stream(self.brotli_mut(), op, b"");
 
         if !result.success {
             return Err(err!("BrotliCompressionError"));

@@ -1734,7 +1734,7 @@ impl<'a> Printer<'a> {
             false,
         )?;
         let mut log = logger::Log::init();
-        options.load(&mut log, &mut env_loader, None, None, PackageManager::Subcommand::Install)?;
+        options.load(&mut log, &mut env_loader, None, None, crate::Subcommand::Install)?;
 
         let mut printer = Printer {
             lockfile,

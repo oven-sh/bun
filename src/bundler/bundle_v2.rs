@@ -82,10 +82,12 @@ pub struct BundleV2<'a> {
     // as `transpiler` (Zig stored both as raw pointers into the bundler heap).
     pub linker: LinkerContext<'a>,
     // CYCLEBREAK GENUINE: `jsc::hot_reloader::NewHotReloader<BundleV2, …>` is a
-    // T6 generic instantiated over a T5 type. SAFETY: erased — never deref'd here.
-    pub bun_watcher: Option<NonNull<()>>,
+    // T6 generic instantiated over a T5 type. Stored as an erased owner +
+    // `&'static WatcherVTable` pair so `add_file` is callable without naming
+    // the concrete reloader.
+    pub bun_watcher: Option<dispatch::WatcherHandle>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
-    pub completion: Option<*mut JSBundleCompletionTask>,
+    pub completion: Option<dispatch::CompletionHandle>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer`. Populated from
     /// `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -1242,9 +1244,6 @@ pub type MangledProps = ArrayHashMap<Ref, Box<[u8]>>;
 // static instances and registers hooks at init. See PORTING.md §Dispatch.
 // ══════════════════════════════════════════════════════════════════════════
 pub mod dispatch {
-    use core::sync::atomic::AtomicPtr;
-    use core::ptr::null_mut;
-
     /// Erased handle to bake::DevServer. PERF(port): was direct struct access.
     #[derive(Copy, Clone)]
     pub struct DevServerHandle {

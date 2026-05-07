@@ -700,9 +700,6 @@ impl AnyRoute {
         index_path: &[u8],
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        let _ = (argument, index_path, init_ctx);
-        todo!("blocked_on: bun_jsc::Node::PathLike::from_bun_string, bun_paths::fs::FileSystem::abs/relative, server::AnyRoute unification");
-        {
         if !argument.is_object() {
             return Ok(None);
         }

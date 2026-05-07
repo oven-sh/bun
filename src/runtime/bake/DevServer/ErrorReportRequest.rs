@@ -48,12 +48,16 @@ pub struct ErrorReportRequest {
 impl BodyReaderHandler for ErrorReportRequest {
     const MIXIN_OFFSET: usize = core::mem::offset_of!(ErrorReportRequest, body);
 
-    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
-        ErrorReportRequest::run_with_body(self, body, resp)
+    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+        // SAFETY: caller (BodyReaderMixin) passes the original Box::into_raw'd
+        // pointer with full-allocation provenance and no live borrows.
+        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }
     }
 
-    fn on_error(&mut self) {
-        ErrorReportRequest::finalize(self as *mut ErrorReportRequest);
+    unsafe fn on_error(this: *mut Self) {
+        // SAFETY: caller passes the original Box::into_raw'd pointer; finalize
+        // consumes it via Box::from_raw exactly once.
+        unsafe { ErrorReportRequest::finalize(this) }
     }
 }
 
@@ -65,29 +69,29 @@ impl ErrorReportRequest {
         }));
         // SAFETY: ctx was just allocated and is non-null; dev/server are live.
         unsafe {
-            (*ctx).dev().server.as_mut().unwrap().on_pending_request();
+            (*ctx).dev.as_mut().server.as_mut().unwrap().on_pending_request();
         }
         uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, &mut resp);
     }
 
-    pub fn finalize(ctx: *mut ErrorReportRequest) {
-        // SAFETY: ctx was allocated via Box::into_raw in `run` and is finalized
-        // exactly once (either here on success path or by BodyReaderMixin on
-        // error/abort).
+    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`;
+    /// called exactly once (success path here, or via `on_error` on abort/error).
+    pub unsafe fn finalize(ctx: *mut ErrorReportRequest) {
+        // SAFETY: caller contract — ctx is the original Box allocation; no live
+        // borrow of *ctx exists (BodyReaderHandler hands us the raw pointer,
+        // never `&mut self`).
         unsafe {
-            (*ctx).dev().server.as_mut().unwrap().on_static_request_complete();
+            (*ctx).dev.as_mut().server.as_mut().unwrap().on_static_request_complete();
             drop(Box::from_raw(ctx));
         }
     }
 
-    #[inline]
-    fn dev(&mut self) -> &mut DevServer {
-        // SAFETY: DevServer outlives every ErrorReportRequest it spawns.
-        unsafe { self.dev.as_mut() }
-    }
-
-    pub fn run_with_body(
-        ctx: &mut ErrorReportRequest,
+    /// SAFETY: `ctx` must be the pointer returned by `Box::into_raw` in `run`,
+    /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
+    /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
+    /// retains ownership and will call `on_error`.
+    pub unsafe fn run_with_body(
+        ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
     ) -> Result<(), bun_core::Error> {
@@ -98,7 +102,6 @@ impl ErrorReportRequest {
         // with `should_finalize_self` flipped to true only at the very end.
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
-        let ctx_ptr: *mut ErrorReportRequest = ctx;
 
         let mut reader: &[u8] = body;
 
@@ -106,12 +109,16 @@ impl ErrorReportRequest {
         let arena = Arena::new();
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         // The Zig used a separate per-source-map arena that was reset between
-        // parses; the Rust `get_parsed_source_map` allocates into the global
-        // mimalloc heap, so no reset arena is needed.
+        // parses; the Rust `source_map_store::get_parsed_source_map` (the
+        // canonical impl on `DevServer.source_maps`) takes `&self` and
+        // allocates VLQ scratch + result mappings into the global mimalloc
+        // heap, so no per-map reset arena is threaded here.
 
         // SAFETY: DevServer outlives this request; immutable borrow for the
-        // duration of remapping (only `source_maps` and `root` are read).
-        let dev: &DevServer = unsafe { ctx.dev.as_ref() };
+        // duration of remapping (only `source_maps` and `root` are read). No
+        // `&mut *ctx` is formed for the body of this fn — `finalize(ctx)` at
+        // the tail consumes the original Box pointer directly.
+        let dev: &DevServer = unsafe { (*ctx).dev.as_ref() };
 
         // Read payload, assemble ZigException
         let name = read_string32(&mut reader)?;
@@ -322,10 +329,11 @@ impl ErrorReportRequest {
             // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
             // takes runtime `allow_ansi_color`, so no `inline else` split needed.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            // SAFETY: `dev.vm` is JSC_BORROW (LIFETIMES.tsv) — VM outlives DevServer;
-            // we need `&mut` for the printer's internal scratch (formatter), the
-            // pointer was created with mutable provenance in `Options.vm`.
-            let vm = unsafe { &mut *(dev.vm as *mut bun_jsc::VirtualMachine) };
+            // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
+            // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
+            // singleton (`VirtualMachine::get() -> *mut`), which carries
+            // mutable provenance. Single JS thread — no aliasing `&mut`.
+            let vm = dev.vm_mut();
             let _ = vm.print_externally_remapped_zig_exception(
                 &mut exception,
                 None,

@@ -1110,8 +1110,8 @@ impl Drop for DevServer {
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            // TODO(port): blocked_on: bun_jsc::VirtualMachine::timer (field is `()` stub)
-            let _ = &mut self.memory_visualizer_timer;
+            self.timer_heap()
+                .remove(&mut self.memory_visualizer_timer as *mut EventLoopTimer);
         }
         self.graph_safety_lock.lock();
         // bun_watcher is Box<Watcher> — Drop handles, but Zig passed `true` for stop-thread.
@@ -1157,8 +1157,8 @@ impl Drop for DevServer {
             // owned buffers; explicit deinit was Zig-side allocator free.
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
-            // TODO(port): blocked_on: bun_jsc::VirtualMachine::timer (field is `()` stub)
-            let _ = &mut self.source_maps.weak_ref_sweep_timer;
+            self.timer_heap()
+                .remove(&mut self.source_maps.weak_ref_sweep_timer as *mut EventLoopTimer);
         }
 
         for event in &mut self.watcher_atomics.events {
@@ -2786,18 +2786,19 @@ impl DeferredRequest {
     /// *WARNING*: Do not call this directly, instead call `.deref_()`
     fn __deinit(&mut self) {
         deferred_request::debug_log_dr!("DeferredRequest(0x{:x}) deinitImpl", self as *const _ as usize);
-        match &mut self.handler {
-            Handler::ServerHandler(saved) => {
-                // TODO(port): blocked_on: bun_jsc::Strong::deinit — `Strong` is
-                // non-nullable; explicit teardown happens via `Drop` when the
-                // owning `SavedRequest` is dropped. The pool stores
-                // `MaybeUninit<DeferredRequest>` so this must drop in place
-                // once `Handler` ownership is reshaped.
-                let _ = &mut saved.js_request;
+        // PORT NOTE: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
+        // so the `Handler` payload must be torn down explicitly here. Swap to
+        // `Aborted` (zero-payload) and let the moved-out value drop — for
+        // `ServerHandler` this releases `saved.js_request: Strong` (the GC
+        // handle Zig freed via `js_request.deinit()`).
+        let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
+        match handler {
+            Handler::ServerHandler(mut saved) => {
+                saved.deinit();
+                // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
             }
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
-        // PORT NOTE: SavedRequest::deinit added in src/runtime/server/mod.rs
     }
 
     /// Deinitializes state by aborting the connection.

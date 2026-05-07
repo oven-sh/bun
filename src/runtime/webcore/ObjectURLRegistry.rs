@@ -144,15 +144,19 @@ pub fn bun_revoke_object_url(
         return Err(global_object
             .throw_invalid_arguments(format_args!("revokeObjectURL expects a string")));
     }
-    let str = arguments.ptr[0]
-        .to_bun_string(global_object)
-        .expect("unreachable");
+    // `to_bun_string` returns a +1 ref; `bun_str::String` is `Copy` (no Drop),
+    // so wrap in `OwnedString` for scope-exit `deref()` — Zig's `defer str.deref()`.
+    let str = bun_str::OwnedString::new(
+        arguments.ptr[0]
+            .to_bun_string(global_object)
+            .expect("unreachable"),
+    );
     if !str.has_prefix_comptime(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
 
     let slice = str.to_utf8_without_ref();
-    // `defer slice.deinit()` / `defer str.deref()` → Drop
+    // `defer slice.deinit()` → ZigStringSlice Drop
 
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
@@ -175,8 +179,10 @@ pub fn js_function_resolve_object_url(
     if arguments.len < 1 {
         return Ok(JSValue::UNDEFINED);
     }
-    let str = arguments.ptr[0].to_bun_string(global_object)?;
-    // `defer str.deref()` → Drop
+    // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
+    // path (exception, non-blob prefix, success) releases it — Zig's
+    // `defer str.deref()`.
+    let str = bun_str::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
 
     if global_object.has_exception() {
         return Ok(JSValue::ZERO);

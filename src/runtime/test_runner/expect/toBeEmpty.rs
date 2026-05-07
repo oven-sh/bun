@@ -29,7 +29,7 @@ pub fn to_be_empty(
     let actual_length = value.get_length_if_property_exists_internal(global)?;
 
     if actual_length == f64::INFINITY {
-        if value.js_type().is_object() {
+        if value.js_type_loose().is_object() {
             if value.is_iterable(global)? {
                 let mut any_properties_in_iterator = false;
 

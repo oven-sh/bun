@@ -201,12 +201,12 @@ pub fn view(
     let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
         Ok(j) => j.into(),
         Err(err) => {
-            Output::err(err, "failed to parse response body as JSON", format_args!(""));
+            Output::err(err, "failed to parse response body as JSON", ());
             Global::crash();
         }
     };
     if log.errors > 0 {
-        let _ = log.print(Output::error_writer() as *mut _);
+        log.print(Output::error_writer() as *mut _)?;
         Global::crash();
     }
 
@@ -223,11 +223,11 @@ pub fn view(
     ) {
         Ok(Some(m)) => m,
         Ok(None) => {
-            Output::err_generic("failed to parse package manifest", format_args!(""));
+            Output::err_generic("failed to parse package manifest", ());
             Global::crash();
         }
         Err(err) => {
-            Output::err(err, "failed to parse package manifest", format_args!(""));
+            Output::err(err, "failed to parse package manifest", ());
             Global::exit(1);
         }
     };

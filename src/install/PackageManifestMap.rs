@@ -127,28 +127,46 @@ impl PackageManifestMap {
         }
     }
 
-    pub fn by_name_allow_expired(
+    /// # Safety
+    /// See [`by_name_hash_allow_expired`](Self::by_name_hash_allow_expired).
+    pub unsafe fn by_name_allow_expired(
         &mut self,
-        pm: &mut PackageManager,
+        pm: *mut PackageManager,
         scope: &npm::registry::Scope,
         name: &[u8],
         is_expired: Option<&mut bool>,
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash_allow_expired(
-            pm,
-            scope,
-            StringBuilder::string_hash(name),
-            is_expired,
-            cache_behavior,
-            needs_extended_manifest,
-        )
+        // SAFETY: forwarded to caller.
+        unsafe {
+            self.by_name_hash_allow_expired(
+                pm,
+                scope,
+                StringBuilder::string_hash(name),
+                is_expired,
+                cache_behavior,
+                needs_extended_manifest,
+            )
+        }
     }
 
-    pub fn by_name_hash_allow_expired(
+    /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
+    ///
+    /// # Safety
+    /// `self` is `pm.manifests` for every caller in the tree, so accepting
+    /// `pm: &mut PackageManager` would alias the `&mut self` receiver
+    /// (Stacked-Borrows UB regardless of which fields are touched). `pm` is
+    /// therefore routed as a raw pointer and only dereferenced for fields
+    /// disjoint from `manifests`: `options`, `cache_directory_*`, `env`, and
+    /// `timestamp_for_manifest_cache_control`.
+    ///
+    /// The caller must ensure `pm` is valid for the call's duration and that
+    /// `self` and the projected fields above all derive from `pm`'s provenance
+    /// (i.e. `self == &mut (*pm).manifests`).
+    pub unsafe fn by_name_hash_allow_expired(
         &mut self,
-        pm: &mut PackageManager,
+        pm: *mut PackageManager,
         scope: &npm::registry::Scope,
         name_hash: PackageNameHash,
         is_expired: Option<&mut bool>,

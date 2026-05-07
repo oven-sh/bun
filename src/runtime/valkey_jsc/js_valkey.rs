@@ -1028,46 +1028,36 @@ impl JSValkeyClient {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: `host_fn(getter)`/`host_fn(setter)` macros don't pass the JS
-    // `this_value` through; recover it from the JsRef (set in `create()`).
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_on_connect(&self, _global: &JSGlobalObject) -> JSValue {
-        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
-        if let Some(value) = Js::onconnect_get_cached(this_value) {
-            return value;
-        }
-        JSValue::UNDEFINED
+    // PORT NOTE: `onconnect`/`onclose` are declared with `this: true` in
+    // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
+    // `this_value` (between `&mut self` and `global`). No `host_fn` attribute —
+    // the extern "C" shim lives in generated_classes.rs.
+    pub fn get_on_connect(&mut self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        Js::onconnect_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_connect(
         &mut self,
+        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<bool> {
-        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
+    ) -> bool {
         Js::onconnect_set_cached(this_value, global_object, value);
-        Ok(true)
+        true
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_on_close(&self, _global: &JSGlobalObject) -> JSValue {
-        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
-        if let Some(value) = Js::onclose_get_cached(this_value) {
-            return value;
-        }
-        JSValue::UNDEFINED
+    pub fn get_on_close(&mut self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+        Js::onclose_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_close(
         &mut self,
+        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<bool> {
-        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
+    ) -> bool {
         Js::onclose_set_cached(this_value, global_object, value);
-        Ok(true)
+        true
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive

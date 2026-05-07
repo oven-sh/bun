@@ -3,10 +3,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, ConcurrentPromiseTask, JSGlobalObject, JSPromise, JSValue, JsResult,
-    JsTerminated, StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
+    StringJsc as _, SysErrorJsc as _,
 };
 use bun_jsc::bun_string_jsc;
+use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};
 use bun_paths::resolve_path::join_string_buf;
 use bun_str::String as BunString;
@@ -163,9 +164,8 @@ impl ScanOpts {
 }
 
 pub struct WalkTask<'a> {
-    // TODO(port): confirm bun_glob::BunGlobWalker::Drop ≡ deinit(true) — Zig's
-    // WalkTask.deinit called `walker.deinit(true)` explicitly; Box<GlobWalker> drop
-    // must carry the same semantics.
+    // PORT NOTE: Zig `WalkTask.deinit` did `walker.deinit(true); destroy(walker)`.
+    // `Box<GlobWalker>` drop runs `GlobWalker::Drop` (≡ `deinit(true)`) then frees.
     walker: Box<GlobWalker>,
     err: Option<WalkTaskErr>,
     global: &'a JSGlobalObject,
@@ -186,30 +186,32 @@ impl WalkTaskErr {
     }
 }
 
-// TODO(port): `ConcurrentPromiseTask` is currently a zero-generic `stub_ty!`
-// placeholder in `src/jsc/event_loop.rs`. Restore `<WalkTask<'a>>` once the
-// real generic task type is ported. The `'a` lifetime is kept so downstream
-// `AsyncGlobWalkTask<'a>` mentions stay shape-stable.
-#[allow(unused_lifetimes)]
-pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask;
+pub type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+
+impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    fn run(&mut self) {
+        WalkTask::run(self)
+    }
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
+        WalkTask::then(self, promise)
+    }
+}
 
 impl<'a> WalkTask<'a> {
     pub fn create(
         global_this: &'a JSGlobalObject,
         glob_walker: Box<GlobWalker>,
         has_pending_activity: &'a AtomicUsize,
-    ) -> Result<Box<AsyncGlobWalkTask<'a>>, bun_core::Error> {
-        // TODO(port): narrow error set
-        let _walk_task = Box::new(WalkTask {
+    ) -> Box<AsyncGlobWalkTask<'a>> {
+        // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (alloc OOM); Rust `Box::new`
+        // is infallible (panics on OOM via mimalloc), so no error variant.
+        let walk_task = Box::new(WalkTask {
             walker: glob_walker,
             global: global_this,
             err: None,
             has_pending_activity,
         });
-        // TODO(port): `bun_jsc::ConcurrentPromiseTask` is currently a non-generic
-        // `stub_ty!` placeholder; the real generic + `create_on_js_thread` live in
-        // bun_jsc's private `_gated` module. Restore once re-exported.
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::create_on_js_thread")
+        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
     }
 
     pub fn run(&mut self) {
@@ -235,9 +237,10 @@ impl<'a> WalkTask<'a> {
     }
 
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // TODO(port): Zig `defer this.deinit()` self-destroys (frees walker + self).
-        // In Rust, ownership of `Box<WalkTask>` should be consumed here so Drop
-        // runs at scope exit. Verify ConcurrentPromiseTask::then signature in Phase B.
+        // PORT NOTE: Zig `defer this.deinit()` freed walker + self. Ownership of
+        // `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
+        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
+        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
 
         if let Some(err) = &self.err {
             promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
@@ -407,26 +410,20 @@ impl Glob {
         };
 
         incr_pending_activity_flag(&self.has_pending_activity);
-        let _task = match WalkTask::create(global_this, glob_walker, &self.has_pending_activity) {
-            Ok(t) => t,
-            Err(_) => {
-                decr_pending_activity_flag(&self.has_pending_activity);
-                // TODO(port): Zig also called `globWalker.deinit(true); alloc.destroy(globWalker)` here.
-                // In Rust, `glob_walker` was moved into `WalkTask::create`; if create() fails it must
-                // drop it internally. Verify bun_jsc::ConcurrentPromiseTask::create_on_js_thread.
-                return Err(global_this.throw_out_of_memory());
-            }
-        };
-        // TODO(port): lifetime — WalkTask<'a> borrows &self.has_pending_activity and
-        // global_this but outlives this stack frame (scheduled on thread pool).
-        // Phase B: likely needs raw `*const AtomicUsize` / `*const JSGlobalObject`
-        // despite LIFETIMES.tsv classification, since the task is heap-allocated and
-        // kept alive by hasPendingActivity().
-        //
-        // `bun_jsc::ConcurrentPromiseTask` is currently a non-generic `stub_ty!`
-        // placeholder with no `schedule()` / `.promise` — restore once the real
-        // generic task type is re-exported.
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::schedule / .promise")
+        // PORT NOTE: Zig `catch { decr; deinit; throwOOM }` handled alloc failure.
+        // Rust `Box::new` is infallible (panics via mimalloc on OOM), so the error
+        // arm collapses; `glob_walker` is moved in and dropped on unwind.
+        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
+        let promise = task.promise.value();
+        task.schedule();
+        // Ownership passes to the work pool / event loop; freed via
+        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
+        // PORT NOTE: lifetime — WalkTask<'_> borrows `&self.has_pending_activity`
+        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
+        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
+        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
+        let _ = Box::into_raw(task);
+        Ok(promise)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -448,8 +445,7 @@ impl Glob {
             Ok(Some(gw)) => gw,
         };
         // Zig: `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
-        // drops at scope exit.
-        // TODO(port): confirm bun_glob::BunGlobWalker::Drop ≡ deinit(true) (bool-arg semantics).
+        // drops at scope exit (`GlobWalker::Drop` ≡ `deinit(true)`).
 
         match glob_walker.walk()? {
             bun_sys::Result::Err(err) => {
@@ -489,7 +485,7 @@ impl Glob {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/glob.zig (397 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      WalkTask<'a> borrows outlive stack frame (scheduled task) — likely needs raw ptrs; arena ownership flows into bun_glob::BunGlobWalker; GlobWalker::deinit(true) vs Drop semantics unresolved.
+//   confidence: high
+//   todos:      0
+//   notes:      arena ownership flows into bun_glob::BunGlobWalker; WalkTask<'_> escapes via Box::into_raw (referents kept alive by hasPendingActivity GC root + VM-lifetime global).
 // ──────────────────────────────────────────────────────────────────────────

@@ -331,26 +331,27 @@ impl Macro {
         hash: i32,
     ) -> Result<Macro, Error> {
         // TODO(port): narrow error set
-        let _ = (log, env);
         let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
             VirtualMachine::get()
         } else {
             // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
             // across this block because `VirtualMachine.init` (via
-            // `Config.configureTransformOptionsForBunVM`) mutates it. The Rust
-            // `bun_resolver::options::BundleOptions` forward-decl does not
-            // carry `transform_options` (the canonical owner is the bundler's
-            // `BundleOptions<'a>`), and `VirtualMachine::InitOptions` does not
-            // accept it either — that wiring lives behind the `RuntimeHooks::
-            // init_runtime_state` hook installed by `bun_runtime`. So the
-            // save/restore is a no-op at this tier.
+            // `Config.configureTransformOptionsForBunVM`) mutates the *passed*
+            // `args`. In the Rust port the resolver's forward-decl
+            // `BundleOptions` does not carry `transform_options` (the canonical
+            // owner is the bundler's `BundleOptions<'a>`), and
+            // `RuntimeHooks::init_runtime_state` builds the macro VM's
+            // transpiler from a fresh `TransformOptions` value rather than
+            // borrowing the caller's, so there is nothing to mutate-and-restore
+            // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
+            // CLI-path macro VM uses the caller's log sink and env loader.
 
             // JSC needs to be initialized if building from CLI
             jsc::initialize(false);
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
-                // TODO(port): once `InitOptions` grows `args: TransformOptions`
-                // / `log` / `env_loader`, thread them here per Macro.zig:181.
+                log: Some(NonNull::from(&mut *log)),
+                env_loader: NonNull::new(env),
                 is_main_thread: false,
                 ..Default::default()
             })?;
@@ -370,21 +371,9 @@ impl Macro {
             (*(*vm).event_loop()).ensure_waker();
         }
 
-        // PORT NOTE: `load_macro_entry_point` takes `&str` (the FFI side
-        // re-borrows as bytes); the spec inputs are guaranteed-ASCII (resolver
-        // path / identifier / synthetic specifier), so `from_utf8_unchecked` is
-        // sound. Phase B should widen the API to `&[u8]`.
-        // SAFETY: see PORT NOTE above — all three are ASCII by construction.
-        let (input_specifier_s, function_name_s, specifier_s) = unsafe {
-            (
-                core::str::from_utf8_unchecked(input_specifier),
-                core::str::from_utf8_unchecked(function_name),
-                core::str::from_utf8_unchecked(specifier),
-            )
-        };
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
         let loaded_result = unsafe {
-            (*vm).load_macro_entry_point(input_specifier_s, function_name_s, specifier_s, hash)
+            (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
         }?;
 
         // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`

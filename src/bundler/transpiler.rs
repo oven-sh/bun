@@ -115,6 +115,30 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// allocator: dropped`), so nothing left to thread.
     }
 
+    /// Port of `bundle_v2.zig:198 initializeClientTranspiler`'s
+    /// `client_transpiler.* = this_transpiler.*` value copy.
+    ///
+    /// Zig structs have no destructors, so a bitwise struct copy that aliases
+    /// heap-owning fields is sound there (both copies live in the bundler arena
+    /// and are bulk-freed). The Rust port mirrors that by `ptr::read`ing into a
+    /// bumpalo arena slot (never `Drop`ped) and requiring the caller to use
+    /// `ptr::write` for any subsequent heap-field overwrites so the aliased
+    /// originals are never freed.
+    ///
+    /// # Safety
+    /// - `arena` must outlive `self`.
+    /// - The returned `Transpiler` aliases every heap-owning field of `self`.
+    ///   It is never dropped (bumpalo). Callers MUST NOT assign to a heap-
+    ///   owning field of the clone with `=` (which would drop the shared old
+    ///   value); use `core::ptr::write` instead. Non-heap (`Copy`) fields and
+    ///   raw-pointer fields may be assigned normally.
+    pub unsafe fn arena_bitwise_dup(&self, arena: &'a Arena) -> &'a mut Transpiler<'a> {
+        // SAFETY: bitwise read of `*self`; the duplicate is placed in `arena`
+        // which never runs `Drop`, so no double-free occurs. See fn docs for
+        // the field-overwrite contract callers must uphold.
+        arena.alloc(unsafe { core::ptr::read(self) })
+    }
+
     /// Port of `transpiler.zig:91 getPackageManager`.
     #[inline]
     pub fn get_package_manager(

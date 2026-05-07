@@ -827,19 +827,7 @@ pub mod bun_object {
     // see PORTING.md §FFI — cannot write `extern jsc_conv!()` in Rust.)
 
     // --- LazyProperty initializers ---
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject__createBunStdin(g: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: JSC always passes a valid global.
-        unsafe { super::create_bun_stdin(&*g) }
-    }
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject__createBunStderr(g: *mut JSGlobalObject) -> JSValue {
-        unsafe { super::create_bun_stderr(&*g) }
-    }
-    #[unsafe(no_mangle)]
-    pub extern "C" fn BunObject__createBunStdout(g: *mut JSGlobalObject) -> JSValue {
-        unsafe { super::create_bun_stdout(&*g) }
-    }
+    // (BunObject__createBunStdin / Stderr / Stdout exported at file scope below.)
     // --- LazyProperty initializers ---
 
     // --- Getters ---
@@ -1089,14 +1077,9 @@ pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
     let mut table_printer =
         ConsoleObject::TablePrinter::init(global_this, ConsoleObject::MessageLevel::Log, value, properties)?;
-    // TODO(port): `TablePrinter.value_formatter` is private upstream
-    // (`bun_jsc::console_object`); depth/ordered/single_line are seeded by
-    // `TablePrinter::init` itself. Revisit once a setter lands.
-    let _ = (
-        format_options.max_depth,
-        format_options.ordered_properties,
-        format_options.single_line,
-    );
+    table_printer.value_formatter.depth = format_options.max_depth;
+    table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
+    table_printer.value_formatter.single_line = format_options.single_line;
 
     let print_result = if format_options.enable_colors {
         table_printer.print_table::<true>(&mut array)
@@ -2465,12 +2448,15 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     }
 
     let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
-    sort_indices
-        .sort_by(|a, b| if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
+    sort_indices.sort_by(|a, b| {
+        if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
             core::cmp::Ordering::Less
-        } else {
+        } else if GraphFile::less_than_by_index(unsorted_files, *b, *a) {
             core::cmp::Ordering::Greater
-        });
+        } else {
+            core::cmp::Ordering::Equal
+        }
+    });
     for (i, index) in sort_indices.iter().enumerate() {
         let file = &mut unsorted_files[*index as usize];
         // PORT NOTE (layering): `File::blob()` lives in the Zig spec's
@@ -2686,32 +2672,29 @@ pub mod environment_variables {
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getEnvCount(
         global_object: *mut JSGlobalObject,
-        ptr: *mut *mut &[u8],
+        ptr: *mut *const Box<[u8]>,
     ) -> usize {
         // SAFETY: caller is C++ with live global; ptr is a valid out-param.
         let bun_vm = unsafe { &mut *(*global_object).bun_vm() };
         // SAFETY: `transpiler.env` is the process-lifetime dotenv loader.
         let env = unsafe { &*bun_vm.transpiler.env };
         let keys: &[Box<[u8]>] = env.map.map.keys();
-        // PORT NOTE: C++ expects `[*][]const u8` (pointer to array of slice
-        // descriptors). `Box<[u8]>` and `&[u8]` share the (ptr,len) fat-pointer
-        // layout (both `repr(transparent)` over `*const [u8]`), so the keys
-        // backing slice can be reinterpreted in place.
-        // SAFETY: layout-compatible reinterpret; the backing Vec lives for the
-        // VM lifetime and is not reallocated between this call and
-        // `Bun__getEnvKey`.
-        unsafe { *ptr = keys.as_ptr() as *mut &[u8] };
+        // C++ declares this out-param as `void**` and only ever round-trips it
+        // back into `Bun__getEnvKey` below; the element layout is opaque to it.
+        // SAFETY: the backing Vec lives for the VM lifetime and is not
+        // reallocated between this call and `Bun__getEnvKey`.
+        unsafe { *ptr = keys.as_ptr() };
         keys.len()
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__getEnvKey(
-        ptr: *mut &[u8],
+        ptr: *const Box<[u8]>,
         i: usize,
         data_ptr: *mut *const u8,
     ) -> usize {
         // SAFETY: ptr was returned from Bun__getEnvCount; i < count.
-        let item = unsafe { *ptr.add(i) };
+        let item: &[u8] = unsafe { &**ptr.add(i) };
         unsafe { *data_ptr = item.as_ptr() };
         item.len()
     }

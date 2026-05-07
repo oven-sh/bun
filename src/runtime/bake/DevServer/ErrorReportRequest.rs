@@ -18,34 +18,29 @@
 use core::ptr::NonNull;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-#[allow(unused_imports)]
 use bun_collections::ArrayHashMap;
-#[allow(unused_imports)]
-use bun_core::Output;
-#[allow(unused_imports)]
-use bun_jsc::{self as jsc, ZigException, ZigStackFrame, ZigStackFramePosition};
-#[allow(unused_imports)]
-use bun_jsc::zig_stack_frame_position::Ordinal;
+use bun_core::{Ordinal, Output};
+use bun_jsc::{
+    JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
+    ZigStackFramePosition, ZigStackTrace,
+};
 use bun_logger::Log;
-#[allow(unused_imports)]
 use bun_paths::path_buffer_pool;
-#[allow(unused_imports)]
-use crate::api::server::StaticRoute;
-use bun_str::strings;
-use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
+use bun_str::{strings, String as BunString};
 use bun_uws::{self as uws, AnyResponse, Request};
+use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
-use super::source_map_store::{self as SourceMapStore};
-#[allow(unused_imports)]
-use super::source_map_store_body::GetResult;
+use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{DevServer, CLIENT_PREFIX};
+use crate::server::static_route::InitFromBytesOptions;
+use crate::server::StaticRoute;
 
 pub struct ErrorReportRequest {
     // TODO(port): lifetime — backref to owning DevServer; raw because the
     // request is heap-allocated and DevServer outlives it.
     dev: NonNull<DevServer>,
-    // TODO(port): BodyReaderMixin is a Zig comptime mixin parameterized by
-    // (Self, "body", run_with_body, finalize). Model as a generic helper that
+    // PORT NOTE: BodyReaderMixin is a Zig comptime mixin parameterized by
+    // (Self, "body", run_with_body, finalize). Modeled as a generic helper that
     // stores the buffered body and dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
 }
@@ -98,60 +93,326 @@ impl ErrorReportRequest {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
 
+        // .finalize has to be called last, but only in the non-error path.
+        // PORT NOTE: Zig used `defer if (should_finalize_self) ctx.finalize()`
+        // with `should_finalize_self` flipped to true only at the very end.
+        // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
+        // here we simply call `finalize` directly at the success tail.
+        let ctx_ptr: *mut ErrorReportRequest = ctx;
+
         let mut reader: &[u8] = body;
 
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
         let arena = Arena::new();
         // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile in Phase B
-        let mut source_map_arena = Arena::new();
+        // The Zig used a separate per-source-map arena that was reset between
+        // parses; the Rust `get_parsed_source_map` allocates into the global
+        // mimalloc heap, so no reset arena is needed.
+
+        // SAFETY: DevServer outlives this request; immutable borrow for the
+        // duration of remapping (only `source_maps` and `root` are read).
+        let dev: &DevServer = unsafe { ctx.dev.as_ref() };
 
         // Read payload, assemble ZigException
         let name = read_string32(&mut reader)?;
         let message = read_string32(&mut reader)?;
         let browser_url = read_string32(&mut reader)?;
         let stack_count = read_u32_le(&mut reader)?.min(255); // does not support more than 255
+        let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
-            let _line = read_i32_le(&mut reader)?;
-            let _column = read_i32_le(&mut reader)?;
-            let _function_name = read_string32(&mut reader)?;
-            let _file_name = read_string32(&mut reader)?;
-            // Frame construction blocked: jsc::ZigStackFrame is currently a
-            // `stub_ty!` tuple-struct placeholder in src/jsc/lib.rs (real
+            let line = read_i32_le(&mut reader)?;
+            let column = read_i32_le(&mut reader)?;
+            let function_name = read_string32(&mut reader)?;
+            let file_name = read_string32(&mut reader)?;
+            frames.push(ZigStackFrame {
+                function_name: BunString::init(function_name),
+                source_url: BunString::init(file_name),
+                position: if line > 0 {
+                    ZigStackFramePosition {
+                        line: Ordinal::from_one_based(line),
+                        column: if column < 1 {
+                            Ordinal::INVALID
+                        } else {
+                            Ordinal::from_one_based(column)
+                        },
+                        line_start_byte: 0,
+                    }
+                } else {
+                    ZigStackFramePosition {
+                        line: Ordinal::INVALID,
+                        column: Ordinal::INVALID,
+                        line_start_byte: 0,
+                    }
+                },
+                code_type: ZigStackFrameCode::NONE,
+                is_async: false,
+                remapped: false,
+                jsc_stack_frame_index: -1,
+            });
         }
 
-        let _ = (
-            ctx,
-            r,
-            &arena,
-            &mut source_map_arena,
-            name,
-            message,
-            browser_url,
-        );
-        // The remainder of this function (source-map remapping, ZigException
-        // construction, stderr printing, response serialization) is entirely
-        // expressed in terms of `jsc::ZigStackFrame` field access and
-        // `jsc::ZigStackTrace::{from_frames, frames, frames_len}`, all of which
-        // are `stub_ty!` placeholders upstream. The full Phase-A draft body is
-        // preserved in git history (see ErrorReportRequest.zig for spec) and
-        // should be restored once src/jsc un-gates ZigStackFrame/ZigStackTrace.
+        const RUNTIME_NAME: &[u8] = b"Bun HMR Runtime";
+
+        let browser_url_origin =
+            bun_url::origin_from_slice(browser_url).unwrap_or(browser_url);
+
+        // All files that DevServer could provide a source map fit the pattern:
+        // `/_bun/client/<label>-{u64}.js`
+        // Where the u64 is a unique identifier pointing into sourcemaps.
         //
-        // Secondary blockers within the same range:
-        //   - jsc::URL::origin_from_slice (URL is also stub_ty!)
-        //   - dev_server::SourceMapStore::get_parsed_source_map (lives on the
-        //     gated source_map_store_body::SourceMapStore, not the active stub)
-        //   - dev_server::DevServer::relative_path (lives on
-        //     dev_server_body::DevServer<'a>, not the active struct)
-        todo!("blocked_on: jsc::ZigStackFrame / jsc::ZigStackTrace (stub_ty placeholders)")
+        // HMR chunks use this too, but currently do not host their JS code.
+        let mut parsed_source_maps: ArrayHashMap<SourceMapKey, Option<GetResult<'_>>> =
+            ArrayHashMap::new();
+        bun_core::handle_oom(parsed_source_maps.ensure_total_capacity(4));
+        // PORT NOTE: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
+        // `GetResult` drops its owned `mappings` automatically.
+
+        let mut runtime_lines: Option<[&[u8]; 5]> = None;
+        let mut first_line_of_interest: usize = 0;
+        let mut top_frame_position = ZigStackFramePosition::INVALID;
+        let mut region_of_interest_line: u32 = 0;
+        for frame in frames.iter_mut() {
+            // SAFETY: every `source_url` here is `Tag::ZigString` (built via
+            // `String::init(&[u8])` above), so `.value.zig.slice()` is sound.
+            let source_url: &[u8] = unsafe { frame.source_url.value.zig.slice() };
+            // The browser code strips "http://localhost:3000" when the string
+            // has /_bun/client. It's done because JS can refer to `location`
+            let Some(id) = parse_id(source_url, browser_url_origin) else {
+                continue;
+            };
+
+            // Get and cache the parsed source map
+            let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id));
+            if !gop.found_existing {
+                // PERF(port): Zig reset a per-map arena here; the Rust port
+                // allocates VLQ/result into the global heap and frees on Drop.
+                match dev.source_maps.get_parsed_source_map(id) {
+                    None => {
+                        Output::debug_warn(format_args!(
+                            "Failed to find mapping for {}, {}",
+                            bstr::BStr::new(source_url),
+                            id.get()
+                        ));
+                        // SAFETY: gop.value_ptr points at the freshly-reserved slot.
+                        unsafe { gop.value_ptr.write(None) };
+                        continue;
+                    }
+                    Some(psm) => {
+                        // SAFETY: gop.value_ptr points at the freshly-reserved slot.
+                        unsafe { gop.value_ptr.write(Some(psm)) };
+                    }
+                }
+            }
+            // SAFETY: slot was either pre-existing (initialized) or just written above.
+            let Some(result) = (unsafe { &*gop.value_ptr }) else {
+                continue;
+            };
+
+            // When before the first generated line, remap to the HMR runtime.
+            //
+            // Reminder that the HMR runtime is *not* sourcemapped. And appears
+            // first in the bundle. This means that the mappings usually looks like
+            // this:
+            //
+            // AAAA;;;;;;;;;;;ICGA,qCAA4B;
+            // ^              ^ generated_mappings[1], actual code
+            // ^
+            // ^ generated_mappings[0], we always start it with this
+            //
+            // So we can know if the frame is inside the HMR runtime if
+            // `frame.position.line < generated_mappings[1].lines`.
+            let generated_mappings = result.mappings.generated();
+            if generated_mappings.len() <= 1
+                || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
+            {
+                frame.source_url = BunString::init(RUNTIME_NAME); // matches value in source map
+                frame.position = ZigStackFramePosition::INVALID;
+                continue;
+            }
+
+            // Remap the frame
+            let remapped = result.mappings.find(frame.position.line, frame.position.column);
+            if let Some(remapped_position) = &remapped {
+                frame.position = ZigStackFramePosition {
+                    line: Ordinal::from_zero_based(remapped_position.original_line()),
+                    column: Ordinal::from_zero_based(remapped_position.original_column()),
+                    line_start_byte: 0,
+                };
+                let index = remapped_position.source_index;
+                if index >= 1 && (index as usize - 1) < result.file_paths.len() {
+                    let abs_path: &[u8] = &result.file_paths[index as usize - 1];
+                    frame.source_url = BunString::init(abs_path);
+                    let mut relative_path_buf = path_buffer_pool::get();
+                    let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
+                    // SAFETY: function_name is Tag::ZigString.
+                    if strings::eql(unsafe { frame.function_name.value.zig.slice() }, rel_path) {
+                        frame.function_name = BunString::EMPTY;
+                    }
+                    frame.remapped = true;
+
+                    if runtime_lines.is_none() {
+                        let file = &result.entry_files[index as usize - 1];
+                        if let Some(source_map) = file.get() {
+                            let json_encoded_source_code = source_map.quoted_contents();
+                            // First line of interest is two above the target line.
+                            let target_line = frame.position.line.zero_based() as usize;
+                            first_line_of_interest = target_line.saturating_sub(2);
+                            region_of_interest_line =
+                                (target_line - first_line_of_interest) as u32;
+                            runtime_lines = extract_json_encoded_source_code::<5>(
+                                json_encoded_source_code,
+                                first_line_of_interest as u32,
+                                &arena,
+                            )?;
+                            top_frame_position = frame.position;
+                        }
+                    }
+                } else if index == 0 {
+                    // Should be picked up by above but just in case.
+                    frame.source_url = BunString::init(RUNTIME_NAME);
+                    frame.position = ZigStackFramePosition::INVALID;
+                }
+            }
+        }
+
+        // Stack traces can often end with random runtime frames that are not relevant.
+        'trim_runtime_frames: {
+            // Ensure that trimming will not remove ALL frames.
+            let mut all_runtime = true;
+            for frame in frames.iter() {
+                // SAFETY: source_url is Tag::ZigString — slice() yields the raw ptr.
+                let is_runtime = frame.position.is_invalid()
+                    && unsafe { frame.source_url.value.zig.slice() }.as_ptr()
+                        == RUNTIME_NAME.as_ptr();
+                if !is_runtime {
+                    all_runtime = false;
+                    break;
+                }
+            }
+            if all_runtime {
+                break 'trim_runtime_frames;
+            }
+
+            // Move all frames up
+            // PORT NOTE: reshaped — Zig copied items down then truncated; Rust
+            // `Vec::retain` does the same in-place compaction with the same
+            // relative order.
+            frames.retain(|frame| {
+                // SAFETY: source_url is Tag::ZigString.
+                !(frame.position.is_invalid()
+                    && unsafe { frame.source_url.value.zig.slice() }.as_ptr()
+                        == RUNTIME_NAME.as_ptr())
+            });
+        }
+
+        let mut exception = ZigException {
+            r#type: JSErrorCode::Error,
+            runtime_type: JSRuntimeType::NOTHING,
+            name: BunString::init(name),
+            message: BunString::init(message),
+            stack: ZigStackTrace::from_frames(&mut frames),
+            exception: core::ptr::null_mut(),
+            remapped: false,
+            browser_url: BunString::init(browser_url),
+            errno: 0,
+            syscall: BunString::EMPTY,
+            system_code: BunString::EMPTY,
+            path: BunString::EMPTY,
+            fd: -1,
+        };
+
+        {
+            let stderr = Output::error_writer_buffered();
+            let _flush = scopeguard::guard((), |_| Output::flush());
+            // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
+            // takes runtime `allow_ansi_color`, so no `inline else` split needed.
+            let ansi_colors = Output::enable_ansi_colors_stderr();
+            // SAFETY: `dev.vm` is JSC_BORROW (LIFETIMES.tsv) — VM outlives DevServer;
+            // we need `&mut` for the printer's internal scratch (formatter), the
+            // pointer was created with mutable provenance in `Options.vm`.
+            let vm = unsafe { &mut *(dev.vm as *mut bun_jsc::VirtualMachine) };
+            let _ = vm.print_externally_remapped_zig_exception(
+                &mut exception,
+                None,
+                stderr,
+                true,
+                ansi_colors,
+            );
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+
+        write_u32_le(&mut out, exception.stack.frames_len as u32);
+        for frame in exception.stack.frames() {
+            write_i32_le(&mut out, frame.position.line.one_based());
+            write_i32_le(&mut out, frame.position.column.one_based());
+
+            // SAFETY: function_name is Tag::ZigString or Tag::Empty.
+            let function_name: &[u8] = unsafe { frame.function_name.value.zig.slice() };
+            write_u32_le(&mut out, function_name.len() as u32);
+            out.extend_from_slice(function_name);
+
+            // SAFETY: source_url is Tag::ZigString.
+            let src_to_write: &[u8] = unsafe { frame.source_url.value.zig.slice() };
+            if strings::has_prefix_comptime(src_to_write, b"/") {
+                let mut relative_path_buf = path_buffer_pool::get();
+                let file = dev.relative_path(&mut relative_path_buf, src_to_write);
+                write_u32_le(&mut out, file.len() as u32);
+                out.extend_from_slice(file);
+            } else {
+                write_u32_le(&mut out, src_to_write.len() as u32);
+                out.extend_from_slice(src_to_write);
+            }
+        }
+
+        if let Some(mut lines) = runtime_lines {
+            // trim empty lines
+            let mut adjusted_lines: &mut [&[u8]] = &mut lines;
+            while !adjusted_lines.is_empty() && adjusted_lines[0].is_empty() {
+                adjusted_lines = &mut adjusted_lines[1..];
+                region_of_interest_line = region_of_interest_line.saturating_sub(1);
+                first_line_of_interest += 1;
+            }
+            while !adjusted_lines.is_empty() && adjusted_lines[adjusted_lines.len() - 1].is_empty()
+            {
+                let new_len = adjusted_lines.len() - 1;
+                adjusted_lines = &mut adjusted_lines[..new_len];
+            }
+
+            out.push(adjusted_lines.len() as u8);
+            write_u32_le(&mut out, region_of_interest_line);
+            write_u32_le(&mut out, (first_line_of_interest + 1) as u32);
+            write_u32_le(&mut out, top_frame_position.column.one_based() as u32);
+
+            for line in adjusted_lines.iter() {
+                write_u32_le(&mut out, line.len() as u32);
+                out.extend_from_slice(line);
+            }
+        } else {
+            out.push(0u8);
+        }
+
+        StaticRoute::send_blob_then_deinit(
+            r,
+            &crate::webcore::blob::Any::from_array_list(out),
+            InitFromBytesOptions {
+                mime_type: Some(&bun_http_types::mime_type::OTHER),
+                server: dev.server,
+                ..Default::default()
+            },
+        );
+        // `should_finalize_self = true;` — see PORT NOTE at fn top.
+        ErrorReportRequest::finalize(ctx_ptr);
+        Ok(())
     }
 }
 
-pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<SourceMapStore::Key> {
+pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }
     let after_host = &source_url[strings::without_trailing_slash(browser_url).len()..];
-    // TODO(port): `client_prefix ++ "/"` is comptime string concat in Zig.
+    // PORT NOTE: `client_prefix ++ "/"` is comptime string concat in Zig.
     if !(after_host.starts_with(CLIENT_PREFIX.as_bytes())
         && after_host.get(CLIENT_PREFIX.len()) == Some(&b'/'))
     {
@@ -170,13 +431,13 @@ pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<SourceMapStore:
     if hex.len() != core::mem::size_of::<u64>() * 2 {
         return None;
     }
-    Some(SourceMapStore::Key::init(parse_hex_to_int::<u64>(hex)?))
+    Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
 }
 
 // PORT NOTE: Zig used `std.fmt.parseUnsigned(T, slice, 16)`. Thin local copy of
 // `dev_server_body::parse_hex_to_int` so this module doesn't depend on the
-// still-gated `DevServer.rs` draft. Rust can't size a stack array by a generic
-// `T` without `generic_const_exprs`, so cap at 16 bytes (enough for u128).
+// body draft. Rust can't size a stack array by a generic `T` without
+// `generic_const_exprs`, so cap at 16 bytes (enough for u128).
 fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
     let size = ::core::mem::size_of::<T>();
     debug_assert!(size <= 16);
@@ -188,7 +449,6 @@ fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
 }
 
 /// Instead of decoding the entire file, just decode the desired section.
-#[allow(dead_code)] // caller (`run_with_body`) is stubbed pending jsc::ZigStackFrame un-gate
 fn extract_json_encoded_source_code<'a, const N: usize>(
     contents: &'a [u8],
     target_line: u32,
@@ -337,13 +597,11 @@ fn read_i32_le(r: &mut &[u8]) -> Result<i32, bun_core::Error> {
     Ok(i32::from_le_bytes([head[0], head[1], head[2], head[3]]))
 }
 
-#[allow(dead_code)] // used by the stubbed `run_with_body` tail
 #[inline]
 fn write_u32_le(w: &mut Vec<u8>, v: u32) {
     w.extend_from_slice(&v.to_le_bytes());
 }
 
-#[allow(dead_code)] // used by the stubbed `run_with_body` tail
 #[inline]
 fn write_i32_le(w: &mut Vec<u8>, v: i32) {
     w.extend_from_slice(&v.to_le_bytes());
@@ -353,6 +611,6 @@ fn write_i32_le(w: &mut Vec<u8>, v: i32) {
 // PORT STATUS
 //   source:     src/bake/DevServer/ErrorReportRequest.zig (404 lines)
 //   confidence: medium
-//   todos:      8
-//   notes:      BodyReaderMixin callback wiring + arena-backed string lifetimes for ZigStackFrame need Phase B attention; finalize-guard borrows ctx mutably alongside body use.
+//   todos:      3
+//   notes:      borrowed BunString fields in ZigStackFrame are Tag::ZigString — Drop's deref() is a no-op; per-map source_map_arena reset elided (Rust port allocates into global heap).
 // ──────────────────────────────────────────────────────────────────────────

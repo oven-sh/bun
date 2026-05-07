@@ -952,53 +952,46 @@ pub mod js_bundler {
             }
 
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
+                // Zig kept a separate `owned_*: OwnedString` buffer per template
+                // and pointed `template.data` (a `[]const u8`) into it. Rust's
+                // `PathTemplate.data` is already `Box<[u8]>` (owned), so build
+                // straight into it — no self-referential borrow, no clone.
+                let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
+                    if s.starts_with(b"./") {
+                        Box::<[u8]>::from(s)
+                    } else {
+                        let mut buf = Vec::with_capacity(2 + s.len());
+                        buf.extend_from_slice(b"./");
+                        buf.extend_from_slice(s);
+                        buf.into_boxed_slice()
+                    }
+                };
                 if naming.is_string() {
                     if let Some(slice) =
                         config.get_optional_slice(global_this, b"naming")?
                     {
-                        if !slice.slice().starts_with(b"./") {
-                            this.names.owned_entry_point.append_slice_exact(b"./")?;
-                        }
-                        this.names.owned_entry_point.append_slice_exact(slice.slice())?;
-                        // TODO(port): self-referential slice — entry_point.data borrows owned_entry_point
-                        this.names.entry_point.data =
-                            this.names.owned_entry_point.list.clone().into_boxed_slice();
+                        this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else if naming.is_object() {
                     if let Some(slice) =
                         naming.get_optional_slice(global_this, b"entry")?
                     {
-                        if !slice.slice().starts_with(b"./") {
-                            this.names.owned_entry_point.append_slice_exact(b"./")?;
-                        }
-                        this.names.owned_entry_point.append_slice_exact(slice.slice())?;
-                        this.names.entry_point.data =
-                            this.names.owned_entry_point.list.clone().into_boxed_slice();
+                        this.names.entry_point.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) =
                         naming.get_optional_slice(global_this, b"chunk")?
                     {
-                        if !slice.slice().starts_with(b"./") {
-                            this.names.owned_chunk.append_slice_exact(b"./")?;
-                        }
-                        this.names.owned_chunk.append_slice_exact(slice.slice())?;
-                        this.names.chunk.data =
-                            this.names.owned_chunk.list.clone().into_boxed_slice();
+                        this.names.chunk.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
 
                     if let Some(slice) =
                         naming.get_optional_slice(global_this, b"asset")?
                     {
-                        if !slice.slice().starts_with(b"./") {
-                            this.names.owned_asset.append_slice_exact(b"./")?;
-                        }
-                        this.names.owned_asset.append_slice_exact(slice.slice())?;
-                        this.names.asset.data =
-                            this.names.owned_asset.list.clone().into_boxed_slice();
+                        this.names.asset.data = with_dot_slash(slice.slice());
                         drop(slice);
                     }
                 } else {
@@ -1247,23 +1240,20 @@ pub mod js_bundler {
     // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
     // `MutableString`, `Strong`); no manual `Drop` needed.
 
+    /// Zig kept a separate `owned_*: OwnedString` per template and pointed
+    /// `template.data: []const u8` into it (self-referential). Rust's
+    /// `PathTemplate.data` is `Box<[u8]>` (owned), so the indirection is gone.
     pub struct Names {
-        pub owned_entry_point: OwnedString,
         pub entry_point: options::PathTemplate,
-        pub owned_chunk: OwnedString,
         pub chunk: options::PathTemplate,
-        pub owned_asset: OwnedString,
         pub asset: options::PathTemplate,
     }
 
     impl Default for Names {
         fn default() -> Self {
             Self {
-                owned_entry_point: OwnedString::default(),
                 entry_point: options::PathTemplate::FILE.into(),
-                owned_chunk: OwnedString::default(),
                 chunk: options::PathTemplate::CHUNK.into(),
-                owned_asset: OwnedString::default(),
                 asset: options::PathTemplate::ASSET.into(),
             }
         }

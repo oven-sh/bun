@@ -83,6 +83,52 @@ unsafe fn ref_string_slice<'a>(r: *mut RefString) -> &'a [u8] {
     unsafe { (*r).leak() }
 }
 
+// ── ResolverLike bridge ───────────────────────────────────────────────────
+// `bun_router::ResolverLike` is the duck-typed seam for `Router::load_routes`;
+// `bun_resolver::Resolver` is the concrete impl. Neither crate depends on the
+// other (siblings), so the orphan-rule-compliant impl lives here in
+// `bun_runtime` — the lowest crate that sees both. The `DirInfoRef` vtable
+// erases `*const bun_resolver::DirInfo` to keep `bun_router` resolver-agnostic.
+
+static RESOLVER_DIR_INFO_VTABLE: Router::DirInfoVTable = Router::DirInfoVTable {
+    get_entries_const: |owner| {
+        // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo` produced by
+        // `dir_info_ref` below; the resolver's BSSMap singleton outlives the walk.
+        let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
+        di.get_entries_const()
+            .map(|e| e as *const Fs::DirEntry as *const bun_sys::fs::DirEntry)
+    },
+};
+
+#[inline]
+fn dir_info_ref(di: *const bun_resolver::DirInfo) -> Router::DirInfoRef {
+    Router::DirInfoRef { owner: di as *const (), vtable: &RESOLVER_DIR_INFO_VTABLE }
+}
+
+/// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
+/// `bun_resolver::Resolver`.
+struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
+
+impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
+    #[inline]
+    fn fs(&self) -> &'static bun_sys::fs::FileSystem {
+        // PORT NOTE: `bun_sys::fs::FileSystem` is the opaque handle whose
+        // documented backing type is the resolver singleton; both `instance()`
+        // calls resolve to the same process-global.
+        bun_sys::fs::FileSystem::instance()
+    }
+    #[inline]
+    fn fs_impl(&self) -> *mut core::ffi::c_void {
+        // SAFETY: `&fs.fs` — the `Implementation` field, type-erased per the
+        // `entry_kind` vtable contract in `bun_resolver::fs` (fs.rs:3109).
+        unsafe { (&mut (*self.0.fs()).fs) as *mut Fs::Implementation as *mut core::ffi::c_void }
+    }
+    #[inline]
+    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<Router::DirInfoRef> {
+        self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
+    }
+}
+
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
 // generator as `FileSystemRouterPrototype__routesSetCachedValue`. The
 // `codegen_cached_accessors!` proc-macro wires the extern.
@@ -122,7 +168,8 @@ impl FileSystemRouter {
             return Err(global_this.throw_invalid_arguments("Expected object"));
         }
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
-        let vm = unsafe { &mut *global_this.bun_vm() };
+        let vm_ptr = global_this.bun_vm();
+        let vm = unsafe { &mut *vm_ptr };
 
         let mut root_dir_path: ZigStringSlice =
             // SAFETY: `vm.transpiler.fs` is the process-global FileSystem singleton.
@@ -216,11 +263,16 @@ impl FileSystemRouter {
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();
-        // TODO(port): errdefer-style swap of `vm.transpiler.resolver.log` — `log` field is
-        // `*mut logger::Log`; storing a stack-local `&mut log` across early returns is UB
-        // without scopeguard. Deferred until ResolverLike/DirInfoRef integration lands.
-        let _orig_log: *mut Log::Log = vm.transpiler.resolver.log;
-        let _ = &_orig_log;
+        // `defer vm.transpiler.resolver.log = orig_log` — restore on every exit
+        // path. The guard re-derives `vm` from the raw pointer so it doesn't
+        // hold a long-lived `&mut` that would conflict with uses below.
+        let orig_log: *mut Log::Log = vm.transpiler.resolver.log;
+        vm.transpiler.resolver.log = &mut log;
+        let _restore_log = scopeguard::guard((), move |_| {
+            // SAFETY: `vm_ptr` is the live VM for this global; runs on scope exit
+            // (before `log` drops — declared after it).
+            unsafe { (*vm_ptr).transpiler.resolver.log = orig_log };
+        });
 
         // `clone_with_trailing_slash` — append '/' if missing.
         let path_to_use: Vec<u8> = {
@@ -267,13 +319,25 @@ impl FileSystemRouter {
         )
         .expect("unreachable");
 
-        // TODO(port): `Router::load_routes` takes `bun_router::b1_stubs::logger::Log` (stub) +
-        // `DirInfoRef` (vtable-erased) + `R: ResolverLike`, none of which `bun_logger::Log` /
-        // `*mut DirInfo` / `Resolver<'a>` currently satisfy. Blocked on upstream wiring.
-        let _ = (&mut log, root_dir_info);
-        let _config_dir = router.config.dir.clone();
-        if false {
-            todo!("blocked_on: bun_router::ResolverLike for bun_resolver::Resolver + DirInfoRef vtable");
+        {
+            // PORT NOTE: `load_routes` currently takes the crate-local
+            // `RouteLoaderLog` stub (no-op) until `bun_router` wires
+            // `bun_logger`. Resolver-side errors still land in `log` via the
+            // swap above; route-name validation errors are dropped for now.
+            let mut route_log = RouteLoaderLog;
+            let config_dir = router.config.dir.clone();
+            if router
+                .load_routes(
+                    &mut route_log,
+                    dir_info_ref(root_dir_info),
+                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &config_dir,
+                )
+                .is_err()
+            {
+                let err_value = log.to_js(global_this, "loading routes");
+                return Err(global_this.throw_value(err_value?));
+            }
         }
 
         if let Some(origin) = argument.get(global_this, "origin")? {

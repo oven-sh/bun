@@ -673,38 +673,37 @@ impl<'a> AsyncModule<'a> {
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = logger::Log::init();
-        let mut errorable: ErrorableResolvedSource;
         this.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(
             bun_aio::AllocatorType::Js,
         ));
-        'outer: {
-            errorable = match this.resume_loading_module(&mut log) {
-                Ok(rs) => ErrorableResolvedSource::ok(rs),
-                Err(err) => {
-                    if err == bun_core::err!("JSError") {
-                        errorable = ErrorableResolvedSource::err(
-                            bun_core::err!("JSError"),
-                            this.global_this.take_error(JsError::Thrown),
-                        );
-                        break 'outer;
-                    } else {
-                        crate::virtual_machine::process_fetch_log(
-                            this.global_this,
-                            BunString::init(ZigString::init(this.specifier)),
-                            BunString::init(ZigString::init(this.referrer)),
-                            &mut log,
-                            &mut errorable,
-                            err,
-                        );
-                        break 'outer;
-                    }
-                }
-            };
-        }
+        let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
+            Ok(rs) => ErrorableResolvedSource::ok(rs),
+            Err(err) if err == bun_core::err!("JSError") => ErrorableResolvedSource::err(
+                bun_core::err!("JSError"),
+                this.global_this.take_error(JsError::Thrown),
+            ),
+            Err(err) => {
+                // PORT NOTE: Zig declared `errorable = undefined` and relied on
+                // `processFetchLog` writing the out-param. Rust pre-seeds the
+                // err so the `&mut` borrow is definitely-initialized;
+                // `process_fetch_log` overwrites `result.err.value`.
+                let mut errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
+                crate::virtual_machine::process_fetch_log(
+                    this.global_this,
+                    BunString::init(ZigString::init(this.specifier())),
+                    BunString::init(ZigString::init(this.referrer())),
+                    &mut log,
+                    &mut errorable,
+                    err,
+                );
+                errorable
+            }
+        };
+        let mut errorable = errorable;
         // log dropped at scope exit (defer log.deinit()).
 
-        let mut spec = BunString::init(ZigString::from_bytes(this.specifier));
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer));
+        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()));
+        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()));
         let _ = jsc::from_js_host_call_generic(this.global_this, || unsafe {
             Bun__onFulfillAsyncModule(
                 this.global_this,
@@ -857,7 +856,7 @@ impl<'a> AsyncModule<'a> {
         error_instance.put(
             global_this,
             b"specifier",
-            ZigString::from_bytes(self.specifier).to_js(global_this),
+            ZigString::from_bytes(self.specifier()).to_js(global_this),
         );
         let location = logger::range_data(
             Some(&self.parse_result.source),
@@ -892,11 +891,12 @@ impl<'a> AsyncModule<'a> {
             b"column",
             JSValue::js_number(location.column as f64),
         );
-        if !self.referrer.is_empty() && self.referrer != b"undefined" {
+        let referrer = self.referrer();
+        if !referrer.is_empty() && referrer != b"undefined" {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(self.referrer).to_js(global_this),
+                ZigString::from_bytes(referrer).to_js(global_this),
             );
         }
 
@@ -1052,11 +1052,12 @@ impl<'a> AsyncModule<'a> {
             b"pkg",
             ZigString::from_bytes(result.name).to_js(global_this),
         );
-        if !self.specifier.is_empty() && self.specifier != b"undefined" {
+        let specifier = self.specifier();
+        if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
                 b"referrer",
-                ZigString::from_bytes(self.specifier).to_js(global_this),
+                ZigString::from_bytes(specifier).to_js(global_this),
             );
         }
 
@@ -1129,16 +1130,22 @@ impl<'a> AsyncModule<'a> {
         bun_core::scoped_log!(
             AsyncModule,
             "resumeLoadingModule: {}",
-            bstr::BStr::new(self.specifier)
+            bstr::BStr::new(self.specifier())
         );
         // PORT NOTE: Zig copied `parse_result` by value, mutated, wrote
         // back. Rust takes-by-value via `mem::take` then restores below to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
         let mut parse_result = core::mem::take(&mut self.parse_result);
-        let path = self.path.clone();
+        // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
+        // stable for the lifetime of `*self`; this fn never replaces it, so
+        // slices into it remain valid across the `&mut self` reborrows below
+        // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
+        // tie `path`/`specifier` to `&self`.
+        let specifier: &[u8] = unsafe { &*(self.specifier() as *const [u8]) };
+        let path_text: &[u8] = unsafe { &*(self.path_text() as *const [u8]) };
+        let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get();
-        let specifier = self.specifier;
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
         // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw

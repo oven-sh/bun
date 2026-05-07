@@ -55,11 +55,15 @@ pub struct StoreRef<T>(NonNull<T>);
 // (e.g. `E::EString::next`) can sit in `static` tables — matches Zig where raw
 // pointers carry no thread-affinity. Callers are responsible for not actually
 // sharing a Store across threads (same contract as the Zig original).
-// AUDIT(unsound): unconditional in `T` — `StoreRef<Cell<_>>` would be `Sync`.
-// Proposed fix: bound on `T: Send` / `T: Sync` once downstream `ExprData`
-// payload types are themselves audited Send/Sync.
-unsafe impl<T> Send for StoreRef<T> {}
-unsafe impl<T> Sync for StoreRef<T> {}
+//
+// Bounded on `T` so `StoreRef` cannot launder a `!Send`/`!Sync` payload (e.g.
+// `StoreRef<Cell<_>>`) past auto-trait inference: `Deref` yields `&T` (needs
+// `T: Sync` to share), and a `Send`-moved `StoreRef` yields `&mut T` via
+// `DerefMut` (needs `T: Send`). The recursive `E::*` payload graph (`EString`/
+// `Array`/`Object` → `BabyList<Expr>` → `Data` → `StoreRef<E::*>`) closes
+// coinductively under these bounds because every leaf field is `Send + Sync`.
+unsafe impl<T: Send> Send for StoreRef<T> {}
+unsafe impl<T: Sync> Sync for StoreRef<T> {}
 
 impl<T> StoreRef<T> {
     #[inline]

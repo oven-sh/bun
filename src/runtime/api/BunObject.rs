@@ -254,7 +254,8 @@ pub mod bun_object {
                     f: *mut CallFrame,
                 ) -> JSValue {
                     // SAFETY: JSC always passes valid pointers here.
-                    bun_jsc::to_js_host_fn($target)(g, f)
+                    let (g, f) = unsafe { (&*g, &*f) };
+                    bun_jsc::to_js_host_call(g, || $target(g, f))
                 }
             )*
         };

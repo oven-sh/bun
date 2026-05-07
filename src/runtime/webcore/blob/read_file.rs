@@ -588,28 +588,27 @@ impl ReadFile {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
             Err(err) => {
-                self.errno = Some(bun_core::errno_to_err(err.errno));
+                self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
                 self.system_error = Some(err.to_system_error());
                 return;
             }
         };
 
         if let Some(store) = &self.store {
-            if store.data.is_file() {
-                // TODO(port): Arc<Store> interior mutability — Zig mutates through *Store.
-                store.data.file().last_modified =
-                    jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
+            if let Data::File(file) = store.data_mut() {
+                let mtime = bun_sys::stat_mtime(&stat);
+                file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
             }
         }
 
-        if bun_sys::S::ISDIR(u32::try_from(stat.mode).unwrap()) {
+        if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(bun_core::err!("EISDIR"));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
                 path: if self.file_store.pathlike.is_path() {
                     BunString::clone_utf8(self.file_store.pathlike.path().slice())
                 } else {
-                    BunString::empty()
+                    BunString::EMPTY
                 },
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
@@ -618,24 +617,22 @@ impl ReadFile {
             return;
         }
 
-        self.could_block = !bun_sys::is_regular_file(stat.mode);
+        self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
         self.total_size =
-            SizeType::try_from(stat.size.max(0).min(Blob::MAX_SIZE as i64)).unwrap();
+            SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
-        if stat.size > 0 && !self.could_block {
+        if stat.st_size > 0 && !self.could_block {
             self.size = self.total_size.min(self.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
-        } else if stat.size == 0 && self.could_block {
+        } else if stat.st_size == 0 && self.could_block {
             self.size = self.max_length.min(4096);
         }
 
         if self.offset > 0 {
             // We DO support offset in Bun.file()
-            match bun_sys::set_file_offset(fd, self.offset) {
-                // we ignore errors because it should continue to work even if its a pipe
-                Err(_) | Ok(_) => {}
-            }
+            // we ignore errors because it should continue to work even if its a pipe
+            let _ = bun_sys::set_file_offset(fd, self.offset);
         }
     }
 

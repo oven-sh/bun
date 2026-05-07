@@ -663,15 +663,17 @@ impl Linux {
         // SAFETY: `fd` is set once in `init()` before the reader thread spawns and
         // never mutated again; reading it here races with nothing.
         let fd = unsafe { (*plat).fd };
-        let rc = sys::syscall::inotify_add_watch(fd.native(), abs_path, mask);
-        if let Some(err) = sys::errno_sys_p(rc, Syscall::Watch, abs_path.as_bytes()) {
+        // SAFETY: FFI; abs_path is NUL-terminated, fd is a valid inotify fd.
+        let rc = unsafe { sys::linux::inotify_add_watch(fd.native(), abs_path.as_ptr(), mask) };
+        if rc < 0 {
             // ENOTDIR/ENOENT during a recursive walk just means we raced; skip.
             if !subpath.is_empty() {
                 return Ok(());
             }
-            return Err(err);
+            return Err(sys::Error::from_code_int(sys::last_errno(), Tag::watch)
+                .with_path(abs_path.as_bytes()));
         }
-        let wd: i32 = i32::try_from(rc).unwrap();
+        let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`. Project
         // only the field (not `&mut Linux`) so this can coexist with the reader
         // thread's long-lived `&AtomicBool` borrow of the disjoint `running` field.

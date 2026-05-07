@@ -170,6 +170,17 @@ pub enum PathOrFileDescriptorSerializeTag {
     Path = 1,
 }
 
+impl PathOrFileDescriptorSerializeTag {
+    #[inline]
+    pub fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Fd),
+            1 => Some(Self::Path),
+            _ => None,
+        }
+    }
+}
+
 impl PathOrFileDescriptor {
     #[inline]
     pub fn slice(&self) -> &[u8] {

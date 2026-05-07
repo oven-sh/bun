@@ -65,6 +65,13 @@ impl MaxHeapAllocator {
         self.len = 0;
     }
 
+    /// Borrow the allocator for a scope; `reset()` is called automatically when
+    /// the returned guard drops. Mirrors Zig's `defer max_heap_allocator.reset()`
+    /// at loop-iteration scope without an ad-hoc `scopeguard`.
+    pub fn scope(&mut self) -> MaxHeapScope<'_> {
+        MaxHeapScope { inner: self }
+    }
+
     // PORT NOTE: reshaped out-param constructor. Zig's `init(self: *Self, allocator) -> std.mem.Allocator`
     // both initialized `self` and returned a vtable+ptr pair. In Rust the caller constructs
     // `MaxHeapAllocator::init()` and obtains `&dyn Allocator` by borrowing the result.

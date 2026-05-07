@@ -1319,8 +1319,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
         // PORT NOTE: guard mirrors the Zig errdefer over the FIELD (not a local),
         // including its `if (this.json_writer)` check — `start()` may already
-        // have re-entered and nulled it.
-        let guard = scopeguard::guard((), move |()| {
+        // have re-entered and nulled it. State is the `parent` backref; disarmed
+        // via `into_inner` on the success path.
+        let guard = scopeguard::guard(parent, |parent| {
             // SAFETY: `parent` points at the live `self` of `finish_spawn`; the
             // guard only fires on early return inside this fn.
             if let Some(w) = unsafe { (*parent).json_writer.take() } {

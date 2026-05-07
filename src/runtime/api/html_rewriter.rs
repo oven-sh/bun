@@ -666,11 +666,12 @@ impl BufferOutputSink {
         unsafe { (*sink).tmp_sync_error = Some(NonNull::from(&mut sink_error)) };
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         // PORT NOTE: Zig `defer sink_error.ensureStillAlive()` reads the *live*
-        // stack local at scope exit. A `move` closure would copy the current
-        // ZERO value, so capture by raw pointer instead — the stack slot
-        // outlives the guard (the guard is dropped before this fn returns).
+        // stack local at scope exit. Read it through a raw pointer so the
+        // closure observes the up-to-date value (it is written via raw pointer
+        // by the unhandled-rejection handler during `bufferer.run()`); the
+        // stack slot outlives the guard (guard drops before this fn returns).
         let sink_error_ptr: *const JSValue = &sink_error;
-        let _vm_guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: `sink_error_ptr` points at a stack local that outlives
             // this guard (sync stack frame; guard runs at scope exit before
             // the local is dropped).
@@ -679,7 +680,7 @@ impl BufferOutputSink {
             let vm = unsafe { &mut *global_static.bun_vm() };
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
             scope.apply(vm);
-        });
+        }
 
         // SAFETY: builder valid; sink outlives rewriter (deinit in Drop). The
         // `&mut *sink` borrow is consumed by `build()` (address-taken into a

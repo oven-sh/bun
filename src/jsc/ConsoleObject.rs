@@ -3035,19 +3035,7 @@ pub mod formatter {
                 writer.print(format_args!(
                     "{}{}{}{}",
                     pfmt!("<r><magenta>", C),
-                    // PORT NOTE: `ZigString::char_at` lives on the gated
-                    // jsc-side impl; inline the 16-bit/latin1 dispatch.
-                    if key.len > 0
-                        && (if key.is_16bit() {
-                            key.utf16_slice_aligned()[0] as u32
-                        } else {
-                            key.slice()[0] as u32
-                        }) == u32::from(b'#')
-                    {
-                        ""
-                    } else {
-                        "$"
-                    },
+                    if key.len > 0 && key.char_at(0) == b'#' { "" } else { "$" },
                     key,
                     pfmt!("<r><d>:<r> ", C),
                 ));
@@ -3832,11 +3820,7 @@ pub mod formatter {
                     if let Some(func) = value.get(self.global_this, "toJSON")? {
                         match func.call(self.global_this, value, &[]) {
                             Err(_) => {
-                                // PORT NOTE: `JSGlobalObject::clear_exception`
-                                // lives on the gated `JSGlobalObject.rs` impl;
-                                // `try_take_exception()` clears + returns it,
-                                // so discard the value to get the same effect.
-                                let _ = self.global_this.try_take_exception();
+                                self.global_this.clear_exception();
                             }
                             Ok(result) => {
                                 let prev_quote_keys = self.quote_keys;

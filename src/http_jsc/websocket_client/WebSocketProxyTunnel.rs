@@ -163,14 +163,14 @@ impl WebSocketProxyTunnel {
     /// `this` must point to a live `WebSocketProxyTunnel`; the returned guard
     /// must not outlive the allocation (the `ref()` it takes guarantees this
     /// as long as no other code over-releases).
-    unsafe fn ref_scope(this: *mut Self) -> impl Drop {
+    #[inline]
+    unsafe fn ref_scope(this: *mut Self) -> TunnelRefGuard {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_() };
-        // SAFETY: ref() above keeps `this` live until this guard drops.
-        scopeguard::guard((), move |_| unsafe { Self::deref(this) })
         // PORT NOTE: captures raw *mut (not &self) so the guard does not borrow
         // the tunnel — lets the guarded scope take &mut self without borrowck
         // conflict, and gives `deref` proper write provenance for Box::from_raw.
+        TunnelRefGuard(this)
     }
 
     /// Initialize a new proxy tunnel with all required parameters

@@ -296,6 +296,9 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
     fn name(&self) -> &[u8] { &self.name }
     fn version(&self) -> &[u8] { &self.version }
     fn source_path(&self) -> &[u8] { self.source.path.text }
+    fn dependency_source_buf(&self) -> &[u8] { self.dependencies.source_buf }
+    fn arch(&self) -> Architecture { self.arch }
+    fn os(&self) -> OperatingSystem { self.os }
     fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
         let buf = self.dependencies.source_buf;
         Box::new(

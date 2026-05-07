@@ -1176,7 +1176,7 @@ fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the
     // thread-local cell outlives all callers and only one `&mut` is taken at a
     // time per call site (Zig also reused this buffer non-reentrantly).
-    unsafe { &mut (*super::cached_package_folder_name_buf()).0[..] }
+    unsafe { (&mut *super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
 /// `&'static ZStr` from a NUL-terminated literal.

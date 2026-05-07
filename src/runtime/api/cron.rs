@@ -1873,11 +1873,15 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
 
     #[allow(unused_mut)]
     let mut resolved_argv0: Option<*const c_char> = None;
+    // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
+    // Windows and must outlive the SpawnOptions construction below.
+    #[cfg(windows)]
+    let mut path_buf = PathBuffer::uninit();
     #[cfg(windows)]
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
-        let mut path_buf = PathBuffer::uninit();
-        let path_env = VirtualMachine::get()
+        // SAFETY: per-thread VM singleton.
+        let path_env = unsafe { vm_mut() }
             .transpiler
             .env
             .map
@@ -1916,7 +1920,8 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: SpawnOptions::Windows {
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop()),
+            // SAFETY: per-thread VM singleton.
+            loop_: EventLoopHandle::init(unsafe { vm_mut() }.event_loop()),
         },
         ..SpawnOptions::default()
     };
@@ -1934,7 +1939,8 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     let envp_owned;
     #[cfg(windows)]
     let envp: *const *const c_char = {
-        match VirtualMachine::get()
+        // SAFETY: per-thread VM singleton.
+        match unsafe { vm_mut() }
             .transpiler
             .env
             .map

@@ -118,7 +118,10 @@ pub fn view(
         break 'brk spec_;
     });
 
-    let scope = manager.scope_for_package_name(name);
+    // PORT NOTE: reshaped for borrowck — clone the registry scope so it doesn't
+    // keep `manager` borrowed across `http_proxy` / `tls_reject_unauthorized`
+    // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
+    let scope = manager.scope_for_package_name(name).clone();
 
     let mut url_buf = PathBuffer::uninit();
     // TODO(port): std.fmt.bufPrint — `buf_print` returns the written slice
@@ -209,7 +212,7 @@ pub fn view(
 
     // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
-        scope,
+        &scope,
         &mut log,
         response_buf.list.as_slice(),
         name,

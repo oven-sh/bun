@@ -1458,14 +1458,7 @@ impl Expect {
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
 
-            // PORT NOTE: bun_jsc::AnyPromise has no `result()`; use status()+unwrap() instead.
-            let _ = vm;
-            result = match promise.status() {
-                js_promise::Status::Pending => unreachable!(),
-                js_promise::Status::Fulfilled => promise.as_value(),
-                js_promise::Status::Rejected => promise.as_value(),
-            };
-            let _ = &result; // TODO(port): blocked_on bun_jsc::AnyPromise::result — using as_value() placeholder
+            result = promise.result(vm);
             result.ensure_still_alive();
             debug_assert!(!result.is_empty());
             match promise.status() {
@@ -2682,7 +2675,9 @@ impl ExpectMatcherUtils {
                 format_args!(""),
             ));
         }
-        let matcher_name = arguments[0].to_bun_string(global_this)?;
+        // .zig:1907 `defer matcher_name.deref();` — `to_bun_string` returns +1;
+        // bun_str::String is `Copy` with no `Drop`, so wrap in `OwnedString`.
+        let matcher_name = bun_str::OwnedString::new(arguments[0].to_bun_string(global_this)?);
 
         let received = if arguments.len() > 1 { arguments[1] } else { bun_str::String::static_("received").to_js(global_this)? };
         let expected = if arguments.len() > 2 { arguments[2] } else { bun_str::String::static_("expected").to_js(global_this)? };
@@ -2728,31 +2723,22 @@ impl ExpectMatcherUtils {
             not: is_not,
         };
 
-        if is_not {
-            let signature = Expect::get_signature("{f}", "<green>expected<r>", true);
-            // TODO(port): comptime string concatenation signature ++ "\n\n{f}\n"
-            print_string_pretty(global_this, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
-        } else {
-            let signature = Expect::get_signature("{f}", "<green>expected<r>", false);
-            print_string_pretty(global_this, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
-        }
+        // .zig:1948-1955 builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
+        // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
+        // slots, then runs `Output.prettyFmt` over the *template* before
+        // substitution. `pretty_fmt_rt` rewrites only the `<tag>` markers in
+        // the static `RECEIVED`/`expected` literals — `matcher_name` and
+        // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
+        // render-then-rewrite ordering, since Display output here contains no
+        // `<tag>` literals).
+        // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile in Phase B.
+        let colors = Output::enable_ansi_colors_stderr();
+        let head = Output::pretty_fmt_rt("<d>expect(<r><red>received<r><d>).<r>", colors);
+        let not = if is_not { Output::pretty_fmt_rt("not<d>.<r>", colors) } else { bun_core::output::PrettyBuf(Vec::new()) };
+        let expected_hint = Output::pretty_fmt_rt("<d>(<r><green>expected<r><d>)<r>", colors);
+        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
-}
-
-/// Local port of `JSValue.printStringPretty` (JSValue.zig:743). Upstream
-/// `bun_jsc::JSValue` does not expose this; the Zig version performs comptime
-/// `Output.prettyFmt` rewriting on the format string, which needs a macro in
-/// Rust. For now we concatenate `signature` and `args` as-is, matching the
-/// Phase-A behaviour of `JSGlobalObject::throw_pretty`.
-fn print_string_pretty(
-    global_this: &JSGlobalObject,
-    signature: &str,
-    args: fmt::Arguments<'_>,
-) -> JsResult<JSValue> {
-    // TODO(port): Output.prettyFmt comptime color rewriting on `signature ++ "\n\n{f}\n"`.
-    // PERF(port): Zig used a stack-fallback MutableString; profile in Phase B.
-    let buf = format!("{signature}{args}");
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
 }
 
 #[bun_jsc::JsClass]

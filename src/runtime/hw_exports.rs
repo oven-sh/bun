@@ -408,8 +408,16 @@ pub extern "C" fn bindgen_Fmt_jsc_dispatchFmtString1(
             unsafe { *out = s };
             true
         }
-        // `JsError` already set the pending exception on `global`; the bindgen
-        // ABI signals "exception pending" via `false`.
+        // OOM is the one `JsError` variant that does **not** leave a pending
+        // exception on the VM; the Zig spec explicitly throws here before
+        // signalling failure (`error.OutOfMemory => arg_global.throwOutOfMemory()`).
+        Err(bun_jsc::JsError::OutOfMemory) => {
+            let _ = global.throw_out_of_memory();
+            false
+        }
+        // `JSError` / `JSTerminated` already set (or cleared) the pending
+        // exception on `global`; the bindgen ABI signals "exception pending"
+        // via `false`.
         Err(_) => false,
     }
 }

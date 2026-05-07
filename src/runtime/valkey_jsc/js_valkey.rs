@@ -101,78 +101,18 @@ pub struct SubscriptionCtx {
     pub original_enable_auto_pipelining: bool,
 }
 
-// Shorthand alias matching Zig's `const ParentJS = JSValkeyClient.js;`
-type ParentJS = codegen_js::JSRedisClient;
-
-/// `jsc.Codegen.JSRedisClient` — thin adapter over the generate-classes.ts
-/// output (`crate::generated_classes::RedisClient`). The generator emits
-/// per-slot `*_set_cached`/`*_get_cached` accessors; this adapter presents
-/// the snake-case surface the hand-ported call sites use.
-mod codegen_js {
-    use super::{JSGlobalObject, JSValue};
-    use crate::generated_classes::RedisClient as Gen;
-
-    pub struct JSRedisClient;
-
-    #[allow(non_snake_case)]
-    impl JSRedisClient {
-        #[inline]
-        pub fn subscriptionCallbackMap_set_cached(
-            this: JSValue,
-            global: &JSGlobalObject,
-            val: JSValue,
-        ) {
-            Gen::subscriptionCallbackMap_set_cached(this, global, val)
-        }
-        #[inline]
-        pub fn subscriptionCallbackMap_get_cached(this: JSValue) -> Option<JSValue> {
-            Gen::subscriptionCallbackMap_get_cached(this)
-        }
-        #[inline]
-        pub fn hello_get_cached(this: JSValue) -> Option<JSValue> {
-            Gen::hello_get_cached(this)
-        }
-        #[inline]
-        pub fn hello_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
-            Gen::hello_set_cached(this, global, val)
-        }
-        #[inline]
-        pub fn connection_promise_get_cached(this: JSValue) -> Option<JSValue> {
-            Gen::connectionPromise_get_cached(this)
-        }
-        #[inline]
-        pub fn connection_promise_set_cached(
-            this: JSValue,
-            global: &JSGlobalObject,
-            val: JSValue,
-        ) {
-            Gen::connectionPromise_set_cached(this, global, val)
-        }
-        #[inline]
-        pub fn onconnect_get_cached(this: JSValue) -> Option<JSValue> {
-            Gen::onconnect_get_cached(this)
-        }
-        #[inline]
-        pub fn onconnect_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
-            Gen::onconnect_set_cached(this, global, val)
-        }
-        #[inline]
-        pub fn onclose_get_cached(this: JSValue) -> Option<JSValue> {
-            Gen::onclose_get_cached(this)
-        }
-        #[inline]
-        pub fn onclose_set_cached(this: JSValue, global: &JSGlobalObject, val: JSValue) {
-            Gen::onclose_set_cached(this, global, val)
-        }
-    }
-}
+/// `jsc.Codegen.JSRedisClient` — the generate-classes.ts output now emits a
+/// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
+/// free-fns plus `to_js`/`from_js`. Re-exported here as `Js` (mirrors Zig's
+/// `pub const js = jsc.Codegen.JSRedisClient`).
+pub use crate::generated_classes::js_RedisClient as Js;
 
 impl SubscriptionCtx {
     pub fn init(valkey_parent: &mut JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(valkey_parent.global_object);
         let parent_this = valkey_parent.this_value.try_get().expect("unreachable");
 
-        ParentJS::subscriptionCallbackMap_set_cached(
+        Js::subscription_callback_map_set_cached(
             parent_this,
             valkey_parent.global_object,
             callback_map,
@@ -197,7 +137,7 @@ impl SubscriptionCtx {
     fn subscription_callback_map(&mut self) -> &mut JSMap {
         let parent_this = self.parent().this_value.try_get().expect("unreachable");
         let value_js =
-            ParentJS::subscriptionCallbackMap_get_cached(parent_this).unwrap();
+            Js::subscription_callback_map_get_cached(parent_this).unwrap();
         // SAFETY: `from_js` returns a non-null heap cell when the slot was set
         // by `init()`; treated as `&mut` for the duration of the call (single
         // JS thread).
@@ -413,7 +353,7 @@ impl SubscriptionCtx {
         }
 
         if let Some(parent_this) = self.parent().this_value.try_get() {
-            ParentJS::subscriptionCallbackMap_set_cached(
+            Js::subscription_callback_map_set_cached(
                 parent_this,
                 global_object,
                 JSValue::UNDEFINED,
@@ -445,9 +385,8 @@ pub struct JSValkeyClient {
     pub ref_count: bun_ptr::RefCount<JSValkeyClient>,
 }
 
-// Codegen alias: `pub const js = jsc.Codegen.JSRedisClient;`
-pub type Js = codegen_js::JSRedisClient;
-// `toJS`/`fromJS`/`fromJSDirect` are provided by the hand-rolled `JsClass` impl in mod.rs.
+// `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
+// live in that generated module.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
 impl bun_ptr::RefCounted for JSValkeyClient {

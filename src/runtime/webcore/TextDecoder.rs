@@ -383,9 +383,11 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
+                            // Zig: `@tagName(utf16_encoding)` → "UTF-16LE" / "UTF-16BE"
+                            // (NOT `get_label()`, which is lowercase "utf-16le"/"utf-16be").
                             format_args!(
                                 "The encoded data was not valid {} data",
-                                bstr::BStr::new(enc.get_label())
+                                if big_endian { "UTF-16BE" } else { "UTF-16LE" }
                             ),
                         )
                         .throw());

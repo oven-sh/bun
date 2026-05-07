@@ -3640,8 +3640,8 @@ pub fn to_namespaced_path(
 // proc-macro for `wrap4v` is not yet wired, so emit the SYSV-ABI thunks locally.
 // Each wrapper forwards `(global, is_windows, args_ptr, args_len)` and routes the
 // `JsResult<JSValue>` through `host_fn::to_js_host_call` (== Zig `toJSHostCall`).
-// TODO(port): jsc.conv ABI — emit `extern "sysv64"` on windows-x64 once the
-// `#[bun_jsc::host_call(wrap, sysv)]` proc-macro lands.
+// PORT NOTE: `jsc.conv` is `extern "sysv64"` on windows-x64; switch to that ABI
+// when the `#[bun_jsc::host_call(wrap, sysv)]` proc-macro lands.
 macro_rules! export_path_host_fn {
     ($( $export:literal => $target:path ),* $(,)?) => {$(
         const _: () = {

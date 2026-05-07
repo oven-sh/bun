@@ -1597,15 +1597,21 @@ impl CronJob {
                     this_ref.ref_();
                     this_ref.pending_ref = true;
                     js::pending_promise_set_cached(js_this, this_ref.global, result);
-                    // PORT NOTE: Zig's `then()` returned `!void` (TopExceptionScope);
-                    // the Rust port returns `()` and lets the surrounding scope
-                    // observe termination — drop the `.is_err()` branch.
                     result.then(
                         this_ref.global,
                         this,
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
                     );
+                    // Zig's `then()` is `TopExceptionScope`-wrapped and only fails
+                    // on termination. The Rust `then()` returns `()`, so re-check
+                    // the VM status and run the same recovery the Zig `catch`
+                    // ran — otherwise `pending_ref` and the `ref_()` above leak.
+                    if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+                        js::pending_promise_set_cached(js_this, this_ref.global, JSValue::UNDEFINED);
+                        Self::release_pending_ref(this);
+                        Self::schedule_next(this, vm);
+                    }
                     return;
                 }
                 jsc::js_promise::Status::Fulfilled => {}

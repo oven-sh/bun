@@ -3119,7 +3119,7 @@ pub mod serializer {
                     // lockfile output).
                     let copy = val.copy();
                     // SAFETY: Resolution is #[repr(C)] POD; reading raw bytes is sound.
-                    writer.write_all(unsafe {
+                    stream.write_all(unsafe {
                         core::slice::from_raw_parts(
                             &copy as *const _ as *const u8,
                             mem::size_of_val(&copy),
@@ -3127,7 +3127,7 @@ pub mod serializer {
                     })?;
                 }
             } else {
-                writer.write_all(bytes)?;
+                stream.write_all(bytes)?;
             }
         }
 

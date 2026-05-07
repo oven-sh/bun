@@ -1426,10 +1426,10 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // TODO(port): ipc_reader.deinit() — explicit teardown of BufferedReader; Drop may not
-            // be safe to call mid-lifecycle. Route through `close()` (Zig `deinit` ≈ `close` +
-            // free of owned fields).
-            self.ipc_reader.close();
+            // Must use deinit() (close-without-reporting), NOT close(): close()
+            // would re-enter on_reader_done and decrement remaining_fds a
+            // second time, underflowing it and hanging sleep_until.
+            self.ipc_reader.deinit();
             self.remaining_fds -= 1;
         }
     }

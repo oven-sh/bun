@@ -102,6 +102,18 @@ export class ClassDefinition {
    */
   lang?: "zig" | "rust";
   /**
+   * Fully-qualified Rust path of the native struct backing this class, e.g.
+   * `crate::webcore::request::Request`. The codegen emits
+   * `pub use <rustPath> as <name>;` so the `#[no_mangle]` thunks call
+   * inherent methods on the real type (compile error if a method is missing).
+   *
+   * If unset, the codegen scans `src/runtime/**\/*.rs` for
+   * `pub struct <name>` and resolves the module path from the `mod` tree
+   * rooted at `src/runtime/lib.rs`. Set this explicitly only when that
+   * heuristic picks the wrong file (or the struct lives in another crate).
+   */
+  rustPath?: string;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.

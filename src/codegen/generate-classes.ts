@@ -1,5 +1,6 @@
 // @ts-nocheck
 import path from "path";
+import { existsSync, readFileSync } from "fs";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";

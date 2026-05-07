@@ -579,23 +579,23 @@ impl Lockfile {
         };
 
         // Zig: `file.readToEnd(allocator).unwrap() catch |err| ...`.
-        // `bun_sys::File::read_to_end` returns a `ReadToEndResult { bytes, err }`
-        // (NOT `Result<Vec<u8>, _>`); honor the `.unwrap()` step by checking
-        // `.err` before consuming `.bytes`.
-        let read_result = file.read_to_end();
-        if let Some(e) = read_result.err {
-            return LoadResult::Err(LoadResultErr {
-                step: LoadStep::ReadFile,
-                value: BunError::from(e),
-                lockfile_path: if lockfile_format == LockfileFormat::Text {
-                    zstr!("bun.lock")
-                } else {
-                    zstr!("bun.lockb")
-                },
-                format: lockfile_format,
-            });
-        }
-        let buf = read_result.bytes;
+        // The live `bun_sys::File::read_to_end` returns `Maybe<Vec<u8>>`
+        // (fstat-presized, pread-from-0); map the error arm to `.read_file`.
+        let buf = match file.read_to_end() {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return LoadResult::Err(LoadResultErr {
+                    step: LoadStep::ReadFile,
+                    value: BunError::from(e),
+                    lockfile_path: if lockfile_format == LockfileFormat::Text {
+                        zstr!("bun.lock")
+                    } else {
+                        zstr!("bun.lockb")
+                    },
+                    format: lockfile_format,
+                });
+            }
+        };
 
         if lockfile_format == LockfileFormat::Text {
             let source = logger::Source::init_path_string(b"bun.lock", buf.as_slice());

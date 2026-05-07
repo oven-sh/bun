@@ -1425,7 +1425,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // TODO(port): WORKSPACE_NOT_FOUND_FMT with named args
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version },
+                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
                             ),
                         )
                         .expect("unreachable");
@@ -1451,7 +1451,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             format_args!(
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
-                                PackageWorkspaceSearchPathFormatter { manager: this, version },
+                                PackageWorkspaceSearchPathFormatter { manager: this, version, quoted: true },
                             ),
                         )
                         .expect("unreachable");
@@ -1489,7 +1489,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            let url = match &version.value.tarball.uri {
+            let url = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
                 dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
             };

@@ -209,7 +209,7 @@ pub fn host_fn_result<R: IntoHostFnReturn>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> JSValue {
-    to_js_host_call(global, Location::caller(), || f().into_host_fn_return())
+    to_js_host_call(global, || f().into_host_fn_return())
 }
 
 /// Codegen thunk entry for prototype setters.
@@ -219,7 +219,7 @@ pub fn host_setter_result<R: IntoHostSetterReturn>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> bool {
-    let scope = jsc::ExceptionValidationScope::new(global, Location::caller());
+    let mut scope = jsc::ExceptionValidationScope::init(global);
     let r = to_js_host_setter_value(global, f().into_host_setter_return());
     scope.assert_exception_presence_matches(!r);
     r
@@ -232,7 +232,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     global: &JSGlobalObject,
     f: impl FnOnce() -> R,
 ) -> *mut c_void {
-    let scope = jsc::ExceptionValidationScope::new(global, Location::caller());
+    let mut scope = jsc::ExceptionValidationScope::init(global);
     let ptr = match f().into_host_construct_return() {
         Ok(p) => p,
         Err(JsError::OutOfMemory) => {

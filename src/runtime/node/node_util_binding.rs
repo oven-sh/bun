@@ -137,8 +137,9 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     let value = frame.argument(0);
     debug_assert!(value.is_string());
 
-    let str = value.to_bun_string(global)?;
-    // `defer str.deref()` — handled by Drop on bun_str::String
+    // `defer str.deref()` — `to_bun_string` returns +1; `OwnedString`'s Drop
+    // releases it on every exit path (bun_str::String itself is Copy, no Drop).
+    let str = OwnedString::new(value.to_bun_string(global)?);
 
     match str.encoding() {
         // `inline .utf16, .latin1 => |encoding| split(encoding, ...)` — runtime → comptime dispatch
@@ -162,8 +163,11 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
     // Allocator param dropped (non-AST crate uses global mimalloc).
 
     // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
-    // — Vec<BunString> dropping at scope exit derefs each element via bun_str::String's Drop.
-    let mut lines: Vec<BunString> = Vec::new();
+    // — `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
+    // the success path after `to_js_array` and any `?` early-return). Raw
+    // `bun_str::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
+    // leak; `OwnedString` is the RAII wrapper that mirrors Zig's defer loop.
+    let mut lines: Vec<OwnedString> = Vec::new();
 
     // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
     // PORT NOTE: reshaped — comptime enum cannot select an associated type in
@@ -173,9 +177,8 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
             let buffer: &[u16] = str.utf16();
             let mut it = SplitNewlineIterator { buffer, index: Some(0) };
             while let Some(line) = it.next() {
-                let encoded_line = BunString::borrow_utf16(line);
-                // errdefer encoded_line.deref() — Drop on BunString handles error path
-                lines.push(encoded_line);
+                // errdefer encoded_line.deref() — folded into OwnedString Drop
+                lines.push(OwnedString::new(BunString::borrow_utf16(line)));
             }
         }
         EncodingNonAscii::Utf8 | EncodingNonAscii::Latin1 => {
@@ -187,13 +190,13 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
                 } else {
                     BunString::clone_latin1(line)
                 };
-                // errdefer encoded_line.deref() — Drop on BunString handles error path
-                lines.push(encoded_line);
+                // errdefer encoded_line.deref() — folded into OwnedString Drop
+                lines.push(OwnedString::new(encoded_line));
             }
         }
     }
 
-    bun_string_jsc::to_js_array(global, &lines)
+    bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
 pub struct SplitNewlineIterator<'a, T> {
@@ -225,9 +228,9 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
 #[bun_jsc::host_fn]
 pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let input = frame.argument(0);
-    let str = BunString::from_js(input, global)?;
+    // `defer str.deref()` — `from_js` returns +1; OwnedString releases on Drop.
+    let str = OwnedString::new(BunString::from_js(input, global)?);
     debug_assert!(str.tag() != bstr::Tag::Dead);
-    // `defer str.deref()` — handled by Drop
     if str.length() == 0 {
         return Ok(Encoding::Utf8.to_js(global));
     }

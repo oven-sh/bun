@@ -196,7 +196,8 @@ where
     fn set_signal(&mut self, sig: *mut AbortSignal) {
         // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
         // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_unref`).
+        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
+        // which drops both the pending-activity count and the intrusive ref).
         self.signal = NonNull::new(sig);
     }
     #[inline]

@@ -120,11 +120,12 @@ pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE:
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal` (intrusive C++ refcount via
-    // `pendingActivityRef`/`pendingActivityUnref`). `Arc<AbortSignal>` was
-    // wrong — `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST
-    // never owns the C++ allocation. Store the raw pointer; ref/unref are
-    // routed through the C++ intrusive count (`shim::signal_unref`).
+    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
+    // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
+    // the C++ allocation. Store the raw pointer. The request holds TWO counts:
+    // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
+    // pending-activity count for GC visibility. Both are released together via
+    // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
     pub signal: Option<NonNull<AbortSignal>>,
     pub method: Method,
     pub cookies: Option<*mut CookieMap>,
@@ -306,17 +307,26 @@ mod shim {
         r.detach_readable_stream(g)
     }
     #[inline] pub fn signal_aborted(s: &NonNull<AbortSignal>) -> bool {
-        // SAFETY: `signal` is kept alive by `pending_activity_ref()` until
-        // `signal_unref` runs (intrusive C++ refcount).
+        // SAFETY: `signal` is kept alive by the intrusive C++ refcount (+1 from
+        // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
+        // `signal_release` drops both.
         unsafe { s.as_ref() }.aborted()
     }
     #[inline] pub fn signal_fire(s: &NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
         // SAFETY: see `signal_aborted`.
         unsafe { s.as_ref() }.signal(g, r)
     }
-    #[inline] pub fn signal_unref(s: &NonNull<AbortSignal>) {
-        // SAFETY: see `signal_aborted`.
-        unsafe { s.as_ref() }.pending_activity_unref()
+    /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
+    /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
+    /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
+    /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
+    /// be dereferenced after this call.
+    #[inline] pub fn signal_release(s: NonNull<AbortSignal>) {
+        // SAFETY: see `signal_aborted`. Order matches Zig: pending-activity
+        // first, then the owning intrusive ref (which may free).
+        let signal = unsafe { s.as_ref() };
+        signal.pending_activity_unref();
+        signal.unref();
     }
     #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
         cb.trigger(ev, g)
@@ -1219,8 +1229,7 @@ where
                 shim::signal_fire(&signal, global_this, jsc::CommonAbortReason::ConnectionClosed);
                 any_js_calls.set(true);
             }
-            shim::signal_unref(&signal);
-            drop(signal); // unref
+            shim::signal_release(signal);
         }
 
         // if have sink, call onAborted on sink
@@ -1295,8 +1304,7 @@ where
             if self.flags.aborted() && !shim::signal_aborted(&signal) {
                 shim::signal_fire(&signal, global_this, jsc::CommonAbortReason::ConnectionClosed);
             }
-            shim::signal_unref(&signal);
-            drop(signal); // unref
+            shim::signal_release(signal);
         }
 
         // Case 1:

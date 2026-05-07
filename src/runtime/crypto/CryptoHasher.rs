@@ -864,8 +864,9 @@ mod zig_crypto_algos {
                     Update::update(self, bytes);
                 }
                 fn final_(&mut self, out: &mut [u8]) {
-                    let len = Self::DIGEST_LENGTH as usize;
-                    ExtendableOutputReset::finalize_xof_reset_into(self, &mut out[..len]);
+                    // Zig `Shake.final(out: []u8)` squeezes exactly `out.len`
+                    // bytes — fill the full slice, not just `DIGEST_LENGTH`.
+                    ExtendableOutputReset::finalize_xof_reset_into(self, out);
                 }
             }
         };
@@ -1121,9 +1122,9 @@ pub trait StaticHasher: 'static {
     fn final_(&mut self, out: &mut Self::Digest);
     fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
     /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
-    /// extern (`${NAME}__getConstructor`, generate-classes.ts:2449). Replaces the
-    /// Zig `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm
-    /// binds the C++ symbol for its concrete name.
+    /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the Zig
+    /// `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm binds
+    /// to the typed wrapper exported by `js_class_module!` for its concrete name.
     fn get_constructor(global: &JSGlobalObject) -> JSValue;
 }
 
@@ -1131,7 +1132,7 @@ pub trait StaticHasher: 'static {
 /// hasher types. Those types live in another crate so we cannot add inherent
 /// methods; the trait bridges the comptime-style API.
 macro_rules! impl_static_hasher {
-    ($ty:ty, $name:literal, $len:expr) => {
+    ($ty:ty, $name:literal, $js_mod:ident, $len:expr) => {
         impl StaticHasher for $ty {
             const NAME: &'static str = $name;
             const DIGEST: usize = $len;
@@ -1154,28 +1155,20 @@ macro_rules! impl_static_hasher {
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {
-                // `${name}__getConstructor` — emitted by generate-classes.ts for
-                // every `crypto.classes.ts` entry (MD4/MD5/SHA1/…).
-                unsafe extern "C" {
-                    #[link_name = concat!($name, "__getConstructor")]
-                    fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
-                }
-                // SAFETY: `global` is a live opaque FFI handle; the C++ side
-                // reads the cached constructor from `Zig::GlobalObject`.
-                unsafe { __get_constructor(global.as_ptr()) }
+                bun_jsc::generated::$js_mod::get_constructor(global)
             }
         }
     };
 }
 
-impl_static_hasher!(hashers::MD4, "MD4", 16);
-impl_static_hasher!(hashers::MD5, "MD5", 16);
-impl_static_hasher!(hashers::SHA1, "SHA1", 20);
-impl_static_hasher!(hashers::SHA224, "SHA224", 28);
-impl_static_hasher!(hashers::SHA256, "SHA256", 32);
-impl_static_hasher!(hashers::SHA384, "SHA384", 48);
-impl_static_hasher!(hashers::SHA512, "SHA512", 64);
-impl_static_hasher!(hashers::SHA512_256, "SHA512_256", 32);
+impl_static_hasher!(hashers::MD4, "MD4", JSMD4, 16);
+impl_static_hasher!(hashers::MD5, "MD5", JSMD5, 16);
+impl_static_hasher!(hashers::SHA1, "SHA1", JSSHA1, 20);
+impl_static_hasher!(hashers::SHA224, "SHA224", JSSHA224, 28);
+impl_static_hasher!(hashers::SHA256, "SHA256", JSSHA256, 32);
+impl_static_hasher!(hashers::SHA384, "SHA384", JSSHA384, 48);
+impl_static_hasher!(hashers::SHA512, "SHA512", JSSHA512, 64);
+impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 
 // PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
 // `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`

@@ -886,13 +886,9 @@ impl BlobExt for Blob {
             // normal zero-sized blob instead of calling it "detached".
             if self.size > 0 {
                 if self.is_jsdom_file {
-                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                        "<d>[<r>File<r> detached<d>]<r>",
-                    ))?;
+                    bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<d>[<r>File<r> detached<d>]<r>")?;
                 } else {
-                    write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                        "<d>[<r>Blob<r> detached<d>]<r>",
-                    ))?;
+                    bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<d>[<r>Blob<r> detached<d>]<r>")?;
                 }
                 return Ok(());
             }
@@ -980,10 +976,11 @@ impl BlobExt for Blob {
 
                 if show_name {
                     formatter.write_indent(writer)?;
-                    write!(
+                    bun_core::write_pretty!(
                         writer,
-                        "name: \"{}\"",
-                        self.get_name_string().unwrap_or_else(BunString::empty)
+                        ENABLE_ANSI_COLORS,
+                        "name<d>:<r> <green>\"{f}\"<r>",
+                        self.get_name_string().unwrap_or_else(BunString::empty),
                     )?;
                     if !self.content_type_slice().is_empty() || self.offset > 0 || self.last_modified != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -993,7 +990,12 @@ impl BlobExt for Blob {
 
                 if !self.content_type_slice().is_empty() {
                     formatter.write_indent(writer)?;
-                    write!(writer, "type: \"{}\"", bstr::BStr::new(self.content_type_slice()))?;
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "type<d>:<r> <green>\"{s}\"<r>",
+                        bstr::BStr::new(self.content_type_slice()),
+                    )?;
                     if self.offset > 0 || self.last_modified != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     }
@@ -1002,7 +1004,12 @@ impl BlobExt for Blob {
 
                 if self.offset > 0 {
                     formatter.write_indent(writer)?;
-                    write!(writer, "offset: {}\n", self.offset)?;
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "offset<d>:<r> <yellow>{d}<r>\n",
+                        self.offset,
+                    )?;
                     if self.last_modified != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
                     }
@@ -1011,7 +1018,12 @@ impl BlobExt for Blob {
 
                 if self.last_modified != 0.0 {
                     formatter.write_indent(writer)?;
-                    write!(writer, "lastModified: {}\n", self.last_modified)?;
+                    bun_core::write_pretty!(
+                        writer,
+                        ENABLE_ANSI_COLORS,
+                        "lastModified<d>:<r> <yellow>{d}<r>\n",
+                        self.last_modified,
+                    )?;
                 }
 
                 formatter.indent_dec();
@@ -3814,17 +3826,15 @@ pub fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool
     writer: &mut W,
 ) -> core::fmt::Result {
     if is_jdom_file {
-        write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>File<r>"))?;
+        bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>File<r>")?;
     } else {
-        write!(writer, "{}", Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>Blob<r>"))?;
+        bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>Blob<r>")?;
     }
-    write!(
+    bun_core::write_pretty!(
         writer,
-        "{} ({}{}{})",
-        Output::pretty_fmt::<ENABLE_ANSI_COLORS>(""),
-        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<yellow>"),
+        ENABLE_ANSI_COLORS,
+        " (<yellow>{f}<r>)",
         bun_core::fmt::size(size, Default::default()),
-        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>"),
     )
 }
 
@@ -6076,7 +6086,7 @@ impl Internal {
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let out = OwnedString::new(BunString::clone_latin1(&self.bytes[3..]));
             self.bytes = Vec::new();
-            return jsc::StringJsc::to_js(&out, global_this);
+            return out.to_js(global_this);
         } else {
             // All-ASCII fast path: hand the heap buffer to JSC's external-string
             // finalizer (mark_global → freed by mimalloc on GC). `to_owned_slice`

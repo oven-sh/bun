@@ -1100,8 +1100,8 @@ impl Drop for DevServer {
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
-            self.timer_heap()
-                .remove(&mut self.memory_visualizer_timer as *mut EventLoopTimer);
+            let timer_ptr: *mut EventLoopTimer = &mut self.memory_visualizer_timer;
+            self.timer_heap().remove(timer_ptr);
         }
         self.graph_safety_lock.lock();
         // bun_watcher is Box<Watcher> — Drop handles, but Zig passed `true` for stop-thread.

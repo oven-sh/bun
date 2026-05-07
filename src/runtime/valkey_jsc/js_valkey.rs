@@ -1698,7 +1698,7 @@ impl JSValkeyClient {
         let socket = unsafe {
             (*client_ptr)
                 .address
-                .connect::<valkey::ValkeyClient>(client_ptr, &mut *group, ssl_ctx_ref, is_tls)
+                .connect(client_ptr, &mut *group, ssl_ctx_ref, is_tls)
         }?;
         self.client.socket = socket;
         // Disarm errdefers on success.

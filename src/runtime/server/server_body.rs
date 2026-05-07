@@ -2885,13 +2885,16 @@ where
         unsafe { &*self.vm_ref().jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — type-erased through the
-        // RuntimeHooks vtable. The returned ptr is the `.value` field of a
-        // `Body::Value::HiveRef` slot.
+        // RuntimeHooks vtable. The hook returns `*mut Body::Value::HiveRef`;
+        // the `BodyValue` payload lives at `&(*hive).value`.
         let mut body_init = BodyValue::Null;
-        let body_ptr = self
+        let body_hive: *mut crate::webcore::body::HiveRef = self
             .vm_mut()
             .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
-            as *mut BodyValue;
+            .cast();
+        // SAFETY: `init_request_body_value` returns a freshly-initialized hive
+        // slot (`ref_count = 1`); never null on success.
+        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
         ctx.set_request_body(NonNull::new(body_ptr));
 
         let signal = AbortSignal::new(unsafe { &*self.global_this });
@@ -2899,20 +2902,25 @@ where
         // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
         unsafe { (*signal).pending_activity_ref() };
 
-        // SAFETY: signal is a live AbortSignal; ref_() bumps for Request's copy.
-        let _signal_for_req = unsafe { (*signal).ref_() };
-        // TODO(port): Request.body field is `Box<BodyValue>` but the body is
-        // hive-pooled (intrusive ref shared with ctx.request_body). Until that
-        // field migrates to `*mut BodyValue`, allocate a fresh Null body for
-        // the Request — the streaming body lives on `ctx.request_body`.
+        // Zig: `.signal = signal.ref()` — bump once for the Request's owned
+        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
+        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
+        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // PORT NOTE: in Zig the +1 from `body.ref()` is moved into
+        // `Request.init(..., body.ref())` so the JS Request and the
+        // RequestContext share one hive slot. `webcore::Request.body` is still
+        // `Box<BodyValue>` (Request.rs:99) and cannot adopt the hive ref yet,
+        // so we deliberately do NOT bump `(*body_hive).ref_()` here — doing so
+        // without an owner would leak the slot on every request. The hive
+        // slot's initial `ref_count = 1` is held by `ctx.request_body` and
+        // released in `RequestContext::deinit`. See the matching note in
+        // `mod.rs::prepare_js_request_context`.
+        let _ = body_hive;
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(ctx as *const Ctx),
             SSL,
-            // TODO(port): Request::init takes `Option<Arc<AbortSignal>>` but
-            // signal is a raw +1 C++ ref. Pass None until the field type
-            // unifies on `*mut AbortSignal` (matches Zig `signal.ref()`).
-            None,
+            Some(signal_for_req),
             Box::new(BodyValue::Null),
         ));
         let request_object: &mut Request =

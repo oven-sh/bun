@@ -964,10 +964,12 @@ impl Response {
             ..Default::default()
         };
         // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
-        // on failure. In Rust, `Body` impls `Drop` and `Init`'s drop glue
-        // (HeadersRef + OwnedString) releases its refs, so early-return `?`
-        // cleans up automatically; on success the value is moved into Box::new
-        // and not dropped here.
+        // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
+        // releases its refs on `?`. `Body` has NO `Drop`, but the only
+        // payloads it can hold here are `Empty` / `InternalBlob{Vec}` /
+        // `WTFStringImpl{Arc}` whose own field drop glue frees the buffers; so
+        // dropping `response` on `?` matches Zig's cleanup. On success the
+        // value is moved into `Box::new` and not dropped here.
         let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
 
         if !json_value.is_empty() {
@@ -1218,14 +1220,17 @@ impl Response {
             // re-exported as `body::extract`.
             super::body::extract(global_this, arguments[0])?
         };
-        // errdefer body.deinit() — Body: Drop handles cleanup on `?` below
+        // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
+        // error return below releases the extracted body payload
+        // (Response.zig:758).
+        let body = scopeguard::guard(body, |mut b| b.reset());
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
 
         let response = Box::leak(Box::new(Response {
-            body,
+            body: scopeguard::ScopeGuard::into_inner(body),
             init,
             js_ref: JsRef::init_weak(js_this),
             ..Default::default()

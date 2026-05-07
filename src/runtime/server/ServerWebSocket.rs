@@ -1611,9 +1611,10 @@ impl ServerWebSocket {
         }
 
         // Get the JSValue directly from C++
-        let _ = global_this;
-        let _ = self.websocket();
-        todo!("blocked_on: bun_uws_sys::AnyWebSocket::get_topics_as_js_array")
+        Ok(crate::socket::uws_jsc::any_web_socket_get_topics_as_js_array(
+            self.websocket(),
+            global_this,
+        ))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1700,12 +1701,14 @@ impl<'a> Corker<'a> {
         };
     }
 }
-} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/ServerWebSocket.zig (1298 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      `&'a WebSocketServerHandler` on m_ctx payload + handler.active_connections mutation through &; on_close defer reshaped via scopeguard with raw ptr; std.net.Address replaced with bun_core::fmt::format_ip_{v4,v6}
+//   notes:      handler kept as `*const` (server-lifetime) + active_connections
+//               mutated through &; on_close defer reshaped via scopeguard with
+//               raw ptr; signal: ?*AbortSignal kept as NonNull (intrusive C++
+//               refcount, never Arc); std.net.Address → std::net::IpAddr +
+//               bun_core::fmt::format_ip
 // ──────────────────────────────────────────────────────────────────────────

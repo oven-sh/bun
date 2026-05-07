@@ -70,6 +70,12 @@ pub struct ResumableSink<'a, Js: ResumableSinkJs, Context: ResumableSinkContext>
 }
 
 impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, Js, Context> {
+    /// Current backpressure high-water mark in bytes (initialized to 16384,
+    /// updated from the wrapped ByteStream on `init`/`set_stream_if_possible`).
+    #[inline]
+    pub fn high_water_mark(&self) -> i64 {
+        self.high_water_mark
+    }
     #[inline]
     fn set_cancel(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         Js::oncancel_set_cached(this_value, global, value);

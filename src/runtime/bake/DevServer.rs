@@ -4742,14 +4742,10 @@ impl DevServer<'_> {
 
     fn register_catch_all_html_route(
         &mut self,
-        html: &mut HTMLBundleRoute,
+        html: *mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
         let _bundle_index = self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))?;
-        // Our `HTMLRouter::fallback` is `Option<&'a HTMLBundleRoute>`; the
-        // route is heap-owned by `Bun.serve` for the DevServer's lifetime, so
-        // erase the local borrow lifetime.
-        // SAFETY: `html` outlives `self` (owned by the parent server config).
-        self.html_router.fallback = Some(unsafe { &*(html as *mut HTMLBundleRoute) });
+        self.html_router.fallback = Some(html);
         // TODO(port): Zig set `.fallback = bundle_index.toOptional()` but field type is
         // `?*HTMLBundle.HTMLBundleRoute` per LIFETIMES.tsv — likely the LIFETIMES row is
         // for an older version. Following Zig source: fallback stores RouteBundle.Index.Optional
@@ -5842,23 +5838,28 @@ impl EntryPointList {
 
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
+/// Zig stores `*HTMLBundle.HTMLBundleRoute` (BACKREF — DevServer.zig:4364);
+/// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 pub struct HTMLRouter<'a> {
-    pub map: StringHashMap<&'a HTMLBundleRoute>,
+    pub map: StringHashMap<*mut HTMLBundleRoute>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub fallback: Option<&'a HTMLBundleRoute>,
+    pub fallback: Option<*mut HTMLBundleRoute>,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> HTMLRouter<'a> {
-    pub fn empty() -> HTMLRouter<'a> { HTMLRouter { map: StringHashMap::new(), fallback: None } }
+    pub fn empty() -> HTMLRouter<'a> {
+        HTMLRouter { map: StringHashMap::new(), fallback: None, _marker: core::marker::PhantomData }
+    }
 
-    pub fn get(&self, path: &[u8]) -> Option<&'a HTMLBundleRoute> {
+    pub fn get(&self, path: &[u8]) -> Option<*mut HTMLBundleRoute> {
         self.map.get(path).copied().or(self.fallback)
     }
 
     pub fn put(
         &mut self,
         path: &[u8],
-        route: &'a HTMLBundleRoute,
+        route: *mut HTMLBundleRoute,
     ) -> Result<(), bun_core::Error> {
         if path == b"/*" {
             self.fallback = Some(route);

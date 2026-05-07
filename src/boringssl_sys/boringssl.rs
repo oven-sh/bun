@@ -416,6 +416,8 @@ unsafe extern "C" {
     pub fn SSL_get_peer_cert_chain(ssl: *const SSL) -> *mut struct_stack_st_X509;
 
     // ── X509 ─────────────────────────────────────────────────────────────
+    pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
+    pub fn X509_free(x509: *mut X509);
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;

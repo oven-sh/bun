@@ -718,6 +718,26 @@ impl From<&[u16]> for String {
     #[inline]
     fn from(s: &[u16]) -> Self { Self::from(ZigString::from16_slice(s)) }
 }
+/// `WTFStringImpl` arm of `bun.String.init` (string.zig:331) — wrap an existing
+/// `*WTFStringImplStruct` without touching its refcount.
+impl From<WTFStringImpl> for String {
+    #[inline]
+    fn from(wtf: WTFStringImpl) -> Self {
+        debug_assert!(!wtf.is_null());
+        Self { tag: Tag::WTFStringImpl, value: StringImpl { wtf } }
+    }
+}
+
+impl bun_core::OptionsEnvArg for String {
+    #[inline]
+    fn from_slice(s: &[u8]) -> Self {
+        String::clone_utf8(s)
+    }
+    #[inline]
+    fn from_buf(buf: Vec<u8>) -> Self {
+        String::clone_utf8(&buf)
+    }
+}
 
 impl Default for String {
     #[inline] fn default() -> Self { Self::EMPTY }

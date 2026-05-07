@@ -1607,35 +1607,47 @@ impl VirtualMachine {
                 let resolved = unsafe { JSC__JSInternalPromise__resolvedPromise(global, ret) };
                 self.pending_internal_promise = Some(resolved);
                 self.pending_internal_promise_is_protected = false;
-                return Ok(resolved);
+                    return Ok(resolved);
+                }
             }
-        }
 
-        // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
-        let global = self.global;
-        // SAFETY: `global` is set during init and live for the VM lifetime.
-        let global_ref = unsafe { &*global };
-        let promise = if !self.main_is_html_entrypoint {
-            let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
-                .map(NonNull::as_ptr)
-                .ok_or_else(|| bun_core::err!("JSError"))?
+            // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
+            let global = self.global;
+            // SAFETY: `global` is set during init and live for the VM lifetime.
+            let global_ref = unsafe { &*global };
+            let promise = if !self.main_is_html_entrypoint {
+                let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
+                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
+                    .map(NonNull::as_ptr)
+                    .ok_or_else(|| bun_core::err!("JSError"))?
+            } else {
+                // SAFETY: extern "C" FFI; global valid for VM lifetime.
+                let p = jsc::from_js_host_call_generic(global_ref, || unsafe {
+                    Bun__loadHTMLEntryPoint(global)
+                })
+                .map_err(|_| bun_core::err!("JSError"))?;
+                if p.is_null() {
+                    return Err(bun_core::err!("JSError"));
+                }
+                p
+            };
+
+            self.pending_internal_promise = Some(promise);
+            self.pending_internal_promise_is_protected = false;
+            JSValue::from_cell(promise).ensure_still_alive();
+            Ok(promise)
         } else {
-            // SAFETY: extern "C" FFI; global valid for VM lifetime.
-            let p = jsc::from_js_host_call_generic(global_ref, || unsafe {
-                Bun__loadHTMLEntryPoint(global)
-            })
-            .map_err(|_| bun_core::err!("JSError"))?;
-            if p.is_null() {
-                return Err(bun_core::err!("JSError"));
-            }
-            p
-        };
-
-        self.pending_internal_promise = Some(promise);
-        self.pending_internal_promise_is_protected = false;
-        JSValue::from_cell(promise).ensure_still_alive();
-        Ok(promise)
+            let global = self.global;
+            let main_str = bun_string::String::from_bytes(self.main);
+            let promise =
+                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
+                    .map(NonNull::as_ptr)
+                    .ok_or_else(|| bun_core::err!("JSError"))?;
+            self.pending_internal_promise = Some(promise);
+            self.pending_internal_promise_is_protected = false;
+            JSValue::from_cell(promise).ensure_still_alive();
+            Ok(promise)
+        }
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
@@ -3567,8 +3579,7 @@ impl VirtualMachine {
             unsafe { (hooks.ensure_debugger)(self, true) };
         }
 
-        // TODO(b2-cycle): `transpiler.options.disable_transpilation` — gated.
-        if !self.preload.is_empty() {
+        if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: hook contract.
                 let p = unsafe { (hooks.load_preloads)(self) };

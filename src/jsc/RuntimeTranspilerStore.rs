@@ -82,8 +82,7 @@ pub fn dump_source_string_failiable(
         return Ok(());
     }
 
-    BUN_DEBUG_HOLDER_LOCK.lock();
-    let _unlock = scopeguard::guard((), |_| BUN_DEBUG_HOLDER_LOCK.unlock());
+    let _lock = BUN_DEBUG_HOLDER_LOCK.lock_guard();
     // SAFETY: every access to BUN_DEBUG_HOLDER is guarded by BUN_DEBUG_HOLDER_LOCK.
     let holder = unsafe { &mut *ptr::addr_of_mut!(BUN_DEBUG_HOLDER) };
 

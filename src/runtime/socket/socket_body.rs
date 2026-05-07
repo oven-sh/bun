@@ -506,32 +506,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// the Zig original satisfied via an aliased pointer read).
     pub fn do_connect(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-<<<<<<< Updated upstream
         // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
         // re-entrant connect path. `ScopedRef` stores a raw `*mut Self` (no
         // borrow held across the body) and derefs with write provenance on Drop.
         // SAFETY: `self` is this fn's `&mut self`; live until guard drop.
         let _guard = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
-||||||| Stash base
-        self.ref_();
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`.
-        // Capture as raw *mut so the guard closure doesn't hold a borrow of
-        // `self` across the body's mutations, and so `deref(&mut self)` gets
-        // write provenance for the last-ref free.
-        let self_ptr: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: self_ptr is this fn's `&mut self`; body borrows have ended
-            // by guard-drop time.
-            unsafe { &mut *self_ptr }.deref();
-        });
-=======
-        // Zig: `this.ref(); defer this.deref();` — RAII guard bumps the
-        // intrusive count and derefs on Drop. Captured as raw *mut so it
-        // doesn't hold a borrow of `self` across the body's mutations.
-        // SAFETY: `self` is a live heap-allocated `NewSocket` (`Box::into_raw`
-        // in `NewSocket::new`); body borrows have ended by guard-drop time.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(self as *mut Self) };
->>>>>>> Stashed changes
 
         // SAFETY: short-lived read; see `get_handlers` contract.
         let vm = unsafe { (*self.get_handlers()).vm };

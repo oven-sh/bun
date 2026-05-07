@@ -1150,17 +1150,346 @@ impl Interpreter {
     }
 
     pub fn finish(&mut self, exit_code: ExitCode) -> Yield {
+        use crate::jsc::generated::JSShellInterpreter;
+        use crate::jsc::JSValue;
+
         log!("Interpreter(0x{:x}) finish {}", self as *const _ as usize, exit_code);
-        // Spec interpreter.zig:1287-1289 — `defer decrPendingActivityFlag(...)`
-        // unconditionally (both JS and mini paths). Paired with the increment
-        // in `runFromJS`; harmless wrap on the mini path (flag is only ever
-        // read from the JS GC `hasPendingActivity()` hook).
-        self.has_pending_activity.fetch_sub(1, Ordering::SeqCst);
-        self.exit_code = Some(exit_code);
-        self.flags.set_done(true);
-        // TODO(b2-blocked): JS resolve/reject + keep_alive.disable() — see
-        // gated body. Non-JS path just records exit code.
+        // Spec interpreter.zig:1289 — `defer decrPendingActivityFlag(...)`
+        // unconditionally. Paired with the increment in `run_from_js`; harmless
+        // wrap on the mini path (flag is only read from the JS GC
+        // `hasPendingActivity()` hook).
+        struct DecrOnDrop<'a>(&'a AtomicU32);
+        impl Drop for DecrOnDrop<'_> {
+            fn drop(&mut self) {
+                Interpreter::decr_pending_activity_flag(self.0);
+            }
+        }
+        let _decr = DecrOnDrop(&self.has_pending_activity);
+
+        if matches!(self.event_loop, EventLoopHandle::Js { .. }) {
+            self.exit_code = Some(exit_code);
+            let this_jsvalue = self.this_jsvalue;
+            if this_jsvalue != JSValue::ZERO {
+                if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
+                    let loop_ = self.event_loop;
+                    // SAFETY: `global_this` was set by `create_shell_interpreter`;
+                    // the global outlives the interpreter (held by the JS wrapper).
+                    let global_this = unsafe { &*self.global_this };
+                    let buffered_stdout = self.get_buffered_stdout(global_this);
+                    let buffered_stderr = self.get_buffered_stderr(global_this);
+                    self.keep_alive.disable();
+                    self.deref_root_shell_and_io_if_needed(true);
+                    let _entered = loop_.entered();
+                    if let Err(err) = resolve.call(
+                        global_this,
+                        JSValue::UNDEFINED,
+                        &[
+                            JSValue::js_number_from_int32(i32::from(exit_code)),
+                            buffered_stdout,
+                            buffered_stderr,
+                        ],
+                    ) {
+                        global_this.report_active_exception_as_unhandled(err);
+                    }
+                    JSShellInterpreter::resolve_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+                    JSShellInterpreter::reject_set_cached(this_jsvalue, global_this, JSValue::UNDEFINED);
+                }
+            }
+        } else {
+            self.flags.set_done(true);
+            self.exit_code = Some(exit_code);
+        }
+
         Yield::done()
+    }
+
+    /// Spec: interpreter.zig `runFromJS`. JS-host entrypoint — sets up root IO
+    /// (unless quiet), spawns the root `Script` node, and starts ticking.
+    pub fn run_from_js(
+        &mut self,
+        global_this: &crate::jsc::JSGlobalObject,
+        _callframe: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        log!("Interpreter(0x{:x}) runFromJS", self as *const _ as usize);
+
+        if let Err(e) = self.setup_io_before_run() {
+            self.deref_root_shell_and_io_if_needed(true);
+            let shellerr = ShellErr::new_sys(e);
+            return Err(throw_shell_err(shellerr, self.event_loop, Some(global_this)));
+        }
+        Self::incr_pending_activity_flag(&self.has_pending_activity);
+
+        // PORT NOTE: reshaped for borrowck — capture raw ptrs before taking
+        // `&mut self` for `Script::init`.
+        let shell = &mut self.root_shell as *mut _;
+        let ast = &self.args.script_ast as *const _;
+        let io = self.root_io.clone();
+        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        self.started.store(true, Ordering::SeqCst);
+        Script::start(self, root).run(self);
+        if global_this.has_exception() {
+            return Err(crate::jsc::JsError::Thrown);
+        }
+
+        Ok(crate::jsc::JSValue::UNDEFINED)
+    }
+
+    /// Spec: interpreter.zig `#derefRootShellAndIOIfNeeded`. Idempotent
+    /// teardown of `root_io`/`root_shell` for the JS event-loop path; called
+    /// from `finish()` (success) and `run_from_js()` (early error). Guards on
+    /// `cleanup_state` so a later `finalize()` doesn't double-free.
+    fn deref_root_shell_and_io_if_needed(&mut self, free_buffered_io: bool) {
+        if self.cleanup_state == CleanupState::RuntimeCleaned {
+            return;
+        }
+
+        if free_buffered_io {
+            // Can safely be called multiple times.
+            if let Bufio::Owned(o) = &mut self.root_shell._buffered_stderr {
+                o.clear_and_free();
+            }
+            if let Bufio::Owned(o) = &mut self.root_shell._buffered_stdout {
+                o.clear_and_free();
+            }
+        }
+
+        // Has this already been finalized?
+        if self.this_jsvalue != crate::jsc::JSValue::ZERO {
+            // Cannot be safely called multiple times.
+            // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
+            // default drops the refs (Zig: `root_io.deref()`).
+            self.root_io = IO::default();
+            self.root_shell.deinit_embedded(false);
+        }
+
+        self.this_jsvalue = crate::jsc::JSValue::ZERO;
+        self.cleanup_state = CleanupState::RuntimeCleaned;
+    }
+
+    /// Spec: interpreter.zig `deinitFromFinalizer`. GC finalizer body — runs
+    /// whatever teardown `finish()` didn't, then frees the box.
+    ///
+    /// # Safety
+    /// `this` must be the `Box::into_raw`'d pointer stored in the JS wrapper's
+    /// `m_ctx`; called exactly once from the GC thread's finalizer.
+    pub unsafe fn deinit_from_finalizer(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live `Box::into_raw` payload.
+        let mut this = unsafe { Box::from_raw(this) };
+        log!(
+            "Interpreter(0x{:x}) deinitFromFinalizer (cleanup_state={})",
+            &*this as *const _ as usize,
+            <&'static str>::from(this.cleanup_state),
+        );
+
+        match this.cleanup_state {
+            CleanupState::NeedsFullCleanup => {
+                // The interpreter never finished normally (e.g. early error or
+                // never started), so we need to clean up IO and shell env here.
+                this.root_io = IO::default();
+                this.root_shell.deinit_embedded(true);
+            }
+            CleanupState::RuntimeCleaned => {
+                // `finish()` already cleaned up via
+                // `deref_root_shell_and_io_if_needed`; nothing more for those.
+            }
+        }
+
+        this.keep_alive.disable();
+        // `args: Box<ShellArgs>` and `vm_args_utf8: Vec<ZigStringSlice>` drop
+        // with the box; `ZigStringSlice` has a `Drop` impl that derefs its
+        // WTF backing (Zig: per-item `str.deinit()` + list deinit).
+    }
+
+    /// Spec: interpreter.zig `setQuiet` — JS `interp.setQuiet()`.
+    pub fn set_quiet(
+        &mut self,
+        _: &crate::jsc::JSGlobalObject,
+        _: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        log!("Interpreter(0x{:x}) setQuiet()", self as *const _ as usize);
+        self.flags.set_quiet(true);
+        Ok(crate::jsc::JSValue::UNDEFINED)
+    }
+
+    /// Spec: interpreter.zig `setCwd` — JS `interp.setCwd(path)`.
+    pub fn set_cwd(
+        &mut self,
+        global_this: &crate::jsc::JSGlobalObject,
+        callframe: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        let value = callframe.argument(0);
+        let str = crate::jsc::bun_string_jsc::from_js(value, global_this)?;
+        let slice = str.to_utf8();
+        let result = self.root_shell.change_cwd(slice.slice());
+        drop(slice);
+        str.deref();
+        if let Err(e) = result {
+            return Err(global_this.throw_value(e.to_shell_system_error().to_error_instance(global_this)));
+        }
+        Ok(crate::jsc::JSValue::UNDEFINED)
+    }
+
+    /// Spec: interpreter.zig `setEnv` — JS `interp.setEnv({ FOO: "bar" })`.
+    pub fn set_env(
+        &mut self,
+        global_this: &crate::jsc::JSGlobalObject,
+        callframe: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        use crate::jsc::{JSPropertyIterator, JSPropertyIteratorOptions};
+        use crate::shell::env_str::EnvStr;
+
+        let value1 = callframe.argument(0);
+        if !value1.is_object() {
+            return Err(global_this.throw_invalid_arguments(format_args!("env must be an object")));
+        }
+
+        let mut object_iter = JSPropertyIterator::init(
+            global_this,
+            value1.to_object(global_this)?,
+            JSPropertyIteratorOptions::new(false, true),
+        )?;
+
+        self.root_shell.export_env.clear_retaining_capacity();
+        self.root_shell.export_env.ensure_total_capacity(object_iter.len);
+
+        // If the env object does not include a $PATH, it must disable path
+        // lookup for argv[0].
+
+        while let Some(key) = object_iter.next()? {
+            let value = object_iter.value;
+            if value.is_undefined() {
+                continue;
+            }
+            let keyslice = key.to_owned_slice();
+            let value_str = value.get_zig_string(global_this)?;
+            let slice = value_str.to_owned_slice();
+            // PORT NOTE: Zig `initRefCounted` adopts the slice; the Rust
+            // `init_ref_counted` dups (see EnvStr.rs TODO), so the `Vec`s drop
+            // here without leaking. Phase B revisits the ownership contract.
+            let keyref = EnvStr::init_ref_counted(&keyslice);
+            let valueref = EnvStr::init_ref_counted(&slice);
+            self.root_shell.export_env.insert(keyref, valueref);
+            keyref.deref();
+            valueref.deref();
+        }
+
+        Ok(crate::jsc::JSValue::UNDEFINED)
+    }
+
+    /// Spec: interpreter.zig `isRunning`.
+    pub fn is_running(
+        &mut self,
+        _: &crate::jsc::JSGlobalObject,
+        _: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        Ok(crate::jsc::JSValue::js_boolean(self.has_pending_activity()))
+    }
+
+    /// Spec: interpreter.zig `getStarted`.
+    pub fn get_started(
+        &mut self,
+        _: &crate::jsc::JSGlobalObject,
+        _: &crate::jsc::CallFrame,
+    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        Ok(crate::jsc::JSValue::js_boolean(self.started.load(Ordering::SeqCst)))
+    }
+
+    /// Spec: interpreter.zig `getBufferedStdout`.
+    pub fn get_buffered_stdout(&mut self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
+        io_to_js_value(global_this, self.root_shell.buffered_stdout())
+    }
+
+    /// Spec: interpreter.zig `getBufferedStderr`.
+    pub fn get_buffered_stderr(&mut self, global_this: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue {
+        io_to_js_value(global_this, self.root_shell.buffered_stderr())
+    }
+
+    /// Spec: interpreter.zig `finalize`. GC finalizer hook — called from the
+    /// generated C++ `JSShellInterpreter::~JSShellInterpreter`.
+    ///
+    /// # Safety
+    /// See [`deinit_from_finalizer`](Self::deinit_from_finalizer).
+    pub unsafe fn finalize(this: *mut Self) {
+        log!("Interpreter(0x{:x}) finalize", this as usize);
+        // SAFETY: caller contract.
+        unsafe { Self::deinit_from_finalizer(this) };
+    }
+
+    /// Spec: interpreter.zig `hasPendingActivity`. GC `hasPendingActivity()`.
+    pub fn has_pending_activity(&self) -> bool {
+        self.has_pending_activity.load(Ordering::SeqCst) > 0
+    }
+
+    fn incr_pending_activity_flag(has_pending_activity: &AtomicU32) {
+        has_pending_activity.fetch_add(1, Ordering::SeqCst);
+        log!(
+            "Interpreter incr pending activity {}",
+            has_pending_activity.load(Ordering::SeqCst)
+        );
+    }
+
+    fn decr_pending_activity_flag(has_pending_activity: &AtomicU32) {
+        has_pending_activity.fetch_sub(1, Ordering::SeqCst);
+        log!(
+            "Interpreter decr pending activity {}",
+            has_pending_activity.load(Ordering::SeqCst)
+        );
+    }
+
+    /// Spec: interpreter.zig `getVmArgsUtf8`. Lazily caches the worker's
+    /// `argv` as UTF-8 slices so `$@`/`$N` expansion (Expansion.zig) can index
+    /// without re-converting on every reference.
+    pub fn get_vm_args_utf8(
+        &mut self,
+        argv: &[bun_str::WTFStringImpl],
+        idx: u8,
+    ) -> &[u8] {
+        if self.vm_args_utf8.len() != argv.len() {
+            self.vm_args_utf8.reserve(argv.len());
+            for arg in argv {
+                // SAFETY: each `WTFStringImpl` in `argv` is a live
+                // `*WTF::StringImpl` borrowed from `worker.argv`.
+                self.vm_args_utf8.push(unsafe { (**arg).to_utf8() });
+            }
+        }
+        self.vm_args_utf8[idx as usize].slice()
+    }
+}
+
+/// Spec: interpreter.zig `ioToJSValue`. Moves the captured stdout/stderr
+/// `ByteList` into a JS `Buffer` (ownership transfers to JSC's deallocator)
+/// and resets the source to empty.
+fn io_to_js_value(global_this: &crate::jsc::JSGlobalObject, buf: *mut ByteList) -> crate::jsc::JSValue {
+    // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
+    let bytelist = core::mem::take(unsafe { &mut *buf });
+    // PORT NOTE: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
+    // (..., .Uint8Array) }.toNodeBuffer(global)`. `MarkedArrayBuffer::
+    // to_node_buffer` is the same `JSBuffer__bufferFromPointerAndLengthAndDeinit`
+    // call; we hand it the moved-out `ByteList` storage directly. The
+    // `ByteList` value itself is `mem::forget`-ed since JSC now owns the bytes.
+    let mut bytelist = core::mem::ManuallyDrop::new(bytelist);
+    crate::jsc::JSValue::create_buffer(global_this, bytelist.slice_mut())
+}
+
+/// Spec: interpreter.zig `throwShellErr(e, event_loop)`. On the mini event
+/// loop this prints to stderr and `exit(1)`s; on the JS event loop it raises a
+/// JS exception via [`ShellErr::throw_js`]. Always returns `JsError::Thrown`
+/// (the JS arm) — the mini arm diverges.
+pub fn throw_shell_err(
+    e: &ShellErr,
+    event_loop: EventLoopHandle,
+    global: &crate::jsc::JSGlobalObject,
+) -> crate::jsc::JsError {
+    match event_loop {
+        EventLoopHandle::Mini(_) => {
+            // PORT NOTE: `throw_mini` consumes by value; the spec passes
+            // `*const ShellErr`, so we re-own via clone-of-variant. All
+            // payloads are `Box<[u8]>`/`SystemError` (cheap to clone for the
+            // about-to-exit path).
+            // The mini arm never returns — `Global::exit(1)`.
+            unreachable!("mini-loop throw routed via Interpreter::throw")
+        }
+        EventLoopHandle::Js { .. } => e.throw_js(global),
     }
 }
 

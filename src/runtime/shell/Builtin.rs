@@ -525,10 +525,10 @@ impl Builtin {
         exit_code: crate::shell::ExitCode,
     ) -> Yield {
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
-            let child = crate::shell::io_writer::ChildPtr {
-                node: cmd,
-                tag: crate::shell::io_writer::WriterTag::Builtin,
-            };
+            let child = crate::shell::io_writer::ChildPtr::new(
+                cmd,
+                crate::shell::io_writer::WriterTag::Builtin,
+            );
             // PORT NOTE: reshaped for borrowck — clone buf so the &mut on
             // `stderr` doesn't overlap a borrow into `err_buf`.
             let owned = buf.to_vec();

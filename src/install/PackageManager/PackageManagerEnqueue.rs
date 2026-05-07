@@ -2368,6 +2368,12 @@ fn get_or_put_resolved_package(
             // PORT NOTE: reshaped for borrowck — `name_str`/`manifest` borrow
             // `*this`; route through a raw root so the `&mut PackageManager`
             // calls below can coexist (Zig passes the aliased `*PackageManager`).
+            // Snapshot the disk-fallback scalars *before* establishing
+            // `this_ptr`: `manifest_disk_cache_ctx` takes `&mut self`, and
+            // materializing `&mut *this_ptr` after `name_str`/`scope` are
+            // derived from it would pop their borrow-stack tags under SB.
+            let cache_ctx = this.manifest_disk_cache_ctx();
+            let needs_ext = this.options.minimum_release_age_ms.is_some();
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
@@ -2376,20 +2382,18 @@ fn get_or_put_resolved_package(
 
             let scope: *const crate::npm::registry::Scope =
                 unsafe { &(*this_ptr).options }.scope_for_package_name(name_str);
-            let needs_ext = this.options.minimum_release_age_ms.is_some();
-            // SAFETY: `cache_ctx` snapshots the disk-fallback scalars before
-            // `&mut manifests` is taken, so the lookup holds only that
-            // disjoint field borrow.
-            let cache_ctx = unsafe { &mut *this_ptr }.manifest_disk_cache_ctx();
-            let Some(manifest) = (unsafe {
-                (*this_ptr).manifests.by_name_hash(
-                    cache_ctx,
-                    &*scope,
-                    name_hash,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
-                    needs_ext,
-                )
-            }) else {
+            // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
+            // only that disjoint field borrow alongside the shared `options`
+            // / `lockfile` projections above.
+            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
+                cache_ctx,
+                // SAFETY: `scope` points into `(*this_ptr).options`, disjoint
+                // from `manifests`; not mutated before this read.
+                unsafe { &*scope },
+                name_hash,
+                ManifestLoad::LoadFromMemoryFallbackToDisk,
+                needs_ext,
+            ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
             let manifest: &Npm::PackageManifest = manifest;

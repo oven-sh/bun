@@ -1,6 +1,6 @@
 use core::ffi::CStr;
-use core::fmt::Write as _;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::io::Write as _;
 
 use bun_core::ZBox;
 use bun_sys::{dir_iterator, FdExt, E, O, S};
@@ -472,7 +472,7 @@ impl ShellLsTask {
 
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
-            this.now_secs = bun_core::epoch_secs_now();
+            this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
         let fd = match shell_openat(
@@ -715,14 +715,19 @@ fn format_time(timestamp: i64, now_secs: u64) -> [u8; 12] {
     let is_recent = epoch_secs > now_secs.saturating_sub(SIX_MONTHS_SECS)
         && epoch_secs <= now_secs.saturating_add(SIX_MONTHS_SECS);
 
-    let mut cur = bun_core::FixedCursor::new(&mut buf[..]);
     if is_recent {
         let hours = secs_of_day / 3600;
         let minutes = (secs_of_day / 60) % 60;
-        let _ = write!(cur, "{} {:02} {:02}:{:02}", month_name, day, hours, minutes);
+        let _ = bun_core::fmt::buf_print(
+            &mut buf[..],
+            format_args!("{} {:02} {:02}:{:02}", month_name, day, hours, minutes),
+        );
     } else {
         // Show year for old files.
-        let _ = write!(cur, "{} {:02}  {:4}", month_name, day, year);
+        let _ = bun_core::fmt::buf_print(
+            &mut buf[..],
+            format_args!("{} {:02}  {:4}", month_name, day, year),
+        );
     }
     buf
 }

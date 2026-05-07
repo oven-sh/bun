@@ -1220,45 +1220,45 @@ impl H2FrameParser {
 }
 
 /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
+///
+/// Zig walks the raw bucket array by index so a rehash mid-loop can't
+/// invalidate the iterator. `bun_collections::HashMap` is backed by
+/// `std::collections::HashMap`, which exposes no bucket index and randomises
+/// iteration order on every mutation, so the bucket trick can't be ported
+/// faithfully. Instead we snapshot the stream IDs at `init` and re-look-up
+/// each one on demand: streams removed mid-loop are skipped, streams added
+/// mid-loop are not visited, and nothing is yielded twice. That's the
+/// guarantee the call sites actually rely on (flush / emit-to-all / detach).
 pub struct StreamResumableIterator {
     // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. Holding a Rust `&mut` here would
     // create a long-lived exclusive borrow that overlaps with the loop body's own `&mut self`
     // accesses (aliased UB under Stacked Borrows). Store the raw pointer and only dereference it
     // briefly inside `next()`, mirroring the Zig aliasing intent.
     parser: *mut H2FrameParser,
-    index: u32,
+    ids: Vec<u32>,
+    index: usize,
 }
 impl StreamResumableIterator {
     pub fn init(parser: *mut H2FrameParser) -> Self {
-        Self { index: 0, parser }
+        // SAFETY: `parser` is derived from a live `&mut H2FrameParser` at every call site and
+        // outlives this iterator; we only read the key set here.
+        let ids = unsafe { (*parser).streams.keys().copied().collect() };
+        Self { parser, ids, index: 0 }
     }
     pub fn next(&mut self) -> Option<*mut Stream> {
-        // TODO(port): Zig HashMap.iterator() exposes raw bucket index; bun_collections::HashMap
-        // must expose a resumable bucket-index iterator. Stub here.
         // SAFETY: `parser` was derived from a live `&mut H2FrameParser` at `init` time and the
         // parser outlives this iterator. CONTRACT: callers must NOT access the parser through the
         // original `&mut` between `next()` calls — under Stacked Borrows a write-retag of the
         // original `&mut` would pop this raw pointer's SharedReadWrite tag and make the deref below
         // UB. Callers must route every in-loop parser access through a reborrow of the SAME `*mut`
         // they passed to `init()` (see flush_stream_queue / emit_*_to_all_streams / detach_from_js).
-        let streams = unsafe { &mut (*self.parser).streams };
-        // PORT NOTE: Zig's bucket-index iterator is not available on
-        // `bun_collections::HashMap` (it derefs to `std::HashMap`). Approximate
-        // resumability by skipping `self.index` entries each call. This is O(n)
-        // per `next()` but preserves the "yield each value once if the map is
-        // not mutated" contract; mutation-safety is best-effort (matching Zig's
-        // behaviour only when `capacity` is unchanged).
-        // TODO(port): switch to a true bucket-index iterator once
-        // `bun_collections::HashMap` grows one.
-        let skip = self.index as usize;
-        for (i, (_, v)) in streams.iter().enumerate() {
-            if i < skip {
-                continue;
+        let streams = unsafe { &(*self.parser).streams };
+        while let Some(&id) = self.ids.get(self.index) {
+            self.index += 1;
+            if let Some(&stream) = streams.get(&id) {
+                return Some(stream);
             }
-            self.index = (i as u32) + 1;
-            return Some(*v);
         }
-        self.index = streams.len() as u32;
         None
     }
 }
@@ -5513,18 +5513,23 @@ impl H2FrameParser {
         }
         let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
-        let result = if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
-            let mut bytes = array_buffer.byte_slice();
-            // read all the bytes
-            while !bytes.is_empty() {
-                let result = this.read_bytes(bytes)?;
-                bytes = &bytes[result..];
+        // Zig: `defer this.incrementWindowSizeIfNeeded()`. Wrap the body in a
+        // closure so `?` short-circuits to the `result` binding instead of out
+        // of the function, and the window-size update still runs on the error
+        // path.
+        let result = (|| {
+            if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
+                let mut bytes = array_buffer.byte_slice();
+                // read all the bytes
+                while !bytes.is_empty() {
+                    let result = this.read_bytes(bytes)?;
+                    bytes = &bytes[result..];
+                }
+                Ok(JSValue::UNDEFINED)
+            } else {
+                Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
             }
-            Ok(JSValue::UNDEFINED)
-        } else {
-            Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
-        };
-        // defer
+        })();
         this.increment_window_size_if_needed();
         result
     }

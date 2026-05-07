@@ -283,10 +283,11 @@ impl OutdatedCommand {
                                 continue;
                             }
                             let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
-                            let workspace_path = unsafe { res.value.workspace };
                             let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => workspace_path.slice(string_buf),
+                                resolution::Tag::Workspace => {
+                                    // SAFETY: tag == Workspace ⇒ `value.workspace` is the active union field.
+                                    unsafe { res.value.workspace }.slice(string_buf)
+                                }
                                 resolution::Tag::Root => top_level_dir,
                                 _ => unreachable!(),
                             };

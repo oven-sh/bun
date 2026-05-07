@@ -4492,6 +4492,21 @@ pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
 #[inline]
 pub fn dup_with_flags(fd: Fd, _flags: i32) -> Maybe<Fd> { dup(fd) }
 
+unsafe extern "C" {
+    // Defined in src/jsc/bindings/c-bindings.cpp — sets SO_LINGER {1,0} so
+    // closing a listen socket sends RST instead of entering TIME_WAIT.
+    #[cfg(windows)]
+    fn Bun__disableSOLinger(fd: windows::HANDLE);
+    #[cfg(not(windows))]
+    fn Bun__disableSOLinger(fd: i32);
+}
+/// sys.zig:3835 `disableLinger` — set `SO_LINGER {1,0}` so close sends RST.
+#[inline]
+pub fn disable_linger(fd: Fd) {
+    // SAFETY: FFI; `fd.cast()` yields the platform-native handle/int.
+    unsafe { Bun__disableSOLinger(fd.cast()) };
+}
+
 /// sys.zig:3788 — `lseek(fd, offset, SEEK_SET)`; result discarded.
 pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
     lseek(fd, offset as i64, libc::SEEK_SET).map(|_| ())

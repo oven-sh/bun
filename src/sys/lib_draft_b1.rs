@@ -4023,17 +4023,7 @@ pub fn set_file_offset_to_end_windows(fd: Fd) -> Result<usize> {
     Result::Ok(new_ptr as usize)
 }
 
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    #[cfg(windows)]
-    fn Bun__disableSOLinger(fd: windows::HANDLE);
-    #[cfg(not(windows))]
-    fn Bun__disableSOLinger(fd: i32);
-}
-pub fn disable_linger(fd: Fd) {
-    // SAFETY: FFI call; arguments are valid for the duration of the call.
-    unsafe { Bun__disableSOLinger(fd.cast()) };
-}
+// `disable_linger` moved to lib.rs (exported as `bun_sys::disable_linger`).
 
 pub fn pipe() -> Result<[Fd; 2]> {
     #[cfg(windows)]

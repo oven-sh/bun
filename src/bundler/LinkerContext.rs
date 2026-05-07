@@ -3134,10 +3134,10 @@ impl<'a> LinkerContext<'a> {
 
                         // SAFETY: resolver backref into BundleV2.transpiler.resolver (LIFETIMES.tsv)
                         if unsafe { (*self.resolver).opts.target } == Target::Browser
-                            && resolve_builtins_shim::HardcodedModule::Alias::has(
+                            && bun_resolve_builtins::Alias::has(
                                 &next_source.path.pretty,
-                                resolve_builtins_shim::RuntimeTarget::Bun,
-                                Default::default(),
+                                Target::Bun,
+                                bun_resolve_builtins::Cfg::default(),
                             )
                         {
                             self.log.add_range_warning_fmt_with_note(

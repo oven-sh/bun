@@ -694,12 +694,14 @@ impl JSGlobalObject {
     }
 
     pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
-        // PORT NOTE: Zig used `switch (Output.enable_ansi_colors_stderr) { inline else => |enabled| ... }`
-        // with `Output.prettyFmt(fmt, enabled)` performing comptime fmt-string rewriting. The Rust
-        // pretty-format machinery (`bun_core::output::pretty_buf`) operates on the rendered string
-        // at runtime, so we render once and let the caller's `format_args!` carry colour escapes.
-        let _ = Output::enable_ansi_colors_stderr();
-        let instance = self.create_error_instance(args);
+        // PORT NOTE: Zig switched on `Output.enable_ansi_colors_stderr` and
+        // rewrote the *format string* at comptime (`Output.prettyFmt(fmt,
+        // enabled)`). Rust can't rewrite the format string of an
+        // already-captured `Arguments<'_>`, so render first, then run the
+        // `<tag>` → ANSI/strip pass at runtime via `pretty_fmt_rt`.
+        let enabled = Output::enable_ansi_colors_stderr();
+        let pretty = Output::pretty_fmt_rt(&args, enabled);
+        let instance = ZigString::init_utf8(&pretty).to_error_instance(self);
         if instance.is_empty() {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
@@ -1342,15 +1344,10 @@ impl JSGlobalObject {
 // Nested types (moved out of `impl` since Rust impls cannot contain type defs).
 // ──────────────────────────────────────────────────────────────────────────────
 
-pub struct GregorianDateTime {
-    pub year: i32,
-    pub month: i32,
-    pub day: i32,
-    pub hour: i32,
-    pub minute: i32,
-    pub second: i32,
-    pub weekday: i32,
-}
+// Unified with the crate-root definition (lib.rs) so callers importing
+// `bun_jsc::GregorianDateTime` and `bun_jsc::js_global_object::GregorianDateTime`
+// see one nominal type (the previous local duplicate diverged from lib.rs).
+pub use crate::GregorianDateTime;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1374,17 +1371,12 @@ pub enum ThreadKind {
     Other,
 }
 
-#[derive(Default, Copy, Clone)]
-pub struct ValidateObjectOpts {
-    pub allow_array: bool,
-    pub allow_function: bool,
-    pub nullable: bool,
-}
-
-// Unified with the crate-root definition (lib.rs) — re-exported here so
-// `bun_jsc::js_global_object::IntegerRange` keeps resolving for any caller
-// that named it via this path.
-pub use crate::IntegerRange;
+// Unified with the crate-root definitions (lib.rs) — re-exported here so
+// `bun_jsc::js_global_object::{IntegerRange, ValidateObjectOpts}` keep
+// resolving for any caller that named them via this path. The previous local
+// `ValidateObjectOpts` diverged from lib.rs (`nullable` vs `allow_nullable`),
+// splitting the public API across two incompatible structs.
+pub use crate::{IntegerRange, ValidateObjectOpts};
 
 /// `bun.webcore.ScriptExecutionContext.Identifier` (ported here, not in
 /// `bun_runtime`, because `JSGlobalObject::script_execution_context_identifier`

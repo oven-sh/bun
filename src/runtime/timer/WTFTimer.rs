@@ -95,6 +95,34 @@ impl WTFTimer {
         RunLoopTimer::fire(self.run_loop_timer.as_ptr());
     }
 
+    #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
+    pub fn is_active(&self) -> bool {
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            return true;
+        }
+        // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
+        let loaded = unsafe { self.imminent.as_ref() }.load(Ordering::SeqCst);
+        // Zig: `(load orelse return false) == this` — null can never equal `this`,
+        // so a single pointer compare suffices.
+        loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
+    }
+
+    #[bun_uws::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
+    pub fn seconds_until_timer(&self) -> f64 {
+        let _g = self.lock.lock_guard();
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            let next = &self.event_loop_timer.next;
+            // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack
+            // into bun_core::Timespec to call `duration`.
+            let until = Timespec { sec: next.sec, nsec: next.nsec }
+                .duration(&Timespec::now(TimespecMockMode::ForceRealTime));
+            let sec = until.sec as f64;
+            let nsec = until.nsec as f64;
+            return sec + nsec / NS_PER_S as f64;
+        }
+        f64::INFINITY
+    }
+
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
@@ -265,41 +293,9 @@ pub extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn WTFTimer__isActive(this: *const WTFTimer) -> bool {
-    // SAFETY: `this` is a live WTFTimer per caller contract.
-    let this_ref = unsafe { &*this };
-    if this_ref.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-        return true;
-    }
-    // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
-    let loaded = unsafe { this_ref.imminent.as_ref() }.load(Ordering::SeqCst);
-    // Zig: `(load orelse return false) == this` — null can never equal `this`,
-    // so a single pointer compare suffices.
-    loaded.cast_const().cast::<WTFTimer>() == this
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     // SAFETY: `this` is a live WTFTimer per caller contract.
     unsafe { WTFTimer::cancel(this) };
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn WTFTimer__secondsUntilTimer(this: *mut WTFTimer) -> f64 {
-    // SAFETY: `this` is a live WTFTimer per caller contract.
-    let this_ref = unsafe { &*this };
-    let _g = this_ref.lock.lock_guard();
-    if this_ref.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-        let next = &this_ref.event_loop_timer.next;
-        // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack
-        // into bun_core::Timespec to call `duration`.
-        let until = Timespec { sec: next.sec, nsec: next.nsec }
-            .duration(&Timespec::now(TimespecMockMode::ForceRealTime));
-        let sec = until.sec as f64;
-        let nsec = until.nsec as f64;
-        return sec + nsec / NS_PER_S as f64;
-    }
-    f64::INFINITY
 }
 
 // TODO(port): move to <area>_sys

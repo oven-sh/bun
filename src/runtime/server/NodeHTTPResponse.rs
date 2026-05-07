@@ -834,9 +834,15 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onClose")]
     pub fn on_abort(&mut self, js_value: JSValue) {
         scoped_log!(NodeHTTPResponse, "onAbort");
         self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value);
+    }
+
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
+    pub fn set_closed(&mut self) {
+        self.flags.insert(Flags::SOCKET_CLOSED);
     }
 
     pub fn on_timeout(&mut self, _resp: uws::AnyResponse) {
@@ -1848,50 +1854,29 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     js_this
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn NodeHTTPResponse__setTimeout(
-    this: *mut NodeHTTPResponse,
-    seconds: JSValue,
-    global_this: *mut JSGlobalObject,
-) -> bool {
-    // SAFETY: pointers provided by C++; live for the call.
-    let this = unsafe { &mut *this };
-    let global_this = unsafe { &*global_this };
+impl NodeHTTPResponse {
+    #[uws::uws_callback(export = "NodeHTTPResponse__setTimeout")]
+    pub fn ffi_set_timeout(&mut self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
+        if !seconds.is_number() {
+            let _: jsc::JsError =
+                global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
+            return false;
+        }
 
-    if !seconds.is_number() {
-        let _: jsc::JsError =
-            global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
-        return false;
+        if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            || self.flags.contains(Flags::SOCKET_CLOSED)
+            || self.flags.contains(Flags::UPGRADED)
+            || self.raw_response.is_none()
+        {
+            return false;
+        }
+
+        // Zig `seconds.to(c_uint)` is ECMAScript ToUint32 — same bit pattern as
+        // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
+        let secs = (seconds.to_int32() as c_uint).min(255) as u8;
+        self.raw_response.as_ref().unwrap().timeout(secs);
+        true
     }
-
-    if this.flags.contains(Flags::REQUEST_HAS_COMPLETED)
-        || this.flags.contains(Flags::SOCKET_CLOSED)
-        || this.flags.contains(Flags::UPGRADED)
-        || this.raw_response.is_none()
-    {
-        return false;
-    }
-
-    // Zig `seconds.to(c_uint)` is ECMAScript ToUint32 — same bit pattern as
-    // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
-    let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-    this.raw_response.as_ref().unwrap().timeout(secs);
-    true
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeHTTPResponse_onClose(
-    response: *mut NodeHTTPResponse,
-    js_value: JSValue,
-) {
-    // SAFETY: response is a live NodeHTTPResponse* from C++.
-    unsafe { (*response).on_abort(js_value) };
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeHTTPResponse_setClosed(response: *mut NodeHTTPResponse) {
-    // SAFETY: response is a live NodeHTTPResponse* from C++.
-    unsafe { (*response).flags.insert(Flags::SOCKET_CLOSED) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

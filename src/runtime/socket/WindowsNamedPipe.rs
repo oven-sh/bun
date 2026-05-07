@@ -324,6 +324,7 @@ impl WindowsNamedPipe {
         self.call_write_or_end(Some(encoded_data), true);
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
     pub fn resume_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
@@ -347,6 +348,7 @@ impl WindowsNamedPipe {
         }
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
     pub fn pause_stream(&mut self) -> bool {
         #[cfg(windows)]
         {
@@ -362,6 +364,7 @@ impl WindowsNamedPipe {
         }
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub fn flush(&mut self) {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.flush();
@@ -798,6 +801,7 @@ impl WindowsNamedPipe {
         unsafe { &mut *self.vm.uv_loop() }
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(wrapper) = self.wrapper.as_mut() {
@@ -808,11 +812,13 @@ impl WindowsNamedPipe {
         i32::try_from(data.len()).expect("int cast")
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__raw_write")]
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
         self.internal_write(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&mut self) {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.shutdown(false);
@@ -820,12 +826,14 @@ impl WindowsNamedPipe {
         self.writer.end();
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub fn shutdown(&mut self) {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.shutdown(false);
         }
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
     pub fn shutdown_read(&mut self) {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.shutdown_read();
@@ -837,6 +845,7 @@ impl WindowsNamedPipe {
         }
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_shutdown", no_catch)]
     pub fn is_shutdown(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_shutdown();
@@ -845,6 +854,7 @@ impl WindowsNamedPipe {
         self.flags.disconnected() || self.writer.is_done
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
     pub fn is_closed(&self) -> bool {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.is_closed();
@@ -852,6 +862,7 @@ impl WindowsNamedPipe {
         self.flags.disconnected()
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_established", no_catch)]
     pub fn is_established(&self) -> bool {
         !self.is_closed()
     }
@@ -863,6 +874,7 @@ impl WindowsNamedPipe {
         None
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__ssl_error", no_catch)]
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         us_bun_verify_error_t {
             error_no: self.ssl_error.error_no,
@@ -903,6 +915,7 @@ impl WindowsNamedPipe {
         timer_all().insert(&raw mut self.event_loop_timer);
     }
 
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
     pub fn set_timeout(&mut self, seconds: c_uint) {
         bun_output::scoped_log!(WindowsNamedPipe, "setTimeout({})", seconds);
         self.set_timeout_in_milliseconds(seconds * 1000);

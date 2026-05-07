@@ -1485,19 +1485,16 @@ impl FetchTasklet {
             // `add_listener` returns `self`, so the field already holds the right ptr.
             unsafe {
                 (*signal).pending_activity_ref();
-                unsafe extern "C" fn cb(ptr: *mut c_void, reason: JSValue) {
-                    FetchTasklet::abort_listener(ptr.cast::<FetchTasklet>(), reason);
-                }
-                (*signal).add_listener(fetch_tasklet_ptr.cast::<c_void>(), cb);
+                (*signal).add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
             }
         }
         Ok(fetch_tasklet_ptr)
     }
 
-    pub fn abort_listener(this: *mut FetchTasklet, reason: JSValue) {
+    #[bun_uws::uws_callback]
+    pub fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
-        // SAFETY: callback context; this is alive while signal listener is registered
-        let this = unsafe { &mut *this };
+        let this = self;
         reason.ensure_still_alive();
         this.abort_reason.set(&this.global_this, reason);
         this.abort_task();
@@ -1846,37 +1843,38 @@ impl FetchTasklet {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__FetchResponse_finalize(this: *mut FetchTasklet) {
-    bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
-    // SAFETY: called from JSC finalizer with valid FetchTasklet ctx
-    let this = unsafe { &mut *this };
-    if let Some(response) = this.native_response {
-        // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-        let body = unsafe { (*response).get_body_value() };
-        // Three scenarios:
-        //
-        // 1. We are streaming, in which case we should not ignore the body.
-        // 2. We were buffering, in which case
-        //    2a. if we have no promise, we should ignore the body.
-        //    2b. if we have a promise, we should keep loading the body.
-        // 3. We never started buffering, in which case we should ignore the body.
-        //
-        // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-        if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-            // Scenario 1 or 3.
-            return;
-        }
+impl FetchTasklet {
+    #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
+    pub fn on_response_finalize(&mut self) {
+        bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
+        let this = self;
+        if let Some(response) = this.native_response {
+            // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
+            let body = unsafe { (*response).get_body_value() };
+            // Three scenarios:
+            //
+            // 1. We are streaming, in which case we should not ignore the body.
+            // 2. We were buffering, in which case
+            //    2a. if we have no promise, we should ignore the body.
+            //    2b. if we have a promise, we should keep loading the body.
+            // 3. We never started buffering, in which case we should ignore the body.
+            //
+            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
+            if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
+                // Scenario 1 or 3.
+                return;
+            }
 
-        if let BodyValue::Locked(locked) = body {
-            if let Some(promise) = locked.promise {
-                if promise.is_empty_or_undefined_or_null() {
-                    // Scenario 2b.
+            if let BodyValue::Locked(locked) = body {
+                if let Some(promise) = locked.promise {
+                    if promise.is_empty_or_undefined_or_null() {
+                        // Scenario 2b.
+                        this.ignore_remaining_response_body();
+                    }
+                } else {
+                    // Scenario 3.
                     this.ignore_remaining_response_body();
                 }
-            } else {
-                // Scenario 3.
-                this.ignore_remaining_response_body();
             }
         }
     }

@@ -444,70 +444,50 @@ impl Request {
             + self.url.byte_slice().len()
             + self.body_value().memory_cost()
     }
-}
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Request__setCookiesOnRequestContext(
-    this: *mut Request,
-    cookie_map: Option<&CookieMap>,
-) {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload)
-    let this = unsafe { &mut *this };
-    this.request_context
-        .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Request__getUWSRequest(this: *mut Request) -> *mut uws::Request {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload). C++ treats
-    // the returned pointer as borrowed for the request handler's lifetime.
-    let this = unsafe { &mut *this };
-    this.request_context
-        .get_request()
-        .unwrap_or(core::ptr::null_mut())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Request__setInternalEventCallback(
-    this: *mut Request,
-    callback: JSValue,
-    global_this: &JSGlobalObject,
-) {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload)
-    let this = unsafe { &mut *this };
-    this.internal_event_callback = InternalJSEventCallback::init(callback, global_this);
-    // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
-    this.request_context.enable_timeout_events();
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Request__setTimeout(
-    this: *mut Request,
-    seconds: JSValue,
-    global_this: &JSGlobalObject,
-) {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload)
-    let this = unsafe { &mut *this };
-    if !seconds.is_number() {
-        let _ = global_this.throw(format_args!(
-            "Failed to set timeout: The provided value is not of type 'number'."
-        ));
-        return;
+    #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
+    pub fn ffi_set_cookies_on_request_context(&mut self, cookie_map: Option<&CookieMap>) {
+        self.request_context
+            .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
     }
 
-    // Zig spec: `seconds.to(c_uint)` → `JSValue.toU32` (clamps via JS ToUint32 rules,
-    // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do).
-    this.set_timeout(seconds.to_u32() as c_uint);
-}
+    /// C++ treats the returned pointer as borrowed for the request handler's lifetime.
+    #[bun_uws::uws_callback(export = "Request__getUWSRequest", no_catch)]
+    pub fn ffi_get_uws_request(&mut self) -> *mut uws::Request {
+        self.request_context
+            .get_request()
+            .unwrap_or(core::ptr::null_mut())
+    }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn Request__clone(
-    this: *mut Request,
-    global_this: &JSGlobalObject,
-) -> Option<Box<Request>> {
-    // SAFETY: called from C++ with a live Request* (m_ctx payload)
-    let this = unsafe { &mut *this };
-    this.clone(global_this).ok()
+    #[bun_uws::uws_callback(export = "Request__setInternalEventCallback")]
+    pub fn ffi_set_internal_event_callback(
+        &mut self,
+        callback: JSValue,
+        global_this: &JSGlobalObject,
+    ) {
+        self.internal_event_callback = InternalJSEventCallback::init(callback, global_this);
+        // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
+        self.request_context.enable_timeout_events();
+    }
+
+    #[bun_uws::uws_callback(export = "Request__setTimeout")]
+    pub fn ffi_set_timeout(&mut self, seconds: JSValue, global_this: &JSGlobalObject) {
+        if !seconds.is_number() {
+            let _ = global_this.throw(format_args!(
+                "Failed to set timeout: The provided value is not of type 'number'."
+            ));
+            return;
+        }
+
+        // Zig spec: `seconds.to(c_uint)` → `JSValue.toU32` (clamps via JS ToUint32 rules,
+        // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do).
+        self.set_timeout(seconds.to_u32() as c_uint);
+    }
+
+    #[bun_uws::uws_callback(export = "Request__clone")]
+    pub fn ffi_clone(&mut self, global_this: &JSGlobalObject) -> Option<Box<Request>> {
+        self.clone(global_this).ok()
+    }
 }
 
 // `comptime { _ = Request__clone; ... }` force-reference block → drop. Rust links what's pub.
@@ -580,17 +560,12 @@ impl Request {
         .map(Some)
     }
 
+    #[bun_uws::uws_callback(export = "Bun__JSRequest__calculateEstimatedByteSize")]
     pub fn calculate_estimated_byte_size(&mut self) {
         self.reported_estimated_size = self.body_value().estimated_size()
             + self.size_of_url()
             + core::mem::size_of::<Request>();
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__JSRequest__calculateEstimatedByteSize(this: *mut Request) {
-    // SAFETY: called from C++ with a live Request*
-    unsafe { (*this).calculate_estimated_byte_size() };
 }
 
 impl Request {

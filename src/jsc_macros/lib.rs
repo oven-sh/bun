@@ -642,6 +642,246 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// #[uws_callback] / #[uws_callback(export = "Name", no_catch, thunk = "name")]
+//
+// Wraps a `&self` / `&mut self` method in an `extern "C"` thunk suitable for
+// registration with uWS / uSockets / any C-ABI callback that round-trips a
+// type-erased `*mut c_void` user-data pointer. The thunk:
+//
+//   - takes `*mut c_void` (or `*const c_void` for `&self`) as the receiver
+//     position and casts it back to `Self`;
+//   - lowers each `&[T]` / `&mut [T]` parameter to a `(ptr, len)` pair and
+//     reconstructs the slice via `slice::from_raw_parts{,_mut}`. A `&mut [T]`
+//     argument **must not alias any memory reachable through `*self`** — the
+//     macro cannot check this and the thunk holds both borrows live;
+//   - passes every other parameter through verbatim (so FFI-safe scalars,
+//     raw pointers, and `#[repr(C)]` structs are forwarded unchanged).
+//     `&T` / `Option<&T>` are intentionally passed straight across the ABI
+//     boundary as thin pointers — the *caller* upholds non-null/aligned/live,
+//     same as the hand-written thunks this macro replaces;
+//   - wraps the call in `catch_unwind` and aborts on panic, because unwinding
+//     across the C++ uWS frame is UB. `no_catch` opts out (e.g. for thunks
+//     where the body is itself a panic barrier, or where aborting is
+//     undesirable and the caller has its own guard).
+//
+// The user body contains **no `unsafe`** — all pointer reconstruction lives in
+// the generated thunk under a single `// SAFETY:` umbrella mirroring the Zig
+// `OpaqueWrap` invariant: the registered ctx pointer is the same `*mut Self`
+// the caller passed to the C side, and any `(ptr, len)` pair describes a slice
+// valid for the duration of the callback.
+//
+// Generated thunk name defaults to `__<method>_c`; override with `thunk = "x"`.
+// `export = "Sym"` adds `#[unsafe(export_name = "Sym")]` for link-time
+// dispatch shims (cycle-break externs).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Default)]
+struct UwsCallbackArgs {
+    export: Option<LitStr>,
+    thunk: Option<LitStr>,
+    no_catch: bool,
+}
+
+impl Parse for UwsCallbackArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut out = UwsCallbackArgs::default();
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "no_catch" => out.no_catch = true,
+                "export" => {
+                    input.parse::<Token![=]>()?;
+                    out.export = Some(input.parse()?);
+                }
+                "thunk" => {
+                    input.parse::<Token![=]>()?;
+                    out.thunk = Some(input.parse()?);
+                }
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!("unknown #[uws_callback] argument `{other}`"),
+                    ));
+                }
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(out)
+    }
+}
+
+#[proc_macro_attribute]
+pub fn uws_callback(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as UwsCallbackArgs);
+    let func = parse_macro_input!(item as ItemFn);
+    expand_uws_callback(args, func)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+fn expand_uws_callback(args: UwsCallbackArgs, func: ItemFn) -> syn::Result<TokenStream2> {
+    let fn_name = &func.sig.ident;
+    let vis = &func.vis;
+
+    // Receiver: `&self` → `*const c_void`, `&mut self` → `*mut c_void`.
+    let recv = match func.sig.inputs.first() {
+        Some(FnArg::Receiver(r)) => r,
+        _ => {
+            return Err(syn::Error::new(
+                func.sig.ident.span(),
+                "#[uws_callback] requires `&self` or `&mut self` as the first parameter",
+            ));
+        }
+    };
+    let recv_mut = recv.mutability.is_some();
+    let (ctx_ty, recv_expr) = if recv_mut {
+        (
+            quote! { *mut ::core::ffi::c_void },
+            quote! { &mut *__ctx.cast::<Self>() },
+        )
+    } else {
+        (
+            quote! { *const ::core::ffi::c_void },
+            quote! { &*__ctx.cast::<Self>() },
+        )
+    };
+
+    // Lower each non-receiver parameter.
+    let mut thunk_params: Vec<TokenStream2> = vec![quote! { __ctx: #ctx_ty }];
+    let mut prelude: Vec<TokenStream2> = Vec::new();
+    let mut call_args: Vec<TokenStream2> = Vec::new();
+
+    for (i, arg) in func.sig.inputs.iter().enumerate().skip(1) {
+        let FnArg::Typed(pt) = arg else {
+            return Err(syn::Error::new(arg.span(), "unexpected receiver"));
+        };
+        let name = match &*pt.pat {
+            syn::Pat::Ident(id) => id.ident.clone(),
+            _ => format_ident!("__arg{}", i),
+        };
+        match classify_uws_arg(&pt.ty) {
+            UwsArg::Slice { elem, mutable } => {
+                let p = format_ident!("{}_ptr", name);
+                let l = format_ident!("{}_len", name);
+                let ptr_ty = if mutable {
+                    quote! { *mut #elem }
+                } else {
+                    quote! { *const #elem }
+                };
+                thunk_params.push(quote! { #p: #ptr_ty });
+                thunk_params.push(quote! { #l: usize });
+                // Tolerate (null, 0) — uWS passes this for empty buffers, and
+                // `from_raw_parts(null, 0)` is UB. Zig's `[]const u8` also
+                // permits `(undefined, 0)`. Use an explicit, obviously-sound
+                // construction per mutability instead of `(&mut [][..]) as _`,
+                // which borrows a temporary and relies on a non-existent
+                // `&mut [T] -> &[T]` `as`-cast.
+                prelude.push(if mutable {
+                    quote! {
+                        // SAFETY: caller guarantees `#p[..#l]` valid for the call;
+                        // for #l == 0 a dangling well-aligned pointer is the
+                        // canonical empty `&mut [T]`.
+                        let #name: &mut [#elem] = unsafe {
+                            ::core::slice::from_raw_parts_mut(
+                                if #l == 0 {
+                                    ::core::ptr::NonNull::<#elem>::dangling().as_ptr()
+                                } else {
+                                    #p
+                                },
+                                #l,
+                            )
+                        };
+                    }
+                } else {
+                    quote! {
+                        let #name: &[#elem] = if #l == 0 {
+                            &[]
+                        } else {
+                            // SAFETY: caller guarantees `#p[..#l]` valid for the call.
+                            unsafe { ::core::slice::from_raw_parts(#p, #l) }
+                        };
+                    }
+                });
+                call_args.push(quote! { #name });
+            }
+            UwsArg::PassThrough(ty) => {
+                thunk_params.push(quote! { #name: #ty });
+                call_args.push(quote! { #name });
+            }
+        }
+    }
+
+    let ret = match &func.sig.output {
+        syn::ReturnType::Default => quote! { () },
+        syn::ReturnType::Type(_, t) => quote! { #t },
+    };
+
+    let thunk_ident = match &args.thunk {
+        Some(l) => format_ident!("{}", l.value()),
+        None => format_ident!("__{}_c", fn_name),
+    };
+    let export_attr = args.export.as_ref().map(|l| {
+        quote! { #[unsafe(export_name = #l)] }
+    });
+
+    let inner_call = quote! {
+        // Slice args are reconstructed from (ptr, len) pairs the caller
+        // guarantees valid for the call. Do this *before* borrowing `__this`
+        // so a future `&mut [T]` arg that (incorrectly) aliased `*self` would
+        // at least not be lexically interleaved with the receiver borrow.
+        #(#prelude)*
+        // SAFETY: `__ctx` is the `*Self` registered with the C side; uWS / the
+        // caller guarantees it is live and exclusively accessed for the
+        // duration of the callback.
+        let __this = unsafe { #recv_expr };
+        Self::#fn_name(__this, #(#call_args),*)
+    };
+
+    let body = if args.no_catch {
+        quote! { #inner_call }
+    } else {
+        quote! {
+            ::bun_core::ffi::catch_unwind_ffi(
+                #[inline(always)] move || { #inner_call }
+            )
+        }
+    };
+
+    let thunk = quote! {
+        #export_attr
+        #[doc(hidden)]
+        #[allow(improper_ctypes_definitions, clippy::not_unsafe_ptr_arg_deref)]
+        #vis unsafe extern "C" fn #thunk_ident(#(#thunk_params),*) -> #ret {
+            #body
+        }
+    };
+
+    Ok(quote! {
+        #func
+        #thunk
+    })
+}
+
+enum UwsArg {
+    Slice { elem: syn::Type, mutable: bool },
+    PassThrough(syn::Type),
+}
+
+fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
+    if let syn::Type::Reference(r) = ty {
+        if let syn::Type::Slice(s) = &*r.elem {
+            return UwsArg::Slice {
+                elem: (*s.elem).clone(),
+                mutable: r.mutability.is_some(),
+            };
+        }
+    }
+    UwsArg::PassThrough(ty.clone())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Compile-time sanity: a `#[host_fn]` body must take refs, not raw pointers.
 // (Best-effort lint; the real type-check happens when the shim calls the fn.)
 // ──────────────────────────────────────────────────────────────────────────

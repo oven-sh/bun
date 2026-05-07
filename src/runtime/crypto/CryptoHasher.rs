@@ -138,16 +138,9 @@ impl CryptoHasher {
         CryptoHasher::finalize(handle);
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__update(
-        handle: &mut CryptoHasher,
-        input_bytes: *const u8,
-        input_len: usize,
-    ) -> bool {
-        // SAFETY: caller passes a valid (ptr,len) byte slice
-        let input = unsafe { core::slice::from_raw_parts(input_bytes, input_len) };
-
-        match handle {
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
+    pub fn extern_update(&mut self, input: &[u8]) -> bool {
+        match self {
             CryptoHasher::Zig(zig) => {
                 zig.update(input);
                 true
@@ -160,16 +153,10 @@ impl CryptoHasher {
         }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__digest(
-        handle: &mut CryptoHasher,
-        global: &JSGlobalObject,
-        buf: *mut u8,
-        buf_len: usize,
-    ) -> u32 {
-        // SAFETY: caller passes a valid writable (ptr,len) byte slice
-        let digest_buf = unsafe { core::slice::from_raw_parts_mut(buf, buf_len) };
-        match handle {
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__digest")]
+    pub fn extern_digest(&mut self, global: &JSGlobalObject, digest_buf: &mut [u8]) -> u32 {
+        let buf_len = digest_buf.len();
+        match self {
             CryptoHasher::Zig(zig) => {
                 let res = zig.final_with_len(digest_buf, buf_len);
                 u32::try_from(res.len()).expect("int cast")
@@ -182,9 +169,9 @@ impl CryptoHasher {
         }
     }
 
-    #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__getDigestSize(handle: &CryptoHasher) -> u32 {
-        match handle {
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
+    pub fn extern_digest_size(&self) -> u32 {
+        match self {
             CryptoHasher::Zig(inner) => inner.digest_length as u32,
             CryptoHasher::Evp(inner) => inner.size() as u32,
             _ => 0,

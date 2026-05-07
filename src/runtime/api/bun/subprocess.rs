@@ -366,11 +366,24 @@ pub fn assert_stdio_result(result: StdioResult) {
     let _ = result;
 }
 
-pub extern "C" fn on_abort_signal(subprocess_ctx: *mut c_void, _reason: JSValue) {
-    // SAFETY: subprocess_ctx was registered as `this` when the abort listener was attached.
-    let this: &mut Subprocess = unsafe { &mut *(subprocess_ctx.cast::<Subprocess>()) };
-    this.clear_abort_signal();
-    let _ = this.try_kill(this.kill_signal);
+impl Subprocess<'_> {
+    #[bun_uws::uws_callback(thunk = "on_abort_signal_c")]
+    fn handle_abort_signal(&mut self, _reason: JSValue) {
+        self.clear_abort_signal();
+        let _ = self.try_kill(self.kill_signal);
+    }
+}
+
+/// Module-level wrapper so callers in `js_bun_spawn_bindings` (which alias the
+/// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal`
+/// path *and* the original safe-`extern "C" fn` item kind. The macro-emitted
+/// thunk is `unsafe extern "C" fn`; this thin shim re-asserts the invariant
+/// (`ctx` is the `*mut Subprocess` registered with the abort listener) so the
+/// public symbol stays a safe fn-item rather than an `unsafe` fn-pointer const.
+pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
+    // SAFETY: ctx was registered as `*mut Subprocess` when the listener was
+    // attached; AbortSignal guarantees it is live for the callback.
+    unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
 /// Static vtable wired into `Process.set_exit_handler` so the low-tier

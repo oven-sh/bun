@@ -2352,6 +2352,7 @@ dependencies = [
  "bstr",
  "bun_boringssl",
  "bun_core",
+ "bun_jsc_macros",
  "bun_string",
  "bun_uws_sys",
  "const_format",

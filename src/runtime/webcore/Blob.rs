@@ -770,9 +770,9 @@ impl BlobExt for Blob {
 
         let mut context = FormDataContext {
             joiner: bun_str::string_joiner::StringJoiner::default(),
-            boundary: boundary as *const [u8],
+            boundary,
             failed: false,
-            global_this: global_this,
+            global_this,
         };
 
         // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
@@ -789,8 +789,9 @@ impl BlobExt for Blob {
             filename: *mut ZigString,
             is_blob: u8,
         ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below.
-            let ctx = unsafe { &mut *(ctx_ptr as *mut FormDataContext) };
+            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
+            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
+            let ctx = unsafe { &mut *(ctx_ptr as *mut FormDataContext<'_>) };
             let entry = if is_blob == 0 {
                 // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
                 FormDataEntry::String(unsafe { *(value_ptr as *mut ZigString) })
@@ -1361,9 +1362,12 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     jsc::EventLoopHandle::init(
-                        unsafe { (*self.global_this).bun_vm().as_mut().event_loop() } as *mut (),
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
                     ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
@@ -3446,23 +3450,28 @@ where
 // FormDataContext
 // ──────────────────────────────────────────────────────────────────────────
 
-struct FormDataContext {
+/// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
+/// caller's `hex_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
+/// both strictly outlive this struct (Zig spec: `[]const u8` / non-optional
+/// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
+/// raw pointers.
+struct FormDataContext<'a> {
     joiner: StringJoiner,
-    boundary: *const [u8], // borrowed; outlives the joiner
+    boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
-    global_this: *const JSGlobalObject,
+    global_this: &'a JSGlobalObject,
 }
 
-impl FormDataContext {
+impl FormDataContext<'_> {
     pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
-        // SAFETY: global_this is valid for the duration of from_dom_form_data.
-        let global_this = unsafe { &*self.global_this };
+        // Copy the borrowed refs out first (disjoint-field reads) so the
+        // long-lived `&mut self.joiner` below doesn't conflict.
+        let global_this = self.global_this;
+        let boundary = self.boundary;
         let joiner = &mut self.joiner;
-        // SAFETY: boundary outlives the joiner (stack buffer in from_dom_form_data).
-        let boundary = unsafe { &*self.boundary };
 
         joiner.push_static(b"--");
         joiner.push_static(boundary); // note: "static" here means "outlives the joiner"

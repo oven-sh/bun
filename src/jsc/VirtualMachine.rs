@@ -621,7 +621,10 @@ impl VirtualMachine {
             // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
             // Registering the allocation as a root region lets LSAN trace
             // `RareData → group.head_sockets → us_socket_t`.
-            // TODO(b2): bun_safety::asan::register_root_region — not at this tier yet.
+            bun_core::asan::register_root_region(
+                core::ptr::from_ref::<RareData>(&*rd).cast(),
+                core::mem::size_of::<RareData>(),
+            );
             self.rare_data = Some(rd);
         }
         self.rare_data.as_mut().unwrap()

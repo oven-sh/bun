@@ -9,7 +9,6 @@ use bun_highway::copy_u16_to_u8 as highway_copy_u16_to_u8;
 use crate::{WStr, ZStr};
 
 use crate::immutable::CodePoint; // i32
-// TODO(b0): js_lexer arrives from move-in (MOVE_DOWN bun_js_parser::js_lexer → string)
 use crate::lexer as js_lexer;
 use bun_simdutf_sys::simdutf;
 

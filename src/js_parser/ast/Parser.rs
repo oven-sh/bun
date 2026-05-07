@@ -232,14 +232,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Reborrow the shared `Log`. Callers must not hold another `&mut` derived
-    /// from `self.lexer.log` across this call.
+    /// Reborrow the shared `Log`. Callers must not hold two results live at
+    /// once (or alongside `self.lexer.log()`).
     #[inline]
     pub fn log_mut(&mut self) -> &mut logger::Log {
         // SAFETY: `log` was created from the `&'a mut Log` passed to `init`,
-        // which outlives `'a` (and therefore `self`). The unique borrow lives
-        // in `self.lexer.log`; `&mut self` here ensures no overlapping borrow
-        // of the lexer is live for the returned reference's lifetime.
+        // which outlives `'a` (and therefore `self`). `self.lexer.log` aliases
+        // the same allocation as a `NonNull` (not `&mut`), so this transient
+        // reborrow does not invalidate it.
         unsafe { self.log.as_mut() }
     }
 }

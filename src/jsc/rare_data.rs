@@ -286,8 +286,11 @@ pub struct RareData {
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
     pub node_fs_stat_watcher_scheduler: Option<NonNull<c_void>>,
 
-    pub listening_sockets_for_watch_mode: Vec<Fd>,
-    pub listening_sockets_for_watch_mode_lock: Mutex,
+    /// Watch-mode restart needs to RST every listen socket so the new process
+    /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
+    /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
+    /// owns the data, no sidecar `Mutex<()>`).
+    pub listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
     pub fs_watchers_for_isolation: Vec<IsolationWatcher>,
     pub stat_watchers_for_isolation: Vec<IsolationWatcher>,
@@ -347,8 +350,7 @@ impl Default for RareData {
             default_client_ssl_ctx: None,
             mime_types: None,
             node_fs_stat_watcher_scheduler: None,
-            listening_sockets_for_watch_mode: Vec::new(),
-            listening_sockets_for_watch_mode_lock: Mutex::default(),
+            listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             fs_watchers_for_isolation: Vec::new(),
             stat_watchers_for_isolation: Vec::new(),
             temp_pipe_read_buffer: None,

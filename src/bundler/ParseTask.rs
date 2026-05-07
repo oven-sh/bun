@@ -693,7 +693,7 @@ fn css_symbols_to_parser_symbols(
         let link = unsafe {
             core::mem::transmute::<bun_logger::Ref, bun_js_parser::ast::Ref>(s.link)
         };
-        out.push_assume_capacity(PSym {
+        out.append_assume_capacity(PSym {
             original_name: s.original_name as *const [u8],
             // CSS-module locals are never ES6 namespace-aliased (the CSS parser
             // never assigns `namespace_alias`); drop rather than bridge the
@@ -1181,7 +1181,7 @@ fn get_ast(
             #[cfg(all(debug_assertions, feature = "css"))]
             if css_ast.local_scope.count() > 0 {
                 for entry in css_ast.local_scope.values() {
-                    debug_assert!((entry.r#ref.inner_index() as u32) < extra.symbols.len);
+                    debug_assert!(entry.ref_.inner_index() < extra.symbols.len);
                 }
             }
             if let Err(e) = css_ast.minify(

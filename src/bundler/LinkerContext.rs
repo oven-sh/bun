@@ -2502,11 +2502,26 @@ pub enum ImportTrackerStatus {
 }
 
 /// `bundle_v2.zig:ImportTracker.Iterator`. See `ImportTrackerStatus` above.
-#[derive(Default)]
+///
+/// `import_data` is a raw slice into
+/// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`
+/// (Zig returned `BabyList.slice()` directly). The graph SoA is never
+/// reallocated during `match_import_with_export`, so the pointer stays valid
+/// for the iterator's lifetime; the caller only reads `.data` from each entry.
 pub struct ImportTrackerIterator {
     pub status: ImportTrackerStatus,
     pub value: ImportTracker,
-    pub import_data: Box<[crate::ImportData]>,
+    pub import_data: *const [crate::ImportData],
+}
+
+impl Default for ImportTrackerIterator {
+    fn default() -> Self {
+        Self {
+            status: ImportTrackerStatus::default(),
+            value: ImportTracker::default(),
+            import_data: &[] as *const [crate::ImportData],
+        }
+    }
 }
 
 /// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
@@ -2892,12 +2907,8 @@ impl<'a> LinkerContext<'a> {
                 return ImportTrackerIterator {
                     value: matching_export.data,
                     status: ImportTrackerStatus::Found,
-                    import_data: matching_export
-                        .potentially_ambiguous_export_star_refs
-                        .slice()
-                        .iter()
-                        .map(|d| crate::ImportData { data: d.data, ..Default::default() })
-                        .collect(),
+                    import_data: matching_export.potentially_ambiguous_export_star_refs.slice()
+                        as *const [crate::ImportData],
                 };
             }
         }
@@ -2915,12 +2926,8 @@ impl<'a> LinkerContext<'a> {
                     name_loc: matching_export.data.name_loc,
                 },
                 status: ImportTrackerStatus::Found,
-                import_data: matching_export
-                    .potentially_ambiguous_export_star_refs
-                    .slice()
-                    .iter()
-                    .map(|d| crate::ImportData { data: d.data, ..Default::default() })
-                    .collect(),
+                import_data: matching_export.potentially_ambiguous_export_star_refs.slice()
+                    as *const [crate::ImportData],
             };
         }
 

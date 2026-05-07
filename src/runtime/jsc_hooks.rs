@@ -978,6 +978,32 @@ unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
     crate::node::process::exit(global, code);
 }
 
+/// `graph.find(path).?.sourcemap.load()` — Spec VirtualMachine.zig:3875.
+/// Downcasts the resolver trait object to the concrete
+/// `bun_standalone_graph::Graph` (the only implementor) and lazily decodes the
+/// embedded source map for `path`. The returned `Arc` is the caller's strong
+/// ref (Zig's `map.ref()` is the `Arc::clone` the caller performs before
+/// caching it into `source_mappings`).
+///
+/// # Safety
+/// `graph` must be the process-lifetime trait object whose data pointer is a
+/// `bun_standalone_graph::Graph` (set in `init_with_module_graph`).
+unsafe fn load_standalone_sourcemap(
+    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    path: &[u8],
+) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
+    // SAFETY: per fn contract — the trait-object data pointer IS the concrete
+    // `Graph`. `&mut` is sound: the graph is process-global and `find` /
+    // `LazySourceMap::load` only mutate per-file lazy caches under
+    // `INIT_LOCK`; this hook is called on the JS thread.
+    let graph = unsafe {
+        &mut *(graph as *const dyn bun_resolver::StandaloneModuleGraph
+            as *const bun_standalone_graph::Graph
+            as *mut bun_standalone_graph::Graph)
+    };
+    graph.find(path)?.sourcemap.load()
+}
+
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — Spec
 /// VirtualMachine.zig:3960 (`IPCInstance.handleIPCMessage` `.internal` arm).
 ///
@@ -1141,6 +1167,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     ipc_child_singleton_deinit,
     console_on_before_print,
     console_print_runtime_object,
+    load_standalone_sourcemap,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

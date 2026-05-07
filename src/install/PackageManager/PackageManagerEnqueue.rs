@@ -245,7 +245,9 @@ pub fn enqueue_tarball_for_reading(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
 ) {
-    let path = this.lockfile.str(&resolution.value.local_tarball);
+    // SAFETY: caller passes `resolution.tag == LocalTarball`; the
+    // `local_tarball` arm is the active union field.
+    let path = this.lockfile.str(unsafe { &resolution.value.local_tarball });
     let task_id = Task::Id::for_tarball(path);
     let task_queue = this.task_queue.get_or_put(task_id).expect("unreachable");
     if !task_queue.found_existing {

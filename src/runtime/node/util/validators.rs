@@ -58,7 +58,7 @@ pub fn throw_err_invalid_arg_type(
 #[cold]
 pub fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     // Zig: `global.ERR(.OUT_OF_RANGE, fmt, args).throw()` — RangeError with `.code = "ERR_OUT_OF_RANGE"`.
-    global_this.err(jsc::Error::OUT_OF_RANGE, args).throw()
+    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
 // Local helpers bridging the not-yet-ported `JSGlobalObject::throw_*` surface.

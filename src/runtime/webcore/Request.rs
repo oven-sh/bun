@@ -1121,8 +1121,10 @@ impl Request {
         this_value: JSValue,
     ) -> JsResult<Request> {
         let mut success = false;
-        // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value
-        // (Zig pools BodyValue in a HiveAllocator). Box directly for now.
+        // PERF(port): Zig routes through `vm.initRequestBodyValue` (HiveAllocator
+        // pool). The hook now exists (`VirtualMachine::init_request_body_value`),
+        // but `Request.body` is still `Box<BodyValue>` — switching the field to
+        // `HiveRef` is a cross-file refactor tracked alongside server/mod.rs.
         let _ = global_this.bun_vm();
         let body: Box<BodyValue> = Box::new(BodyValue::Null);
         let body_ptr: *const BodyValue = &*body;
@@ -1666,7 +1668,8 @@ impl Request {
             break 'brk self.body.clone(global_this)?;
         };
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
-        // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value (HiveRef pool)
+        // PERF(port): see construct_into — `Request.body: Box<BodyValue>` until the
+        // HiveRef field-type refactor lands (server/mod.rs tracks the same).
         let body: Box<BodyValue> = Box::new(body_);
         // Zig: `const url = if (preserve_url) req.url else self.url.dupeRef();`
         //      `errdefer if (!preserve_url) url.deref();`

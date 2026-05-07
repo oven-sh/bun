@@ -457,10 +457,11 @@ pub enum Value {
     ///     })
     ///
     /// This works for .json(), too.
-    // TODO(port): LIFETIMES.tsv says Arc<WTFStringImpl>, but WTF::StringImpl is intrusively
-    // refcounted by WebKit. Phase B should confirm whether bun_wtf::StringImpl is itself a
-    // smart-pointer wrapper (in which case Arc<> double-counts).
-    WTFStringImpl(std::sync::Arc<WTFStringImpl>),
+    // PORT NOTE: `bun_str::WTFStringImpl` = `*mut WTFStringImplStruct` — a Copy raw
+    // pointer to an *intrusively* refcounted WTF::StringImpl. We hold the +1 directly
+    // (no Arc) and ref/deref explicitly at the same points Zig does (from_js / clone /
+    // use_ / to_blob_if_possible / reset / use_as_any_blob*).
+    WTFStringImpl(WTFStringImpl),
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
@@ -651,7 +652,7 @@ impl Value {
             Value::Used | Value::Empty => true,
             Value::InternalBlob(b) => b.slice_const().is_empty(),
             Value::Blob(b) => b.size == 0,
-            Value::WTFStringImpl(s) => (unsafe { (***s).length() }) == 0,
+            Value::WTFStringImpl(s) => (unsafe { (**s).length() }) == 0,
             Value::Error(_) | Value::Locked(_) => false,
         }
     }
@@ -661,19 +662,20 @@ impl Value {
     // un-gated above; only the WTFStringImpl→InternalBlob conversion blocks.
     
     pub fn to_blob_if_possible(&mut self) {
-        if let Value::WTFStringImpl(str) = self {
-            // SAFETY: `**str` derefs Arc → `*mut WTFStringImplStruct`; the pointee is
-            // a live WTF::StringImpl kept alive by the intrusive refcount.
-            if let Some(bytes) = unsafe { (***str).to_utf8_if_needed() } {
-                // PORT NOTE: reshaped for borrowck — take str out before reassigning *self.
-                let _str = core::mem::replace(self, Value::Null);
-                // _str dropped at end of scope (deref via Arc Drop / intrusive deref).
+        if let Value::WTFStringImpl(str) = *self {
+            // SAFETY: `str` is a non-null `*mut WTFStringImplStruct`; the pointee is a
+            // live WTF::StringImpl kept alive by the intrusive +1 we hold.
+            if let Some(bytes) = unsafe { (*str).to_utf8_if_needed() } {
                 // Zig: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
                 // already heap-owned by the slice wrapper; transfer it (no copy).
                 *self = Value::InternalBlob(InternalBlob {
                     bytes: bytes.into_vec(),
                     was_string: true,
                 });
+                // Zig: `var str = this.WTFStringImpl; defer str.deref();` — release the
+                // +1 the body held now that we've replaced the variant.
+                // SAFETY: `str` is still valid; deref may free it.
+                unsafe { (*str).deref() };
             }
         }
 
@@ -685,7 +687,7 @@ impl Value {
             *self = match blob {
                 AnyBlob::Blob(b) => Value::Blob(b),
                 AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-                AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(std::sync::Arc::new(s)),
+                AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
                 // AnyBlob::InlineBlob(b) => Value::InlineBlob(b),
             };
         }
@@ -697,7 +699,7 @@ impl Value {
         match self {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => (unsafe { (***s).utf8_byte_length() }) as blob::SizeType,
+            Value::WTFStringImpl(s) => (unsafe { (**s).utf8_byte_length() }) as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
@@ -707,7 +709,7 @@ impl Value {
     pub fn fast_size(&self) -> blob::SizeType {
         match self {
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
-            Value::WTFStringImpl(s) => unsafe { (***s).byte_slice() }.len() as blob::SizeType,
+            Value::WTFStringImpl(s) => unsafe { (**s).byte_slice() }.len() as blob::SizeType,
             Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
@@ -717,7 +719,7 @@ impl Value {
     pub fn memory_cost(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
-            Value::WTFStringImpl(s) => unsafe { (***s).memory_cost() },
+            Value::WTFStringImpl(s) => unsafe { (**s).memory_cost() },
             Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
@@ -727,7 +729,7 @@ impl Value {
     pub fn estimated_size(&self) -> usize {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
-            Value::WTFStringImpl(s) => unsafe { (***s).byte_slice() }.len(),
+            Value::WTFStringImpl(s) => unsafe { (**s).byte_slice() }.len(),
             Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
@@ -892,7 +894,7 @@ impl Value {
 
             // Zig accessed `str.value.WTFStringImpl` directly; `leak_wtf_impl()` transfers
             // the +1 ref out of the bun_str::String wrapper.
-            return Ok(Value::WTFStringImpl(std::sync::Arc::new(str.leak_wtf_impl())));
+            return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
         }
 
         if js_type.is_typed_array_or_array_buffer() {
@@ -972,7 +974,7 @@ impl Value {
                         match any_blob {
                             AnyBlob::Blob(b) => Value::Blob(b),
                             AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(std::sync::Arc::new(s)),
+                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
                         }
                     } else {
                         Value::Empty
@@ -1135,7 +1137,7 @@ impl Value {
             Value::InternalBlob(b) => b.slice_const(),
             Value::WTFStringImpl(s) => {
                 // SAFETY: WTFStringImpl is a non-null intrusive-refcounted ptr.
-                let s = unsafe { &*(**s) };
+                let s = unsafe { &**s };
                 if s.can_use_as_utf8() {
                     s.latin1_slice()
                 } else {

@@ -881,8 +881,8 @@ impl BunxCommand {
                                         break 'is_stale false;
                                     }
                                 };
-                                // PORT NOTE: `defer fd.close()` → Drop on Fd guard.
-                                // TODO(port): ensure Fd has RAII close or close explicitly here.
+                                // Zig: `defer fd.close()` — closed explicitly below before
+                                // any `break 'is_stale` (no early-return between open & close).
 
                                 // SAFETY: all-zero is a valid IO_STATUS_BLOCK (repr(C) POD, no niches)
                                 let mut io_status_block: win::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };

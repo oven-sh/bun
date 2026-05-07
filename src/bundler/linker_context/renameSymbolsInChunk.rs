@@ -228,8 +228,8 @@ pub fn rename_symbols_in_chunk(
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
 
-        let mut minifier = freq.compile();
-        minify_renamer.assign_names_by_frequency(&mut minifier)?;
+        let minifier = freq.compile();
+        minify_renamer.assign_names_by_frequency(&minifier)?;
 
         let _ = capacity;
         return Ok(ChunkRenamer::Minify(minify_renamer));

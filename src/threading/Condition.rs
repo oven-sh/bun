@@ -266,7 +266,9 @@ impl FutexImpl {
 
         mutex.unlock();
         // PORT NOTE: Zig `defer mutex.lock()` — re-acquire on every exit path (Ok and Err).
-        let _relock = scopeguard::guard((), |()| mutex.lock());
+        // Condvar wait semantics (unlock, block, re-lock) are the inverse of MutexGuard,
+        // so the re-lock is expressed as a one-off defer rather than an RAII guard type.
+        scopeguard::defer! { mutex.lock(); }
 
         let mut futex_deadline = Futex::Deadline::init(timeout);
 

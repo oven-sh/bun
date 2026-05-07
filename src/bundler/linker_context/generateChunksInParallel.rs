@@ -575,13 +575,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
     // the HTML assembly step in codeWithSourceMapShifts, not here.
+    //
+    // PORT NOTE: Zig `defer` frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
+    // Rust `Vec<Option<Box<[u8]>>>` frees via `Drop` (global mimalloc); if `allocatorForSize`
+    // returns a distinct allocator for large buffers, Phase B must restore matched-allocator
+    // dealloc here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
-    // TODO(port): Zig frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
-    // Rust Box<[u8]> uses global mimalloc; if `allocatorForSize` returns a distinct allocator
-    // for large buffers, Phase B must restore matched-allocator dealloc here.
-    let _standalone_chunk_contents_guard = scopeguard::guard((), |_| {
-        // Drop handles freeing of Vec<Option<Box<[u8]>>>.
-    });
 
     if is_standalone {
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
@@ -858,7 +857,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ))
                         };
                         source_provider_url.ref_();
-                        let _spu_guard = scopeguard::guard((), |_| source_provider_url.deref());
+                        // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
+                        // releases the ref bumped above on every exit path (incl. `break 'brk`).
+                        let source_provider_url = bun_string::OwnedString::new(source_provider_url);
 
                         if let Some((bytecode, cached_bytecode)) = unsafe {
                             (bytecode_vt.generate)(

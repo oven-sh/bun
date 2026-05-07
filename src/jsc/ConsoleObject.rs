@@ -2080,16 +2080,19 @@ pub mod formatter {
             }
 
             if js_type == jsc::JSType::GlobalProxy {
-                // TODO(phase-c): `JSValue::c` / `as_object_ref` /
-                // `JSObjectGetProxyTarget` not yet ported — fall through to
-                // GlobalObject for now (no recursion into proxy target).
+                if !opts.contains(TagOptions::HIDE_GLOBAL) {
+                    // SAFETY: `value` is a cell with `js_type == GlobalProxy`,
+                    // so `as_object_ref()` is a valid `JSObjectRef` for the
+                    // C API call.
+                    let target = JSValue::c(unsafe {
+                        jsc::C::JSObjectGetProxyTarget(value.as_object_ref())
+                    });
+                    return Tag::get(target, global_this);
+                }
                 return Ok(TagResult { tag: TagPayload::GlobalObject, cell: js_type });
             }
 
             // Is this a react element?
-            // TODO(phase-c): `JSValue::get_own_truthy` / `symbol_for` not yet
-            // ported — JSX detection re-gated.
-            
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
@@ -3181,12 +3184,7 @@ pub mod formatter {
                 if !self.stack_check.is_safe_to_recurse() {
                     self.failed = true;
                     if self.can_throw_stack_overflow {
-                        // PORT NOTE: `JSGlobalObject::throw_stack_overflow` lives
-                        // on the gated `JSGlobalObject.rs` impl; call the FFI
-                        // directly here.
-                        // SAFETY: `global_this` is a live `JSGlobalObject`.
-                        unsafe { JSGlobalObject__throwStackOverflow(self.global_this) };
-                        return Err(jsc::JsError::Thrown);
+                        return Err(self.global_this.throw_stack_overflow());
                     }
                     return Ok(());
                 }

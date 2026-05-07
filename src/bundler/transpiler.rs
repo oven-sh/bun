@@ -301,12 +301,9 @@ impl<'a> Transpiler<'a> {
         js_ast::Expr::data_store_create();
         js_ast::Stmt::data_store_create();
 
-        // Spec `defer Store.reset()` — scopeguard so the reset runs on every
-        // exit path (including `?` early-return below).
-        let _reset = scopeguard::guard((), |_| {
-            js_ast::Expr::data_store_reset();
-            js_ast::Stmt::data_store_reset();
-        });
+        // Spec `defer Store.reset()` — RAII guard resets both AST stores on
+        // every exit path (including `?` early-return below).
+        let _reset = js_ast::ast::StoreResetGuard::new();
 
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved

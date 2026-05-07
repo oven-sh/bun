@@ -655,11 +655,9 @@ impl<'a> Parser<'a> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
-        // the lifetime on `Action` (Zig held the same pointer).
-        let _prev_action = (); // bun_crash_handler::CURRENT_ACTION.replace(...)
-        let _restore = scopeguard::guard((), |_| {
-            // bun_crash_handler::CURRENT_ACTION.set(prev_action);
-        });
+        // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
+        //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
+        // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
 
         // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
@@ -1041,8 +1039,8 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let mut postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
-        let _postvisit_guard = scopeguard::guard((), move |_| postvisit_tracer.end());
+        // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
+        let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
 
         let mut uses_dirname =
             p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;

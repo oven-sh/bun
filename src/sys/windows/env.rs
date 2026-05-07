@@ -30,10 +30,14 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         }
     }
     #[cfg(feature = "ci_assert")]
-    let env_guard = scopeguard::guard((), |_| {
-        // SAFETY: single-threaded startup; see module-level note.
-        unsafe { ENV_CONVERTED = false };
-    });
+    let env_guard = scopeguard::guard(
+        // SAFETY: single-threaded startup; taking a raw pointer to the flag we just set.
+        unsafe { core::ptr::addr_of_mut!(ENV_CONVERTED) },
+        |p| {
+            // SAFETY: single-threaded startup; `p` is `&raw mut ENV_CONVERTED`.
+            unsafe { *p = false };
+        },
+    );
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {

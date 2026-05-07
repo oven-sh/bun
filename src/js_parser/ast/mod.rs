@@ -82,6 +82,24 @@ impl<T> DebugOnlyDisabler<T> {
     pub fn enable() {
         // TODO(port): set thread-local `disabled = false` (debug builds only).
     }
+    /// RAII scope: `disable()` now, `enable()` on drop. Replaces the Zig idiom
+    /// `Disabler.disable(); defer Disabler.enable();` so callers don't
+    /// hand-roll a `scopeguard::guard((), |_| ...)` per PORTING.md.
+    #[inline]
+    pub fn scope() -> DebugOnlyDisablerScope<T> {
+        Self::disable();
+        DebugOnlyDisablerScope(core::marker::PhantomData)
+    }
+}
+
+/// Guard returned by [`DebugOnlyDisabler::scope`]; re-enables on drop.
+#[must_use = "disabler is re-enabled on drop; bind to a named local"]
+pub struct DebugOnlyDisablerScope<T>(core::marker::PhantomData<T>);
+impl<T> Drop for DebugOnlyDisablerScope<T> {
+    #[inline]
+    fn drop(&mut self) {
+        DebugOnlyDisabler::<T>::enable();
+    }
 }
 
 /// RAII guard that resets the thread-local `Stmt.Data.Store` and

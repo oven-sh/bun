@@ -64,10 +64,7 @@ fn load_bunfig(
 
     bun_js_parser::ast::stmt::data::Store::create();
     bun_js_parser::ast::expr::data::Store::create();
-    let _store_reset = scopeguard::guard((), |_| {
-        bun_js_parser::ast::stmt::data::Store::reset();
-        bun_js_parser::ast::expr::data::Store::reset();
-    });
+    let _store_reset = bun_js_parser::ast::StoreResetGuard::new();
 
     // PORT NOTE: reshaped for borrowck — `defer { ctx.log.level = original }`
     // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
@@ -78,10 +75,10 @@ fn load_bunfig(
     // SAFETY: `ctx.log` is the process-global Log written once during
     // single-threaded CLI startup; no other `&mut` to it is live here.
     let original_level = unsafe { (*log_ptr).level };
-    let _level_reset = scopeguard::guard((), move |_| {
+    scopeguard::defer! {
         // SAFETY: same as above; runs on the same thread.
         unsafe { (*log_ptr).level = original_level };
-    });
+    }
     // SAFETY: see above.
     unsafe { (*log_ptr).level = logger::Level::Warn };
     ctx.debug.loaded_bunfig = true;

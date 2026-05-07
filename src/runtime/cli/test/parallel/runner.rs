@@ -46,6 +46,26 @@ macro_rules! format_bytes {
 /// module load alone can exceed the production 5ms threshold.
 pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
+/// Owns the coordinator-side per-run worker temp directory path (NUL-terminated
+/// bytes); recursively removes it on drop. Mirrors the Zig
+/// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
+struct WorkerTmpdir(Option<Box<[u8]>>);
+
+impl WorkerTmpdir {
+    #[inline]
+    fn path(&self) -> Option<&[u8]> {
+        self.0.as_deref()
+    }
+}
+
+impl Drop for WorkerTmpdir {
+    fn drop(&mut self) {
+        if let Some(d) = &self.0 {
+            let _ = Fd::cwd().delete_tree(d);
+        }
+    }
+}
+
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
@@ -193,7 +213,7 @@ pub fn run_as_coordinator(
         argv,
         envps,
         workers: &mut workers, // TODO(port): lifetime — Coordinator borrows workers slice
-        worker_tmpdir: worker_tmpdir.as_deref(),
+        worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::try_from(d).unwrap()
@@ -223,8 +243,7 @@ pub fn run_as_coordinator(
         windows_job: Coordinator::create_windows_kill_on_close_job(),
     };
 
-    abort_handler::install();
-    let _abort_guard = scopeguard::guard((), |_| abort_handler::uninstall());
+    let _abort_guard = abort_handler::install();
 
     // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
     // Access workers through `coord.workers` to avoid a second &mut on the Vec.

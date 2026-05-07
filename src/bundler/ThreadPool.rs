@@ -131,8 +131,7 @@ mod io_thread_pool {
             }
         }
 
-        MUTEX.lock();
-        let _guard = scopeguard::guard((), |_| MUTEX.unlock());
+        let _guard = MUTEX.lock_guard();
 
         // Relaxed because the store we care about (the one that stores 1 to
         // indicate the thread pool is initialized) is guarded by the mutex.
@@ -176,8 +175,7 @@ mod io_thread_pool {
             return false;
         }
 
-        MUTEX.lock();
-        let _guard = scopeguard::guard((), |_| MUTEX.unlock());
+        let _guard = MUTEX.lock_guard();
 
         // Relaxed is okay because the only store that could happen at this point
         // is guarded by the mutex.

@@ -73,8 +73,7 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
 pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     let items = this.items.slice();
     let array = JSValue::create_empty_array(global, items.len()).map_err(js_err)?;
-    array.protect();
-    let _guard = scopeguard::guard((), |_| array.unprotect());
+    let _guard = array.protected();
     for (j, expr) in items.iter().enumerate() {
         array
             .put_index(global, j as u32, data_to_js(&expr.data, global)?)
@@ -103,8 +102,7 @@ pub fn big_int_to_js(_: &E::BigInt) -> JSValue {
 
 pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     let obj = JSValue::create_empty_object(global, this.properties.len as usize);
-    obj.protect();
-    let _guard = scopeguard::guard((), |_| obj.unprotect());
+    let _guard = obj.protected();
     let props: &[G::Property] = this.properties.slice();
     for prop in props {
         if prop.kind != G::PropertyKind::Normal
@@ -168,5 +166,5 @@ pub fn string_to_js(s: &E::String, global: &JSGlobalObject) -> Result<JSValue, T
 //   source:     src/js_parser_jsc/expr_jsc.zig (112 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      ToJSError variant names guessed (Zig used string-literal error tags); allocator params dropped per non-AST-crate rule; protect/unprotect via scopeguard; ExprData variant shapes & E::String mutability need Phase B verification.
+//   notes:      ToJSError variant names guessed (Zig used string-literal error tags); allocator params dropped per non-AST-crate rule; protect/unprotect via JSValue::protected RAII; ExprData variant shapes & E::String mutability need Phase B verification.
 // ──────────────────────────────────────────────────────────────────────────

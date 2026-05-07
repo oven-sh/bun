@@ -823,7 +823,7 @@ impl Task {
                                     return Ok(Yield::failure(TaskError::LinkPackage(err)));
                                 }
                             };
-                            let _folder_dir_guard = scopeguard::guard((), |_| folder_dir.close());
+                            let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
                             // TODO(port): Zig labeled-switch `backend:` modeled as loop+match
                             let mut backend = InstallMethod::Hardlink;
@@ -1547,10 +1547,7 @@ impl Task {
                                 let trusted_dep_to_add: Box<[u8]> =
                                     Box::from(dep.name.slice(string_buf));
 
-                                installer.trusted_dependencies_mutex.lock();
-                                let _unlock = scopeguard::guard((), |_| {
-                                    installer.trusted_dependencies_mutex.unlock();
-                                });
+                                let _unlock = installer.trusted_dependencies_mutex.lock_guard();
 
                                 // SAFETY: `trusted_dependencies_mutex` is held. Narrow the
                                 // exclusive borrow to the single Vec field via raw place so

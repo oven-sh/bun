@@ -317,13 +317,11 @@ impl LinkerContext<'_> {
         re_exports_count: usize,
     ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). The Rust port currently
-        // exposes only `DebugOnlyDisabler::{disable,enable}` as no-op stubs
-        // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
-        bun_js_parser::ast::stmt::Disabler::disable();
-        let _stmt_guard = scopeguard::guard((), |_| bun_js_parser::ast::stmt::Disabler::enable());
-        bun_js_parser::ast::expr::Disabler::disable();
-        let _expr_guard = scopeguard::guard((), |_| bun_js_parser::ast::expr::Disabler::enable());
+        // re-entrancy guards around the global Store). `scoped()` is the RAII
+        // form of Zig's `disable(); defer enable();` bracket — currently a
+        // no-op stub until the thread-local toggle lands (`js_parser/ast/mod.rs`).
+        let _stmt_guard = bun_js_parser::ast::stmt::Disabler::scoped();
+        let _expr_guard = bun_js_parser::ast::expr::Disabler::scoped();
 
         // 1 property per export
         let mut properties =

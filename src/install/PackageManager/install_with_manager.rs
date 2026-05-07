@@ -844,15 +844,13 @@ pub fn install_with_manager(
     // at scope exit frees it. Route through a raw provenance root because
     // `manager: &mut` is reborrowed many times below; the guard fires once on
     // the way out and is the only access at that point.
-    let _root_scripts_guard = {
-        let mgr: *mut PackageManager = manager;
-        scopeguard::guard((), move |_| {
-            // SAFETY: `mgr` was derived from the live exclusive `manager`
-            // borrow above; this guard runs once at scope exit (before
-            // `manager` is returned to the caller) and is the sole access
-            // to `*mgr` at that instant.
-            unsafe { (*mgr).root_lifecycle_scripts = None };
-        })
+    let mgr_for_root_scripts_cleanup: *mut PackageManager = manager;
+    scopeguard::defer! {
+        // SAFETY: `mgr_for_root_scripts_cleanup` was derived from the live
+        // exclusive `manager` borrow above; this guard runs once at scope exit
+        // (before `manager` is returned to the caller) and is the sole access
+        // to `*mgr_for_root_scripts_cleanup` at that instant.
+        unsafe { (*mgr_for_root_scripts_cleanup).root_lifecycle_scripts = None };
     };
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
@@ -1275,7 +1273,7 @@ fn print_install_summary(
     did_meta_hash_change: bool,
     log_level: Options::LogLevel,
 ) -> Result<(), bun_core::Error> {
-    let _flush_guard = scopeguard::guard((), |_| Output::flush());
+    let _flush_guard = Output::flush_guard();
 
     let mut printed_timestamp = false;
     if this.options.do_.summary {

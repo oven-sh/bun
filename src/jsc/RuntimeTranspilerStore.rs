@@ -543,11 +543,11 @@ impl TranspilerJob {
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
-        let _dispatch_guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: `self` outlives this guard (guard drops before `arena` and before fn
             // return); no other &mut alias is live at drop time.
             unsafe { (*this_ptr).dispatch_to_main_thread() };
-        });
+        }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
         // PORT NOTE: kept as a raw pointer — never form `&mut VirtualMachine`

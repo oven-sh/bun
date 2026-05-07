@@ -978,16 +978,39 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Port of `install.zig` `PackageManager.WakeHandler` — opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS
-/// event loop when a network task completes. The resolver only stores
-/// and forwards it; the fields are `Option` so `Default` is all-None
-/// (Zig: `.{ }` zero-init).
+/// Port of `install/PackageManager.zig` `WakeHandler` — (ctx-ptr + 2 fn-ptrs)
+/// the runtime installs so the JS event loop is nudged when a network task
+/// completes. Zig stores both fns as `*const anyopaque` and casts at the
+/// accessor (`getHandler` → `fn(*anyopaque, *PackageManager)`); this crate
+/// cannot name `PackageManager`, so `handler`'s second arg is the erased
+/// `*mut c_void` and `bun_install` casts it back at the call site. The
+/// resolver only stores and forwards this struct.
 #[derive(Default, Clone)]
 pub struct WakeHandler {
     pub context: Option<core::ptr::NonNull<core::ffi::c_void>>,
-    pub handler: Option<fn(*mut core::ffi::c_void)>,
-    pub on_dependency_error: Option<fn(*mut core::ffi::c_void, &Dependency, DependencyID, bun_core::Error)>,
+    /// `fn(ctx, *mut PackageManager)` — second arg is the erased manager ptr.
+    pub handler: Option<fn(*mut core::ffi::c_void, *mut core::ffi::c_void)>,
+    pub on_dependency_error:
+        Option<fn(*mut core::ffi::c_void, &Dependency, DependencyID, bun_core::Error)>,
+}
+
+impl WakeHandler {
+    /// Zig: `getHandler` — caller must have set `handler` before `context`.
+    #[inline]
+    pub fn get_handler(&self) -> fn(*mut core::ffi::c_void, *mut core::ffi::c_void) {
+        self.handler.unwrap()
+    }
+
+    /// Zig: `getonDependencyError`. PORT NOTE: the Zig spec casts `t.handler`
+    /// (the wrong field) to the dep-error fn type — that is a Zig bug; this
+    /// reads `on_dependency_error` instead. Preserving the bug would require an
+    /// unsound transmute between fn-pointer signatures.
+    #[inline]
+    pub fn geton_dependency_error(
+        &self,
+    ) -> fn(*mut core::ffi::c_void, &Dependency, DependencyID, bun_core::Error) {
+        self.on_dependency_error.unwrap()
+    }
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────

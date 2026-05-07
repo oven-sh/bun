@@ -446,15 +446,16 @@ impl FileSystemRouter {
         let arena = Box::new(ArenaAllocator::new());
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global.
         let vm_ptr = global_this.bun_vm();
-        let vm = unsafe { &mut *vm_ptr };
 
         let mut log = Log::Log::new();
-        let orig_log: *mut Log::Log = vm.transpiler.resolver.log;
-        vm.transpiler.resolver.log = &mut log;
-        let _restore_log = scopeguard::guard((), move |_| {
-            // SAFETY: `vm_ptr` is live; runs before `log` drops (declared after it).
-            unsafe { (*vm_ptr).transpiler.resolver.log = orig_log };
-        });
+        // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
+        // scope. Guard declared after `log` so it drops (and restores) first.
+        let _restore_log = unsafe {
+            Resolver::scoped_log(
+                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
+                &mut log,
+            )
+        };
 
         this.bust_dir_cache(global_this);
         // PORT NOTE: `bust_dir_cache` re-derives `&mut *vm_ptr` internally; rebind here so

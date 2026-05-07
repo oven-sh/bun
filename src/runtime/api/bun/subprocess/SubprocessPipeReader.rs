@@ -268,8 +268,11 @@ impl PipeReader {
     }
 
     pub fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // `defer this.detach()` — detach may drop the last ref, so run it after computing the result.
-        // TODO(port): self-deref at scope exit; ensure no `&mut self` borrow outlives detach().
+        // `defer this.detach()` — detach() = clear `process` backref + deref. The deref
+        // may drop the last ref, so it must run after the result is computed; the backref
+        // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
+        // re-enter on_reader_done/on_reader_error and consult `self.process`). Compound
+        // side-effect, not pure refcount → defer! is the RAII shape here.
         let this_ptr: *mut PipeReader = self;
         scopeguard::defer! {
             // SAFETY: `self` is valid for the duration of this call; detach() may free it,

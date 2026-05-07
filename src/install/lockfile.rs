@@ -2239,7 +2239,8 @@ impl Lockfile {
                     let resolutions = self.packages.items_resolution();
                     let buf = self.buffers.string_bytes.as_slice();
 
-                    for (i, &existing_id) in existing_ids.iter().enumerate() {
+                    for i in 0..existing_ids.len() {
+                        let existing_id = existing_ids[i];
                         if resolutions[id as usize]
                             .order(&resolutions[existing_id as usize], buf, buf)
                             == Ordering::Greater
@@ -2671,21 +2672,16 @@ pub struct PathToId {
 }
 
 impl<'a> EqlSorter<'a> {
-    pub fn is_less_than(&self, l: PathToId, r: PathToId) -> bool {
+    pub fn order(&self, l: PathToId, r: PathToId) -> Ordering {
         // SAFETY: tree_path points into allocations alive for the duration of `eql`.
         let l_path = unsafe { &*l.tree_path };
         let r_path = unsafe { &*r.tree_path };
-        match strings::order(l_path, r_path) {
-            Ordering::Less => return true,
-            Ordering::Greater => return false,
-            Ordering::Equal => {}
-        }
-
-        // they exist in the same tree, name can't be the same so string
-        // compare.
-        let l_name = self.pkg_names[l.pkg_id as usize];
-        let r_name = self.pkg_names[r.pkg_id as usize];
-        l_name.order(&r_name, self.string_buf, self.string_buf) == Ordering::Less
+        // they exist in the same tree, name can't be the same so string compare.
+        strings::order(l_path, r_path).then_with(|| {
+            let l_name = self.pkg_names[l.pkg_id as usize];
+            let r_name = self.pkg_names[r.pkg_id as usize];
+            l_name.order(&r_name, self.string_buf, self.string_buf)
+        })
     }
 }
 

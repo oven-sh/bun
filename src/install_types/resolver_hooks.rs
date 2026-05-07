@@ -135,70 +135,420 @@ pub struct Dependency {
     pub version: DependencyVersion,
 }
 
-// ─── npm::{Architecture, OperatingSystem} ─────────────────────────────────
-// Bitflag sets keyed by short arch/os strings (install/npm.zig). The resolver
-// only constructs them from package.json `os`/`cpu` arrays via
-// `none().negatable().apply(str).combine()`; `bun_install` consumes the bits.
+// ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────
+// MOVE_DOWN from `bun_install::npm` (port of `install/npm.zig`) so both
+// `bun_resolver` (package.json `os`/`cpu` arrays) and `bun_install` (manifest
+// parsing, lockfile serialization) name the SAME bit-layout. The bit positions
+// are load-bearing — they round-trip through `bun.lock` and the npm manifest
+// cache; the Zig spec starts at `1 << 1` (bit 0 is never set).
+//
+// `Negatable::from_json` stays in `bun_install::npm` because it depends on the
+// `JsonExprView` trait (which abstracts over `bun_logger::js_ast::Expr` and
+// `bun_js_parser::Expr`), neither of which is reachable from this crate.
 
-macro_rules! os_arch_flags {
-    ($name:ident, $bits:ty, [$( $variant:ident = $lit:literal => $bit:expr ),* $(,)?]) => {
-        bitflags::bitflags! {
-            #[derive(Default, Clone, Copy, PartialEq, Eq)]
-            pub struct $name: $bits {
-                $( const $variant = 1 << $bit; )*
-            }
-        }
-        impl $name {
-            #[inline] pub fn none() -> Self { Self::empty() }
-            #[inline] pub fn negatable(self) -> Negatable<$name> { Negatable { has: self, not: Self::empty() } }
-            // NOTE: `bitflags!` already generates an inherent `from_name(&str)`;
-            // use a distinct identifier so the two don't collide (E0592).
-            fn from_npm_name(s: &[u8]) -> Option<Self> {
-                match s { $( $lit => Some(Self::$variant), )* _ => None }
-            }
-        }
-        impl Negatable<$name> {
-            /// Port of `npm.zig` `Negatable.apply` — `!foo` clears, `foo` sets.
-            pub fn apply(&mut self, s: &[u8]) {
-                let (neg, key) = if let Some(rest) = s.strip_prefix(b"!") { (true, rest) } else { (false, s) };
-                if let Some(bit) = <$name>::from_npm_name(key) {
-                    if neg { self.not |= bit; } else { self.has |= bit; }
-                }
-            }
-            #[inline] pub fn combine(self) -> $name {
-                if self.has.is_empty() { <$name>::all() & !self.not } else { self.has & !self.not }
-            }
-        }
-    };
+/// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`] (Zig: `enum(uN)
+/// { none = 0, all = all_value, _ }` open-enum with associated bit consts).
+pub trait NegatableEnum: Copy + Eq {
+    type Int: 'static
+        + Copy
+        + Eq
+        + core::ops::BitOr<Output = Self::Int>
+        + core::ops::BitAnd<Output = Self::Int>
+        + core::ops::Not<Output = Self::Int>
+        + Default;
+    const NONE: Self;
+    const ALL: Self;
+    const ALL_VALUE: Self::Int;
+    fn name_map() -> &'static phf::Map<&'static [u8], Self::Int>;
+    fn name_map_kvs() -> &'static [(&'static [u8], Self::Int)];
+    fn has(self, other: Self::Int) -> bool;
+    fn to_raw(self) -> Self::Int;
+    fn from_raw(n: Self::Int) -> Self;
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct Negatable<T: Copy> { pub has: T, pub not: T }
+/// Port of `install/npm.zig` `Negatable(T)` — accumulates an `os`/`cpu`/`libc`
+/// allowlist+blocklist from package.json string arrays, then collapses to a
+/// single bitset via [`combine`](Self::combine).
+#[derive(Clone, Copy)]
+pub struct Negatable<T: NegatableEnum> {
+    pub added: T,
+    pub removed: T,
+    pub had_wildcard: bool,
+    pub had_unrecognized_values: bool,
+}
 
-os_arch_flags!(Architecture, u16, [
-    ARM     = b"arm"     => 0,
-    ARM64   = b"arm64"   => 1,
-    IA32    = b"ia32"    => 2,
-    MIPS    = b"mips"    => 3,
-    MIPSEL  = b"mipsel"  => 4,
-    PPC     = b"ppc"     => 5,
-    PPC64   = b"ppc64"   => 6,
-    S390X   = b"s390x"   => 7,
-    X64     = b"x64"     => 8,
-    LOONG64 = b"loong64" => 9,
-    RISCV64 = b"riscv64" => 10,
-]);
+impl<T: NegatableEnum> Default for Negatable<T> {
+    fn default() -> Self {
+        Self {
+            added: T::NONE,
+            removed: T::NONE,
+            had_wildcard: false,
+            had_unrecognized_values: false,
+        }
+    }
+}
 
-os_arch_flags!(OperatingSystem, u16, [
-    AIX     = b"aix"     => 0,
-    DARWIN  = b"darwin"  => 1,
-    FREEBSD = b"freebsd" => 2,
-    LINUX   = b"linux"   => 3,
-    OPENBSD = b"openbsd" => 4,
-    SUNOS   = b"sunos"   => 5,
-    WIN32   = b"win32"   => 6,
-    ANDROID = b"android" => 7,
-]);
+impl<T: NegatableEnum> Negatable<T> {
+    // https://github.com/pnpm/pnpm/blob/1f228b0aeec2ef9a2c8577df1d17186ac83790f9/config/package-is-installable/src/checkPlatform.ts#L56-L86
+    // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/node_modules/npm-install-checks/lib/index.js#L2-L96
+    pub fn combine(self) -> T {
+        let added = if self.had_wildcard { T::ALL_VALUE } else { self.added.to_raw() };
+        let removed = self.removed.to_raw();
+        let zero = T::Int::default();
+
+        // If none were added or removed, all are allowed
+        if added == zero && removed == zero {
+            if self.had_unrecognized_values {
+                return T::NONE;
+            }
+            // []
+            return T::ALL;
+        }
+
+        // If none were added, but some were removed, return the inverse of the removed
+        if added == zero && removed != zero {
+            // ["!linux", "!darwin"]
+            return T::from_raw(T::ALL_VALUE & !removed);
+        }
+
+        if removed == zero {
+            // ["linux", "darwin"]
+            return T::from_raw(added);
+        }
+
+        // - ["linux", "!darwin"]
+        T::from_raw(added & !removed)
+    }
+
+    pub fn apply(&mut self, str: &[u8]) {
+        if str.is_empty() {
+            return;
+        }
+
+        if str == b"any" {
+            self.had_wildcard = true;
+            return;
+        }
+
+        if str == b"none" {
+            self.had_unrecognized_values = true;
+            return;
+        }
+
+        let is_not = str[0] == b'!';
+        let offset: usize = is_not as usize;
+
+        let Some(&field) = T::name_map().get(&str[offset..]) else {
+            if !is_not {
+                self.had_unrecognized_values = true;
+            }
+            return;
+        };
+
+        if is_not {
+            self.removed = T::from_raw(self.removed.to_raw() | field);
+        } else {
+            self.added = T::from_raw(self.added.to_raw() | field);
+        }
+    }
+
+    /// writes to a one line json array with a trailing comma and space, or writes a string
+    pub fn to_json(field: T, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+        if field == T::NONE {
+            // [] means everything, so unrecognized value
+            return writer.write_str(r#""none""#);
+        }
+
+        let kvs = T::name_map_kvs();
+        let mut removed: u8 = 0;
+        for kv in kvs {
+            if !field.has(kv.1) {
+                removed += 1;
+            }
+        }
+        let included = kvs.len() - usize::from(removed);
+        let print_included = usize::from(removed) > kvs.len() - usize::from(removed);
+
+        let one = (print_included && included == 1) || (!print_included && removed == 1);
+
+        if !one {
+            writer.write_str("[ ")?;
+        }
+
+        for kv in kvs {
+            let has = field.has(kv.1);
+            if has && print_included {
+                write!(writer, r#""{}""#, bstr::BStr::new(kv.0))?;
+                if one {
+                    return Ok(());
+                }
+                writer.write_str(", ")?;
+            } else if !has && !print_included {
+                write!(writer, r#""!{}""#, bstr::BStr::new(kv.0))?;
+                if one {
+                    return Ok(());
+                }
+                writer.write_str(", ")?;
+            }
+        }
+
+        writer.write_char(']')
+    }
+}
+
+/// Zig: `pub fn negatable(this: T) Negatable(T)` — provided as a blanket ext
+/// so each enum doesn't repeat the constructor.
+pub trait NegatableExt: NegatableEnum {
+    #[inline]
+    fn negatable(self) -> Negatable<Self> {
+        Negatable {
+            added: self,
+            removed: Self::NONE,
+            had_wildcard: false,
+            had_unrecognized_values: false,
+        }
+    }
+}
+impl<T: NegatableEnum> NegatableExt for T {}
+
+// ──────────────────────────────────────────────────────────────────────────
+
+/// https://nodejs.org/api/os.html#osplatform
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct OperatingSystem(pub u16);
+
+impl OperatingSystem {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self(Self::ALL_VALUE);
+
+    pub const AIX: u16 = 1 << 1;
+    pub const DARWIN: u16 = 1 << 2;
+    pub const FREEBSD: u16 = 1 << 3;
+    pub const LINUX: u16 = 1 << 4;
+    pub const OPENBSD: u16 = 1 << 5;
+    pub const SUNOS: u16 = 1 << 6;
+    pub const WIN32: u16 = 1 << 7;
+    pub const ANDROID: u16 = 1 << 8;
+
+    pub const ALL_VALUE: u16 = Self::AIX
+        | Self::DARWIN
+        | Self::FREEBSD
+        | Self::LINUX
+        | Self::OPENBSD
+        | Self::SUNOS
+        | Self::WIN32
+        | Self::ANDROID;
+
+    #[cfg(all(target_os = "linux", not(target_os = "android")))]
+    pub const CURRENT: Self = Self(Self::LINUX);
+    #[cfg(target_os = "android")]
+    pub const CURRENT: Self = Self(Self::ANDROID);
+    #[cfg(target_os = "macos")]
+    pub const CURRENT: Self = Self(Self::DARWIN);
+    #[cfg(windows)]
+    pub const CURRENT: Self = Self(Self::WIN32);
+    #[cfg(target_os = "freebsd")]
+    pub const CURRENT: Self = Self(Self::FREEBSD);
+
+    #[cfg(target_os = "linux")]
+    pub const CURRENT_NAME: &'static str = "linux";
+    #[cfg(target_os = "macos")]
+    pub const CURRENT_NAME: &'static str = "darwin";
+    #[cfg(windows)]
+    pub const CURRENT_NAME: &'static str = "win32";
+    #[cfg(target_os = "freebsd")]
+    pub const CURRENT_NAME: &'static str = "freebsd";
+
+    #[inline] pub const fn none() -> Self { Self::NONE }
+    #[inline] pub const fn all() -> Self { Self::ALL }
+    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
+    #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
+    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
+    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
+    // `Negatable::to_json` iterates this to serialize bun.lock `"os"` arrays; mismatched
+    // order yields non-byte-identical lockfiles vs. Zig.
+    pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
+        (b"aix", Self::AIX),
+        (b"linux", Self::LINUX),
+        (b"sunos", Self::SUNOS),
+        (b"win32", Self::WIN32),
+        (b"darwin", Self::DARWIN),
+        (b"android", Self::ANDROID),
+        (b"freebsd", Self::FREEBSD),
+        (b"openbsd", Self::OPENBSD),
+    ];
+}
+
+pub static OPERATING_SYSTEM_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
+    b"aix" => OperatingSystem::AIX,
+    b"darwin" => OperatingSystem::DARWIN,
+    b"freebsd" => OperatingSystem::FREEBSD,
+    b"linux" => OperatingSystem::LINUX,
+    b"openbsd" => OperatingSystem::OPENBSD,
+    b"sunos" => OperatingSystem::SUNOS,
+    b"win32" => OperatingSystem::WIN32,
+    b"android" => OperatingSystem::ANDROID,
+};
+
+impl NegatableEnum for OperatingSystem {
+    type Int = u16;
+    const NONE: Self = Self::NONE;
+    const ALL: Self = Self::ALL;
+    const ALL_VALUE: u16 = Self::ALL_VALUE;
+    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &OPERATING_SYSTEM_NAME_MAP }
+    fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
+    fn has(self, other: u16) -> bool { Self::has(self, other) }
+    fn to_raw(self) -> u16 { self.0 }
+    fn from_raw(n: u16) -> Self { Self(n) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct Libc(pub u8);
+
+impl Libc {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self(Self::ALL_VALUE);
+
+    pub const GLIBC: u8 = 1 << 1;
+    pub const MUSL: u8 = 1 << 2;
+
+    pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
+
+    // TODO: (matches Zig — runtime libc detection)
+    pub const CURRENT: Self = Self(Self::GLIBC);
+
+    #[inline] pub const fn none() -> Self { Self::NONE }
+    #[inline] pub const fn all() -> Self { Self::ALL }
+    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
+    #[inline] pub fn has(self, other: u8) -> bool { (self.0 & other) != 0 }
+    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (sorted by (key.len asc, bytewise asc)).
+    pub const NAME_MAP_KVS: &'static [(&'static [u8], u8)] = &[
+        (b"musl", Self::MUSL),
+        (b"glibc", Self::GLIBC),
+    ];
+}
+
+pub static LIBC_NAME_MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
+    b"glibc" => Libc::GLIBC,
+    b"musl" => Libc::MUSL,
+};
+
+impl NegatableEnum for Libc {
+    type Int = u8;
+    const NONE: Self = Self::NONE;
+    const ALL: Self = Self::ALL;
+    const ALL_VALUE: u8 = Self::ALL_VALUE;
+    fn name_map() -> &'static phf::Map<&'static [u8], u8> { &LIBC_NAME_MAP }
+    fn name_map_kvs() -> &'static [(&'static [u8], u8)] { Self::NAME_MAP_KVS }
+    fn has(self, other: u8) -> bool { Self::has(self, other) }
+    fn to_raw(self) -> u8 { self.0 }
+    fn from_raw(n: u8) -> Self { Self(n) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
+/// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
+/// https://nodejs.org/api/os.html#osarch
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct Architecture(pub u16);
+
+impl Architecture {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self(Self::ALL_VALUE);
+
+    pub const ARM: u16 = 1 << 1;
+    pub const ARM64: u16 = 1 << 2;
+    pub const IA32: u16 = 1 << 3;
+    pub const MIPS: u16 = 1 << 4;
+    pub const MIPSEL: u16 = 1 << 5;
+    pub const PPC: u16 = 1 << 6;
+    pub const PPC64: u16 = 1 << 7;
+    pub const S390: u16 = 1 << 8;
+    pub const S390X: u16 = 1 << 9;
+    pub const X32: u16 = 1 << 10;
+    pub const X64: u16 = 1 << 11;
+
+    pub const ALL_VALUE: u16 = Self::ARM
+        | Self::ARM64
+        | Self::IA32
+        | Self::MIPS
+        | Self::MIPSEL
+        | Self::PPC
+        | Self::PPC64
+        | Self::S390
+        | Self::S390X
+        | Self::X32
+        | Self::X64;
+
+    #[cfg(target_arch = "aarch64")]
+    pub const CURRENT: Self = Self(Self::ARM64);
+    #[cfg(target_arch = "x86_64")]
+    pub const CURRENT: Self = Self(Self::X64);
+
+    #[cfg(target_arch = "aarch64")]
+    pub const CURRENT_NAME: &'static str = "arm64";
+    #[cfg(target_arch = "x86_64")]
+    pub const CURRENT_NAME: &'static str = "x64";
+
+    #[inline] pub const fn none() -> Self { Self::NONE }
+    #[inline] pub const fn all() -> Self { Self::ALL }
+    #[inline] pub fn is_match(self, target: Self) -> bool { (self.0 & target.0) != 0 }
+    #[inline] pub fn has(self, other: u16) -> bool { (self.0 & other) != 0 }
+    #[inline] pub fn negatable(self) -> Negatable<Self> { NegatableExt::negatable(self) }
+
+    // Order MUST match Zig's `ComptimeStringMap.kvs` (= `precomputed.sorted_kvs`, sorted by
+    // (key.len asc, then bytewise asc) — src/collections/comptime_string_map.zig:21-27,66).
+    // `Negatable::to_json` iterates this to serialize bun.lock `"cpu"` arrays; mismatched
+    // order yields non-byte-identical lockfiles vs. Zig.
+    pub const NAME_MAP_KVS: &'static [(&'static [u8], u16)] = &[
+        (b"arm", Self::ARM),
+        (b"ppc", Self::PPC),
+        (b"x32", Self::X32),
+        (b"x64", Self::X64),
+        (b"ia32", Self::IA32),
+        (b"mips", Self::MIPS),
+        (b"s390", Self::S390),
+        (b"arm64", Self::ARM64),
+        (b"ppc64", Self::PPC64),
+        (b"s390x", Self::S390X),
+        (b"mipsel", Self::MIPSEL),
+    ];
+}
+
+pub static ARCHITECTURE_NAME_MAP: phf::Map<&'static [u8], u16> = phf::phf_map! {
+    b"arm" => Architecture::ARM,
+    b"arm64" => Architecture::ARM64,
+    b"ia32" => Architecture::IA32,
+    b"mips" => Architecture::MIPS,
+    b"mipsel" => Architecture::MIPSEL,
+    b"ppc" => Architecture::PPC,
+    b"ppc64" => Architecture::PPC64,
+    b"s390" => Architecture::S390,
+    b"s390x" => Architecture::S390X,
+    b"x32" => Architecture::X32,
+    b"x64" => Architecture::X64,
+};
+
+impl NegatableEnum for Architecture {
+    type Int = u16;
+    const NONE: Self = Self::NONE;
+    const ALL: Self = Self::ALL;
+    const ALL_VALUE: u16 = Self::ALL_VALUE;
+    fn name_map() -> &'static phf::Map<&'static [u8], u16> { &ARCHITECTURE_NAME_MAP }
+    fn name_map_kvs() -> &'static [(&'static [u8], u16)] { Self::NAME_MAP_KVS }
+    fn has(self, other: u16) -> bool { Self::has(self, other) }
+    fn to_raw(self) -> u16 { self.0 }
+    fn from_raw(n: u16) -> Self { Self(n) }
+}
 
 // ─── Resolution ───────────────────────────────────────────────────────────
 
@@ -213,12 +563,11 @@ pub enum ResolutionTag {
     Folder = 4,
     LocalTarball = 8,
     Github = 16,
-    Gitlab = 24,
     Git = 32,
     Symlink = 64,
     Workspace = 72,
     RemoteTarball = 80,
-    Single = 100,
+    SingleFileModule = 100,
 }
 
 /// Resolver-visible projection of `install::resolution::Resolution`. The full
@@ -276,6 +625,74 @@ impl Default for Features {
             check_for_duplicate_dependencies: false,
         }
     }
+}
+
+impl Features {
+    pub fn behavior(self) -> Behavior {
+        let mut out: u8 = 0;
+        out |= (self.dependencies as u8) << 1;
+        out |= (self.optional_dependencies as u8) << 2;
+        out |= (self.dev_dependencies as u8) << 3;
+        out |= (self.peer_dependencies as u8) << 4;
+        out |= (self.workspaces as u8) << 5;
+        Behavior::from_bits_retain(out)
+    }
+
+    const fn base() -> Self {
+        Self {
+            dependencies: true,
+            dev_dependencies: false,
+            is_main: false,
+            optional_dependencies: false,
+            peer_dependencies: true,
+            trusted_dependencies: false,
+            workspaces: false,
+            patched_dependencies: false,
+            check_for_duplicate_dependencies: false,
+        }
+    }
+
+    pub const MAIN: Self = Self {
+        check_for_duplicate_dependencies: true,
+        dev_dependencies: true,
+        is_main: true,
+        optional_dependencies: true,
+        trusted_dependencies: true,
+        patched_dependencies: true,
+        workspaces: true,
+        ..Self::base()
+    };
+
+    pub const FOLDER: Self = Self {
+        dev_dependencies: true,
+        optional_dependencies: true,
+        ..Self::base()
+    };
+
+    pub const WORKSPACE: Self = Self {
+        dev_dependencies: true,
+        optional_dependencies: true,
+        trusted_dependencies: true,
+        ..Self::base()
+    };
+
+    pub const LINK: Self = Self {
+        dependencies: false,
+        peer_dependencies: false,
+        ..Self::base()
+    };
+
+    pub const NPM: Self = Self {
+        optional_dependencies: true,
+        ..Self::base()
+    };
+
+    pub const TARBALL: Self = Self::NPM;
+
+    pub const NPM_MANIFEST: Self = Self {
+        optional_dependencies: true,
+        ..Self::base()
+    };
 }
 
 #[derive(Default, Clone, Copy)]

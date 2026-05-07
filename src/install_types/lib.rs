@@ -7,9 +7,10 @@ pub mod resolver_hooks;
 pub use resolver_hooks::{
     Architecture, AutoInstaller, Behavior, Dependency, DependencyGroup, DependencyID,
     DependencySlice, DependencyVersion, DependencyVersionTag, EnqueueResult, ExternalSlice,
-    Features, InitAutoInstaller, Negatable, OperatingSystem, PackageID, PackageJsonView,
-    PreinstallState, Resolution, ResolutionSlice, ResolutionTag, TaskCallbackContext, WakeHandler,
-    INIT_AUTO_INSTALLER, INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID,
+    Features, InitAutoInstaller, Libc, Negatable, NegatableEnum, NegatableExt, OperatingSystem,
+    PackageID, PackageJsonView, PreinstallState, Resolution, ResolutionSlice, ResolutionTag,
+    TaskCallbackContext, WakeHandler, ARCHITECTURE_NAME_MAP, INIT_AUTO_INSTALLER,
+    INVALID_DEPENDENCY_ID, INVALID_PACKAGE_ID, LIBC_NAME_MAP, OPERATING_SYSTEM_NAME_MAP,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

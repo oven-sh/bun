@@ -15,7 +15,7 @@ use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle, FilePollFlag
 
 use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
-use bun_sys::Fd;
+use bun_sys::{Fd, FdExt as _};
 use bun_aio::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);

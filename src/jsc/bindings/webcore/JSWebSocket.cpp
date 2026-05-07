@@ -943,10 +943,8 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForWebSocket; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForWebSocket; });
 }
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)

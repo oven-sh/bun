@@ -926,10 +926,8 @@ GCClient::IsoSubspace* JSCookie::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSCookie, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCookie.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCookie = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCookie.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCookie = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCookie; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForCookie; });
 }
 
 void JSCookie::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

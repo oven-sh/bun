@@ -393,10 +393,8 @@ JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStringDecoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoder = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForStringDecoder; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForStringDecoder; });
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);

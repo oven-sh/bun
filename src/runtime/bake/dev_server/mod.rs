@@ -41,7 +41,10 @@ use crate::server::StaticRoute;
  #[path = "../DevServer/WatcherAtomics.rs"]      pub(crate) mod watcher_atomics_body;
  #[path = "../DevServer/memory_cost.rs"]         pub(crate) mod memory_cost_body;
 
-bun_core::declare_scope!(DevServer, visible);
+// NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in
+// `dev_server_body` (`bun_output::declare_scope!(DevServer, visible)`) and
+// re-exported via the `pub use` block below alongside the `struct DevServer`
+// type. Declaring it again here would collide in the value namespace.
 
 pub const INTERNAL_PREFIX: &str = "/_bun";
 pub const ASSET_PREFIX: &str = "/_bun/asset";

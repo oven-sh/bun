@@ -494,7 +494,9 @@ impl<'a> Arguments<'a> {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
-                        signal = Some(signal_obj);
+                        // SAFETY: `from_js` returned a non-null borrow of the JS wrapper's
+                        // payload; the JSValue stays alive for `'a` (rooted in CallFrame args).
+                        signal = Some(unsafe { &*signal_obj });
                     } else {
                         return Err(ctx.throw_invalid_arguments(
                             "signal is not of type AbortSignal",
@@ -564,18 +566,21 @@ impl FSWatcher {
         self.js_this = js_this;
         Self::js::listener_set_cached(js_this, self.global_this, listener);
 
+        let self_ptr: *mut FSWatcher = self;
         if let Some(s) = &self.signal {
             // already aborted?
             if s.aborted() {
                 // safely abort next tick
                 self.current_task = FSWatchTask {
-                    ctx: self,
+                    ctx: self_ptr,
                     ..Default::default()
                 };
                 self.current_task.append_abort();
             } else {
                 // watch for abortion
-                self.signal = Some(s.listen(self, FSWatcher::emit_abort));
+                // PORT NOTE: Zig `this.signal = s.listen(...)` reassigns the same pointer;
+                // `listen` returns `self`, so the field already holds it — just register.
+                s.listen::<FSWatcher>(self_ptr);
             }
         }
     }
@@ -691,6 +696,13 @@ impl FSWatcher {
         }
 
         emit_js::<EVENT_TYPE>(listener, global_object, filename);
+    }
+}
+
+impl AbortListener for FSWatcher {
+    #[inline]
+    fn on_abort(&mut self, reason: JSValue) {
+        self.emit_abort(reason);
     }
 }
 
@@ -811,7 +823,9 @@ impl FSWatcher {
         }
 
         if let Some(signal) = self.signal.take() {
-            signal.detach(self);
+            // Zig: `signal.detach(this)` → `cleanNativeBindings(this); unref();`.
+            // `AbortSignalRef: Drop` performs the `unref`, so only clean bindings here.
+            signal.clean_native_bindings((self as *mut Self).cast::<c_void>());
         }
 
         self.js_this = JSValue::ZERO;
@@ -850,7 +864,11 @@ impl FSWatcher {
                 ..Default::default()
             },
             mutex: Mutex::default(),
-            signal: args.signal.map(|s| s.ref_()),
+            // SAFETY: `ref_()` returns the same non-null pointer with +1 refcount;
+            // adopted into `AbortSignalRef`, which `unref`s on drop.
+            signal: args
+                .signal
+                .map(|s| unsafe { AbortSignalRef::adopt(s.ref_()) }),
             persistent: args.persistent,
             path_watcher: None,
             // SAFETY: JSGlobalObject is a singleton that outlives FSWatcher (JSC_BORROW per LIFETIMES.tsv).

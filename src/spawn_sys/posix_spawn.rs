@@ -352,18 +352,18 @@ pub mod posix_spawn {
             let mut flags: c_short = 0;
             // SAFETY: self.attr is a live posix_spawnattr_t
             match errno(unsafe { system::posix_spawnattr_getflags(&self.attr, &mut flags) }) {
-                Errno::SUCCESS => {
-                    // SAFETY: c_short and u16 are same size
-                    Ok(unsafe { core::mem::transmute::<c_short, u16>(flags) })
-                }
+                // Zig: `@as(u16, @bitCast(flags))`
+                Errno::SUCCESS => Ok(flags as u16),
                 Errno::INVAL => unreachable!(),
                 e => Err(unexpected_errno(e)),
             }
         }
 
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
+            // Zig: `@as(c_short, @bitCast(flags))` — `as` between same-width
+            // signed/unsigned is the bitcast.
+            let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
-            let flags_s: c_short = unsafe { core::mem::transmute::<u16, c_short>(flags) };
             match errno(unsafe { system::posix_spawnattr_setflags(&mut self.attr, flags_s) }) {
                 Errno::SUCCESS => Ok(()),
                 Errno::INVAL => unreachable!(),
@@ -428,12 +428,13 @@ pub mod posix_spawn {
             flags: u32,
             mode: mode_t,
         ) -> Result<(), Error> {
+            // Zig: `@as(c_int, @bitCast(flags))`
+            let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
-            let flags_c: c_int = unsafe { core::mem::transmute::<u32, c_int>(flags) };
             match errno(unsafe {
                 system::posix_spawn_file_actions_addopen(
                     &mut self.actions,
-                    fd.cast(),
+                    fd.native(),
                     path.as_ptr(),
                     flags_c,
                     mode,
@@ -451,7 +452,7 @@ pub mod posix_spawn {
         pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             match errno(unsafe {
-                system::posix_spawn_file_actions_addclose(&mut self.actions, fd.cast())
+                system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
             }) {
                 Errno::SUCCESS => Ok(()),
                 Errno::BADF => Err(err!("InvalidFileDescriptor")),
@@ -469,7 +470,7 @@ pub mod posix_spawn {
 
             // SAFETY: self.actions is live
             match errno(unsafe {
-                system::posix_spawn_file_actions_adddup2(&mut self.actions, fd.cast(), newfd.cast())
+                system::posix_spawn_file_actions_adddup2(&mut self.actions, fd.native(), newfd.native())
             }) {
                 Errno::SUCCESS => Ok(()),
                 Errno::BADF => Err(err!("InvalidFileDescriptor")),
@@ -485,7 +486,7 @@ pub mod posix_spawn {
             match errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
                     &mut self.actions,
-                    fd.cast(),
+                    fd.native(),
                 )
             }) {
                 Errno::SUCCESS => Ok(()),

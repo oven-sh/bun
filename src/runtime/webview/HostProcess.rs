@@ -87,7 +87,7 @@ pub extern "C" fn Bun__WebViewHost__ensure(
                 return -1;
             }
         };
-        fd.cast()
+        fd.native()
     }
 }
 

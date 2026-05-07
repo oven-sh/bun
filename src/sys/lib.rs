@@ -3356,7 +3356,7 @@ pub mod c {
         sysctl, sysctlbyname, sysctlnametomib,
         // <mach/*.h> — host/processor/vm primitives for `os.cpus()` & memory stats
         natural_t, integer_t, mach_port_t, mach_msg_type_number_t,
-        mach_host_self, mach_task_self, host_processor_info, host_statistics64,
+        host_processor_info, host_statistics64,
         vm_deallocate, vm_size_t, vm_statistics64, vm_statistics64_data_t,
         processor_cpu_load_info, processor_cpu_load_info_data_t,
         processor_info_array_t, processor_flavor_t,
@@ -3393,17 +3393,41 @@ pub mod c {
         pub fscale: core::ffi::c_long,
     }
 
-    /// dyld image enumeration (`<mach-o/dyld.h>`). Re-exported so
-    /// `bun_crash_handler` can compute ASLR slide for stable addresses.
+    // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
+    // `libc` crate has deprecated these in favour of the `mach2` crate. We
+    // bind the C symbols ourselves (as Zig's `std.c` does) so the workspace
+    // stays free of an extra dependency and of deprecation noise.
     #[cfg(target_os = "macos")]
-    pub use libc::{_dyld_image_count, _dyld_get_image_vmaddr_slide};
-    /// `_dyld_get_image_header(i)` — libc returns `*const mach_header` (32-bit
-    /// header); on 64-bit Darwin every loaded image is 64-bit, so present it
-    /// as `*const mach_header_64` (Zig's std does the same cast).
+    unsafe extern "C" {
+        /// `extern mach_port_t mach_task_self_` — the task's send right,
+        /// cached by libsystem at startup. `mach_task_self()` in C is a macro
+        /// that just reads this global.
+        static mach_task_self_: libc::mach_port_t;
+        /// `mach_port_t mach_host_self(void)` — host privileged port.
+        pub safe fn mach_host_self() -> libc::mach_port_t;
+        /// `uint32_t _dyld_image_count(void)`
+        pub safe fn _dyld_image_count() -> u32;
+        /// `intptr_t _dyld_get_image_vmaddr_slide(uint32_t image_index)`
+        pub safe fn _dyld_get_image_vmaddr_slide(image_index: u32) -> isize;
+        /// `const struct mach_header* _dyld_get_image_header(uint32_t)`
+        #[link_name = "_dyld_get_image_header"]
+        fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+    }
+    /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
+    #[cfg(target_os = "macos")]
+    #[inline]
+    pub fn mach_task_self() -> libc::mach_port_t {
+        // SAFETY: `mach_task_self_` is a plain immutable global initialized by
+        // libsystem before any user code runs; reading it is always safe.
+        unsafe { mach_task_self_ }
+    }
+    /// `_dyld_get_image_header(i)` — on 64-bit Darwin every loaded image is
+    /// 64-bit, so present it as `*const mach_header_64` (Zig's std does the
+    /// same cast).
     #[cfg(target_os = "macos")]
     #[inline]
     pub unsafe fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
-        unsafe { libc::_dyld_get_image_header(image_index).cast() }
+        unsafe { dyld_get_image_header_raw(image_index).cast() }
     }
 
     /// `bun.c.kqueue` — create a new kqueue fd.

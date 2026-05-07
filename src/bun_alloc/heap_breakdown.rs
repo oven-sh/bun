@@ -3,7 +3,9 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;
 
-#[allow(non_camel_case_types)]
+// Only referenced from the Darwin `extern "C"` block below; rustc's
+// reachability analysis doesn't see uses inside dead `extern fn` signatures.
+#[allow(non_camel_case_types, dead_code)]
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan

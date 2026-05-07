@@ -3044,7 +3044,7 @@ pub mod sync {
         }
         for (i, &fd) in out_fds_to_wait_for.iter().enumerate() {
             if fd != Fd::INVALID {
-                add(&mut changes_buf, &mut changes_len, usize::try_from(fd.cast()).expect("int cast"), libc::EVFILT_READ, 0, i);
+                add(&mut changes_buf, &mut changes_len, usize::try_from(fd.native()).expect("int cast"), libc::EVFILT_READ, 0, i);
             }
         }
 

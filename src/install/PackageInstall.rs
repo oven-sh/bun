@@ -957,9 +957,9 @@ impl<'a> PackageInstall<'a> {
                         // built into stackpath above; fds are open for the loop iteration.
                         match unsafe {
                             clonefileat(
-                                entry.dir.cast(),
+                                entry.dir.native(),
                                 basename.as_ptr(),
-                                destination_dir_.fd().cast(),
+                                destination_dir_.fd().native(),
                                 path_.as_ptr(),
                                 0,
                             )
@@ -1022,9 +1022,9 @@ impl<'a> PackageInstall<'a> {
         // slices into long-lived path buffers; fds are open.
         match unsafe {
             clonefileat(
-                self.cache_dir.fd().cast(),
+                self.cache_dir.fd().native(),
                 self.cache_dir_subpath.as_ptr(),
-                destination_dir.fd().cast(),
+                destination_dir.fd().native(),
                 self.destination_dir_subpath.as_ptr(),
                 0,
             )

@@ -2540,7 +2540,8 @@ pub mod internal {
                         (*req).libinfo.machport = machport;
                         // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
-                        poll.fd = sys::Fd::from_native(core::mem::transmute::<u32, i32>(machport));
+                        // Zig: `@bitCast(machport)` — `as i32` is the same-width bitcast.
+                        poll.fd = sys::Fd::from_native(machport as i32);
                         match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
                                 bun_output::scoped_log!(dns, "libinfoCallback: failed to register poll");

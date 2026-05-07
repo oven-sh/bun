@@ -175,6 +175,9 @@ pub mod upgrade_command;
 pub mod fuzzilli_command;
 #[path = "install_command.rs"]
 pub mod install_command;
+// MOVE_UP: `--analyze` branch + `Cli.log_` access of
+// `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
+pub mod pm_update_package_json;
 #[path = "add_command.rs"]
 pub mod add_command;
 #[path = "remove_command.rs"]

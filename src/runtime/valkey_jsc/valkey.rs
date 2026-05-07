@@ -225,7 +225,7 @@ impl Address {
 
     pub fn connect(
         &self,
-        client: &mut ValkeyClient,
+        client: *mut ValkeyClient,
         group: &mut SocketGroup,
         ssl_ctx: Option<&mut SslCtx>,
         is_tls: bool,

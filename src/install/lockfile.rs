@@ -577,26 +577,26 @@ impl Lockfile {
             }
         };
 
-        let read_result = file.read_to_end();
-        let buf = if let Some(e) = read_result.err {
-            return LoadResult::Err(LoadResultErr {
-                step: LoadStep::ReadFile,
-                value: BunError::from(e),
-                lockfile_path: if lockfile_format == LockfileFormat::Text {
-                    zstr!("bun.lock")
-                } else {
-                    zstr!("bun.lockb")
-                },
-                format: lockfile_format,
-            });
-        } else {
-            read_result.bytes
+        let buf = match file.read_to_end() {
+            Err(e) => {
+                return LoadResult::Err(LoadResultErr {
+                    step: LoadStep::ReadFile,
+                    value: BunError::from(e),
+                    lockfile_path: if lockfile_format == LockfileFormat::Text {
+                        zstr!("bun.lock")
+                    } else {
+                        zstr!("bun.lockb")
+                    },
+                    format: lockfile_format,
+                });
+            }
+            Ok(bytes) => bytes,
         };
 
         if lockfile_format == LockfileFormat::Text {
             let source = logger::Source::init_path_string(b"bun.lock", buf.as_slice());
             initialize_store();
-            let bump = bumpalo::Bump::new();
+            let bump = bun_alloc::Arena::new();
             let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
                 Ok(j) => j,
                 Err(e) => {
@@ -701,7 +701,7 @@ impl Lockfile {
             return true;
         }
 
-        let dep = self.buffers.dependencies[dep_id as usize];
+        let dep = &self.buffers.dependencies[dep_id as usize];
 
         dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
     }
@@ -741,7 +741,7 @@ impl Lockfile {
             let old_workspace_dependencies =
                 old_workspace_dependencies_list.get(old.buffers.dependencies.as_slice());
             let old_workspace_resolutions =
-                old_workspace_resolutions_list.get_mut(old.buffers.resolutions.as_mut_slice());
+                old_workspace_resolutions_list.mut_(old.buffers.resolutions.as_mut_slice());
 
             debug_assert_eq!(
                 old_workspace_dependencies.len(),
@@ -838,7 +838,7 @@ impl Lockfile {
                 let mut temp_buf = [0u8; 513];
 
                 let root_deps: &mut [Dependency] =
-                    root_deps_list.get_mut(old.buffers.dependencies.as_mut_slice());
+                    root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
                 let old_resolutions_list_lists = old.packages.items_resolutions();
                 let old_resolutions_list = old_resolutions_list_lists[workspace_package_id as usize];
                 let old_resolutions: &[PackageID] =
@@ -929,12 +929,12 @@ impl Lockfile {
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
         if dep.version.tag != dependency::Tag::Catalog {
-            return Some(dep.version);
+            return Some(dep.version.clone());
         }
 
-        let catalog_dep = self
-            .catalogs
-            .get(self, dep.version.value.catalog, dep.name)?;
+        // SAFETY: tag checked == .catalog above; `catalog` is the active union field.
+        let catalog_name = unsafe { dep.version.value.catalog };
+        let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
         Some(catalog_dep.version)
     }

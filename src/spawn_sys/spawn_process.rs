@@ -534,19 +534,23 @@ pub fn spawn_process_posix(
                 || matches!(options.stdout, PosixStdio::Buffer)
                 || matches!(options.stderr, PosixStdio::Buffer)
             {
-                Output::panic(
+                Output::panic(format_args!(
                     "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                    &[],
-                );
+                ));
             }
         }
     }
 
     if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        // TODO(port): @hasDecl check — assume present on platforms that define it.
+        #[cfg(target_os = "linux")]
         {
             flags |= libc::POSIX_SPAWN_SETSID as i32;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+            flags |= 0x0400;
         }
         attr.detached = true;
     }

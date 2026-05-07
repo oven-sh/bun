@@ -313,7 +313,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
 fn decode_via_system(bytes: &[u8], max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        return system_backend::decode(bytes, max_pixels).map(Some);
+        return system_backend::BackendError::split(system_backend::decode(bytes, max_pixels));
     }
     Ok(None)
 }
@@ -533,10 +533,12 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Resu
         Format::Heic | Format::Avif => {
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
-                return match system_backend::encode(rgba, width, height, &opts) {
-                    Ok(buf) => Ok(Encoded::from_owned(buf)),
-                    // PORT NOTE: backend returns Error directly; BackendUnavailable
-                    // collapsed into UnsupportedOnPlatform here.
+                return match system_backend::BackendError::split(
+                    system_backend::encode(rgba, width, height, &opts),
+                ) {
+                    Ok(Some(buf)) => Ok(Encoded::from_owned(buf)),
+                    // BackendUnavailable collapses into UnsupportedOnPlatform.
+                    Ok(None) => Err(Error::UnsupportedOnPlatform),
                     Err(e) => Err(e),
                 };
             }
@@ -610,8 +612,7 @@ pub fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
 pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Result<Vec<u8>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        // TODO(port): @hasDecl(b, "scale") — verify backend module exports `scale`
-        match system_backend::scale(src, sw, sh, dw, dh, f) {
+        match system_backend::BackendError::split(system_backend::scale(src, sw, sh, dw, dh, f)) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
@@ -661,8 +662,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
     let (dw, dh): (u32, u32) = if degrees == 90 || degrees == 270 { (h, w) } else { (w, h) };
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        // TODO(port): @hasDecl(b, "rotate") — verify backend module exports `rotate`
-        match system_backend::rotate(src, w, h, degrees / 90) {
+        match system_backend::BackendError::split(system_backend::rotate(src, w, h, degrees / 90)) {
             Ok(Some(out)) => return Ok(Decoded { rgba: out, width: dw, height: dh, icc_profile: None }),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),
@@ -685,8 +685,7 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
 pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        // TODO(port): @hasDecl(b, "flip") — verify backend module exports `flip`
-        match system_backend::flip(src, w, h, horizontal) {
+        match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
             Ok(Some(out)) => return Ok(out),
             Ok(None) => {} // BackendUnavailable → fall through
             Err(e) => return Err(e),

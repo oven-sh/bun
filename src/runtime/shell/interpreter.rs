@@ -2054,16 +2054,18 @@ pub fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     }
     #[cfg(unix)]
     {
-        let fmt = mode & libc::S_IFMT;
+        // `libc::S_IFMT` etc. are u16 on Darwin, u32 on Linux; widen so the
+        // `mode: u32` arg compares uniformly.
+        let fmt = mode & libc::S_IFMT as u32;
         #[cfg(target_os = "macos")]
         {
             // macOS allows polling regular files, but our IOWriter has a
             // better dedicated path for them — exclude S_ISREG explicitly.
-            if fmt == libc::S_IFREG {
+            if fmt == libc::S_IFREG as u32 {
                 return false;
             }
         }
-        fmt == libc::S_IFIFO || fmt == libc::S_IFSOCK
+        fmt == libc::S_IFIFO as u32 || fmt == libc::S_IFSOCK as u32
     }
 }
 

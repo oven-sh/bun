@@ -475,7 +475,8 @@ impl Loop {
                             // SAFETY: capacity reserved above; slot zeroed.
                             unsafe { events_list.set_len(i + 1) };
 
-                            Poll::apply_kqueue::<{ ApplyAction::Readable }>(
+                            Poll::apply_kqueue(
+                                ApplyAction::Readable,
                                 readable.tag,
                                 readable.poll,
                                 readable.fd,
@@ -488,7 +489,8 @@ impl Loop {
                             // SAFETY: capacity reserved above; slot zeroed.
                             unsafe { events_list.set_len(i + 1) };
 
-                            Poll::apply_kqueue::<{ ApplyAction::Writable }>(
+                            Poll::apply_kqueue(
+                                ApplyAction::Writable,
                                 writable.tag,
                                 writable.poll,
                                 writable.fd,
@@ -503,7 +505,8 @@ impl Loop {
                                 debug_assert!(i + 1 <= events_list.capacity());
                                 // SAFETY: capacity reserved above; slot zeroed.
                                 unsafe { events_list.set_len(i + 1) };
-                                Poll::apply_kqueue::<{ ApplyAction::Cancel }>(
+                                Poll::apply_kqueue(
+                                    ApplyAction::Cancel,
                                     close.tag,
                                     close.poll,
                                     close.fd,
@@ -534,7 +537,7 @@ impl Loop {
             );
 
             match sys::get_errno(rc) {
-                sys::Errno::INTR => continue,
+                sys::Errno::EINTR => continue,
                 sys::Errno::SUCCESS => {}
                 e => bun_core::Output::panic(format_args!(
                     "kevent failed: {}",
@@ -831,8 +834,13 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // TODO(port): `pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);` — a struct with
 // one `bool` field per variant. Unused in this file; provide if external callers need it.
 
+// PORT NOTE: Zig used a `comptime action: enum` const-generic. `adt_const_params`
+// is nightly-only and the body never uses ACTION in a type position — it just
+// `match`es on it — so demote to a runtime parameter (PORTING.md §Idiom-map).
+// PERF(port): was comptime monomorphization — profile in Phase B (3 call sites,
+// kqueue registration is not hot enough to matter).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-#[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ApplyAction {
     Readable,
     Writable,
@@ -895,7 +903,8 @@ impl Flags {
 
 impl Poll {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn apply_kqueue<const ACTION: ApplyAction>(
+    pub fn apply_kqueue(
+        action: ApplyAction,
         tag: PollableTag,
         poll: &mut Poll,
         fd: Fd,
@@ -903,7 +912,7 @@ impl Poll {
     ) {
         log!(
             "register({}, {})",
-            match ACTION {
+            match action {
                 ApplyAction::Readable => "readable",
                 ApplyAction::Writable => "writable",
                 ApplyAction::Cancel => "cancel",
@@ -913,7 +922,7 @@ impl Poll {
 
         let one_shot_flag = libc::EV_ONESHOT;
         let udata: usize = Pollable::init(tag, poll as *mut Poll).ptr() as usize;
-        let (filter, flags_): (i16, u16) = match ACTION {
+        let (filter, flags_): (i16, u16) = match action {
             ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
             ApplyAction::Cancel => {
@@ -928,7 +937,8 @@ impl Poll {
         };
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = unsafe { core::mem::zeroed() };
-        kqueue_event.ident = usize::try_from(fd.native()).expect("int cast");
+        // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
+        kqueue_event.ident = fd.native() as _;
         kqueue_event.filter = filter;
         kqueue_event.flags = flags_;
         kqueue_event.udata = udata as _;
@@ -937,7 +947,7 @@ impl Poll {
         #[cfg(target_os = "macos")]
         {
             #[cfg(debug_assertions)]
-            let gen_: u64 = if ACTION == ApplyAction::Cancel {
+            let gen_: u64 = if action == ApplyAction::Cancel {
                 poll.generation_number
             } else {
                 // SAFETY: only the IO thread mutates this counter.
@@ -949,7 +959,7 @@ impl Poll {
         }
 
         // Zig `defer` block — runs after the body above.
-        match ACTION {
+        match action {
             ApplyAction::Readable => {
                 poll.flags.insert(Flags::PollReadable);
             }
@@ -970,7 +980,7 @@ impl Poll {
         // The generation-number sanity check rides in kevent64_s.ext[0],
         // which only exists on Darwin (GenerationNumberInt is u0 elsewhere).
         #[cfg(all(target_os = "macos", debug_assertions))]
-        if ACTION != ApplyAction::Cancel {
+        if action != ApplyAction::Cancel {
             // SAFETY: only the IO thread mutates this counter.
             unsafe {
                 GENERATION_NUMBER_MONOTONIC += 1;
@@ -1023,7 +1033,7 @@ impl Poll {
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
                     // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
-                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::Kevent),
+                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
         } else {
@@ -1468,7 +1478,7 @@ pub mod waker {
             // SAFETY: direct syscall wrapper.
             let kq = unsafe { libc::kqueue() };
             if kq < 0 {
-                return Err(bun_core::Error::last_os_error());
+                return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
             }
             Self::init_with_file_descriptor(kq)
         }

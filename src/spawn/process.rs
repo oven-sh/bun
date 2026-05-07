@@ -3065,7 +3065,7 @@ pub mod sync {
                 // `ParentDeathWatchdog.installOnEventLoop`. The
                 // `getppid() != ppid` recheck below is the backstop.
                 if r.data == libc::ESRCH as isize {
-                    Global::exit(ParentDeathWatchdog::EXIT_CODE);
+                    Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                 }
                 continue;
             }
@@ -3109,7 +3109,7 @@ pub mod sync {
                     // knotes (`child` above + any `scan()` added) use udata 0.
                     if ev.udata as usize == TAG_PPID {
                         if ev.fflags & libc::NOTE_EXIT != 0 {
-                            Global::exit(ParentDeathWatchdog::EXIT_CODE);
+                            Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                         }
                         continue;
                     }
@@ -3132,7 +3132,7 @@ pub mod sync {
                     // SIGCHLD: probe for a stop. May also observe the exit
                     // (racing NOTE_EXIT in this batch) — stash the status so
                     // `reapChild` below doesn't block on an already-reaped pid.
-                    let r = posix_spawn::wait4(child, libc::WNOHANG | libc::WUNTRACED, None);
+                    let r = posix_spawn::wait4(child, (libc::WNOHANG | libc::WUNTRACED) as u32, None);
                     if let Ok(ref w) = r {
                         if w.pid == child {
                             if libc::WIFSTOPPED(w.status as i32) {

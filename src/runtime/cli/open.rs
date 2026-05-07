@@ -411,21 +411,22 @@ pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'stat
 pub fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
-        // TODO(port): ZStr literal constructor (bun_str::zstr!("..."))
+        // `const { &[...] }` forces const-promotion so the array lives in
+        // `'static` storage (otherwise `&[..]` borrows a stack temporary).
         match editor {
-            Editor::Vscode => Some(&[
+            Editor::Vscode => Some(const { &[
                 ZStr::from_static(b"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\0"),
                 ZStr::from_static(b"/Applications/VSCodium.app/Contents/Resources/app/bin/code\0"),
-            ]),
-            Editor::Atom => Some(&[
+            ] }),
+            Editor::Atom => Some(const { &[
                 ZStr::from_static(b"/Applications/Atom.app/Contents/Resources/app/atom.sh\0"),
-            ]),
-            Editor::Sublime => Some(&[
+            ] }),
+            Editor::Sublime => Some(const { &[
                 ZStr::from_static(b"/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl\0"),
                 ZStr::from_static(b"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl\0"),
-            ]),
+            ] }),
             _ => None,
         }
     }

@@ -388,12 +388,12 @@ type GidT = node::gid_t;
 type UidT = node::uid_t;
 
 #[cfg(unix)]
-pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR
-    | sys::S::IWUSR
-    | sys::S::IRGRP
-    | sys::S::IWGRP
-    | sys::S::IROTH
-    | sys::S::IWOTH;
+pub const DEFAULT_PERMISSION: Mode = sys::S::IRUSR as Mode
+    | sys::S::IWUSR as Mode
+    | sys::S::IRGRP as Mode
+    | sys::S::IWGRP as Mode
+    | sys::S::IROTH as Mode
+    | sys::S::IWOTH as Mode;
 #[cfg(not(unix))]
 // Windows does not have permissions
 pub const DEFAULT_PERMISSION: Mode = 0;
@@ -3975,7 +3975,7 @@ impl NodeFS {
                     Err(err) => return Err(err.with_path(src)),
                 };
 
-                if !sys::S::ISREG(stat_.st_mode) {
+                if !sys::S::ISREG(stat_.st_mode as u32) {
                     return Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
                 }
 
@@ -3988,7 +3988,7 @@ impl NodeFS {
                     }
                     // SAFETY: src/dest are NUL-terminated; clonefile is the libc FFI
                     if Maybe::<ret::CopyFile>::errno_sys_p(unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) }, sys::Tag::copyfile, src).is_none() {
-                        let _ = Syscall::chmod(dest, stat_.st_mode);
+                        let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                         return Ok(());
                     }
                 } else {
@@ -3998,7 +3998,7 @@ impl NodeFS {
                     };
                     let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
-                    let mut flags: Mode = sys::O::CREAT | sys::O::WRONLY;
+                    let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
                     // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
                     // that wrote into a discarded temporary so the deferred ftruncate
                     // always saw 0. The scopeguard variant also double-borrowed `wrote`.
@@ -4015,7 +4015,7 @@ impl NodeFS {
 
                     let result = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, stat_.st_size.max(0) as usize, &mut wrote);
                     let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return result;
                 }
@@ -4052,7 +4052,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -4090,7 +4090,7 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                             return Ok(());
                         }
                     }
@@ -4108,7 +4108,7 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
-            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
             return Ok(());
         }
 
@@ -4130,7 +4130,7 @@ impl NodeFS {
                 Err(err) => return Err(err),
             };
 
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -4159,16 +4159,16 @@ impl NodeFS {
                     let _ = sys::unlink(dest);
                     return err;
                 }
-                let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                 dest_fd.close();
                 return Ok(());
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if sys::S::ISREG(stat_.st_mode) && sys::copy_file::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
                 }
@@ -4323,8 +4323,13 @@ impl NodeFS {
     pub fn fdatasync(&mut self, args: &args::FdataSync, _: Flavor) -> Maybe<ret::Fdatasync> {
         #[cfg(windows)]
         { return Syscall::fdatasync(args.fd); }
+        // `libc` omits the Darwin binding (fdatasync exists since 10.7).
+        #[cfg(target_os = "macos")]
+        unsafe extern "C" { fn fdatasync(fd: libc::c_int) -> libc::c_int; }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        use libc::fdatasync;
         // SAFETY: args.fd.native() is a valid open fd; fdatasync is the libc FFI
-        Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { libc::fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
+        Maybe::<ret::Fdatasync>::errno_sys_fd(unsafe { fdatasync(args.fd.native()) }, sys::Tag::fdatasync, args.fd)
             .unwrap_or(Ok(()))
     }
 
@@ -6597,8 +6602,8 @@ impl NodeFS {
                 },
             };
 
-            if !sys::S::ISREG(stat_.st_mode) {
-                if sys::S::islnk(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
+                if sys::S::ISLNK(stat_.st_mode as u32) {
                     let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
                     if mode.shouldnt_overwrite() { mode_ |= bun_sys::c::COPYFILE_EXCL; }
                     return Maybe::<ret::CopyFile>::errno_sys_p(
@@ -6626,7 +6631,7 @@ impl NodeFS {
                     unsafe { bun_sys::c::clonefile(src.as_ptr(), dest.as_ptr(), 0) },
                     sys::Tag::clonefile, src.as_bytes(),
                 ).is_none() {
-                    let _ = Syscall::chmod(dest, stat_.st_mode);
+                    let _ = Syscall::chmod(dest, stat_.st_mode as u32);
                     return Ok(());
                 }
             } else {
@@ -6649,7 +6654,7 @@ impl NodeFS {
                 };
                 let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                     let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
+                    let _ = Syscall::fchmod(fd, m as u32);
                     fd.close();
                 });
 
@@ -6708,7 +6713,7 @@ impl NodeFS {
                 Err(err) => return Err(err.with_fd(src_fd)),
             };
 
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::ENOTSUP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -6723,10 +6728,10 @@ impl NodeFS {
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
-            if sys::S::ISREG(stat_.st_mode) && sys::copy_file::can_use_ioctl_ficlone() {
+            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
                     dest_fd.close();
                     return Ok(());
                 }
@@ -6833,7 +6838,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err.with_fd(src_fd)),
             };
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 

@@ -302,8 +302,9 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
-        // SAFETY: sole `&mut Loop` borrow; `register` does not re-derive the loop.
-        match poll.register(unsafe { handle.platform_event_loop() }, crate::file_poll::Pollable::Process, true) {
+        // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
+        // borrow; `register` does not re-derive the loop.
+        match unsafe { &mut *poll }.register(unsafe { handle.platform_event_loop() }, crate::file_poll::Pollable::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no
@@ -313,7 +314,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             Err(err) => {
                 // ESRCH: parent already gone before we registered — treat as fired.
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    Global::exit(EXIT_CODE);
+                    bun_core::exit(EXIT_CODE as u32);
                 }
                 // Any other registration error: best-effort feature, just don't watch.
             }

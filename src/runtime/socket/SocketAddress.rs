@@ -561,8 +561,10 @@ impl SocketAddress {
     /// system uses. Do not compare to `std.posix.AF`.
     pub fn family(&self) -> AF {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
-        // SAFETY: family field is at the same offset in both union variants
-        unsafe { mem::transmute::<inet::sa_family_t, AF>(self._addr.sin.family) }
+        // `sa_family_t` is u8 on Darwin, u16 on Linux; AF is `#[repr(u16)]`,
+        // so cast through u16 instead of transmuting (sizes differ on Darwin).
+        // SAFETY: `family` is always one of the AF discriminants we constructed.
+        unsafe { mem::transmute::<u16, AF>(self._addr.sin.family as u16) }
     }
 
     #[bun_jsc::host_fn(getter)]

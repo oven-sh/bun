@@ -965,7 +965,7 @@ impl<'a> PackageInstall<'a> {
                             )
                         } {
                             0 => {}
-                            _ => match sys::Errno::from_i32(sys::last_errno()) {
+                            _ => match sys::Errno::from_raw(sys::last_errno() as u16) {
                                 sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
                                 sys::Errno::EOPNOTSUPP => return Err(bun_core::err!("NotSupported")),
                                 sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
@@ -1028,7 +1028,7 @@ impl<'a> PackageInstall<'a> {
             )
         } {
             0 => Ok(InstallResult::Success),
-            _ => match sys::Errno::from_i32(sys::last_errno()) {
+            _ => match sys::Errno::from_raw(sys::last_errno() as u16) {
                 sys::Errno::EXDEV => Err(bun_core::err!("NotSupported")), // not same file system
                 sys::Errno::EOPNOTSUPP => Err(bun_core::err!("NotSupported")),
                 sys::Errno::ENOENT => Err(bun_core::err!("FileNotFound")),

@@ -66,8 +66,14 @@ mod zig_std_debug {
             }
             #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
             {
+                // The `libc` crate omits getcontext(3) on Darwin; declare it
+                // locally (it's in libSystem). On Linux/glibc the libc crate
+                // provides it but we use the same local decl for uniformity.
+                unsafe extern "C" {
+                    fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
+                }
                 // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
-                let result = unsafe { libc::getcontext(context) } == 0;
+                let result = unsafe { getcontext(context) } == 0;
                 // On aarch64-macos, the system getcontext doesn't write anything into the pc
                 // register slot, it only writes lr. This makes the context consistent with
                 // other aarch64 getcontext implementations which write the current lr

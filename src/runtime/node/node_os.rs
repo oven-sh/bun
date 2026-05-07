@@ -1032,7 +1032,11 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 let addr_data: &[u8] = {
                     // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check
                     let dl = unsafe { &*(ll_addr as *const c::sockaddr_dl) };
-                    &dl.sdl_data[dl.sdl_nlen as usize..]
+                    // `sdl_data` is `[c_char]` (i8 on Darwin); reinterpret as
+                    // bytes — same layout, MAC bytes are not signed.
+                    let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
+                    // SAFETY: i8 and u8 have identical layout/size/align.
+                    unsafe { core::slice::from_raw_parts(raw.as_ptr() as *const u8, raw.len()) }
                 };
                 if addr_data.len() < 6 {
                     let mac = b"00:00:00:00:00:00";

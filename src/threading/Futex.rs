@@ -231,16 +231,17 @@ mod darwin_impl {
         if status >= 0 {
             return Ok(());
         }
-        // SAFETY: -status is a valid errno value returned by the kernel.
-        match unsafe { core::mem::transmute::<i32, c::E>(-status) } {
+        // ULF_NO_ERRNO: kernel returns `-errno` directly. `c::E` is `#[repr(u16)]`,
+        // so cast (no transmute — sizes differ).
+        match c::E::from_raw((-status) as u16) {
             // Wait was interrupted by the OS or other spurious signalling.
-            c::E::INTR => Ok(()),
+            c::E::EINTR => Ok(()),
             // Address of the futex was paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
             // without waiting, but the caller should retry anyway.
-            c::E::FAULT => Ok(()),
+            c::E::EFAULT => Ok(()),
             // Only report Timeout if we didn't have to cap the timeout
-            c::E::TIMEDOUT => {
+            c::E::ETIMEDOUT => {
                 debug_assert!(timeout.is_some());
                 if !timeout_overflowed {
                     return Err(TimeoutError::Timeout);
@@ -267,12 +268,11 @@ mod darwin_impl {
             if status >= 0 {
                 return;
             }
-            // SAFETY: -status is a valid errno value returned by the kernel.
-            match unsafe { core::mem::transmute::<i32, c::E>(-status) } {
-                c::E::INTR => continue, // spurious wake()
-                c::E::FAULT => panic!("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
-                c::E::NOENT => return, // nothing was woken up
-                c::E::ALREADY => panic!("__ulock_wake() returned EALREADY unexpectedly"), // only for ULF_WAKE_THREAD
+            match c::E::from_raw((-status) as u16) {
+                c::E::EINTR => continue, // spurious wake()
+                c::E::EFAULT => panic!("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
+                c::E::ENOENT => return, // nothing was woken up
+                c::E::EALREADY => panic!("__ulock_wake() returned EALREADY unexpectedly"), // only for ULF_WAKE_THREAD
                 _ => panic!("Unexpected __ulock_wake() return code"),
             }
         }

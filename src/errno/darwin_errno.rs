@@ -54,16 +54,19 @@ pub mod posix {
         pub const IWOTH: mode_t = 0o0002;
         pub const IXOTH: mode_t = 0o0001;
 
-        #[inline] pub const fn ISREG(m: mode_t)  -> bool { m & IFMT == IFREG }
-        #[inline] pub const fn ISDIR(m: mode_t)  -> bool { m & IFMT == IFDIR }
-        #[inline] pub const fn ISCHR(m: mode_t)  -> bool { m & IFMT == IFCHR }
-        #[inline] pub const fn ISBLK(m: mode_t)  -> bool { m & IFMT == IFBLK }
-        #[inline] pub const fn ISFIFO(m: mode_t) -> bool { m & IFMT == IFIFO }
-        #[inline] pub const fn ISLNK(m: mode_t)  -> bool { m & IFMT == IFLNK }
-        #[inline] pub const fn ISSOCK(m: mode_t) -> bool { m & IFMT == IFSOCK }
+        // Predicates take `u32` (== `bun_core::Mode`) so cross-platform call
+        // sites that normalize `st_mode as u32` compile uniformly. Darwin's
+        // kernel `mode_t` is u16; the upper 16 bits are always zero.
+        #[inline] pub const fn ISREG(m: u32)  -> bool { m & IFMT as u32 == IFREG as u32 }
+        #[inline] pub const fn ISDIR(m: u32)  -> bool { m & IFMT as u32 == IFDIR as u32 }
+        #[inline] pub const fn ISCHR(m: u32)  -> bool { m & IFMT as u32 == IFCHR as u32 }
+        #[inline] pub const fn ISBLK(m: u32)  -> bool { m & IFMT as u32 == IFBLK as u32 }
+        #[inline] pub const fn ISFIFO(m: u32) -> bool { m & IFMT as u32 == IFIFO as u32 }
+        #[inline] pub const fn ISLNK(m: u32)  -> bool { m & IFMT as u32 == IFLNK as u32 }
+        #[inline] pub const fn ISSOCK(m: u32) -> bool { m & IFMT as u32 == IFSOCK as u32 }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         // Darwin libc: `int *__error(void)`
         fn __error() -> *mut c_int;
     }
@@ -190,22 +193,29 @@ pub enum SystemErrno {
 }
 
 impl SystemErrno {
-    pub const MAX: i32 = 107;
+    pub const MAX: u16 = 107;
 
-    // TODO(port): Zig `code: anytype` accepted any signed int width; using i32 (errno is c_int)
-    pub fn init(code: i32) -> Option<SystemErrno> {
+    #[inline]
+    pub const fn from_raw(n: u16) -> SystemErrno {
+        debug_assert!(n < Self::MAX);
+        // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous
+        // discriminants 0..107 (Darwin <sys/errno.h>).
+        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+    }
+
+    // Signature matches linux_errno.rs so cross-platform call sites in
+    // bun_sys/Error.rs (`init(self.errno as i64)`) compile uniformly.
+    pub fn init(code: i64) -> Option<SystemErrno> {
         if code < 0 {
-            if code <= -Self::MAX {
+            if code <= -(Self::MAX as i64) {
                 return None;
             }
-            // SAFETY: 0 < -code < MAX, all discriminants in [0, MAX) are defined
-            return Some(unsafe { core::mem::transmute::<u16, SystemErrno>((-code) as u16) });
+            return Some(Self::from_raw((-code) as u16));
         }
-        if code >= Self::MAX {
+        if code >= Self::MAX as i64 {
             return None;
         }
-        // SAFETY: 0 <= code < MAX, all discriminants in [0, MAX) are defined
-        Some(unsafe { core::mem::transmute::<u16, SystemErrno>(code as u16) })
+        Some(Self::from_raw(code as u16))
     }
 }
 
@@ -224,7 +234,9 @@ pub mod uv_e {
     pub const BADF: i32 = SystemErrno::EBADF as i32;
     pub const BUSY: i32 = SystemErrno::EBUSY as i32;
     pub const CANCELED: i32 = SystemErrno::ECANCELED as i32;
-    pub const CHARSET: i32 = -windows_sys::libuv::UV__ECHARSET;
+    // Darwin lacks ECHARSET; libuv uses synthetic UV__ECHARSET = -4080.
+    // Zig: `-bun.windows.libuv.UV__ECHARSET` → 4080.
+    pub const CHARSET: i32 = 4080;
     pub const CONNABORTED: i32 = SystemErrno::ECONNABORTED as i32;
     pub const CONNREFUSED: i32 = SystemErrno::ECONNREFUSED as i32;
     pub const CONNRESET: i32 = SystemErrno::ECONNRESET as i32;
@@ -248,7 +260,8 @@ pub mod uv_e {
     pub const NODEV: i32 = SystemErrno::ENODEV as i32;
     pub const NOENT: i32 = SystemErrno::ENOENT as i32;
     pub const NOMEM: i32 = SystemErrno::ENOMEM as i32;
-    pub const NONET: i32 = -windows_sys::libuv::UV_ENONET;
+    // Darwin lacks ENONET; libuv uses synthetic UV__ENONET = -4056.
+    pub const NONET: i32 = 4056;
     pub const NOSPC: i32 = SystemErrno::ENOSPC as i32;
     pub const NOSYS: i32 = SystemErrno::ENOSYS as i32;
     pub const NOTCONN: i32 = SystemErrno::ENOTCONN as i32;
@@ -274,28 +287,66 @@ pub mod uv_e {
     pub const NXIO: i32 = SystemErrno::ENXIO as i32;
     pub const MLINK: i32 = SystemErrno::EMLINK as i32;
     pub const HOSTDOWN: i32 = SystemErrno::EHOSTDOWN as i32;
-    pub const REMOTEIO: i32 = -windows_sys::libuv::UV_EREMOTEIO;
+    // Darwin lacks EREMOTEIO; libuv uses synthetic UV__EREMOTEIO = -4030.
+    pub const REMOTEIO: i32 = 4030;
     pub const NOTTY: i32 = SystemErrno::ENOTTY as i32;
     pub const FTYPE: i32 = SystemErrno::EFTYPE as i32;
     pub const ILSEQ: i32 = SystemErrno::EILSEQ as i32;
     pub const OVERFLOW: i32 = SystemErrno::EOVERFLOW as i32;
     pub const SOCKTNOSUPPORT: i32 = SystemErrno::ESOCKTNOSUPPORT as i32;
     pub const NODATA: i32 = SystemErrno::ENODATA as i32;
-    pub const UNATCH: i32 = -windows_sys::libuv::UV_EUNATCH;
+    // Darwin lacks EUNATCH; libuv uses synthetic UV__EUNATCH = -4023.
+    pub const UNATCH: i32 = 4023;
     pub const NOEXEC: i32 = SystemErrno::ENOEXEC as i32;
 }
 
-// TODO(port): Zig `rc: anytype` accepted any signed int width; bound on From<i8> covers
-// i8/i16/i32/i64/isize/c_int (Into<i64> would not cover isize — no From<isize> for i64)
-pub fn get_errno<T: Copy + PartialEq + From<i8>>(rc: T) -> E {
-    if rc == T::from(-1) {
-        // CYCLEBREAK: bun_sys::c::errno MOVE_DOWN → crate::posix (move-in pass)
-        // SAFETY: errno is always a valid E discriminant on Darwin
-        unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
-    } else {
-        E::SUCCESS
+/// Zig's `getErrno(rc: anytype)` switches on `@TypeOf(rc)` to pick the errno
+/// extraction strategy. Rust has no type-switch, so we model it as a trait with
+/// per-type impls — call as `rc.get_errno()` or `get_errno(rc)`. Surface
+/// matches `linux_errno::GetErrno` so `bun_sys` re-exports compile uniformly.
+pub trait GetErrno: Copy {
+    fn get_errno(self) -> E;
+}
+
+#[inline]
+pub fn get_errno<T: GetErrno>(rc: T) -> E {
+    rc.get_errno()
+}
+
+// On Darwin every libc wrapper returns a signed int sentinel (-1) and sets
+// thread-local errno; there is no Linux-style raw-syscall `usize` errno-in-retval
+// convention. We still impl `usize` for callers that uniformly cast.
+impl GetErrno for usize {
+    #[inline]
+    fn get_errno(self) -> E {
+        // Reinterpret as signed (Zig: @bitCast). Darwin syscalls never encode
+        // errno in the return value, so only `-1` is the sentinel.
+        if self as isize == -1 {
+            // SAFETY: __error() returns a value in [0, MAX) per <sys/errno.h>.
+            unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
+        } else {
+            E::SUCCESS
+        }
     }
 }
+
+macro_rules! impl_get_errno_libc {
+    ($($t:ty),+ $(,)?) => {$(
+        impl GetErrno for $t {
+            #[inline]
+            fn get_errno(self) -> E {
+                if self as i64 == -1 {
+                    // CYCLEBREAK: bun_sys::c::errno MOVE_DOWN → crate::posix (move-in pass)
+                    // SAFETY: errno is always a valid E discriminant on Darwin
+                    unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }
+                } else {
+                    E::SUCCESS
+                }
+            }
+        }
+    )+};
+}
+impl_get_errno_libc!(i32, u32, isize, i64);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

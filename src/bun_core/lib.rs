@@ -233,6 +233,22 @@ pub mod strings {
         if check_len && a.len() != b.len() { return false; }
         a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
     }
+    /// Zig: `strings.containsCaseInsensitiveASCII` — naive O(n·m) windowed
+    /// case-insensitive ASCII substring search (matches the Zig scalar impl;
+    /// callers are cold path-lookup on macOS/Windows where the FS is
+    /// case-insensitive).
+    #[inline]
+    pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
+        if needle.len() > haystack.len() { return false; }
+        let mut start = 0usize;
+        while start + needle.len() <= haystack.len() {
+            if eql_case_insensitive_ascii(&haystack[start..start + needle.len()], needle, false) {
+                return true;
+            }
+            start += 1;
+        }
+        false
+    }
     /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
     /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig
     /// version generates length-specialized SWAR loads at comptime; this scalar

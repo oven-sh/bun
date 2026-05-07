@@ -15,6 +15,27 @@ use bun_sys::{self as sys, Fd};
 #[cfg(unix)]
 use libc as system;
 
+// ── Darwin spawn extensions missing from the `libc` crate ────────────────
+// Values/signatures match <spawn.h> on macOS 14 SDK; Zig's translate-c picks
+// these up via `bun.c`, but the Rust `libc` crate omits the `_np` variants.
+#[cfg(target_os = "macos")]
+mod darwin_spawn_np {
+    use core::ffi::{c_char, c_int};
+    /// `POSIX_SPAWN_SETSID` — set session ID (calls `setsid()` in child).
+    /// `<spawn.h>`: `0x0400`.
+    pub const POSIX_SPAWN_SETSID: c_int = 0x0400;
+    unsafe extern "C" {
+        pub fn posix_spawn_file_actions_addinherit_np(
+            actions: *mut libc::posix_spawn_file_actions_t,
+            fd: c_int,
+        ) -> c_int;
+        pub fn posix_spawn_file_actions_addchdir_np(
+            actions: *mut libc::posix_spawn_file_actions_t,
+            path: *const c_char,
+        ) -> c_int;
+    }
+}
+
 // `std.posix.{errno, fd_t, mode_t, pid_t, toPosixPath, unexpectedErrno}` —
 // `bun_sys::posix` currently exposes only `mode_t`/`S`/`E`/`errno()` (the
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
@@ -261,9 +282,13 @@ pub mod bun_spawn {
             // that value when the flag bit isn't available.
             // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
             // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
-            #[cfg(all(unix, not(target_os = "freebsd")))]
+            #[cfg(target_os = "linux")]
             {
                 self.detached = (flags & system::POSIX_SPAWN_SETSID as u16) != 0;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                self.detached = (flags & super::darwin_spawn_np::POSIX_SPAWN_SETSID as u16) != 0;
             }
             Ok(())
         }
@@ -458,7 +483,10 @@ pub mod posix_spawn {
         pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             match errno(unsafe {
-                system::posix_spawn_file_actions_addinherit_np(&mut self.actions, fd.cast())
+                super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
+                    &mut self.actions,
+                    fd.cast(),
+                )
             }) {
                 Errno::SUCCESS => Ok(()),
                 Errno::BADF => Err(err!("InvalidFileDescriptor")),
@@ -478,7 +506,10 @@ pub mod posix_spawn {
         fn chdir_z(&mut self, path: &CStr) -> Result<(), Error> {
             // SAFETY: self.actions is live; path is NUL-terminated
             match errno(unsafe {
-                system::posix_spawn_file_actions_addchdir_np(&mut self.actions, path.as_ptr())
+                super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
+                    &mut self.actions,
+                    path.as_ptr(),
+                )
             }) {
                 Errno::SUCCESS => Ok(()),
                 Errno::NOMEM => Err(err!("SystemResources")),
@@ -775,15 +806,18 @@ pub mod posix_spawn {
             }
 
             let mut pid: pid_t = 0;
-            // SAFETY: all pointers valid; argv/envp NULL-terminated
+            // SAFETY: all pointers valid; argv/envp NULL-terminated. Darwin's
+            // `libc` crate types argv/envp as `*const *mut c_char` (matching
+            // the C header's non-const `char *const argv[]`); the strings are
+            // never written, so the const→mut element cast is sound.
             let rc = unsafe {
                 system::posix_spawn(
                     &mut pid,
                     path.as_ptr(),
                     &posix_actions.actions,
                     &posix_attr.attr,
-                    argv,
-                    envp,
+                    argv as *const *mut c_char,
+                    envp as *const *mut c_char,
                 )
             };
             if cfg!(debug_assertions) {

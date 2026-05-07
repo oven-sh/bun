@@ -832,7 +832,7 @@ impl Image {
     pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         #[cfg(any(target_os = "macos", windows))]
         {
-            return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count()));
+            return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count() as f64));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         Ok(JSValue::js_number(-1.0))

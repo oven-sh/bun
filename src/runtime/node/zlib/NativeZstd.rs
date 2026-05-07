@@ -515,6 +515,8 @@ impl CompressionStreamImpl for NativeZstd {
         js::error_callback_set_cached(this_value, global, cb)
     }
 }
+
+crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -107,14 +107,17 @@ impl Script {
             Some(interp.node(parent).kind())
         };
         let me = interp.as_script_mut(this);
-        // io.deref() — Drop on IO clones handles refcounts; explicit no-op kept
-        // for parity.
+        // io.deref() — IO uses Arc fields; Drop on the cloned `io` handles the
+        // refcount decrement, no explicit call needed.
         if !matches!(parent_kind, None | Some(StateKind::Subshell)) {
             // The shell env is owned by the parent when the parent is the
-            // Interpreter or a Subshell; otherwise this Script is a command
-            // substitution which duped from the parent and must deinit it.
-            // TODO(b2-blocked): ShellExecEnv::deinit_impl — gated body.
-            let _ = me.base.shell;
+            // Interpreter or a Subshell; otherwise this Script represents a
+            // command substitution which duped from the parent and must
+            // deinitialize it (Zig: `this.base.shell.deinit()`).
+            if !me.base.shell.is_null() {
+                ShellExecEnv::deinit_impl(me.base.shell);
+                me.base.shell = core::ptr::null_mut();
+            }
         }
         me.base.end_scope();
         // free_node is done by the caller (Interpreter::deinit_node).

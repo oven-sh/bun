@@ -215,6 +215,7 @@ impl NativeZlib {
 }
 
 crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
+crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
 pub use _impl::NativeZlib;

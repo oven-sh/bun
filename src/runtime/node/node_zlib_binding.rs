@@ -730,6 +730,87 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 }
 
+/// Expose the [`CompressionStream<T>`] mixin entry points as inherent
+/// associated fns on `T` so the per-class C-ABI thunks emitted by
+/// `generated_classes.rs` (which call `T::write(&mut *this, …)` etc.) resolve.
+///
+/// This is the Rust spelling of Zig's
+/// ```zig
+/// const impl = CompressionStream(@This());
+/// pub const write = impl.write;
+/// pub const writeSync = impl.writeSync;
+/// pub const reset = impl.reset;
+/// pub const close = impl.close;
+/// pub const setOnError = impl.setOnError;
+/// pub const getOnError = impl.getOnError;
+/// pub const finalize = impl.finalize;
+/// ```
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __compression_stream_mixin_reexports {
+    ($native:ty) => {
+        impl $native {
+            #[inline]
+            pub fn write(
+                this: &mut Self,
+                global: &::bun_jsc::JSGlobalObject,
+                frame: &::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::write(this, global, frame)
+            }
+            #[inline]
+            pub fn write_sync(
+                this: &mut Self,
+                global: &::bun_jsc::JSGlobalObject,
+                frame: &::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::write_sync(this, global, frame)
+            }
+            #[inline]
+            pub fn reset(
+                this: &mut Self,
+                global: &::bun_jsc::JSGlobalObject,
+                frame: &::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JSValue {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::reset(this, global, frame)
+            }
+            #[inline]
+            pub fn close(
+                this: &mut Self,
+                global: &::bun_jsc::JSGlobalObject,
+                frame: &::bun_jsc::CallFrame,
+            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::close(this, global, frame)
+            }
+            #[inline]
+            pub fn set_on_error(
+                this: &mut Self,
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+                value: ::bun_jsc::JSValue,
+            ) {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::set_on_error(
+                    this, this_value, global, value,
+                )
+            }
+            #[inline]
+            pub fn get_on_error(
+                this: &mut Self,
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+            ) -> ::bun_jsc::JSValue {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::get_on_error(
+                    this, this_value, global,
+                )
+            }
+            #[inline]
+            pub fn finalize(this: *mut Self) {
+                $crate::node::node_zlib_binding::CompressionStream::<Self>::finalize(this)
+            }
+        }
+    };
+}
+
 // Zig: `pub const NativeZlib = jsc.Codegen.JSNativeZlib.getConstructor;` (etc.) —
 // in Rust the per-class `JS*` codegen submodules collapse into the generic
 // `jsc::codegen::js::get_constructor::<T>` helper (see src/jsc/lib.rs `pub mod codegen`).

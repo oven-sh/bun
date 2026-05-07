@@ -699,6 +699,7 @@ mod js {
     }
 }
 
+crate::__compression_stream_mixin_reexports!(NativeBrotli);
 } // mod _impl
 
 pub use _impl::NativeBrotli;

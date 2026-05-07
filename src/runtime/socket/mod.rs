@@ -36,9 +36,7 @@ pub mod ssl_wrapper;
 mod tls_socket_functions;
 
 #[path = "udp_socket.rs"]
-pub mod udp_socket;
-// Phase-B alias retained until callers stop spelling `udp_socket_draft` directly.
-pub use udp_socket as udp_socket_draft;
+pub mod udp_socket_draft;
 
 #[path = "uws_dispatch.rs"]
 pub mod uws_dispatch;
@@ -68,14 +66,21 @@ pub use windows_named_pipe_context::WindowsNamedPipeContext;
 #[cfg(not(windows))]
 pub type WindowsNamedPipeContext = ();
 
+/// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
+/// `udp_socket_draft` above (Phase-B name retained for existing callers); the
+/// public `udp_socket` module below is a thin re-export façade so both
+/// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
+/// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
+/// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    pub use super::udp_socket_draft::{UDPSocket, UDPSocketConfig};
+    pub use super::udp_socket_draft::*;
     /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
     pub use super::udp_socket_draft::UDPSocket as udp_socket;
 }
+pub use udp_socket::UDPSocket;
 
 /// Codegen path alias.
 ///

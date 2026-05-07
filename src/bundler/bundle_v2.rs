@@ -2,7 +2,7 @@
 // B-2 un-gated header — real `BundleV2` struct definition.
 // resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep, so
 // `Transpiler` (which embeds `Resolver`) is referenceable here. Method bodies
-// remain in the gated `__phase_a_draft` module below until `LinkerContext`,
+// remain in the gated `bv2_impl` module below until `LinkerContext`,
 // `ParseTask`, `ThreadPool`, and the JSBundler/api TYPE_ONLY split land.
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -12,13 +12,13 @@ use bun_collections::{ArrayHashMap, BabyList, StringHashMap};
 use bun_core::ThreadLock;
 use bun_logger as Logger;
 
-// `bake_types` / `dispatch` are canonically defined in `__phase_a_draft` below
+// `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
 // the outer `BundleV2` struct see exactly the same types as the impl bodies.
-pub use __phase_a_draft::bake_types;
-pub use __phase_a_draft::dispatch;
-pub use __phase_a_draft::api;
-pub use __phase_a_draft::{
+pub use bv2_impl::bake_types;
+pub use bv2_impl::dispatch;
+pub use bv2_impl::api;
+pub use bv2_impl::{
     JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
@@ -47,7 +47,7 @@ pub struct BundleThread(());
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
 
 /// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
-pub use __phase_a_draft::JSBundleCompletionTask;
+pub use bv2_impl::JSBundleCompletionTask;
 
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
@@ -129,7 +129,7 @@ pub struct BundleV2<'a> {
 // still-gated modules (`ThreadPool`, full `dispatch::DevServerVTable`,
 // `ServerComponentParseTask`, `Watcher`) are ``-gated inline so
 // the call shape is preserved verbatim and un-gates by deletion once those
-// land. See `__phase_a_draft` below for the full reference bodies.
+// land. See `bv2_impl` below for the full reference bodies.
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_core::declare_scope!(Bundle, visible);
@@ -230,7 +230,7 @@ impl<'a> BundleV2<'a> {
 // `ParseTask`, `ThreadPool`, OUT_DIR codegen for HmrRuntime embeds.)
 // ══════════════════════════════════════════════════════════════════════════
 
-pub mod __phase_a_draft {
+pub mod bv2_impl {
 // This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -5748,6 +5748,18 @@ impl<'a> BundleV2<'a> {
                 }
                 result.ast.import_records = import_records;
 
+                // PORT NOTE: Zig reads `result.ast.named_exports` /
+                // `result.source` *after* `graph.ast.set(…)` (Zig structs are
+                // value types so the `set` is a shallow copy). The Rust port
+                // moves `result.ast` into `graph.ast` and swapped `result.source`
+                // earlier, so snapshot the data the use-directive block needs
+                // *before* the move. Only paid for files with a directive.
+                let named_exports_for_scb = if result.use_directive != crate::UseDirective::None {
+                    Some(result.ast.named_exports.clone().expect("oom"))
+                } else {
+                    None
+                };
+
                 this.graph.ast.set(result_source_index, core::mem::replace(&mut result.ast, JSAst::empty()));
 
                 // Barrel optimization: eagerly record import requests and
@@ -5766,16 +5778,98 @@ impl<'a> BundleV2<'a> {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
-                    // blocked_on: `Logger::Source.path` is `bun_logger::fs::Path` but
-                    // `path_with_pretty_initialized` takes/returns `Fs::Path`
-                    // (`bun_resolver::Path<'_>`) — types not yet unified. Additionally
-                    // `result.ast` / `result.source` were consumed above (moved into
-                    // `graph.ast` / swapped into `graph.input_files`), so the Zig data
-                    // flow that builds `ReferenceProxy { other_source, named_exports }`
-                    // from `result` needs re-threading from `graph` once unified.
-                    let _ = (result_ast_target, &source_path_owned, result_source_index);
-                    todo!("blocked_on: Logger::fs::Path vs Fs::Path unification + ServerComponentParseTask::ReferenceProxy data flow");
+                    let separate_ssr_graph = this
+                        .framework
+                        .as_ref()
+                        .unwrap()
+                        .server_components
+                        .as_ref()
+                        .unwrap()
+                        .separate_ssr_graph;
+
+                    // PORT NOTE: `result.source` was swapped into
+                    // `graph.input_files` earlier; re-borrow it from the SoA.
+                    // `dup_source` materializes the value-copy Zig got for free.
+                    let source_loader: Loader =
+                        this.graph.input_files.items_loader()[result_source_index];
+
+                    let (reference_source_index, ssr_index) = if separate_ssr_graph {
+                        // Enqueue two files, one in server graph, one in ssr graph.
+                        let other_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        let scb_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        let reference_source_index = this
+                            .enqueue_server_component_generated_file(
+                                crate::ServerComponentParseTask::Data::ClientReferenceProxy(
+                                    crate::ServerComponentParseTask::ReferenceProxy {
+                                        other_source,
+                                        named_exports: named_exports_for_scb.unwrap(),
+                                    },
+                                ),
+                                scb_source,
+                            )
+                            .expect("oom");
+
+                        let mut ssr_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        // PORT NOTE: `path_with_pretty_initialized` takes/returns
+                        // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
+                        // `fs_path_from_logger`/`fs_path_to_logger` until the
+                        // three `Path` mirrors unify.
+                        ssr_source.path.pretty = ssr_source.path.text;
+                        ssr_source.path = fs_path_to_logger(
+                            this.path_with_pretty_initialized(
+                                fs_path_from_logger(&ssr_source.path),
+                                Target::BakeServerComponentsSsr,
+                            )
+                            .expect("oom"),
+                        );
+                        let ssr_index = this
+                            .enqueue_parse_task2(
+                                &mut ssr_source,
+                                source_loader,
+                                Target::BakeServerComponentsSsr,
+                            )
+                            .expect("oom");
+
+                        (reference_source_index, ssr_index)
+                    } else {
+                        // Enqueue only one file
+                        let mut server_source =
+                            dup_source(&this.graph.input_files.items_source()[result_source_index]);
+                        server_source.path.pretty = server_source.path.text;
+                        let server_target = this.transpiler.options.target;
+                        server_source.path = fs_path_to_logger(
+                            this.path_with_pretty_initialized(
+                                fs_path_from_logger(&server_source.path),
+                                server_target,
+                            )
+                            .expect("oom"),
+                        );
+                        let server_index = this
+                            .enqueue_parse_task2(&mut server_source, source_loader, Target::Browser)
+                            .expect("oom");
+
+                        (server_index, Index::invalid().get())
+                    };
+
+                    this.graph
+                        .path_to_source_index_map(result_ast_target)
+                        .put(source_path_text, reference_source_index)
+                        .expect("oom");
+
+                    this.graph
+                        .server_component_boundaries
+                        .put(
+                            result_source_index as IndexInt,
+                            result.use_directive,
+                            reference_source_index,
+                            ssr_index,
+                        )
+                        .expect("oom");
                 }
+                let _ = source_path_owned;
             }
             parse_task::ResultValue::Err(err) => {
                 if cfg!(feature = "debug_logs") {

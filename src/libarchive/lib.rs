@@ -669,7 +669,7 @@ pub mod lib {
         pub fn read_entry_data(
             &self,
             archive: *mut Archive,
-        ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_alloc::AllocError> {
+        ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
             if size < 0 {

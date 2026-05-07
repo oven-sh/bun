@@ -947,14 +947,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let _put_net = scopeguard::guard((), move |()| {
                     // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
                     // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
+                    // `task.tag == PackageManifest` so `request.package_manifest`
+                    // is the active union arm.
                     unsafe {
                         (*mgr_iter_ptr)
                             .preallocated_network_tasks
-                            .put((*task_ptr).request.package_manifest_mut().network);
+                            .put((*task_ptr).request.package_manifest.network);
                     }
                 });
                 if task.status == Task::Status::Fail {
-                    let name = &task.request.package_manifest().name;
+                    // SAFETY: `task.tag == PackageManifest` — active union arm.
+                    let req = unsafe { &*task.request.package_manifest };
+                    let name = req.name.slice();
                     let err = task.err.unwrap_or(bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
@@ -962,7 +966,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             extract_ctx,
                             name,
                             err,
-                            &task.request.package_manifest().network.url_buf,
+                            // SAFETY: same active-arm read as `req` above.
+                            unsafe { &(*req.network).url_buf },
                         );
                     } else {
                         let _ = unsafe { &mut *manager.log }.add_error_fmt(
@@ -1007,18 +1012,20 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let _put_net = scopeguard::guard((), move |()| {
                     // SAFETY: see `_put_task` above — same iteration-scoped raw ptrs
                     // (`mgr_iter_ptr`/`task_ptr` are children of the live shadows).
+                    // `task.tag == Extract` so `request.extract` is the active arm.
                     unsafe {
                         if (*task_ptr).tag == Task::Tag::Extract {
                             (*mgr_iter_ptr)
                                 .preallocated_network_tasks
-                                .put((*task_ptr).request.extract_mut().network);
+                                .put((*task_ptr).request.extract.network);
                         }
                     }
                 });
 
+                // SAFETY: `task.tag` selects the active union arm.
                 let tarball = match task.tag {
-                    Task::Tag::Extract => &task.request.extract().tarball,
-                    Task::Tag::LocalTarball => &task.request.local_tarball().tarball,
+                    Task::Tag::Extract => unsafe { &task.request.extract.tarball },
+                    Task::Tag::LocalTarball => unsafe { &task.request.local_tarball.tarball },
                     _ => unreachable!(),
                 };
                 let dependency_id = tarball.dependency_id;
@@ -1047,11 +1054,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let _ = manager.network_dedupe_map.remove(&task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+                        // SAFETY: `task.tag` selects the active union arm.
                         let fail_url: &[u8] = match task.tag {
-                            Task::Tag::Extract => &task.request.extract().network.url_buf,
-                            Task::Tag::LocalTarball => {
-                                task.request.local_tarball().tarball.url.slice()
-                            }
+                            Task::Tag::Extract => unsafe {
+                                &(*task.request.extract.network).url_buf
+                            },
+                            Task::Tag::LocalTarball => unsafe {
+                                task.request.local_tarball.tarball.url.slice()
+                            },
                             _ => unreachable!(),
                         };
                         if C::IS_STORE_INSTALLER {
@@ -1161,16 +1171,18 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     let version = &mut manager.lockfile.buffers.dependencies
                                         [id as usize]
                                         .version;
+                                    // SAFETY: `version.tag` selects the active
+                                    // `dependency::Value` union arm.
                                     match version.tag {
-                                        bun_install::DependencyVersionTag::Git => {
-                                            version.value.git_mut().package_name = pkg.name;
-                                        }
-                                        bun_install::DependencyVersionTag::Github => {
-                                            version.value.github_mut().package_name = pkg.name;
-                                        }
-                                        bun_install::DependencyVersionTag::Tarball => {
-                                            version.value.tarball_mut().package_name = pkg.name;
-                                        }
+                                        bun_install::DependencyVersionTag::Git => unsafe {
+                                            version.value.git.package_name = pkg.name;
+                                        },
+                                        bun_install::DependencyVersionTag::Github => unsafe {
+                                            version.value.github.package_name = pkg.name;
+                                        },
+                                        bun_install::DependencyVersionTag::Tarball => unsafe {
+                                            version.value.tarball.package_name = pkg.name;
+                                        },
 
                                         // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
                                         // will still have the original.
@@ -1213,7 +1225,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     )?;
                 }
 
-                manager.set_preinstall_state(package_id, bun_install::PreinstallState::Done);
+                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {

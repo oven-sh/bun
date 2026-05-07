@@ -649,25 +649,30 @@ impl<'a> PackageInstaller<'a> {
                     None,
                 ) {
                     if log_level != Options::LogLevel::Silent {
-                        let fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n";
-                        // TODO(port): zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)` —
-                        // const-time ANSI formatting. Use bun_output::pretty_fmt! macro in Phase B.
+                        // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
+                        // — `Progress::log` takes a single `Arguments` so format inline.
                         if log_level.show_progress() {
-                            if Output::enable_ansi_colors_stderr() {
-                                self.progress.log(Output::pretty_fmt::<true>(fmt), format_args!("{} {}", bstr::BStr::new(name), err.name()));
-                            } else {
-                                self.progress.log(Output::pretty_fmt::<false>(fmt), format_args!("{} {}", bstr::BStr::new(name), err.name()));
-                            }
+                            self.progress.log(format_args!(
+                                "{}",
+                                Output::pretty_fmt_rt(
+                                    format_args!(
+                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
+                                        bstr::BStr::new(&name),
+                                        err.name(),
+                                    ),
+                                    Output::enable_ansi_colors_stderr(),
+                                ),
+                            ));
                         } else {
                             Output::pretty_errorln(format_args!(
                                 "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                                bstr::BStr::new(name),
+                                bstr::BStr::new(&name),
                                 err.name(),
                             ));
                         }
                     }
 
-                    if self.manager.options.enable.fail_early {
+                    if self.manager.options.enable.fail_early() {
                         Global::exit(1);
                     }
 
@@ -766,24 +771,30 @@ impl<'a> PackageInstaller<'a> {
                 None,
             ) {
                 if log_level != Options::LogLevel::Silent {
-                    let fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n";
-                    // TODO(port): comptime Output.prettyFmt — see run_available_scripts.
+                    // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
+                    // — `Progress::log` takes a single `Arguments` so format inline.
                     if log_level.show_progress() {
-                        if Output::enable_ansi_colors_stderr() {
-                            self.progress.log(Output::pretty_fmt::<true>(fmt), format_args!("{} {}", bstr::BStr::new(package_name), err.name()));
-                        } else {
-                            self.progress.log(Output::pretty_fmt::<false>(fmt), format_args!("{} {}", bstr::BStr::new(package_name), err.name()));
-                        }
+                        self.progress.log(format_args!(
+                            "{}",
+                            Output::pretty_fmt_rt(
+                                format_args!(
+                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
+                                    bstr::BStr::new(&package_name),
+                                    err.name(),
+                                ),
+                                Output::enable_ansi_colors_stderr(),
+                            ),
+                        ));
                     } else {
                         Output::pretty_errorln(format_args!(
                             "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                            bstr::BStr::new(package_name),
+                            bstr::BStr::new(&package_name),
                             err.name(),
                         ));
                     }
                 }
 
-                if self.manager.options.enable.fail_early {
+                if self.manager.options.enable.fail_early() {
                     Global::exit(1);
                 }
 
@@ -797,8 +808,10 @@ impl<'a> PackageInstaller<'a> {
             self.manager.report_slow_lifecycle_scripts();
 
             if log_level.show_progress() {
-                if let Some(scripts_node) = self.manager.scripts_node.as_mut() {
-                    scripts_node.activate();
+                if let Some(scripts_node) = self.manager.scripts_node {
+                    // SAFETY: `scripts_node` is a caller stack-local that
+                    // outlives the install pass (see PackageManager field doc).
+                    unsafe { (*scripts_node.as_ptr()).activate() };
                     self.manager.progress.refresh();
                 }
             }
@@ -811,7 +824,8 @@ impl<'a> PackageInstaller<'a> {
     pub fn can_run_scripts(&self, scripts_tree_id: lockfile::tree::Id) -> bool {
         let deps = self.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id as usize);
         // .monotonic is okay because this value isn't modified from any other thread.
-        (deps.subset_of(&self.completed_trees) || deps.eql(&self.completed_trees))
+        (deps.subset_of(&self.completed_trees.unmanaged)
+            || deps.eql(&self.completed_trees.unmanaged))
             && LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                 < self.manager.options.max_concurrent_lifecycle_scripts
     }

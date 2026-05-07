@@ -354,8 +354,14 @@ pub struct NextBundle {
     pub promise: DeferredPromise,
 }
 
-// TODO(port): `<'a>` must be threaded through all `impl DevServer` blocks in Phase B.
-pub struct DevServer<'a> {
+// PORT NOTE: this is the **canonical** `DevServer` struct. `dev_server/mod.rs`
+// re-exports it (`pub use super::dev_server_body::DevServer`) so the
+// `@fieldParentPtr` submodules (`incremental_graph`, `assets`, …) and the
+// 4.8 kL of method bodies in this file all name the same type. The
+// `Transpiler<'static>` / `BundleV2<'static>` lifetime is the DevServer-self
+// lifetime stand-in: those borrows point at fields stored inline in the
+// `Box<DevServer>` allocation, which is never moved post-`init()`.
+pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub magic: Magic,
@@ -372,7 +378,11 @@ pub struct DevServer<'a> {
     /// When the value mismatches the page is forcibly reloaded.
     pub configuration_hash_key: [u8; 16],
     /// The virtual machine (global object) to execute code in.
-    pub vm: &'a VirtualMachine,
+    /// JSC_BORROW (LIFETIMES.tsv): passed in via `Options.vm`; deinit no-op.
+    /// Stored as raw ptr (not `&'a`) so `DevServer` is not lifetime-generic
+    /// — it is `Box`-owned by `ServerInstance` which outlives the VM anyway.
+    // SAFETY: vm is valid for DevServer's entire lifetime (DevServer.zig:315).
+    pub vm: *const VirtualMachine,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.

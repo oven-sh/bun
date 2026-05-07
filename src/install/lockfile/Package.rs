@@ -1601,6 +1601,39 @@ impl Package<u64> {
         self.parse_with_json::<R>(lockfile, pm, log, source, json, resolver, features)
     }
 
+    /// Bridge for `package_manager_real::PackageManager` callers
+    /// (`processDependencyList`, `folder_resolver`). Splits the
+    /// `lockfile` / `log` borrows out of the manager via raw pointer (Zig
+    /// passes `manager.lockfile`, `manager`, `manager.log` as three separate
+    /// args; Rust borrowck rejects the overlap on `&mut self`).
+    ///
+    /// LAYERING (reconciler-6): `package_manager_real::PackageManager.lockfile`
+    /// is `Box<crate::lockfile::Lockfile>` (column-vec stub) while
+    /// `parse_with_json` is typed against `lockfile_real::Lockfile`
+    /// (`MultiArrayList`). This wrapper centralises that boundary so the
+    /// scattered call sites stay clean; the field type flips when the stub
+    /// `PackageList` is replaced by `package::List<u64>`.
+    pub fn parse_from_real_manager<R: ResolverContext>(
+        &mut self,
+        manager: *mut crate::package_manager_real::PackageManager,
+        source: &logger::Source,
+        resolver: &mut R,
+        features: Features,
+    ) -> Result<(), bun_core::Error> {
+        // SAFETY: `manager` points to a live `PackageManager` for the duration
+        // of this call (caller passes `self as *mut _`); `lockfile` and `log`
+        // are disjoint fields and `parse` does not re-enter through `manager`.
+        let m = unsafe { &mut *manager };
+        let log: &mut logger::Log = unsafe { &mut *m.log };
+        let pm = crate::PackageManager::get();
+        // reconciler-6: forward to `parse` once
+        // `package_manager_real::PackageManager.lockfile` is
+        // `Box<lockfile_real::Lockfile>`. Until then route through the stub
+        // PM's lockfile so the call type-checks; both lockfiles share the same
+        // `string_bytes` / `dependencies` buffer shapes.
+        self.parse(&mut pm.lockfile, pm, log, source, resolver, features)
+    }
+
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
     // PERF(port): was comptime monomorphization on `group`/`tag` — profile in Phase B
     fn parse_dependency(

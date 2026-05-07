@@ -1,7 +1,7 @@
 //! Port of src/cli/create/SourceFileProjectGenerator.zig
 
 use bun_bundler::bundle_v2::BundleV2;
-use bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult;
+use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::Graph::InputFileListExt as _;
 use bun_bundler::JSMetaListExt as _;
 use bun_bundler::ResolvedExports;

@@ -11,7 +11,7 @@ use crate::cli::concat_params;
 // `package_manager_real::command_line_arguments` module, which is currently gated out
 // below are stubbed with `todo!` until that module is un-gated.
 // use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
-use bun_bundler::bundle_v2::__phase_a_draft::{DependenciesScanner, DependenciesScannerResult};
+use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
 
 use crate::build_command::BuildCommand;
 use crate::command::ContextData;

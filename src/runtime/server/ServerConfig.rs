@@ -1617,7 +1617,6 @@ impl ServerConfig {
         Ok(args)
     }
 }
-} // mod _gated_from_js
 
 #[derive(Clone, Copy)]
 pub struct FromJSOptions {

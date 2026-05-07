@@ -819,9 +819,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
-        if let Maybe::Err(err) = &mut this_ref.result {
-            err.deinit();
-        }
+        // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
         this_ref.r#ref.unref(js_event_loop_ctx());
@@ -1124,9 +1122,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, 
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
-        if let Maybe::Err(err) = &mut this_ref.result {
-            err.deinit();
-        }
+        // Zig: `result.err.deinit()` — `bun_sys::Error` frees its path on Drop.
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
         // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
         this_ref.r#ref.unref(js_event_loop_ctx());
@@ -2147,7 +2143,7 @@ impl AsyncReaddirRecursiveTask {
         let promise: *mut bun_jsc::JSPromise = unsafe { self.promise.get() };
         let result = if let Some(err) = &mut self.pending_err {
             // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-            match SysErrorAsyncJsc::to_js_with_async_stack(&*err, global_object, unsafe { &*promise }) {
+            match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
                 Ok(v) => v,
                 Err(e) => return unsafe { &mut *promise }.reject(global_object, Ok(global_object.take_exception(e))),
             }

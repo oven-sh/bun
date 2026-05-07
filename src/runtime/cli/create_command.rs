@@ -1887,7 +1887,7 @@ struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn on_analyze(
         this: &mut Self,
-        result: &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult,
+        result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
     ) -> Result<(), bun_core::Error> {
         this.node.end();
 
@@ -1898,7 +1898,7 @@ impl<'a> Analyzer<'a> {
 // Type-erased trampoline matching `DependenciesScanner.on_fetch`; see PORT NOTE at use site.
 fn analyzer_on_fetch_trampoline(
     ctx: *mut (),
-    result: &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult,
+    result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
 ) -> Result<(), bun_core::Error> {
     // SAFETY: `ctx` is `&mut analyzer as *mut _ as *mut ()` set by the caller in
     // `run_on_entry_point`; lives for the duration of the scan call.
@@ -1921,7 +1921,7 @@ fn run_on_entry_point(
         node,
     };
 
-    let mut fetcher = bun_bundler::bundle_v2::__phase_a_draft::DependenciesScanner {
+    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner {
         ctx: &mut analyzer as *mut _ as *mut (),
         entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
         // PORT NOTE: Zig used `@ptrCast` on the fn pointer; in Rust the HRTB lifetime

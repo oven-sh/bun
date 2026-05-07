@@ -802,7 +802,7 @@ pub mod command {
                     .collect();
 
                 let entry_name = graph.entry_point().name.to_vec();
-                run_command::boot_standalone(ctx, &entry_name, graph)?;
+                RunCommand::boot_standalone(ctx, &entry_name, graph)?;
                 return Ok(());
             }
         }
@@ -1402,7 +1402,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         concatenated.extend(ctx.positionals.iter().cloned());
         concatenated.extend(ctx.passthrough.iter().cloned());
         ctx.passthrough = concatenated;
-        run_command::boot(
+        RunCommand::boot(
             ctx,
             entry_point_buf[..cwd_len + trigger.len()].to_vec().into_boxed_slice(),
             None,

@@ -562,7 +562,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // PORT NOTE: `CrossChunkImport` here is the `__phase_a_draft` definition (which owns
         // `sorted_cross_chunk_imports`); the crate-root re-export is a structurally identical
         // ungate stub without the method.
-        type CrossChunkImportD = crate::bundle_v2::__phase_a_draft::CrossChunkImport;
+        type CrossChunkImportD = crate::bundle_v2::bv2_impl::CrossChunkImport;
         let mut list: Vec<CrossChunkImportD> = Vec::new();
         // defer list.deinit() — handled by Drop
         // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same

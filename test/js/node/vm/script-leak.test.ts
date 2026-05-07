@@ -1,5 +1,10 @@
 const vm = require("vm");
 const { describe, it, expect } = require("bun:test");
+const { isDebug } = require("harness");
+
+// 10k×10KB ≈ 100 MB of source text — if Script records leak their source we
+// blow past the threshold. Debug builds parse/evaluate ~30× slower, so scale down.
+const ITERATIONS = isDebug ? 1_000 : 10_000;
 
 describe("vm.Script", () => {
   it("shouldn't leak memory", () => {
@@ -13,7 +18,7 @@ describe("vm.Script", () => {
         script.runInThisContext();
       }
 
-      for (let i = 0; i < 10000; ++i) {
+      for (let i = 0; i < ITERATIONS; ++i) {
         go(i);
       }
     }

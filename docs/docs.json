@@ -536,23 +536,6 @@
             ]
           },
           {
-            "group": "Utilities",
-            "icon": "wrench",
-            "pages": [
-              "/guides/util/hash-a-password",
-              "/guides/util/javascript-uuid",
-              "/guides/util/base64",
-              "/guides/util/gzip",
-              "/guides/util/deflate",
-              "/guides/util/escape-html",
-              "/guides/util/deep-equals",
-              "/guides/util/sleep",
-              "/guides/util/file-url-to-path",
-              "/guides/util/path-to-file-url",
-              "/guides/util/which-path-to-executable-bin"
-            ]
-          },
-          {
             "group": "HTML Processing",
             "icon": "file-code",
             "pages": ["/guides/html-rewriter/extract-links", "/guides/html-rewriter/extract-social-meta"]

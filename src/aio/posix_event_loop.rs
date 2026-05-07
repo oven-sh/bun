@@ -300,6 +300,23 @@ type KQueueEvent = bun_sys::darwin::kevent64_s;
 #[cfg(target_os = "freebsd")]
 type KQueueEvent = bun_sys::freebsd::Kevent;
 
+/// Build a `struct kevent` without naming every field. FreeBSD ≥12 added
+/// `ext: [u64; 4]` to the struct, so a literal initializer fails to compile
+/// against older/newer libc ABI variants. Start from zeroed and assign.
+#[cfg(target_os = "freebsd")]
+#[inline]
+fn make_kevent(ident: usize, filter: i16, flags: u16, fflags: u32, udata: *mut core::ffi::c_void) -> KQueueEvent {
+    // SAFETY: all-zero is a valid `struct kevent` (POD).
+    let mut ev: KQueueEvent = unsafe { core::mem::zeroed() };
+    ev.ident = ident;
+    ev.filter = filter;
+    ev.flags = flags;
+    ev.fflags = fflags;
+    ev.data = 0;
+    ev.udata = udata;
+    ev
+}
+
 /// Zig std's `.freebsd` `EV` struct omits EOF; the kernel value is the
 /// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -953,31 +970,12 @@ impl FilePoll {
                 EV::ONESHOT
             };
 
+            let ident = usize::try_from(fd.native()).expect("int cast");
+            let udata = Pollable::init(self as *const _).ptr() as *mut core::ffi::c_void;
             changelist[0] = match flag {
-                Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::READ,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::ADD | one_shot_flag,
-                },
-                Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::ADD | one_shot_flag,
-                },
-                Flags::Process => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::PROC,
-                    data: 0,
-                    fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::ADD | one_shot_flag,
-                },
+                Flags::Readable => make_kevent(ident, EVFILT::READ, EV::ADD | one_shot_flag, 0, udata),
+                Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::ADD | one_shot_flag, 0, udata),
+                Flags::Process => make_kevent(ident, EVFILT::PROC, EV::ADD | one_shot_flag, NOTE::EXIT, udata),
                 Flags::Machport => {
                     return sys::Result::Err(sys::Error::from_code(
                         sys::E::EOPNOTSUPP,
@@ -1237,31 +1235,12 @@ impl FilePoll {
             use bun_sys::freebsd::{kevent, Kevent, EV, EVFILT, NOTE};
             // SAFETY: all-zero is a valid Kevent
             let mut changelist: [Kevent; 2] = unsafe { core::mem::zeroed() };
+            let ident = usize::try_from(fd.native()).expect("int cast");
+            let udata = Pollable::init(self as *const _).ptr() as *mut core::ffi::c_void;
             changelist[0] = match flag {
-                Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::READ,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::DELETE,
-                },
-                Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::DELETE,
-                },
-                Flags::Process => Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::PROC,
-                    data: 0,
-                    fflags: NOTE::EXIT,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::DELETE,
-                },
+                Flags::Readable => make_kevent(ident, EVFILT::READ, EV::DELETE, 0, udata),
+                Flags::Writable => make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata),
+                Flags::Process => make_kevent(ident, EVFILT::PROC, EV::DELETE, NOTE::EXIT, udata),
                 Flags::Machport => {
                     return sys::Result::Err(sys::Error::from_code(
                         sys::E::EOPNOTSUPP,
@@ -1273,14 +1252,7 @@ impl FilePoll {
 
             let mut nchanges: c_int = 1;
             if both_directions {
-                changelist[1] = Kevent {
-                    ident: usize::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::WRITE,
-                    data: 0,
-                    fflags: 0,
-                    udata: Pollable::init(self as *const _).ptr() as usize,
-                    flags: EV::DELETE,
-                };
+                changelist[1] = make_kevent(ident, EVFILT::WRITE, EV::DELETE, 0, udata);
                 nchanges = 2;
             }
 

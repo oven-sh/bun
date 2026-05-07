@@ -901,7 +901,7 @@ impl FdOptional {
 
 unsafe extern "Rust" {
     /// Resolves an FD to its path (readlink `/proc/self/fd/N` on Linux,
-    /// `F_GETPATH` on macOS). Defined `#[no_mangle]` in `bun_sys::fd` so T0
+    /// `F_GETPATH` on macOS, `F_KINFO` on FreeBSD). Defined `#[no_mangle]` in `bun_sys::fd` so T0
     /// doesn't depend on bun_paths/bun_sys at compile time. Returns bytes
     /// written (>0), 0 on failure, -1 on EBADF/ENOENT.
     pub fn __bun_fd_path(fd: Fd, buf: *mut u8, cap: usize) -> isize;
@@ -1188,7 +1188,10 @@ fn thread_id() -> u64 {
     // Use the OS tid via libc; matches Zig `Thread.getCurrentId()` semantics.
     #[cfg(target_os = "linux")]
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "freebsd")]
+    // SAFETY: pthread_getthreadid_np() is infallible and returns the kernel LWP id.
+    unsafe { libc::pthread_getthreadid_np() as u64 }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     { std::thread::current().id().as_u64().into() } // PERF(port): unstable; Phase B
 }
 

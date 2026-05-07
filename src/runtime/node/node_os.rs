@@ -1030,9 +1030,12 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
                 let addr_data: &[u8] = unsafe { &(*(ll_addr as *const libc::sockaddr_ll)).sll_addr };
                 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
                 let addr_data: &[u8] = {
-                    // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check
+                    // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check.
+                    // `sdl_data` is `[c_char; N]` (signedness varies by platform);
+                    // reinterpret as bytes — same width, same provenance.
                     let dl = unsafe { &*(ll_addr as *const c::sockaddr_dl) };
-                    &dl.sdl_data[dl.sdl_nlen as usize..]
+                    let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
+                    unsafe { core::slice::from_raw_parts(raw.as_ptr() as *const u8, raw.len()) }
                 };
                 if addr_data.len() < 6 {
                     let mac = b"00:00:00:00:00:00";

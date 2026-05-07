@@ -354,45 +354,46 @@ mod linux_impl {
 #[cfg(target_os = "freebsd")]
 mod freebsd_impl {
     use super::*;
-    // TODO(port): std.c on FreeBSD — map to bun_sys::freebsd or bun_sys::c.
-    use bun_sys::freebsd as c;
+    use bun_sys::E;
 
     pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
-        // SAFETY: tm is fully initialized below before tm_ptr is passed to the kernel.
-        let mut tm: c::_umtx_time = unsafe { core::mem::zeroed() };
-        let mut tm_ptr: Option<*const c::_umtx_time> = None;
+        // SAFETY: all-zero is a valid `_umtx_time` (POD).
+        let mut tm: libc::_umtx_time = unsafe { core::mem::zeroed() };
+        let mut tm_ptr: *mut c_void = core::ptr::null_mut();
 
         if let Some(timeout_ns) = timeout {
-            tm_ptr = Some(&tm);
-            tm_size = core::mem::size_of::<c::_umtx_time>();
-
-            tm.flags = 0; // use relative time not UMTX_ABSTIME
-            tm.clockid = c::CLOCK::MONOTONIC;
-            tm.timeout.sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
-            tm.timeout.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
+            tm._flags = 0; // use relative time not UMTX_ABSTIME
+            tm._clockid = libc::CLOCK_MONOTONIC as u32;
+            tm._timeout.tv_sec = <_>::try_from(timeout_ns / NS_PER_S).unwrap();
+            tm._timeout.tv_nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
+            tm_size = core::mem::size_of::<libc::_umtx_time>();
+            tm_ptr = (&mut tm as *mut libc::_umtx_time).cast();
         }
 
-        // SAFETY: ptr.as_ptr() is valid; tm_ptr is null or points at the stack local above.
+        // SAFETY: ptr.as_ptr() is valid; tm_ptr is null or points at the stack
+        // local above. _umtx_op WAIT_UINT_PRIVATE reads `*obj` as a u32.
         let rc = unsafe {
-            c::_umtx_op(
-                ptr.as_ptr() as usize,
-                c::UMTX_OP::WAIT_UINT_PRIVATE as c_int,
+            libc::_umtx_op(
+                ptr.as_ptr().cast::<c_void>(),
+                libc::UMTX_OP_WAIT_UINT_PRIVATE,
                 expect as c_ulong,
-                tm_size,
-                tm_ptr.map_or(0, |p| p as usize),
+                // Per _umtx_op(2): when uaddr2 is non-null, uaddr1 is the size
+                // of the timeout struct (not a pointer).
+                tm_size as *mut c_void,
+                tm_ptr,
             )
         };
 
-        match bun_sys::posix::errno(rc) {
-            c::E::SUCCESS => Ok(()),
-            c::E::FAULT => panic!("_umtx_op() WAIT returned EFAULT unexpectedly"),
-            c::E::INVAL => Ok(()), // possibly timeout overflow
-            c::E::TIMEDOUT => {
+        match bun_sys::get_errno(rc) {
+            E::SUCCESS => Ok(()),
+            E::EFAULT => panic!("_umtx_op() WAIT returned EFAULT unexpectedly"),
+            E::EINVAL => Ok(()), // possibly timeout overflow
+            E::ETIMEDOUT => {
                 debug_assert!(timeout.is_some());
                 Err(TimeoutError::Timeout)
             }
-            c::E::INTR => Ok(()), // spurious wake
+            E::EINTR => Ok(()), // spurious wake
             _ => panic!("Unexpected _umtx_op() WAIT return code"),
         }
     }
@@ -404,19 +405,19 @@ mod freebsd_impl {
         let n: c_ulong = max_waiters.min(c_int::MAX as u32) as c_ulong;
         // SAFETY: ptr.as_ptr() is valid for the duration of the call.
         let rc = unsafe {
-            c::_umtx_op(
-                ptr.as_ptr() as usize,
-                c::UMTX_OP::WAKE_PRIVATE as c_int,
+            libc::_umtx_op(
+                ptr.as_ptr().cast::<c_void>(),
+                libc::UMTX_OP_WAKE_PRIVATE,
                 n,
-                0, // there is no timeout struct
-                0, // there is no timeout struct pointer
+                core::ptr::null_mut(), // there is no timeout struct
+                core::ptr::null_mut(), // there is no timeout struct pointer
             )
         };
 
-        match bun_sys::posix::errno(rc) {
-            c::E::SUCCESS => {}
-            c::E::FAULT => {} // it's ok if the ptr doesn't point to valid memory
-            c::E::INVAL => panic!("_umtx_op() WAKE returned EINVAL unexpectedly"),
+        match bun_sys::get_errno(rc) {
+            E::SUCCESS => {}
+            E::EFAULT => {} // it's ok if the ptr doesn't point to valid memory
+            E::EINVAL => panic!("_umtx_op() WAKE returned EINVAL unexpectedly"),
             _ => panic!("Unexpected _umtx_op() WAKE return code"),
         }
     }

@@ -195,11 +195,28 @@ mod platform {
 #[cfg(target_os = "freebsd")]
 mod platform {
     use super::*;
+    use core::ptr::addr_of;
+
+    // Zig spec calls `posix.system.getdents()`. The Rust `libc` crate binds
+    // neither `getdents` nor `getdirentries` on FreeBSD, so declare the former
+    // to keep the struct shape and syscall surface mirroring the spec.
+    unsafe extern "C" {
+        fn getdents(
+            fd: core::ffi::c_int,
+            buf: *mut core::ffi::c_char,
+            nbytes: usize,
+        ) -> isize;
+    }
+
+    /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
+    /// FreeBSD's `struct dirent` leads with `ino_t` (u64, align 8); a bare
+    /// `[u8; N]` field has alignment 1, so wrap it to force 8-byte alignment.
+    #[repr(C, align(8))]
+    pub struct DirentBuf(pub [u8; 8192]);
 
     pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
         pub dir: Fd,
-        // TODO(port): align(@alignOf(posix.system.dirent))
-        pub buf: [u8; 8192],
+        pub buf: DirentBuf,
         pub index: usize,
         pub end_index: usize,
     }
@@ -208,12 +225,12 @@ mod platform {
         pub fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
-                    // SAFETY: FFI getdents
+                    // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
                     let rc = unsafe {
-                        libc::getdents(
+                        getdents(
                             self.dir.native(),
-                            self.buf.as_mut_ptr() as *mut libc::c_char,
-                            self.buf.len(),
+                            self.buf.0.as_mut_ptr() as *mut libc::c_char,
+                            self.buf.0.len(),
                         )
                     };
                     if rc < 0 {
@@ -231,24 +248,32 @@ mod platform {
                     self.index = 0;
                     self.end_index = usize::try_from(rc).expect("int cast");
                 }
-                // SAFETY: index within filled buf; packed dirent
+                // Records are variable-length; subsequent entries may not be
+                // 8-byte aligned (Zig: `*align(1) posix.system.dirent`). Never
+                // form a `&dirent` — read each field through the raw pointer.
+                // SAFETY: index < end_index ≤ 8192; kernel wrote a valid record.
                 let entry = unsafe {
-                    &*(self.buf.as_ptr().add(self.index) as *const libc::dirent)
+                    self.buf.0.as_ptr().add(self.index) as *const libc::dirent
                 };
-                self.index += entry.d_reclen as usize;
+                // SAFETY: entry points at a valid (possibly unaligned) dirent.
+                let d_reclen: u16 = unsafe { addr_of!((*entry).d_reclen).read_unaligned() };
+                let d_namlen: u16 = unsafe { addr_of!((*entry).d_namlen).read_unaligned() };
+                let d_fileno: u64 = unsafe { addr_of!((*entry).d_fileno).read_unaligned() };
+                let d_type: u8 = unsafe { addr_of!((*entry).d_type).read_unaligned() };
+                self.index += d_reclen as usize;
 
                 // SAFETY: name is d_namlen bytes within the record
                 let name = unsafe {
                     core::slice::from_raw_parts(
-                        entry.d_name.as_ptr() as *const u8,
-                        entry.d_namlen as usize,
+                        addr_of!((*entry).d_name) as *const u8,
+                        d_namlen as usize,
                     )
                 };
-                if name == b"." || name == b".." || entry.d_fileno == 0 {
+                if name == b"." || name == b".." || d_fileno == 0 {
                     continue 'start_over;
                 }
 
-                let entry_kind: EntryKind = match entry.d_type {
+                let entry_kind: EntryKind = match d_type {
                     libc::DT_BLK => EntryKind::BlockDevice,
                     libc::DT_CHR => EntryKind::CharacterDevice,
                     libc::DT_DIR => EntryKind::Directory,
@@ -256,7 +281,8 @@ mod platform {
                     libc::DT_LNK => EntryKind::SymLink,
                     libc::DT_REG => EntryKind::File,
                     libc::DT_SOCK => EntryKind::UnixDomainSocket,
-                    libc::DT_WHT => EntryKind::Whiteout,
+                    // FreeBSD <sys/dirent.h> DT_WHT = 14; libc crate omits it.
+                    14 => EntryKind::Whiteout,
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
@@ -818,7 +844,7 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
                 },
             };
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(target_os = "linux")]
         {
             return Self {
                 iter: NewIterator {
@@ -827,6 +853,18 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16> {
                     end_index: 0,
                     // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
                     buf: [0u8; 8192],
+                },
+            };
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            return Self {
+                iter: NewIterator {
+                    dir,
+                    index: 0,
+                    end_index: 0,
+                    // Zig `= undefined`; zero-init avoids Rust's invalid_value lint on [u8; N]
+                    buf: platform::DirentBuf([0u8; 8192]),
                 },
             };
         }

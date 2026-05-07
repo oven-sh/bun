@@ -1671,7 +1671,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size;
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_size = if bun_sys::S::ISREG(stat.st_mode) {
+                    let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
                         stat_size
                     } else {
                         original_size.min(stat_size)
@@ -1687,7 +1687,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         content_size: blob_size as usize,
                     };
 
-                    if bun_sys::S::ISREG(stat.st_mode) {
+                    if bun_sys::S::ISREG(stat.st_mode as u32) {
                         let stat_size_usize = stat_size as usize;
                         sf.offset = sf.offset.min(stat_size_usize);
                         sf.remain = sf

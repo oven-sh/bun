@@ -4052,7 +4052,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -4090,7 +4090,7 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+                            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
                             return Ok(());
                         }
                     }
@@ -4108,7 +4108,7 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
-            let _ = Syscall::fchmod(dest_fd, stat_.st_mode);
+            let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
             return Ok(());
         }
 
@@ -6733,7 +6733,7 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode as Mode, &wrote), |(fd, m, wrote)| {
                 let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
                 let _ = Syscall::fchmod(fd, m);
                 fd.close();
@@ -6821,7 +6821,7 @@ impl NodeFS {
                     // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
-                    if matches!(err.get_errno(), E::MLINK | E::LOOP) {
+                    if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
                         return self._cp_symlink(src, dest);
                     }
                     return Err(err);
@@ -6833,7 +6833,7 @@ impl NodeFS {
                 Ok(result) => result,
                 Err(err) => return Err(err.with_fd(src_fd)),
             };
-            if !sys::S::ISREG(stat_.st_mode) {
+            if !sys::S::ISREG(stat_.st_mode as u32) {
                 return Err(sys::Error { errno: SystemErrno::EOPNOTSUPP as _, syscall: sys::Tag::copyfile, ..Default::default() });
             }
 
@@ -6859,7 +6859,7 @@ impl NodeFS {
                 }
             }
 
-            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
+            let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode as Mode, &wrote), |(fd, m, wrote)| {
                 let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
                 let _ = Syscall::fchmod(fd, m);
                 fd.close();

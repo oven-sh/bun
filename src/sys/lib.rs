@@ -218,8 +218,12 @@ pub mod dir_iterator {
             libc::DT_LNK  => EntryKind::SymLink,
             libc::DT_REG  => EntryKind::File,
             libc::DT_SOCK => EntryKind::UnixDomainSocket,
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            #[cfg(target_os = "macos")]
             libc::DT_WHT  => EntryKind::Whiteout,
+            // FreeBSD's <sys/dirent.h> defines DT_WHT = 14 but the libc crate
+            // omits it (whiteouts only appear on unionfs).
+            #[cfg(target_os = "freebsd")]
+            14 => EntryKind::Whiteout,
             // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
             // provide d_type. Callers should lstatat() to resolve when needed.
             _ => EntryKind::Unknown,
@@ -776,7 +780,7 @@ pub use bun_errno::{E, S, SystemErrno, get_errno, GetErrno};
 /// upper-case errno name (e.g. `"ENOENT"`) or null for an unrecognised code.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_char {
-    match SystemErrno::init(err as _) {
+    match SystemErrno::init(err as i64) {
         Some(e) => <&'static str>::from(e).as_ptr() as *const core::ffi::c_char,
         None => core::ptr::null(),
     }
@@ -948,7 +952,9 @@ pub fn last_errno() -> i32 {
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
 #[cfg(target_os = "macos")]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+#[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+#[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__error() } }
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos", target_os = "freebsd", target_os = "dragonfly"))))]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
 #[cfg(windows)]
 #[inline] fn last_errno() -> i32 {
@@ -1579,11 +1585,11 @@ mod posix_impl {
     }
 
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> {
-        check_p!(unsafe { libc::mkdir(path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
+        check_p!(unsafe { libc::mkdir(path.as_ptr(), mode as libc::mode_t) }, Tag::mkdir, path); Ok(())
     }
     pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
         // sys.zig:809 — `mkdiratZ` tags errors as `.mkdir` (not `.mkdirat`).
-        check_p!(unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode) }, Tag::mkdir, path); Ok(())
+        check_p!(unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode as libc::mode_t) }, Tag::mkdir, path); Ok(())
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
@@ -1748,7 +1754,7 @@ mod posix_impl {
         }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
-        check!(unsafe { libc::fchmod(fd.native(), mode) }, Tag::fchmod); Ok(())
+        check!(unsafe { libc::fchmod(fd.native(), mode as libc::mode_t) }, Tag::fchmod); Ok(())
     }
     pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()> {
         check!(unsafe { libc::fchown(fd.native(), uid, gid) }, Tag::fchown); Ok(())
@@ -1850,15 +1856,21 @@ mod posix_impl {
         Ok(n)
     }
     pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()> {
-        check_p!(unsafe { libc::chmod(path.as_ptr(), mode) }, Tag::chmod, path); Ok(())
+        check_p!(unsafe { libc::chmod(path.as_ptr(), mode as libc::mode_t) }, Tag::chmod, path); Ok(())
     }
     pub fn fchmodat(dir: Fd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
-        check_p!(unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode, flags) }, Tag::fchmodat, path); Ok(())
+        check_p!(unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) }, Tag::fchmodat, path); Ok(())
     }
     /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)` (sys.zig:434).
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        { check_p!(unsafe { libc::lchmod(path.as_ptr(), mode) }, Tag::lchmod, path); Ok(()) }
+        #[cfg(target_os = "macos")]
+        { check_p!(unsafe { libc::lchmod(path.as_ptr(), mode as libc::mode_t) }, Tag::lchmod, path); Ok(()) }
+        #[cfg(target_os = "freebsd")]
+        {
+            // FreeBSD libc has lchmod(2) since 3.0 but the `libc` crate omits the binding.
+            unsafe extern "C" { fn lchmod(path: *const core::ffi::c_char, mode: libc::mode_t) -> core::ffi::c_int; }
+            check_p!(unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) }, Tag::lchmod, path); Ok(())
+        }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         { fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW) }
     }
@@ -2001,7 +2013,7 @@ mod posix_impl {
         check!(unsafe { libc::fchdir(fd.native()) }, Tag::fchdir); Ok(())
     }
     pub fn umask(mode: Mode) -> Mode {
-        unsafe { libc::umask(mode) }
+        unsafe { libc::umask(mode as libc::mode_t) as Mode }
     }
 
     // ── B-2 round 9: socket primitives (recv/send/socketpair) ──
@@ -3427,6 +3439,10 @@ pub mod c {
     pub use libc::stat as Stat;
     pub use libc::{fchmod, memcmp};
     #[cfg(unix)] pub use libc::{getuid, getgid, geteuid, getegid};
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
+    pub use libc::{sysctlbyname, getloadavg, sockaddr_dl};
+    #[cfg(unix)]
+    pub use super::UTIME_NOW;
     /// `std.c.fd_t` / `std.posix.fd_t` — native fd backing int (c_int on POSIX,
     /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
     /// exists only for direct libc FFI (e.g. `socketpair`).
@@ -5021,13 +5037,32 @@ pub mod posix {
     use core::ffi::{c_int, c_void};
     pub use bun_errno::posix::*;
 
+    // ── BSD sysctl(3) family (Zig: `std.posix.sysctlbynameZ`) ──
+    // macOS/FreeBSD only — Linux dropped sysctl(2) and uses procfs instead.
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
+    #[inline]
+    pub fn sysctlbyname(
+        name: &core::ffi::CStr,
+        oldp: *mut c_void, oldlenp: *mut usize,
+        newp: *mut c_void, newlen: usize,
+    ) -> super::Maybe<()> {
+        // SAFETY: thin libc wrapper; pointer validity is the caller's contract.
+        let rc = unsafe { libc::sysctlbyname(name.as_ptr(), oldp, oldlenp, newp, newlen) };
+        if rc != 0 { return Err(super::err_with(super::Tag::TODO)); }
+        Ok(())
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "dragonfly", target_os = "netbsd", target_os = "openbsd"))]
+    pub use libc::timeval;
+
     // ── stat mode-kind tests (Zig: `std.posix.S.ISLNK` etc.) ──
+    // `libc::S_IF*` is `mode_t` (u32 on Linux/macOS, u16 on FreeBSD); widen to
+    // u32 so callers can pass `Mode` uniformly.
     #[cfg(unix)]
-    #[inline] pub const fn s_islnk(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFLNK }
+    #[inline] pub const fn s_islnk(m: u32) -> bool { (m & libc::S_IFMT as u32) == libc::S_IFLNK as u32 }
     #[cfg(unix)]
-    #[inline] pub const fn s_isdir(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFDIR }
+    #[inline] pub const fn s_isdir(m: u32) -> bool { (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32 }
     #[cfg(unix)]
-    #[inline] pub const fn s_isreg(m: u32) -> bool { (m & libc::S_IFMT) == libc::S_IFREG }
+    #[inline] pub const fn s_isreg(m: u32) -> bool { (m & libc::S_IFMT as u32) == libc::S_IFREG as u32 }
 
     // ── signals ──
     #[cfg(unix)] pub use libc::sigaction as Sigaction;
@@ -5304,6 +5339,25 @@ pub mod freebsd {
 }
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
+
+/// `std.time` shims — wallclock timestamp without `std::time::SystemTime`
+/// (banned per PORTING.md). Used by uptime/process-start on BSD where the
+/// boot time comes from `sysctl(kern.boottime)` and we subtract "now".
+pub mod time {
+    /// Seconds since the Unix epoch (Zig: `std.time.timestamp()`).
+    #[cfg(unix)]
+    #[inline]
+    pub fn timestamp() -> i64 {
+        // SAFETY: time(NULL) is infallible on POSIX.
+        unsafe { libc::time(core::ptr::null_mut()) as i64 }
+    }
+    #[cfg(windows)]
+    #[inline]
+    pub fn timestamp() -> i64 {
+        // TODO(port): GetSystemTimeAsFileTime → epoch seconds.
+        0
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Dir` — `std.fs.Dir` replacement. Thin wrapper over `Fd`; close on Drop is
@@ -6051,8 +6105,9 @@ pub fn renameat_concurrently_without_fallback(
     Ok(())
 }
 
-/// Linux `eventfd(initval, flags)` — kernel notification fd.
-#[cfg(target_os = "linux")]
+/// `eventfd(initval, flags)` — kernel notification fd. Linux native; FreeBSD 13+
+/// gained a Linux-compatible `eventfd(2)` via the `libc` shim.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     // SAFETY: eventfd(2) is safe to call with any args.
     let rc = unsafe { libc::eventfd(initval, flags) };

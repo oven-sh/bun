@@ -360,7 +360,11 @@ macro_rules! impl_get_errno_libc {
         impl GetErrno for $t {
             #[inline]
             fn get_errno(self) -> E {
-                if self as i64 == -1 {
+                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
+                // `as i64` would zero-extend u32, never matching -1. Compare
+                // against the type's own all-ones value instead (== -1 for
+                // signed, == MAX for unsigned — both are libc's failure rc).
+                if self == !(0 as $t) {
                     // CYCLEBREAK: bun_sys::libc::errno MOVE_DOWN → crate::posix (move-in pass)
                     // SAFETY: errno value is a valid E discriminant on Linux
                     unsafe { core::mem::transmute::<u16, E>(crate::posix::errno() as u16) }

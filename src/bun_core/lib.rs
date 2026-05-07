@@ -203,6 +203,18 @@ pub mod strings {
     pub use crate::fmt::strings::*; // pulls in fmt.rs's larger subset
     #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { ::bstr::ByteSlice::find(h, n).is_some() }
     #[inline] pub fn contains(h: &[u8], n: &[u8]) -> bool { includes(h, n) }
+    #[inline]
+    pub fn contains_case_insensitive_ascii(h: &[u8], n: &[u8]) -> bool {
+        if n.is_empty() { return true; }
+        let mut start: usize = 0;
+        while start + n.len() <= h.len() {
+            if eql_case_insensitive_ascii(&h[start..start + n.len()], n, false) {
+                return true;
+            }
+            start += 1;
+        }
+        false
+    }
     #[inline] pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> { h.iter().position(|&b| b == c) }
     #[inline] pub fn starts_with(h: &[u8], p: &[u8]) -> bool { h.starts_with(p) }
     #[inline] pub fn ends_with(h: &[u8], p: &[u8]) -> bool { h.ends_with(p) }
@@ -723,7 +735,12 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
     }
     #[cfg(unix)]
     unsafe {
+        // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
+        #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+        let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap) as usize;
+        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
         let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap as core::ffi::c_int);
+        #[cfg(not(any(target_os = "freebsd", target_os = "dragonfly")))]
         let n = if n < 0 { 0 } else { n as usize };
         if begin > 0 && begin < n {
             core::ptr::copy(out.add(begin), out, n - begin);

@@ -142,7 +142,7 @@ pub fn current() -> ThreadId {
     }
     #[cfg(target_os = "freebsd")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn pthread_getthreadid_np() -> core::ffi::c_int;
         }
         // SAFETY: infallible.

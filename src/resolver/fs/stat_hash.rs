@@ -35,9 +35,9 @@ fn as_bytes<T>(v: &T) -> &[u8] {
 // platform-specific fields here (mirrors `bun_sys::PosixStat::stat_mtime`).
 #[inline]
 fn stat_mtime(s: &Stat) -> Timespec {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    #[cfg(target_os = "macos")]
     { Timespec { sec: s.st_mtimespec.tv_sec as i64, nsec: s.st_mtimespec.tv_nsec as i64 } }
     #[cfg(windows)]
     { Timespec { sec: s.st_mtim.tv_sec as i64, nsec: s.st_mtim.tv_nsec as i64 } }

@@ -430,7 +430,7 @@ impl<const SSL: bool> App<SSL> {
                 Self::SSL_FLAG,
                 self as *mut Self as *mut uws_app_t,
                 config.host,
-                u16::try_from(config.port).unwrap(),
+                u16::try_from(config.port).expect("int cast"),
                 config.options,
                 handler,
                 user_data,

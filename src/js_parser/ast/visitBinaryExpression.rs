@@ -685,7 +685,7 @@ impl<'arena> BinaryExpressionVisitor<'arena> {
                     if !Symbol::is_kind_private(kind) {
                         let r = logger::Range {
                             loc: e_.left.loc,
-                            len: i32::try_from(name.len()).unwrap(),
+                            len: i32::try_from(name.len()).expect("int cast"),
                         };
                         p.log()
                             .add_range_error_fmt(

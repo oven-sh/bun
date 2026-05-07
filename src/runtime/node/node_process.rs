@@ -202,7 +202,7 @@ fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
             for (i, &wtf) in exec_argv.iter().enumerate() {
                 array.put_index(
                     global_object,
-                    u32::try_from(i).unwrap(),
+                    u32::try_from(i).expect("int cast"),
                     BunString::init(wtf).to_js(global_object)?,
                 )?;
             }

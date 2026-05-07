@@ -123,7 +123,7 @@ impl Event {
     }
 
     pub fn size(&self) -> u32 {
-        u32::try_from(size_of::<Event>()).unwrap() + self.name_len
+        u32::try_from(size_of::<Event>()).expect("int cast") + self.name_len
     }
 }
 
@@ -251,7 +251,7 @@ impl INotifyWatcher {
                 let errno = get_errno(rc);
                 match errno {
                     E::SUCCESS => {
-                        let mut read_len = usize::try_from(rc).unwrap();
+                        let mut read_len = usize::try_from(rc).expect("int cast");
                         bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd, read_len);
                         if read_len == 0 {
                             return Ok(&[]);
@@ -296,7 +296,7 @@ impl INotifyWatcher {
                                     let e = get_errno(new_rc);
                                     match e {
                                         E::SUCCESS => {
-                                            read_len += usize::try_from(new_rc).unwrap();
+                                            read_len += usize::try_from(new_rc).expect("int cast");
                                             break 'outer read_len;
                                         }
                                         E::EAGAIN | E::EINTR => {
@@ -365,7 +365,7 @@ impl INotifyWatcher {
             if count as usize == max_count {
                 self.read_ptr = Some(ReadPtr {
                     i,
-                    len: u32::try_from(read_eventlist_bytes.len()).unwrap(),
+                    len: u32::try_from(read_eventlist_bytes.len()).expect("int cast"),
                 });
                 bun_core::scoped_log!(watcher, "{} read buffer filled up", self.fd);
                 return Ok(&self.eventlist_ptrs[..]);

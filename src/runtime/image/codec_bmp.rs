@@ -31,24 +31,24 @@ pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     if b.len() < 54 || b[0] != b'B' || b[1] != b'M' {
         return Err(codecs::Error::DecodeFailed);
     }
-    let pix_off = u32::from_le_bytes(b[10..14].try_into().unwrap());
-    let ih_size = u32::from_le_bytes(b[14..18].try_into().unwrap());
+    let pix_off = u32::from_le_bytes(b[10..14].try_into().expect("infallible: size matches"));
+    let ih_size = u32::from_le_bytes(b[14..18].try_into().expect("infallible: size matches"));
     // OS/2 BITMAPCOREHEADER (12) and other oddities — let the system
     // backend (already tried) or caller deal; clipboards don't emit these.
     // (usize add: `ih_size` is attacker bytes; u32 14+u32::MAX would wrap.)
     if ih_size < 40 || 14 + ih_size as usize > b.len() {
         return Err(codecs::Error::DecodeFailed);
     }
-    let w_raw = i32::from_le_bytes(b[18..22].try_into().unwrap());
-    let h_raw = i32::from_le_bytes(b[22..26].try_into().unwrap());
+    let w_raw = i32::from_le_bytes(b[18..22].try_into().expect("infallible: size matches"));
+    let h_raw = i32::from_le_bytes(b[22..26].try_into().expect("infallible: size matches"));
     // i32::MIN biHeight would make `@abs` yield 2³¹, which then doesn't fit
     // back into i32 anywhere downstream — reject it as the corrupt header it
     // is rather than letting safety-checked casts trap.
     if w_raw <= 0 || h_raw == 0 || h_raw == i32::MIN {
         return Err(codecs::Error::DecodeFailed);
     }
-    let bpp = u16::from_le_bytes(b[28..30].try_into().unwrap());
-    let compression = u32::from_le_bytes(b[30..34].try_into().unwrap());
+    let bpp = u16::from_le_bytes(b[28..30].try_into().expect("infallible: size matches"));
+    let compression = u32::from_le_bytes(b[30..34].try_into().expect("infallible: size matches"));
     if bpp != 24 && bpp != 32 {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -58,7 +58,7 @@ pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
     }
 
     let mut h = Header {
-        width: u32::try_from(w_raw).unwrap(),
+        width: u32::try_from(w_raw).expect("int cast"),
         height: h_raw.unsigned_abs(),
         top_down: h_raw < 0,
         bpp,
@@ -80,12 +80,12 @@ pub fn parse_header(b: &[u8]) -> Result<Header, codecs::Error> {
         if b.len() < 14 + 40 + 12 {
             return Err(codecs::Error::DecodeFailed);
         }
-        h.r_mask = u32::from_le_bytes(b[54..58].try_into().unwrap());
-        h.g_mask = u32::from_le_bytes(b[58..62].try_into().unwrap());
-        h.b_mask = u32::from_le_bytes(b[62..66].try_into().unwrap());
+        h.r_mask = u32::from_le_bytes(b[54..58].try_into().expect("infallible: size matches"));
+        h.g_mask = u32::from_le_bytes(b[58..62].try_into().expect("infallible: size matches"));
+        h.b_mask = u32::from_le_bytes(b[62..66].try_into().expect("infallible: size matches"));
         // Alpha mask is V4+ only (offset 66). V3+BITFIELDS has no alpha.
         h.a_mask = if ih_size >= 108 && b.len() >= 70 {
-            u32::from_le_bytes(b[66..70].try_into().unwrap())
+            u32::from_le_bytes(b[66..70].try_into().expect("infallible: size matches"))
         } else {
             0
         };
@@ -162,7 +162,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             let pix: u32 = if bpp_bytes == 3 {
                 row[xs * 3] as u32 | (row[xs * 3 + 1] as u32) << 8 | (row[xs * 3 + 2] as u32) << 16
             } else {
-                u32::from_le_bytes(row[xs * 4..xs * 4 + 4].try_into().unwrap())
+                u32::from_le_bytes(row[xs * 4..xs * 4 + 4].try_into().expect("infallible: size matches"))
             };
             dst[xs * 4 + 0] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
             dst[xs * 4 + 1] = to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw);

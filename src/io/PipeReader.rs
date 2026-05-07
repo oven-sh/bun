@@ -598,7 +598,7 @@ impl PosixBufferedReader {
 
     fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
         fn pread_fn(fd1: Fd, buf: &mut [u8], offset: usize) -> sys::Result<usize> {
-            sys::pread(fd1, buf, i64::try_from(offset).unwrap())
+            sys::pread(fd1, buf, i64::try_from(offset).expect("int cast"))
         }
         if parent.flags.contains(PosixFlags::USE_PREAD) {
             Self::read_with_fn(parent, FileType::File, fd, size_hint, received_hup, pread_fn);
@@ -1394,7 +1394,7 @@ impl WindowsBufferedReader {
                     return;
                 }
                 // we got some data we can slice the buffer!
-                let len: usize = usize::try_from(nread_int).unwrap();
+                let len: usize = usize::try_from(nread_int).expect("int cast");
                 // SAFETY: buf is valid when nread > 0.
                 let slice = unsafe { (*buf).slice_mut() };
                 this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
@@ -1484,7 +1484,7 @@ impl WindowsBufferedReader {
                 }
 
                 // PORT NOTE: defer block inlined after body — see below.
-                let len: usize = usize::try_from(nread_int).unwrap();
+                let len: usize = usize::try_from(nread_int).expect("int cast");
                 this._offset += len;
                 // we got some data lets get the current iov
                 let mut handled = false;
@@ -1521,7 +1521,7 @@ impl WindowsBufferedReader {
                                 this.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                                 let offset = if this.flags.contains(WindowsFlags::USE_PREAD) {
-                                    i64::try_from(this._offset).unwrap()
+                                    i64::try_from(this._offset).expect("int cast")
                                 } else {
                                     -1
                                 };
@@ -1583,7 +1583,7 @@ impl WindowsBufferedReader {
                 self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
 
                 let offset = if self.flags.contains(WindowsFlags::USE_PREAD) {
-                    i64::try_from(self._offset).unwrap()
+                    i64::try_from(self._offset).expect("int cast")
                 } else {
                     -1
                 };

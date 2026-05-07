@@ -478,7 +478,7 @@ impl Image {
             return Err(global
                 .throw_invalid_arguments(format_args!("rotate: only multiples of 90 are supported")));
         }
-        self.pipeline.rotate = u16::try_from(deg).unwrap();
+        self.pipeline.rotate = u16::try_from(deg).expect("int cast");
         Ok(callframe.this())
     }
 
@@ -876,8 +876,8 @@ impl Image {
                             mem::swap(&mut w, &mut h);
                         }
                     }
-                    self.last_width = i32::try_from(w).unwrap();
-                    self.last_height = i32::try_from(h).unwrap();
+                    self.last_width = i32::try_from(w).expect("int cast");
+                    self.last_height = i32::try_from(h).expect("int cast");
                     let obj = JSValue::create_empty_object(global, 3);
                     obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                     obj.put(global, b"height", JSValue::js_number(f64::from(h)));
@@ -1144,8 +1144,8 @@ impl Image {
         mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
-                self.last_width = i32::try_from(w).unwrap();
-                self.last_height = i32::try_from(h).unwrap();
+                self.last_width = i32::try_from(w).expect("int cast");
+                self.last_height = i32::try_from(h).expect("int cast");
                 Ok((out, format.mime()))
             }
             TaskResult::Err(e) => {
@@ -1451,7 +1451,7 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::ISREG(u32::try_from(st.st_mode).unwrap() as _) {
+            if !sys::S::ISREG(u32::try_from(st.st_mode).expect("int cast") as _) {
                 self.result = TaskResult::IoErr(sys::Error {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
@@ -1460,7 +1460,7 @@ impl<'a> PipelineTask<'a> {
                 });
                 return;
             }
-            if u64::try_from(st.st_size.max(0)).unwrap() > MAX_INPUT_FILE_BYTES {
+            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
@@ -1626,8 +1626,8 @@ impl<'a> PipelineTask<'a> {
         // so writing `self.image.*` there would race the synchronous getters.
         match &self.result {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
-                image.last_width = i32::try_from(*w).unwrap();
-                image.last_height = i32::try_from(*h).unwrap();
+                image.last_width = i32::try_from(*w).expect("int cast");
+                image.last_height = i32::try_from(*h).expect("int cast");
             }
             _ => {}
         }

@@ -1083,7 +1083,7 @@ fn write_to_socket<const IS_SSL: bool>(
         if amount < 0 {
             return Err(err!(WriteFailed));
         }
-        let wrote = usize::try_from(amount).unwrap();
+        let wrote = usize::try_from(amount).expect("int cast");
         total_written += wrote;
         remaining = &remaining[wrote..];
         if wrote == 0 {
@@ -1258,7 +1258,7 @@ impl HTTPClient {
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
                         let cert_size = unsafe { boring_extra::i2d_X509(x509, core::ptr::null_mut()) };
                         let mut cert =
-                            vec![0u8; usize::try_from(cert_size).unwrap()].into_boxed_slice();
+                            vec![0u8; usize::try_from(cert_size).expect("int cast")].into_boxed_slice();
                         let mut cert_ptr = cert.as_mut_ptr();
                         // SAFETY: x509 is live; cert_ptr points at a writable buffer of cert_size bytes
                         let result_size = unsafe { boring_extra::i2d_X509(x509, &mut cert_ptr) };
@@ -2783,7 +2783,7 @@ impl HTTPClient {
             });
 
             let bytes_read =
-                (usize::try_from(response.bytes_read).unwrap()).min(to_read!().len());
+                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read!().len());
             to_read_ptr = &to_read!()[bytes_read..] as *const [u8];
 
             if response.status_code == 101 {

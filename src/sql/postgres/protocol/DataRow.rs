@@ -16,25 +16,25 @@ pub fn decode<C: Copy, R: ReaderContext>(
     let mut _remaining_bytes = reader.length()?;
     _remaining_bytes = _remaining_bytes.saturating_sub(4);
 
-    let remaining_fields: usize = usize::try_from(reader.short()?.max(0)).unwrap();
+    let remaining_fields: usize = usize::try_from(reader.short()?.max(0)).expect("int cast");
 
     for index in 0..remaining_fields {
         let byte_length = reader.int4()?;
         match byte_length {
             0 => {
                 let mut empty = Data::EMPTY;
-                if !for_each(context, u32::try_from(index).unwrap(), Some(&mut empty))? {
+                if !for_each(context, u32::try_from(index).expect("int cast"), Some(&mut empty))? {
                     break;
                 }
             }
             NULL_INT4 => {
-                if !for_each(context, u32::try_from(index).unwrap(), None)? {
+                if !for_each(context, u32::try_from(index).expect("int cast"), None)? {
                     break;
                 }
             }
             _ => {
-                let mut bytes = reader.bytes(usize::try_from(byte_length).unwrap())?;
-                if !for_each(context, u32::try_from(index).unwrap(), Some(&mut bytes))? {
+                let mut bytes = reader.bytes(usize::try_from(byte_length).expect("int cast"))?;
+                if !for_each(context, u32::try_from(index).expect("int cast"), Some(&mut bytes))? {
                     break;
                 }
             }

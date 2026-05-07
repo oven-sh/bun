@@ -154,7 +154,7 @@ impl ByteBlobLoader {
             return streams::Result::Done;
         }
 
-        let copied = blob::SizeType::try_from(temporary.len()).unwrap();
+        let copied = blob::SizeType::try_from(temporary.len()).expect("int cast");
 
         self.remain = self.remain.saturating_sub(copied);
         self.offset = self.offset.saturating_add(copied);

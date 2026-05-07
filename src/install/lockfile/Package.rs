@@ -621,7 +621,7 @@ impl Package<u64> {
                     old_resolution: *old_resolution,
                     parent: new_package.meta.id,
                     resolve_id: new_package.resolutions.off
-                        + PackageID::try_from(i).unwrap(),
+                        + PackageID::try_from(i).expect("int cast"),
                 });
             }
         }
@@ -1319,7 +1319,7 @@ impl Diff {
                 // removed
                 for &from_trusted in from_trusted_dependencies.keys() {
                     if !default_trusted_dependencies::has_with_hash(
-                        u64::try_from(from_trusted).unwrap(),
+                        u64::try_from(from_trusted).expect("int cast"),
                     ) {
                         summary.removed_trusted_dependencies.put(from_trusted, ())?;
                     }
@@ -2106,8 +2106,8 @@ impl Package<u64> {
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
             if let ExprData::EObject(obj) = &patched_deps.expr.data {
                 for prop in obj.properties.slice() {
-                    let key = prop.key.unwrap();
-                    let value = prop.value.unwrap();
+                    let key = prop.key.expect("infallible: prop has key");
+                    let value = prop.value.expect("infallible: prop has value");
                     if key.is_string() && value.is_string() {
                         string_builder.count(value.as_utf8().unwrap());
                     }
@@ -2127,11 +2127,11 @@ impl Package<u64> {
                 match &bin.expr.data {
                     ExprData::EObject(obj) => {
                         for bin_prop in obj.properties.slice() {
-                            let Some(k) = bin_prop.key.unwrap().as_utf8() else {
+                            let Some(k) = bin_prop.key.expect("infallible: prop has key").as_utf8() else {
                                 break 'bin;
                             };
                             string_builder.count(k);
-                            let Some(v) = bin_prop.value.unwrap().as_utf8() else {
+                            let Some(v) = bin_prop.value.expect("infallible: prop has value").as_utf8() else {
                                 break 'bin;
                             };
                             string_builder.count(v);
@@ -2208,7 +2208,7 @@ impl Package<u64> {
                     let props = obj.properties.slice();
                     optional_peer_dependencies.ensure_unused_capacity(props.len())?;
                     for prop in props {
-                        if let Some(optional) = prop.value.unwrap().as_property(b"optional") {
+                        if let Some(optional) = prop.value.expect("infallible: prop has value").as_property(b"optional") {
                             if !matches!(
                                 &optional.expr.data,
                                 ExprData::EBoolean(b) if b.value
@@ -2216,7 +2216,7 @@ impl Package<u64> {
                                 continue;
                             }
 
-                            let key = prop.key.unwrap().as_utf8().expect("unreachable");
+                            let key = prop.key.expect("infallible: prop has key").as_utf8().expect("unreachable");
                             // PERF(port): was assume_capacity
                             optional_peer_dependencies.put_assume_capacity(
                                 semver::string::Builder::string_hash(key),
@@ -2305,11 +2305,11 @@ impl Package<u64> {
                                 break 'brk;
                             }
                             for item in obj.properties.slice() {
-                                let key = item.key.unwrap().as_utf8().unwrap();
-                                let Some(value) = item.value.unwrap().as_utf8() else {
+                                let key = item.key.expect("infallible: prop has key").as_utf8().unwrap();
+                                let Some(value) = item.value.expect("infallible: prop has value").as_utf8() else {
                                     let _ = log.add_error_fmt(
                                         source,
-                                        item.value.unwrap().loc,
+                                        item.value.expect("infallible: prop has value").loc,
                                         // TODO: what if we could comptime call the syntax highlighter
                                         format_args!(
                                             "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
@@ -2496,8 +2496,8 @@ impl Package<u64> {
                     .ensure_total_capacity(obj.properties.len as usize)
                     .expect("unreachable");
                 for prop in obj.properties.slice() {
-                    let key = prop.key.unwrap();
-                    let value = prop.value.unwrap();
+                    let key = prop.key.expect("infallible: prop has key");
+                    let value = prop.value.expect("infallible: prop has value");
                     if key.is_string() && value.is_string() {
                         // PERF(port): was stack-fallback
                         let keyhash =
@@ -2556,13 +2556,13 @@ impl Package<u64> {
 
                                 let mut i: usize = 0;
                                 for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop.key.unwrap().as_utf8() else {
+                                    let Some(k) = bin_prop.key.expect("infallible: prop has key").as_utf8() else {
                                         break 'bin;
                                     };
                                     extern_strings[i] =
                                         string_builder.append::<ExternalString>(k);
                                     i += 1;
-                                    let Some(v) = bin_prop.value.unwrap().as_utf8() else {
+                                    let Some(v) = bin_prop.value.expect("infallible: prop has value").as_utf8() else {
                                         break 'bin;
                                     };
                                     extern_strings[i] =
@@ -2835,8 +2835,8 @@ impl Package<u64> {
                     match &dependencies_q.expr.data {
                         ExprData::EObject(obj) => {
                             for item in obj.properties.slice() {
-                                let key = item.key.unwrap();
-                                let value = item.value.unwrap();
+                                let key = item.key.expect("infallible: prop has key");
+                                let value = item.value.expect("infallible: prop has value");
                                 let external_name = string_builder
                                     .append::<ExternalString>(key.as_utf8().unwrap());
                                 let version = value.as_utf8().unwrap_or(b"");
@@ -3259,7 +3259,7 @@ pub mod serializer {
             )?;
 
             for pkg_id_ in 0..list_for_migrating_from_v2.len() {
-                let pkg_id: PackageID = PackageID::try_from(pkg_id_).unwrap();
+                let pkg_id: PackageID = PackageID::try_from(pkg_id_).expect("int cast");
                 let _ = pkg_id;
                 let old: OldPackageV2 = *list_for_migrating_from_v2.get(pkg_id_);
                 let new = Package::<SemverIntType> {

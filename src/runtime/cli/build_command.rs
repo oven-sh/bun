@@ -944,7 +944,7 @@ impl BuildCommand {
                 };
                 let padding_buf = [b' '; 16];
                 let padding_ =
-                    &padding_buf[0..usize::try_from(compiled_elapsed_digit_count).unwrap()];
+                    &padding_buf[0..usize::try_from(compiled_elapsed_digit_count).expect("int cast")];
                 Output::pretty(format_args!("{}", bstr::BStr::new(padding_)));
 
                 Output::print_elapsed_stdout_trim(compiled_elapsed as f64);
@@ -1151,12 +1151,12 @@ fn print_summary(
         if delta > 1024 {
             Output::prettyln(format_args!(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
-                bun_fmt::size(usize::try_from(delta).unwrap(), Default::default())
+                bun_fmt::size(usize::try_from(delta).expect("int cast"), Default::default())
             ));
         } else if -delta > 1024 {
             Output::prettyln(format_args!(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
-                bun_fmt::size(usize::try_from(-delta).unwrap(), Default::default())
+                bun_fmt::size(usize::try_from(-delta).expect("int cast"), Default::default())
             ));
         } else {
             Output::prettyln(format_args!("  <b>minify<r>"));

@@ -320,7 +320,7 @@ impl Pos {
     }
 
     pub fn loc(self) -> logger::Loc {
-        logger::Loc { start: i32::try_from(self.0).unwrap() }
+        logger::Loc { start: i32::try_from(self.0).expect("int cast") }
     }
 
     pub fn inc(&mut self, n: usize) {
@@ -3995,7 +3995,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if indent_indicator.is_some() {
                         return Err(ParseError::UnexpectedCharacter);
                     }
-                    indent_indicator = Some(IndentIndicator::from_raw(u8::try_from(__c - 0x30).unwrap()));
+                    indent_indicator = Some(IndentIndicator::from_raw(u8::try_from(__c - 0x30).expect("int cast")));
                     self.inc(1);
                     __c = Enc::wide(self.next());
                     continue;
@@ -4648,9 +4648,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(1);
             let digit = Enc::wide(self.next());
             let num: u8 = match digit {
-                0x30..=0x39 => u8::try_from(digit - 0x30).unwrap(),
-                0x61..=0x66 => u8::try_from(digit - 0x61 + 10).unwrap(),
-                0x41..=0x46 => u8::try_from(digit - 0x41 + 10).unwrap(),
+                0x30..=0x39 => u8::try_from(digit - 0x30).expect("int cast"),
+                0x61..=0x66 => u8::try_from(digit - 0x61 + 10).expect("int cast"),
+                0x41..=0x46 => u8::try_from(digit - 0x41 + 10).expect("int cast"),
                 _ => return Err(ParseError::UnexpectedCharacter),
             };
             value = value * 16 + num as u32;
@@ -4680,12 +4680,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let len: u8 = if cp < 0x10000 { 1 } else { 2 };
                 match len {
                     1 => {
-                        let unit = u16::try_from(cp).unwrap();
+                        let unit = u16::try_from(cp).expect("int cast");
                         text.push(Enc::unit_from_u16(unit));
                     }
                     2 => {
-                        let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).unwrap();
-                        let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).unwrap();
+                        let high = 0xD800u16 + u16::try_from((cp - 0x10000) >> 10).expect("int cast");
+                        let low = 0xDC00u16 + u16::try_from((cp - 0x10000) & 0x3FF).expect("int cast");
                         text.push(Enc::unit_from_u16(high));
                         text.push(Enc::unit_from_u16(low));
                     }
@@ -4696,7 +4696,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 if cp > 0xFF {
                     return Err(ParseError::UnexpectedCharacter);
                 }
-                text.push(Enc::ch(u8::try_from(cp).unwrap()));
+                text.push(Enc::ch(u8::try_from(cp).expect("int cast")));
             }
         }
         Ok(())

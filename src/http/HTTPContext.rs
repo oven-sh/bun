@@ -250,7 +250,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         unsafe { (*session).ref_() };
         // SAFETY: same as above.
         unsafe {
-            (*session).set_registry_index(u32::try_from(self.active_h2_sessions.len()).unwrap())
+            (*session).set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"))
         };
         self.active_h2_sessions.push(session);
     }
@@ -418,7 +418,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 core::ptr::null()
             },
-            ca_count: u32::try_from(init_opts.ca.len()).unwrap(),
+            ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
             ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
                 init_opts.abs_ca_file_name.as_ptr().cast()
             } else {
@@ -588,7 +588,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         while let Some(pending_socket_index) = iter.next() {
             let socket_ptr = self
                 .pending_sockets
-                .at(u16::try_from(pending_socket_index).unwrap());
+                .at(u16::try_from(pending_socket_index).expect("int cast"));
             // SAFETY: HiveArray slot reserved (`used` bit set); contents are
             // initialized PooledSocket written by release_socket().
             let socket = unsafe { &mut *socket_ptr };
@@ -893,7 +893,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         {
             let mut iter = self.pending_sockets.used.iterator::<true, true>();
             while let Some(idx) = iter.next() {
-                let pooled_ptr = self.pending_sockets.at(u16::try_from(idx).unwrap());
+                let pooled_ptr = self.pending_sockets.at(u16::try_from(idx).expect("int cast"));
                 // SAFETY: `used` bit is set; slot is an initialized PooledSocket.
                 let pooled = unsafe { &mut *pooled_ptr };
                 // Not gated on comptime ssl — an HTTP-proxy-to-HTTPS

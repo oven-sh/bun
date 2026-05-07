@@ -325,7 +325,7 @@ impl DirectoryWatchStore {
                 self.dependencies[index.get()] = d;
                 index
             } else {
-                let index = DepIndex::init(u32::try_from(self.dependencies.len()).unwrap());
+                let index = DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
                 self.dependencies.push(d);
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
                 index
@@ -443,7 +443,7 @@ impl DirectoryWatchStore {
             return index;
         }
 
-        let index = DepIndex::init(u32::try_from(self.dependencies.len()).unwrap());
+        let index = DepIndex::init(u32::try_from(self.dependencies.len()).expect("int cast"));
         self.dependencies.push(dep);
         // PERF(port): was appendAssumeCapacity — profile in Phase B
         index

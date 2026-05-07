@@ -832,7 +832,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                     let start = self.payload_length_frame_len as usize;
                     self.payload_length_frame_bytes[start..start + total_received]
                         .copy_from_slice(&data[..total_received]);
-                    self.payload_length_frame_len += u8::try_from(total_received).unwrap();
+                    self.payload_length_frame_len += u8::try_from(total_received).expect("int cast");
                     data = &data[total_received..];
 
                     // short read on payload length - we need to wait for more data
@@ -1089,7 +1089,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !self.has_backpressure() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             let wrote = self.tcp.write(bytes);
-            let expected = c_int::try_from(bytes.len()).unwrap();
+            let expected = c_int::try_from(bytes.len()).expect("int cast");
             if wrote == expected {
                 return true;
             }
@@ -1099,7 +1099,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return false;
             }
 
-            let _ = self.copy_to_send_buffer(&bytes[usize::try_from(wrote).unwrap()..], false);
+            let _ = self.copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
             return true;
         }
 
@@ -1261,7 +1261,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 Err(false)
             } else {
                 let w = self.tcp.write(out_buf);
-                if w < 0 { Err(true) } else { Ok(usize::try_from(w).unwrap()) }
+                if w < 0 { Err(true) } else { Ok(usize::try_from(w).expect("int cast")) }
             }
         };
         match wrote {
@@ -1306,7 +1306,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if ping_len > 0 {
             // PORT NOTE: reshaped for borrowck — Mask::fill needs disjoint borrows of ping_frame_bytes
             let (head, tail) = self.ping_frame_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().unwrap();
+            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
             Mask::fill_in_place(self.global_this, mask_buf, to_mask);
@@ -1378,7 +1378,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let slice_len = 8 + body_len;
         {
             let (head, tail) = final_body_bytes.split_at_mut(6);
-            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().unwrap();
+            let mask_buf: &mut [u8; 4] = (&mut head[2..6]).try_into().expect("infallible: size matches");
             let payload = &mut tail[..slice_len - 6];
             Mask::fill_in_place(self.global_this, mask_buf, payload);
         }
@@ -2513,7 +2513,7 @@ impl<'a> Copy<'a> {
         // `Mask::fill*` don't alias. Zig wrote through one pointer.
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
         let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().unwrap();
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().expect("infallible: size matches");
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         match self {
@@ -2598,7 +2598,7 @@ impl<'a> Copy<'a> {
         // PORT NOTE: reshaped for borrowck — three disjoint regions (see `copy`).
         let (head, to_mask_full) = buf.split_at_mut(content_offset);
         let (header_part, mask_part) = head.split_at_mut(mask_offset);
-        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().unwrap();
+        let mask_buf: &mut [u8; 4] = (&mut mask_part[..4]).try_into().expect("infallible: size matches");
         let to_mask = &mut to_mask_full[..content_byte_len];
 
         header

@@ -534,7 +534,7 @@ impl Process {
         } else {
             this.on_exit(
                 Status::Err(bun_sys::Error::from_code(
-                    bun_sys::E::from_raw(i32::try_from(exit_status).unwrap()),
+                    bun_sys::E::from_raw(i32::try_from(exit_status).expect("int cast")),
                     bun_sys::Syscall::Waitpid,
                 )),
                 &rusage,
@@ -1708,19 +1708,19 @@ pub fn spawn_process_windows(
 
         if fd_i == 1 && matches!(stdio_options[2], WindowsStdio::Dup2(_)) {
             treat_as_dup = true;
-            dup_tgt = Some(u32::try_from(fd_i).unwrap());
+            dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
         } else if fd_i == 2 && matches!(stdio_options[1], WindowsStdio::Dup2(_)) {
             treat_as_dup = true;
-            dup_tgt = Some(u32::try_from(fd_i).unwrap());
+            dup_tgt = Some(u32::try_from(fd_i).expect("int cast"));
         } else {
             match stdio_options[fd_i] {
                 WindowsStdio::Dup2(_) => {
                     treat_as_dup = true;
-                    dup_src = Some(u32::try_from(fd_i).unwrap());
+                    dup_src = Some(u32::try_from(fd_i).expect("int cast"));
                 }
                 WindowsStdio::Inherit => {
                     stdio.flags = uv::UV_INHERIT_FD;
-                    stdio.data.fd = uv::uv_file::try_from(fd_i).unwrap();
+                    stdio.data.fd = uv::uv_file::try_from(fd_i).expect("int cast");
                 }
                 WindowsStdio::Ipc(_) => {
                     // ipc option inside stdin, stderr or stdout is not supported.
@@ -1788,7 +1788,7 @@ pub fn spawn_process_windows(
             WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
             WindowsStdio::Inherit => {
                 stdio.flags = uv::StdioFlags::INHERIT_FD;
-                stdio.data.fd = uv::uv_file::try_from(3 + i).unwrap();
+                stdio.data.fd = uv::uv_file::try_from(3 + i).expect("int cast");
             }
             WindowsStdio::Ignore => {
                 stdio.flags = uv::UV_IGNORE;
@@ -1841,7 +1841,7 @@ pub fn spawn_process_windows(
     }
 
     uv_process_options.stdio = stdio_containers.as_mut_ptr();
-    uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).unwrap();
+    uv_process_options.stdio_count = c_int::try_from(stdio_containers.len()).expect("int cast");
     uv_process_options.exit_cb = Some(Process::on_exit_uv);
 
     let process = Box::into_raw(Box::new(Process {
@@ -1923,9 +1923,9 @@ pub fn spawn_process_windows(
             _ => unreachable!(),
         };
 
-        if dup_src == Some(u32::try_from(i).unwrap()) {
+        if dup_src == Some(u32::try_from(i).expect("int cast")) {
             *result_stdio = WindowsStdioResult::Unavailable;
-        } else if dup_tgt == Some(u32::try_from(i).unwrap()) {
+        } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
             *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));
         } else {
             match stdio_options[i] {
@@ -3023,7 +3023,7 @@ pub mod sync {
             *len += 1;
         };
         if ppid > 1 {
-            add(&mut changes_buf, &mut changes_len, usize::try_from(ppid).unwrap(), libc::EVFILT_PROC, libc::NOTE_EXIT, TAG_PPID);
+            add(&mut changes_buf, &mut changes_len, usize::try_from(ppid).expect("int cast"), libc::EVFILT_PROC, libc::NOTE_EXIT, TAG_PPID);
         }
         // NOTE_FORK so the wait loop wakes to scan whenever the script (or
         // any registered descendant) forks. NOTE_TRACK would have let xnu
@@ -3032,7 +3032,7 @@ pub mod sync {
         // fail, the receipt loop below `return null`, and the caller fall
         // through to a plain `wait4()` that watches neither ppid nor
         // descendants (the `runDied=false` failure on darwin in CI).
-        add(&mut changes_buf, &mut changes_len, usize::try_from(child).unwrap(), libc::EVFILT_PROC, libc::NOTE_FORK | libc::NOTE_EXIT, 0);
+        add(&mut changes_buf, &mut changes_len, usize::try_from(child).expect("int cast"), libc::EVFILT_PROC, libc::NOTE_FORK | libc::NOTE_EXIT, 0);
         // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
         // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
         // stdin is a TTY — non-TTY callers never see stops, matching plain
@@ -3044,7 +3044,7 @@ pub mod sync {
         }
         for (i, &fd) in out_fds_to_wait_for.iter().enumerate() {
             if fd != Fd::INVALID {
-                add(&mut changes_buf, &mut changes_len, usize::try_from(fd.cast()).unwrap(), libc::EVFILT_READ, 0, i);
+                add(&mut changes_buf, &mut changes_len, usize::try_from(fd.cast()).expect("int cast"), libc::EVFILT_READ, 0, i);
             }
         }
 
@@ -3123,8 +3123,8 @@ pub mod sync {
                         // seeded it into `m_tracked`, and `reapChild()` is
                         // about to free its pid before `killTracked()` runs).
                         // SAFETY: FFI
-                        unsafe { Bun__noOrphans_onExit(libc::pid_t::try_from(ev.ident).unwrap()) };
-                        if ev.ident == usize::try_from(child).unwrap() {
+                        unsafe { Bun__noOrphans_onExit(libc::pid_t::try_from(ev.ident).expect("int cast")) };
+                        if ev.ident == usize::try_from(child).expect("int cast") {
                             child_exited = true;
                         }
                     }

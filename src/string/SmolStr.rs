@@ -178,7 +178,7 @@ impl SmolStr {
             }
             let old_len = inlined.len() as usize;
             inlined.all_chars()[old_len] = char;
-            inlined.set_len(u8::try_from(old_len + 1).unwrap());
+            inlined.set_len(u8::try_from(old_len + 1).expect("int cast"));
             self.0 = inlined.0;
             self.mark_inlined();
             return Ok(());
@@ -210,7 +210,7 @@ impl SmolStr {
                 return Ok(());
             }
             inlined.all_chars()[old_len..old_len + values.len()].copy_from_slice(values);
-            inlined.set_len(u8::try_from(old_len + values.len()).unwrap());
+            inlined.set_len(u8::try_from(old_len + values.len()).expect("int cast"));
             // SAFETY: old *self is inlined (no heap ownership); ptr::write skips its Drop.
             unsafe { ptr::write(self, SmolStr::from_inlined(inlined)) };
             return Ok(());
@@ -287,7 +287,7 @@ impl Inlined {
 
         if !str.is_empty() {
             inlined.all_chars()[0..str.len()].copy_from_slice(&str[0..str.len()]);
-            inlined.set_len(u8::try_from(str.len()).unwrap());
+            inlined.set_len(u8::try_from(str.len()).expect("int cast"));
         }
         Ok(inlined)
     }

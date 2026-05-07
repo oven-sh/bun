@@ -60,7 +60,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         let index = ((value as usize) - (start as usize)) / size_of::<T>();
         debug_assert!(index < CAPACITY);
         debug_assert!(self.buffer[index].as_ptr() as *const T == value);
-        Some(u32::try_from(index).unwrap())
+        Some(u32::try_from(index).expect("int cast"))
     }
 
     pub fn r#in(&self, value: *const T) -> bool {
@@ -275,7 +275,7 @@ mod tests {
         {
             for i in 0..SIZE {
                 let b = a.get().unwrap();
-                assert_eq!(a.index_of(b), Some(u32::try_from(i).unwrap()));
+                assert_eq!(a.index_of(b), Some(u32::try_from(i).expect("int cast")));
                 assert!(a.put(b));
                 assert!(a.get().unwrap() == b);
             }

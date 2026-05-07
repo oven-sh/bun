@@ -345,7 +345,7 @@ impl<'a> CopyFile<'a> {
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                     let _ = unsafe {
-                        libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
+                        libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
                     };
                     return Ok(());
                 }
@@ -410,7 +410,7 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                             let _ = unsafe {
-                                libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
+                                libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
                             };
                             return Ok(());
                         }
@@ -463,7 +463,7 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                 let _ = unsafe {
-                                    libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
+                                    libc::ftruncate(dest_fd.native(), i64::try_from(total_written).expect("int cast"))
                                 };
                                 return Ok(());
                             }
@@ -496,8 +496,8 @@ impl<'a> CopyFile<'a> {
             }
 
             // wrote zero bytes means EOF
-            remain = remain.saturating_sub(usize::try_from(written).unwrap());
-            total_written += u64::try_from(written).unwrap();
+            remain = remain.saturating_sub(usize::try_from(written).expect("int cast"));
+            total_written += u64::try_from(written).expect("int cast");
             if written == 0 || remain == 0 {
                 break;
             }
@@ -650,7 +650,7 @@ impl<'a> CopyFile<'a> {
                                     let stat_size = stat_.unwrap().st_size;
                                     if self.max_length != MAX_SIZE
                                         && self.max_length
-                                            < SizeType::try_from(stat_size).unwrap()
+                                            < SizeType::try_from(stat_size).expect("int cast")
                                     {
                                         // If this fails...well, there's not much we can do about it.
                                         let _ = bun_sys::c::truncate(
@@ -658,12 +658,12 @@ impl<'a> CopyFile<'a> {
                                                 .pathlike
                                                 .path()
                                                 .slice_z(&mut path_buf),
-                                            i64::try_from(self.max_length).unwrap(),
+                                            i64::try_from(self.max_length).expect("int cast"),
                                         );
                                         self.read_len =
-                                            SizeType::try_from(self.max_length).unwrap();
+                                            SizeType::try_from(self.max_length).expect("int cast");
                                     } else {
-                                        self.read_len = SizeType::try_from(stat_size).unwrap();
+                                        self.read_len = SizeType::try_from(stat_size).expect("int cast");
                                     }
                                     // Apply destination mode if specified (clonefile copies source permissions)
                                     if let Some(mode) = self.destination_mode {
@@ -747,7 +747,7 @@ impl<'a> CopyFile<'a> {
             }
 
             if stat.st_size != 0 {
-                self.max_length = (SizeType::try_from(stat.st_size).unwrap().min(self.max_length))
+                self.max_length = (SizeType::try_from(stat.st_size).expect("int cast").min(self.max_length))
                     .max(self.offset)
                     - self.offset;
                 if self.max_length == 0 {
@@ -825,11 +825,11 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
                 if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).unwrap() > self.max_length
+                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                 {
                     let _ = bun_sys::darwin::ftruncate(
                         self.destination_fd.native(),
-                        i64::try_from(self.max_length).unwrap(),
+                        i64::try_from(self.max_length).expect("int cast"),
                     );
                 }
 
@@ -856,11 +856,11 @@ impl<'a> CopyFile<'a> {
                     bun_sys::Result::Ok(()) => {}
                 }
                 if stat.st_size != 0
-                    && SizeType::try_from(stat.st_size).unwrap() > self.max_length
+                    && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
                 {
                     let _ = bun_sys::ftruncate(
                         self.destination_fd,
-                        i64::try_from(self.max_length).unwrap(),
+                        i64::try_from(self.max_length).expect("int cast"),
                     );
                     self.read_len =
                         total_written.min(self.max_length as u64) as SizeType;
@@ -1062,7 +1062,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
         return;
     }
 
-    let n = usize::try_from(rc.int()).unwrap();
+    let n = usize::try_from(rc.int()).expect("int cast");
     // SAFETY: libuv wrote `n` bytes into the buffer's capacity.
     unsafe { read_buf.set_len(n) };
     this.read_write_loop.uv_buf = libuv::uv_buf_t::init(read_buf.as_slice());
@@ -1119,7 +1119,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         return;
     }
 
-    let wrote: u32 = u32::try_from(rc.int()).unwrap();
+    let wrote: u32 = u32::try_from(rc.int()).expect("int cast");
 
     this.read_write_loop.written += wrote as usize;
 
@@ -1461,9 +1461,9 @@ impl<'a> CopyFileWindows<'a> {
 
     pub fn on_complete(&mut self, written_actual: usize) {
         let mut written = written_actual;
-        if written != usize::try_from(self.size).unwrap() && self.size != MAX_SIZE {
+        if written != usize::try_from(self.size).expect("int cast") && self.size != MAX_SIZE {
             self.truncate();
-            written = usize::try_from(self.size).unwrap();
+            written = usize::try_from(self.size).expect("int cast");
         }
 
         // Apply destination mode if specified (async)
@@ -1491,7 +1491,7 @@ impl<'a> CopyFileWindows<'a> {
                     loop_,
                     &mut self.io_request,
                     path,
-                    i32::try_from(mode).unwrap(),
+                    i32::try_from(mode).expect("int cast"),
                     Some(on_chmod),
                 );
 
@@ -1539,7 +1539,7 @@ impl<'a> CopyFileWindows<'a> {
         let _ = node_fs_.truncate(
             node_fs::TruncateArgs {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
-                len: i64::try_from(self.size).unwrap(),
+                len: i64::try_from(self.size).expect("int cast"),
                 ..Default::default()
             },
             node_fs::Flavor::Sync,

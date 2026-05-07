@@ -134,7 +134,7 @@ impl ArrayBuffer {
             match bun_sys::pread(fd, bytes, read as i64) {
                 bun_sys::Result::Ok(amount) => {
                     bytes = &mut bytes[amount..];
-                    read += isize::try_from(amount).unwrap();
+                    read += isize::try_from(amount).expect("int cast");
 
                     if amount == 0 {
                         if !bytes.is_empty() {
@@ -193,7 +193,7 @@ impl ArrayBuffer {
         // If there is a lot of repetitive memory allocations in a tight loop, it performs poorly.
         // So we clone it when it's small.
         if size < Self::MMAP_THRESHOLD as i64 {
-            let result = Self::to_js_buffer_from_fd(fd, usize::try_from(size).unwrap(), global);
+            let result = Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
             fd.close();
             return Ok(result);
         }
@@ -204,7 +204,7 @@ impl ArrayBuffer {
         let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
         #[cfg(not(unix))]
         let (prot, map_flags) = (0i32, 0i32);
-        let map_len = usize::try_from(size.max(0)).unwrap();
+        let map_len = usize::try_from(size.max(0)).expect("int cast");
         let result = bun_sys::mmap(
             ptr::null_mut(),
             map_len,
@@ -364,8 +364,8 @@ impl ArrayBuffer {
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
-            len: u32::try_from(bytes.len()).unwrap() as usize,
-            byte_len: u32::try_from(bytes.len()).unwrap() as usize,
+            len: u32::try_from(bytes.len()).expect("int cast") as usize,
+            byte_len: u32::try_from(bytes.len()).expect("int cast") as usize,
             typed_array_type,
             ptr: bytes.as_mut_ptr(),
             ..Default::default()
@@ -386,8 +386,8 @@ impl ArrayBuffer {
         // this is an FFI hand-off, not a leak.
         let ptr = Box::into_raw(bytes).cast::<u8>();
         ArrayBuffer {
-            len: u32::try_from(len).unwrap() as usize,
-            byte_len: u32::try_from(len).unwrap() as usize,
+            len: u32::try_from(len).expect("int cast") as usize,
+            byte_len: u32::try_from(len).expect("int cast") as usize,
             typed_array_type,
             ptr,
             ..Default::default()

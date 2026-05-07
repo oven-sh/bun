@@ -82,7 +82,7 @@ pub fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -
             value = 10;
         }
         AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT
-            .with(|v| v.set(u32::try_from(value).unwrap()));
+            .with(|v| v.set(u32::try_from(value).expect("int cast")));
         Ok(JSValue::js_number(f64::from(value)))
     }
     JSFunction::create(

@@ -54,7 +54,7 @@ impl PBKDF2 {
         let length = self.length;
 
         output.fill(0);
-        debug_assert!(self.length <= i32::try_from(output.len()).unwrap());
+        debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
         // SAFETY: FFI call into BoringSSL; clears the thread-local error queue.
         unsafe { boringssl::ERR_clear_error() };
         // SAFETY: password/salt point to valid slices for the given lengths;
@@ -73,7 +73,7 @@ impl PBKDF2 {
                 // `Algorithm::md()` returns `*const bun_sha_hmac::sha::ffi::EVP_MD`; cast to the
                 // boringssl-sys opaque — both name the same C `struct env_md_st`.
                 algorithm.md().unwrap().cast::<boringssl::EVP_MD>(),
-                usize::try_from(length).unwrap(),
+                usize::try_from(length).expect("int cast"),
                 output.as_mut_ptr(),
             )
         };
@@ -202,7 +202,7 @@ impl PBKDF2 {
         let mut out = PBKDF2 {
             password: StringOrBuffer::default(),
             salt: StringOrBuffer::default(),
-            iteration_count: u32::try_from(iteration_count).unwrap(),
+            iteration_count: u32::try_from(iteration_count).expect("int cast"),
             length: keylen,
             algorithm,
         };
@@ -301,7 +301,7 @@ impl Job {
             }
         }
 
-        let len = usize::try_from(job.pbkdf2.length).unwrap();
+        let len = usize::try_from(job.pbkdf2.length).expect("int cast");
         // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`
         // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
         let mut buf = Vec::new();
@@ -343,7 +343,7 @@ impl Job {
         }
 
         let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).unwrap());
+        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
         // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
@@ -418,7 +418,7 @@ pub fn pbkdf2<'a>(
         password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
         salt: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(salt)),
         iteration_count,
-        length: i32::try_from(output.len()).unwrap(),
+        length: i32::try_from(output.len()).expect("int cast"),
     };
 
     if !pbk.run(output) {

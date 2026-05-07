@@ -55,12 +55,12 @@ impl StatHash {
         let prev = self.value;
         self.value = stat_hasher.digest();
 
-        if prev != self.value && S::ISREG(u32::try_from(stat.st_mode).unwrap()) {
+        if prev != self.value && S::ISREG(u32::try_from(stat.st_mode).expect("int cast")) {
             let mtime_timespec = stat_mtime(stat);
             // Clamp negative values to 0 to avoid timestamp overflow issues on Windows
             let mtime = Timespec {
-                nsec: i64::try_from(mtime_timespec.nsec.max(0)).unwrap(),
-                sec: i64::try_from(mtime_timespec.sec.max(0)).unwrap(),
+                nsec: i64::try_from(mtime_timespec.nsec.max(0)).expect("int cast"),
+                sec: i64::try_from(mtime_timespec.sec.max(0)).expect("int cast"),
             };
             if mtime.ms() > 0 {
                 self.last_modified_buffer_len = u8::try_from(
@@ -72,7 +72,7 @@ impl StatHash {
                 self.last_modified_buffer_len = 0;
                 self.last_modified_u64 = 0;
             }
-        } else if !S::ISREG(u32::try_from(stat.st_mode).unwrap()) {
+        } else if !S::ISREG(u32::try_from(stat.st_mode).expect("int cast")) {
             self.last_modified_buffer_len = 0;
             self.last_modified_u64 = 0;
         }

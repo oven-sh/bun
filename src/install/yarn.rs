@@ -813,20 +813,20 @@ pub fn migrate_yarn_lockfile<'a>(
 
         for entry in yarn_lock.entries.iter() {
             if let Some(deps) = &entry.dependencies {
-                num_deps += u32::try_from(deps.count()).unwrap();
+                num_deps += u32::try_from(deps.count()).expect("int cast");
             }
             if let Some(deps) = &entry.optional_dependencies {
-                num_deps += u32::try_from(deps.count()).unwrap();
+                num_deps += u32::try_from(deps.count()).expect("int cast");
             }
             if let Some(deps) = &entry.peer_dependencies {
-                num_deps += u32::try_from(deps.count()).unwrap();
+                num_deps += u32::try_from(deps.count()).expect("int cast");
             }
             if let Some(deps) = &entry.dev_dependencies {
-                num_deps += u32::try_from(deps.count()).unwrap();
+                num_deps += u32::try_from(deps.count()).expect("int cast");
             }
         }
 
-        let num_packages = u32::try_from(yarn_lock.entries.len() + 1).unwrap();
+        let num_packages = u32::try_from(yarn_lock.entries.len() + 1).expect("int cast");
 
         this.buffers.dependencies.reserve((num_deps as usize).saturating_sub(this.buffers.dependencies.len()));
         this.buffers.resolutions.reserve((num_deps as usize).saturating_sub(this.buffers.resolutions.len()));
@@ -1351,15 +1351,15 @@ pub fn migrate_yarn_lockfile<'a>(
             (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
         let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
         this.packages.items_dependencies_mut()[package_id as usize] = lockfile::DependencySlice::new(
-            u32::try_from(deps_off / core::mem::size_of::<Dependency>()).unwrap(),
-            u32::try_from(deps_len / core::mem::size_of::<Dependency>()).unwrap(),
+            u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
+            u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
         );
         let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
         let res_len =
             (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
         this.packages.items_resolutions_mut()[package_id as usize] = lockfile::DependencyIDSlice::new(
-            u32::try_from(res_off / core::mem::size_of::<PackageID>()).unwrap(),
-            u32::try_from(res_len / core::mem::size_of::<PackageID>()).unwrap(),
+            u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
+            u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
         );
     }
 
@@ -1714,12 +1714,12 @@ pub fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    let root_deps_off = u32::try_from(this.buffers.dependencies.len()).unwrap();
-    let root_resolutions_off = u32::try_from(this.buffers.resolutions.len()).unwrap();
+    let root_deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
+    let root_resolutions_off = u32::try_from(this.buffers.resolutions.len()).expect("int cast");
 
     if !root_dependencies.is_empty() {
         for root_dep in root_dependencies.iter() {
-            let _ = DependencyID::try_from(this.buffers.dependencies.len()).unwrap();
+            let _ = DependencyID::try_from(this.buffers.dependencies.len()).expect("int cast");
 
             let name_hash = string_hash(&root_dep.name);
             let dep_name_string = sbuf!().append_with_hash(&root_dep.name, name_hash)?;
@@ -1769,11 +1769,11 @@ pub fn migrate_yarn_lockfile<'a>(
 
     this.packages.items_dependencies_mut()[0] = lockfile::DependencySlice::new(
         root_deps_off,
-        u32::try_from(root_dependencies.len()).unwrap(),
+        u32::try_from(root_dependencies.len()).expect("int cast"),
     );
     this.packages.items_resolutions_mut()[0] = lockfile::DependencyIDSlice::new(
         root_resolutions_off,
-        u32::try_from(root_dependencies.len()).unwrap(),
+        u32::try_from(root_dependencies.len()).expect("int cast"),
     );
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
@@ -1783,8 +1783,8 @@ pub fn migrate_yarn_lockfile<'a>(
         }
 
         let mut dep_count: u32 = 0;
-        let deps_off = u32::try_from(this.buffers.dependencies.len()).unwrap();
-        let resolutions_off = u32::try_from(this.buffers.resolutions.len()).unwrap();
+        let deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
+        let resolutions_off = u32::try_from(this.buffers.resolutions.len()).expect("int cast");
 
         if let Some(deps) = &entry.dependencies {
             for (dep_name_key, dep_version_ref) in deps.iter() {

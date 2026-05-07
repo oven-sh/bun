@@ -467,7 +467,7 @@ impl S3Credentials {
                     break 'brk_host v.into_boxed_slice();
                 }
                 let mut v = Vec::new();
-                write!(&mut v, "s3.{}.amazonaws.com", BStr::new(region)).unwrap();
+                write!(&mut v, "s3.{}.amazonaws.com", BStr::new(region)).expect("infallible: in-memory write");
                 endpoint_owned = Some(v.clone());
                 break 'brk_host v.into_boxed_slice();
             }
@@ -579,7 +579,7 @@ impl S3Credentials {
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
                 let digest: [u8; DIGESTED_HMAC_256_LEN] =
-                    hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].try_into().unwrap();
+                    hmac_sig_service2[0..DIGESTED_HMAC_256_LEN].try_into().expect("infallible: size matches");
                 // PORT NOTE: intentionally diverges from Zig. In Zig, `key` is a slice into
                 // `tmp_buffer` which has since been overwritten by the `AWS4{secret}` bufPrint,
                 // so Zig passes corrupted bytes to `cache.set` (latent bug → cache never hits).
@@ -986,21 +986,21 @@ fn get_amz_date() -> DateResult {
 fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     // returns (year, month(1-based), day(1-based), hours, minutes, seconds, seconds_into_day)
     let day_seconds = secs % 86_400;
-    let hours = u32::try_from(day_seconds / 3600).unwrap();
-    let minutes = u32::try_from((day_seconds % 3600) / 60).unwrap();
-    let seconds = u32::try_from(day_seconds % 60).unwrap();
+    let hours = u32::try_from(day_seconds / 3600).expect("int cast");
+    let minutes = u32::try_from((day_seconds % 3600) / 60).expect("int cast");
+    let seconds = u32::try_from(day_seconds % 60).expect("int cast");
 
     // civil_from_days (days since 1970-01-01, non-negative for u64 secs)
-    let z: i64 = i64::try_from(secs / 86_400).unwrap() + 719_468; // shift to 0000-03-01 era origin
+    let z: i64 = i64::try_from(secs / 86_400).expect("int cast") + 719_468; // shift to 0000-03-01 era origin
     let era: i64 = z.div_euclid(146_097);
-    let doe: u64 = u64::try_from(z - era * 146_097).unwrap(); // [0, 146096]
+    let doe: u64 = u64::try_from(z - era * 146_097).expect("int cast"); // [0, 146096]
     let yoe: u64 = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y: i64 = i64::try_from(yoe).unwrap() + era * 400;
+    let y: i64 = i64::try_from(yoe).expect("int cast") + era * 400;
     let doy: u64 = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
     let mp: u64 = (5 * doy + 2) / 153; // [0, 11]
-    let day: u32 = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap(); // [1, 31]
-    let month: u32 = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap(); // [1, 12]
-    let year: u32 = u32::try_from(y + i64::from(month <= 2)).unwrap();
+    let day: u32 = u32::try_from(doy - (153 * mp + 2) / 5 + 1).expect("int cast"); // [1, 31]
+    let month: u32 = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).expect("int cast"); // [1, 12]
+    let year: u32 = u32::try_from(y + i64::from(month <= 2)).expect("int cast");
 
     (year, month, day, hours, minutes, seconds, day_seconds)
 }

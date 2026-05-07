@@ -141,7 +141,7 @@ pub trait PosixPipeWriter {
         }
 
         let max_write = if size_hint > 0 && self.get_file_type().is_blocking() {
-            usize::try_from(size_hint).unwrap()
+            usize::try_from(size_hint).expect("int cast")
         } else {
             usize::MAX
         };

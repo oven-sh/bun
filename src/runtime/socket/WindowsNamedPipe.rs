@@ -771,16 +771,16 @@ impl WindowsNamedPipe {
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(wrapper) = self.wrapper.as_mut() {
-            return i32::try_from(wrapper.write_data(data).unwrap_or(0)).unwrap();
+            return i32::try_from(wrapper.write_data(data).unwrap_or(0)).expect("int cast");
         } else {
             self.internal_write(data);
         }
-        i32::try_from(data.len()).unwrap()
+        i32::try_from(data.len()).expect("int cast")
     }
 
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
         self.internal_write(encoded_data);
-        i32::try_from(encoded_data.len()).unwrap()
+        i32::try_from(encoded_data.len()).expect("int cast")
     }
 
     pub fn close(&mut self) {

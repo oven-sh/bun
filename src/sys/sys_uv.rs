@@ -469,7 +469,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
                 &mut req,
                 uv_fd,
                 chunk_bufs.as_ptr(),
-                c_uint::try_from(chunk_len).unwrap(),
+                c_uint::try_from(chunk_len).expect("int cast"),
                 current_position,
                 None,
             )
@@ -491,7 +491,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
             return Result::Err(Error::new(e as _, Tag::read).with_fd(fd));
         }
 
-        let bytes_read: usize = usize::try_from(req.result.int()).unwrap();
+        let bytes_read: usize = usize::try_from(req.result.int()).expect("int cast");
         total_read += bytes_read;
 
         // If we read less than requested, we're done (EOF or partial read)
@@ -503,7 +503,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 
         // Update position for the next chunk (if position tracking is enabled)
         if current_position >= 0 {
-            current_position += i64::try_from(bytes_read).unwrap();
+            current_position += i64::try_from(bytes_read).expect("int cast");
         }
     }
 
@@ -539,7 +539,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
                 &mut req,
                 uv_fd,
                 chunk_bufs.as_ptr(),
-                c_uint::try_from(chunk_len).unwrap(),
+                c_uint::try_from(chunk_len).expect("int cast"),
                 current_position,
                 None,
             )
@@ -570,7 +570,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             return Result::Err(Error::new(e as _, Tag::write).with_fd(fd));
         }
 
-        let bytes_written: usize = usize::try_from(req.result.int()).unwrap();
+        let bytes_written: usize = usize::try_from(req.result.int()).expect("int cast");
         total_written += bytes_written;
 
         // If we wrote less than requested, we're done (partial write)
@@ -582,7 +582,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
 
         // Update position for the next chunk (if position tracking is enabled)
         if current_position >= 0 {
-            current_position += i64::try_from(bytes_written).unwrap();
+            current_position += i64::try_from(bytes_written).expect("int cast");
         }
     }
 
@@ -621,7 +621,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
 
                 remaining = &mut remaining[chunk_len..];
                 if current_position >= 0 {
-                    current_position += i64::try_from(bytes_read).unwrap();
+                    current_position += i64::try_from(bytes_read).expect("int cast");
                 }
             }
         }
@@ -701,7 +701,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 
                 remaining = &remaining[chunk_len..];
                 if current_position >= 0 {
-                    current_position += i64::try_from(bytes_written).unwrap();
+                    current_position += i64::try_from(bytes_written).expect("int cast");
                 }
             }
         }

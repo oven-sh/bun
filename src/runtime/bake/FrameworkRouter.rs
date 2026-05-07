@@ -258,7 +258,7 @@ impl FrameworkRouter {
             // PERF(port): was appendAssumeCapacity
             routes.push(Route {
                 part: Part::Text(b""),
-                r#type: TypeIndex::init(u8::try_from(type_index).unwrap()),
+                r#type: TypeIndex::init(u8::try_from(type_index).expect("int cast")),
                 parent: None,
                 prev_sibling: None,
                 next_sibling: None,
@@ -300,7 +300,7 @@ impl FrameworkRouter {
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         for i in 0..self.types.len() {
-            self.scan(TypeIndex::init(u8::try_from(i).unwrap()), r, ctx)?;
+            self.scan(TypeIndex::init(u8::try_from(i).expect("int cast")), r, ctx)?;
         }
         Ok(())
     }
@@ -656,7 +656,7 @@ impl<'a> Part<'a> {
             debug_assert!(strings::index_of_char(text, b'/').is_none());
         }
         let payload = self.payload();
-        let header = SerializedHeader::new(self.tag(), u32::try_from(payload.len()).unwrap());
+        let header = SerializedHeader::new(self.tag(), u32::try_from(payload.len()).expect("int cast"));
         writer.write_all(&header.0.to_le_bytes())?;
         writer.write_all(payload)?;
         Ok(())
@@ -1381,7 +1381,7 @@ impl FrameworkRouter {
     fn new_route(&mut self, route_data: Route) -> Result<RouteIndex, AllocError> {
         let i = self.routes.len();
         self.routes.push(route_data);
-        Ok(RouteIndex::init(u32::try_from(i).unwrap()))
+        Ok(RouteIndex::init(u32::try_from(i).expect("int cast")))
     }
 
     #[allow(dead_code)]
@@ -1435,8 +1435,8 @@ impl TinyLog {
         cursor_len: usize,
     ) -> PatternParseError {
         self.write(args);
-        self.cursor_at = u32::try_from(cursor_at).unwrap();
-        self.cursor_len = u32::try_from(cursor_len).unwrap();
+        self.cursor_at = u32::try_from(cursor_at).expect("int cast");
+        self.cursor_len = u32::try_from(cursor_len).expect("int cast");
         PatternParseError::InvalidRoutePattern
     }
 
@@ -1680,7 +1680,7 @@ impl FrameworkRouter {
                             t.style.parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at += u32::try_from(abs_root_len - root_len).unwrap();
+                                log.cursor_at += u32::try_from(abs_root_len - root_len).expect("int cast");
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset();
                                 continue 'outer;
@@ -1918,7 +1918,7 @@ impl JSFrameworkRouter {
             for (i, item) in jsfr.stored_parse_errors.iter().enumerate() {
                 arr.put_index(
                     global,
-                    u32::try_from(i).unwrap(),
+                    u32::try_from(i).expect("int cast"),
                     global.create_error_instance(format_args!(
                         "Invalid route {}: {}",
                         bun_core::fmt::quote(&item.rel_path),
@@ -2170,7 +2170,7 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     ) -> Result<OpaqueFileId, AllocError> {
         self.files.push(bun_str::String::clone_utf8(abs_path));
         Ok(OpaqueFileId::init(
-            u32::try_from(self.files.len() - 1).unwrap(),
+            u32::try_from(self.files.len() - 1).expect("int cast"),
         ))
     }
 

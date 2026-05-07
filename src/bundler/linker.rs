@@ -332,7 +332,7 @@ impl Linker {
                 // whole `result`) before any `ast` mut borrow.
                 let len = result.ast.import_records.slice().len();
                 for record_i in 0..len {
-                    let record_index = u32::try_from(record_i).unwrap();
+                    let record_index = u32::try_from(record_i).expect("int cast");
 
                     let skip_deferred = IS_BUN
                         && is_deferred

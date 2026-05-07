@@ -893,7 +893,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         if let Err(err) = unsafe {
                             Self::spawn_next_script(
                                 self as *mut Self,
-                                u8::try_from(new_script_index).unwrap(),
+                                u8::try_from(new_script_index).expect("int cast"),
                             )
                         } {
                             Output::err_generic(

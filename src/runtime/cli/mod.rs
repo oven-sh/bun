@@ -423,7 +423,7 @@ pub mod help_command {
     // PERF(port): was comptime monomorphization — profile in Phase B.
     pub fn print_with_reason(reason: Reason, show_all_flags: bool) {
         let mut rand = bun_core::rand::DefaultPrng::init(
-            u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap(),
+            u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
         // Zig: rand.uintAtMost(len-1). xoshiro256++ next_u64() % len is close
         // enough for filler-word selection (no rejection sampling needed here).

@@ -92,12 +92,12 @@ impl RapidHash {
 
     #[inline(always)]
     fn r64(p: &[u8]) -> u64 {
-        u64::from_le_bytes(p[0..8].try_into().unwrap())
+        u64::from_le_bytes(p[0..8].try_into().expect("infallible: size matches"))
     }
 
     #[inline(always)]
     fn r32(p: &[u8]) -> u64 {
-        u32::from_le_bytes(p[0..4].try_into().unwrap()) as u64
+        u32::from_le_bytes(p[0..4].try_into().expect("infallible: size matches")) as u64
     }
 }
 

@@ -617,8 +617,8 @@ impl PostgresSQLConnection {
         self.flags.set(ConnectionFlags::HAS_BACKPRESSURE, wrote < 0 || (wrote as usize) < chunk.len());
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
-            SocketMonitor::write(&chunk[..usize::try_from(wrote).unwrap()]);
-            self.write_buffer.consume(u32::try_from(wrote).unwrap());
+            SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
+            self.write_buffer.consume(u32::try_from(wrote).expect("int cast"));
         }
     }
 
@@ -734,7 +734,7 @@ impl PostgresSQLConnection {
 
         let written = self.socket_write(&ssl_request[offset as usize..]);
         if written > 0 {
-            self.tls_status = TLSStatus::MessageSent(offset + u8::try_from(written).unwrap());
+            self.tls_status = TLSStatus::MessageSent(offset + u8::try_from(written).expect("int cast"));
         } else {
             self.tls_status = TLSStatus::MessageSent(offset);
         }
@@ -1146,15 +1146,15 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         tls_config,
         tls_status: if ssl_mode != SSLMode::Disable { TLSStatus::Pending } else { TLSStatus::None },
         ssl_mode,
-        idle_timeout_interval_ms: u32::try_from(idle_timeout).unwrap(),
-        connection_timeout_ms: u32::try_from(connection_timeout).unwrap(),
+        idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
+        connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
         flags: if use_unnamed_prepared_statements {
             ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
         } else {
             ConnectionFlags::empty()
         },
         timer: EventLoopTimer::init_paused(EventLoopTimerTag::PostgresSQLConnectionTimeout),
-        max_lifetime_interval_ms: u32::try_from(max_lifetime).unwrap(),
+        max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
         max_lifetime_timer: EventLoopTimer::init_paused(
             EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
         ),

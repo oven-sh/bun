@@ -341,7 +341,7 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                     let flag = u32::from_ne_bytes(
-                        self.buf.0[BUF_SIZE - 4..].try_into().unwrap()
+                        self.buf.0[BUF_SIZE - 4..].try_into().expect("infallible: size matches")
                     );
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }

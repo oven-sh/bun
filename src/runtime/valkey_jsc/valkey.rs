@@ -598,7 +598,7 @@ impl ValkeyClient {
         let wrote = any_socket_write(&self.socket, chunk);
         if wrote > 0 {
             self.write_buffer
-                .consume(u32::try_from(wrote).unwrap());
+                .consume(u32::try_from(wrote).expect("int cast"));
         }
         let has_remaining = self.write_buffer.len() > 0;
         has_remaining
@@ -1332,7 +1332,7 @@ impl ValkeyClient {
             // PORT NOTE: `defer allocator.free(data)` — `data: Box<[u8]>` drops at scope end.
 
             let wrote = any_socket_write(&self.socket, &data);
-            let unwritten = &data[usize::try_from(wrote.max(0)).unwrap()..];
+            let unwritten = &data[usize::try_from(wrote.max(0)).expect("int cast")..];
 
             if !unwritten.is_empty() {
                 // Handle incomplete write.

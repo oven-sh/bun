@@ -153,7 +153,7 @@ impl<H: Handler> Trampolines<H> {
     pub extern "C" fn on_open(s: *mut us_socket_t, is_client: c_int, ip: *mut u8, ip_len: c_int) -> *mut us_socket_t {
         let ip_slice: &[u8] = if !ip.is_null() {
             // SAFETY: usockets guarantees `ip[0..ip_len]` is valid when non-null.
-            unsafe { core::slice::from_raw_parts(ip, usize::try_from(ip_len).unwrap()) }
+            unsafe { core::slice::from_raw_parts(ip, usize::try_from(ip_len).expect("int cast")) }
         } else {
             &[]
         };
@@ -167,7 +167,7 @@ impl<H: Handler> Trampolines<H> {
 
     pub extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
-        let data_slice = unsafe { core::slice::from_raw_parts(data, usize::try_from(len).unwrap()) };
+        let data_slice = unsafe { core::slice::from_raw_parts(data, usize::try_from(len).expect("int cast")) };
         if H::HAS_EXT {
             H::on_data(Self::ext(s), s, data_slice);
         } else {

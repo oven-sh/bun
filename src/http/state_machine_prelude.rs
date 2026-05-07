@@ -426,7 +426,7 @@ fn write_to_socket<const IS_SSL: bool>(
         if amount < 0 {
             return Err(err!(WriteFailed));
         }
-        let wrote = usize::try_from(amount).unwrap();
+        let wrote = usize::try_from(amount).expect("int cast");
         total_written += wrote;
         remaining = &remaining[wrote..];
         if wrote == 0 {

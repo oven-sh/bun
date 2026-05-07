@@ -110,9 +110,9 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let key = item.key.as_ref().unwrap();
-                    builder.count(key.as_utf8_string_literal().unwrap());
-                    if let ExprData::EString(version_str) = &item.value.as_ref().unwrap().data {
+                    let key = item.key.as_ref().expect("infallible: prop has key");
+                    builder.count(key.as_utf8_string_literal().expect("infallible: is_string checked"));
+                    if let ExprData::EString(version_str) = &item.value.as_ref().expect("infallible: prop has value").data {
                         builder.count(version_str.data);
                     }
                 }
@@ -123,13 +123,13 @@ impl CatalogMap {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
                     let catalog_key = catalog.key.as_ref().unwrap();
-                    builder.count(catalog_key.as_utf8_string_literal().unwrap());
+                    builder.count(catalog_key.as_utf8_string_literal().expect("infallible: is_string checked"));
                     if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
-                            let key = item.key.as_ref().unwrap();
-                            builder.count(key.as_utf8_string_literal().unwrap());
+                            let key = item.key.as_ref().expect("infallible: prop has key");
+                            builder.count(key.as_utf8_string_literal().expect("infallible: is_string checked"));
                             if let ExprData::EString(version_str) =
-                                &item.value.as_ref().unwrap().data
+                                &item.value.as_ref().expect("infallible: prop has value").data
                             {
                                 builder.count(version_str.data);
                             }
@@ -159,9 +159,9 @@ impl CatalogMap {
             found_any = true;
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let key = item.key.as_ref().unwrap();
-                    let value = item.value.as_ref().unwrap();
-                    let dep_name_str = key.as_utf8_string_literal().unwrap();
+                    let key = item.key.as_ref().expect("infallible: prop has key");
+                    let value = item.value.as_ref().expect("infallible: prop has value");
+                    let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
 
                     let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                     let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
@@ -213,7 +213,7 @@ impl CatalogMap {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
                     let catalog_key = catalog.key.as_ref().unwrap();
-                    let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
+                    let catalog_name_str = catalog_key.as_utf8_string_literal().expect("infallible: is_string checked");
                     let catalog_name = builder.append::<String>(catalog_name_str);
 
                     let group =
@@ -221,9 +221,9 @@ impl CatalogMap {
 
                     if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
-                            let key = item.key.as_ref().unwrap();
-                            let value = item.value.as_ref().unwrap();
-                            let dep_name_str = key.as_utf8_string_literal().unwrap();
+                            let key = item.key.as_ref().expect("infallible: prop has key");
+                            let value = item.value.as_ref().expect("infallible: prop has value");
+                            let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
                             let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
                             let dep_name =
                                 builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
@@ -291,8 +291,8 @@ impl CatalogMap {
         string_buf: &mut StringBuf,
     ) -> Result<(), FromPnpmLockfileError> {
         for prop in catalogs_obj.properties.slice() {
-            let key = prop.key.as_ref().unwrap();
-            let value = prop.value.as_ref().unwrap();
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let value = prop.value.as_ref().expect("infallible: prop has value");
             let Some(group_name_str) = key.as_utf8_string_literal() else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };

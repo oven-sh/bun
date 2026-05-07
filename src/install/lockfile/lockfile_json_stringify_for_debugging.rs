@@ -273,7 +273,7 @@ where
                     this.buffers.trees.as_slice(),
                     this.buffers.dependencies.as_slice(),
                     this.buffers.string_bytes.as_slice(),
-                    u32::try_from(tree_id).unwrap(),
+                    u32::try_from(tree_id).expect("int cast"),
                     &mut path_buf,
                     &mut depth_buf,
                 );
@@ -335,7 +335,7 @@ where
         for dep_id in 0..dependencies.len() {
             let dep = &dependencies[dep_id];
             let res = resolutions[dep_id];
-            json_stringify_dependency(this, w, u32::try_from(dep_id).unwrap(), dep, res)?;
+            json_stringify_dependency(this, w, u32::try_from(dep_id).expect("int cast"), dep, res)?;
         }
 
         let _ = w.end_array();

@@ -164,7 +164,7 @@ impl Integrity {
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().unwrap(), core::ptr::null_mut());
+        Crypto::SHA512::hash(bytes, (&mut value[0..LEN]).try_into().expect("infallible: size matches"), core::ptr::null_mut());
         Integrity { tag: Tag::SHA512, value }
     }
 
@@ -180,25 +180,25 @@ impl Integrity {
         match tag {
             Tag::SHA1 => {
                 const LEN: usize = SHA1_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().expect("infallible: size matches");
                 Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().expect("infallible: size matches");
                 Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().expect("infallible: size matches");
                 Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
-                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().unwrap();
+                let ptr: &mut [u8; LEN] = (&mut digest[0..LEN]).try_into().expect("infallible: size matches");
                 Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut());
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
@@ -349,19 +349,19 @@ impl Streaming {
         match &mut self.hasher {
             Hasher::None => Integrity::default(),
             Hasher::Sha1(h) => {
-                h.r#final((&mut out[0..SHA1_DIGEST_LEN]).try_into().unwrap());
+                h.r#final((&mut out[0..SHA1_DIGEST_LEN]).try_into().expect("infallible: size matches"));
                 Integrity { tag: Tag::SHA1, value: out }
             }
             Hasher::Sha256(h) => {
-                h.r#final((&mut out[0..SHA256_DIGEST_LEN]).try_into().unwrap());
+                h.r#final((&mut out[0..SHA256_DIGEST_LEN]).try_into().expect("infallible: size matches"));
                 Integrity { tag: Tag::SHA256, value: out }
             }
             Hasher::Sha384(h) => {
-                h.r#final((&mut out[0..SHA384_DIGEST_LEN]).try_into().unwrap());
+                h.r#final((&mut out[0..SHA384_DIGEST_LEN]).try_into().expect("infallible: size matches"));
                 Integrity { tag: Tag::SHA384, value: out }
             }
             Hasher::Sha512(h) => {
-                h.r#final((&mut out[0..SHA512_DIGEST_LEN]).try_into().unwrap());
+                h.r#final((&mut out[0..SHA512_DIGEST_LEN]).try_into().expect("infallible: size matches"));
                 Integrity { tag: Tag::SHA512, value: out }
             }
         }

@@ -678,7 +678,7 @@ impl InternalSourceMap {
         if lo == 0 {
             return None;
         }
-        Some(u32::try_from(lo - 1).unwrap())
+        Some(u32::try_from(lo - 1).expect("int cast"))
     }
 
     fn seed_window(self, sync_idx: u32, state: &mut State, reader: &mut WindowReader) {
@@ -972,7 +972,7 @@ impl Builder {
             return;
         }
         let seed = self.pending[0];
-        let start_off: u32 = u32::try_from(self.win_stream.len()).unwrap();
+        let start_off: u32 = u32::try_from(self.win_stream.len()).expect("int cast");
         self.sync_entries.push(SyncEntry {
             generated_line: seed.generated_line,
             generated_column: seed.generated_column,
@@ -1042,7 +1042,7 @@ impl Builder {
             }
             w += write_varint(buf[w..].as_mut_ptr(), d.d_gen_col);
         }
-        let gen_col_len: u16 = u16::try_from(w - win_hdr::GEN_COL_LANE_OFF).unwrap();
+        let gen_col_len: u16 = u16::try_from(w - win_hdr::GEN_COL_LANE_OFF).expect("int cast");
         buf[win_hdr::GEN_COL_LEN_OFF..win_hdr::GEN_COL_LEN_OFF + 2]
             .copy_from_slice(&gen_col_len.to_ne_bytes());
 
@@ -1052,14 +1052,14 @@ impl Builder {
                 w += write_varint(buf[w..].as_mut_ptr(), d.d_orig_line);
             }
         }
-        let orig_line_len: u16 = u16::try_from(w - orig_line_start).unwrap();
+        let orig_line_len: u16 = u16::try_from(w - orig_line_start).expect("int cast");
         let orig_col_start = w;
         for d in &deltas[0..n_deltas] {
             if d.d_orig_col != d.d_gen_col {
                 w += write_varint(buf[w..].as_mut_ptr(), d.d_orig_col);
             }
         }
-        let orig_col_len: u16 = u16::try_from(w - orig_col_start).unwrap();
+        let orig_col_len: u16 = u16::try_from(w - orig_col_start).expect("int cast");
         buf[win_hdr::ORIG_LINE_LEN_OFF..win_hdr::ORIG_LINE_LEN_OFF + 2]
             .copy_from_slice(&orig_line_len.to_ne_bytes());
         buf[win_hdr::ORIG_COL_LEN_OFF..win_hdr::ORIG_COL_LEN_OFF + 2]
@@ -1068,7 +1068,7 @@ impl Builder {
         if flags & FLAG_HAS_GEN_LINE_EXCEPTIONS != 0 {
             for k in 0..n_deltas {
                 if deltas[k].d_gen_line > 1 || deltas[k].d_gen_line < 0 {
-                    buf[w] = u8::try_from(k).unwrap();
+                    buf[w] = u8::try_from(k).expect("int cast");
                     w += 1;
                     w += write_varint(buf[w..].as_mut_ptr(), deltas[k].d_gen_line);
                 }
@@ -1108,7 +1108,7 @@ impl Builder {
             self.flush_window();
 
             let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
-            let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).unwrap();
+            let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
             let total: usize = stream_offset as usize + self.win_stream.len() + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
@@ -1117,7 +1117,7 @@ impl Builder {
             let blob = out.list.as_mut_slice();
 
             blob[0..24].fill(0);
-            blob[24..28].copy_from_slice(&u32::try_from(self.sync_entries.len()).unwrap().to_ne_bytes());
+            blob[24..28].copy_from_slice(&u32::try_from(self.sync_entries.len()).expect("int cast").to_ne_bytes());
             blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
             if sync_bytes > 0 {
                 // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
@@ -1252,7 +1252,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
     let out = builder.finalize();
     let blob = out.list.as_mut_slice();
     let total_len: u64 = blob.len() as u64;
-    let input_lines: u64 = (input_line_count_hint as u64).max(u64::try_from(max_original_line).unwrap() + 1);
+    let input_lines: u64 = (input_line_count_hint as u64).max(u64::try_from(max_original_line).expect("int cast") + 1);
     blob[0..8].copy_from_slice(&total_len.to_ne_bytes());
     blob[8..16].copy_from_slice(&mapping_count.to_ne_bytes());
     blob[16..24].copy_from_slice(&input_lines.to_ne_bytes());

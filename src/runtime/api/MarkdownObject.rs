@@ -99,7 +99,7 @@ pub fn render_to_ansi(
         if let Some(cols) = theme_value.get(global_this, "columns")? {
             if cols.is_number() {
                 let n = cols.to_int32();
-                theme.columns = if n <= 0 { 0 } else { u16::try_from(n.min(u16::MAX as i32)).unwrap() };
+                theme.columns = if n <= 0 { 0 } else { u16::try_from(n.min(u16::MAX as i32)).expect("int cast") };
             }
         }
     }

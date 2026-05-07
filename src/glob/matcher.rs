@@ -503,7 +503,7 @@ fn match_brace_branch(
     // Clone state
     let mut branch_state = *state;
     branch_state.glob_index = branch_index;
-    branch_state.brace_depth = u8::try_from(brace_stack.len()).unwrap();
+    branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
     let matched = glob_match_impl(&mut branch_state, glob, branch_index, path, brace_stack);
 

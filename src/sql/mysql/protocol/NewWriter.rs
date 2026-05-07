@@ -32,7 +32,7 @@ impl<C: WriterContext> Packet<C> {
         let new_offset = self.ctx.wrapped.offset();
         // fix position for packet header
         let length = new_offset - self.offset - PacketHeader::SIZE;
-        self.header.length = u32::try_from(length).unwrap();
+        self.header.length = u32::try_from(length).expect("int cast");
         bun_core::scoped_log!(NewWriter, "writing packet header: {}", self.header.length);
         self.ctx.pwrite(&self.header.encode(), self.offset)
     }

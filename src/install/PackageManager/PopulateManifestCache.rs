@@ -156,7 +156,7 @@ pub fn populate_manifest_cache(
             let mut seen_pkg_ids: HashMap<PackageID, ()> = HashMap::new();
 
             for (_dep_id, dep) in dependencies.iter().enumerate() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
                 let pkg_id = resolutions[dep_id as usize];
                 if pkg_id == invalid_package_id {

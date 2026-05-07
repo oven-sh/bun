@@ -1303,9 +1303,9 @@ impl RealFS {
 
             // SAFETY: single init-time write
             unsafe {
-                limit::HANDLES = usize::try_from(lim.cur).unwrap();
+                limit::HANDLES = usize::try_from(lim.cur).expect("int cast");
             }
-            Ok(usize::try_from(lim.cur).unwrap())
+            Ok(usize::try_from(lim.cur).expect("int cast"))
         }
     }
 

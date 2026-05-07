@@ -782,7 +782,7 @@ impl AnyRoute {
                     ));
                 }
                 return Ok(Some(AnyRoute::FrameworkRouter(FrameworkRouter::TypeIndex::init(
-                    u8::try_from(init_ctx.framework_router_list.len() - 1).unwrap(),
+                    u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
                 ))));
             }
         }
@@ -1497,7 +1497,7 @@ where
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW per LIFETIMES.tsv)
             unsafe { &*self.global_this },
             &info.ip,
-            u16::try_from(info.port).unwrap(),
+            u16::try_from(info.port).expect("int cast"),
             info.is_ipv6,
         )
     }
@@ -2364,7 +2364,7 @@ where
                 if let Some(listener) = self.listener {
                     // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
                     let listener = unsafe { &mut *listener };
-                    port = u16::try_from(listener.get_local_port()).unwrap();
+                    port = u16::try_from(listener.get_local_port()).expect("int cast");
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
@@ -2385,7 +2385,7 @@ where
                     if let Some(h3l) = self.h3_listener {
                         // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
                         let h3l = unsafe { &mut *h3l };
-                        port = u16::try_from(h3l.get_local_port()).unwrap();
+                        port = u16::try_from(h3l.get_local_port()).expect("int cast");
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                             return Ok(JSValue::NULL);

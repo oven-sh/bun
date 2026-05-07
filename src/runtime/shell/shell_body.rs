@@ -263,7 +263,7 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{}", args).unwrap();
+        write!(&mut v, "{}", args).expect("infallible: in-memory write");
         ShellErr::InvalidArguments { val: v.into_boxed_slice() }
     }
 
@@ -280,14 +280,14 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{} {}", err.name(), suffix).unwrap();
+        write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
     }
 
     #[inline]
     pub fn throw(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{}", args).unwrap();
+        write!(&mut v, "{}", args).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
     }
 
@@ -379,14 +379,14 @@ impl<'a> GlobalMini<'a> {
     #[inline]
     pub fn throw_invalid_arguments(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{}", args).unwrap();
+        write!(&mut v, "{}", args).expect("infallible: in-memory write");
         ShellErr::InvalidArguments { val: v.into_boxed_slice() }
     }
 
     #[inline]
     pub fn handle_error(self, err: bun_core::Error, suffix: &str) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{} {}", err.name(), suffix).unwrap();
+        write!(&mut v, "{} {}", err.name(), suffix).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
     }
 
@@ -429,7 +429,7 @@ impl<'a> GlobalMini<'a> {
     #[inline]
     pub fn throw(self, args: fmt::Arguments<'_>) -> ShellErr {
         let mut v = Vec::new();
-        write!(&mut v, "{}", args).unwrap();
+        write!(&mut v, "{}", args).expect("infallible: in-memory write");
         ShellErr::Custom(v.into_boxed_slice())
     }
 
@@ -1195,7 +1195,7 @@ pub mod testing_apis {
             marked_argument_buffer,
         )?;
 
-        let jsobjs_len: u32 = u32::try_from(jsobjs.len()).unwrap();
+        let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
         let lex_result = 'brk: {
             if strings::is_all_ascii(&script[..]) {
                 let mut lexer =

@@ -126,7 +126,7 @@ impl<'a> Row<'a> {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u64 = parse_int::<u64>(value.slice()).unwrap_or(0);
                     if val <= u32::MAX as u64 {
-                        *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: u32::try_from(val).unwrap() }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell { tag: Tag::Uint4, value: Value { uint4: u32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
                         return;
                     }
                     if self.bigint {
@@ -136,7 +136,7 @@ impl<'a> Row<'a> {
                 } else {
                     let val: i64 = parse_int::<i64>(value.slice()).unwrap_or(0);
                     if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                        *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: i32::try_from(val).unwrap() }, ..SQLDataCell::default() };
+                        *cell = SQLDataCell { tag: Tag::Int4, value: Value { int4: i32::try_from(val).expect("int cast") }, ..SQLDataCell::default() };
                         return;
                     }
                     if self.bigint {
@@ -246,14 +246,14 @@ impl<'a> Row<'a> {
                         *value = SQLDataCell::raw(&data);
                     } else {
                         reader.skip(result.bytes_read);
-                        let string_data = reader.read(usize::try_from(result.value).unwrap())?;
+                        let string_data = reader.read(usize::try_from(result.value).expect("int cast"))?;
                         self.parse_value_and_set_cell(value, column, &string_data);
                     }
                 }
                 value.index = match column.name_or_index {
                     // The indexed columns can be out of order.
                     NameOrIndex::Index(i) => i,
-                    _ => u32::try_from(index).unwrap(),
+                    _ => u32::try_from(index).expect("int cast"),
                 };
                 value.is_indexed_column = match column.name_or_index {
                     NameOrIndex::Duplicate => 2,
@@ -312,7 +312,7 @@ impl<'a> Row<'a> {
             value.index = match column.name_or_index {
                 // The indexed columns can be out of order.
                 NameOrIndex::Index(idx) => idx,
-                _ => u32::try_from(i).unwrap(),
+                _ => u32::try_from(i).expect("int cast"),
             };
             value.is_indexed_column = match column.name_or_index {
                 NameOrIndex::Duplicate => 2,

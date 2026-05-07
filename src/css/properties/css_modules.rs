@@ -47,7 +47,7 @@ impl Composes {
             names,
             from,
             loc: bun_logger::Loc {
-                start: i32::try_from(loc).unwrap(),
+                start: i32::try_from(loc).expect("int cast"),
             },
             cssparser_loc: Location::from_source_location(loc2),
         })

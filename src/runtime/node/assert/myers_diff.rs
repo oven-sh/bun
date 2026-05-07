@@ -205,8 +205,8 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
             // const m:
 
             break 'blk (
-                u32::try_from(_max).unwrap(),
-                u32::try_from(_graph_size).unwrap(),
+                u32::try_from(_max).expect("int cast"),
+                u32::try_from(_graph_size).expect("int cast"),
             );
         };
 
@@ -226,7 +226,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
         // ================================================================
 
         for _diff_level in 0..=(max as usize) {
-            let diff_level: int = i64::try_from(_diff_level).unwrap(); // why is this always usize?
+            let diff_level: int = i64::try_from(_diff_level).expect("int cast"); // why is this always usize?
             // const new_trace = try TraceFrame.initCapacity(trace_alloc, graph.len);
             let new_trace: Box<[uint]> = graph.clone().into_boxed_slice();
             // PERF(port): was appendAssumeCapacity — profile in Phase B
@@ -259,7 +259,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
                     let x2: int = i64::from(x);
                     let y: int = x2 - diag_idx;
                     debug_assert!(y >= 0 && (y as u64) <= MAXLEN); // sanity check. Fine to be stripped in release.
-                    break 'blk usize::try_from(y).unwrap();
+                    break 'blk usize::try_from(y).expect("int cast");
                 };
 
                 while (x as usize) < actual.len()
@@ -360,21 +360,21 @@ fn u<N: TryInto<uint>>(n: N) -> uint
 where
     N::Error: core::fmt::Debug,
 {
-    n.try_into().unwrap()
+    n.try_into().expect("infallible: size matches")
 }
 #[inline]
 fn us<N: TryInto<usize>>(n: N) -> usize
 where
     N::Error: core::fmt::Debug,
 {
-    n.try_into().unwrap()
+    n.try_into().expect("infallible: size matches")
 }
 #[inline]
 fn i<N: TryInto<int>>(n: N) -> int
 where
     N::Error: core::fmt::Debug,
 {
-    n.try_into().unwrap()
+    n.try_into().expect("infallible: size matches")
 }
 
 // TODO(port): `printDiff` wrote directly to stdout/stderr via `std.fs.File`.

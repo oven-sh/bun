@@ -1659,7 +1659,7 @@ impl PatternBuffer {
 
     pub fn prepend(&mut self, chunk: &[u8]) {
         debug_assert!(self.i as usize >= chunk.len());
-        self.i -= u16::try_from(chunk.len()).unwrap();
+        self.i -= u16::try_from(chunk.len()).expect("int cast");
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 

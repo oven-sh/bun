@@ -469,7 +469,7 @@ impl<'a> Parser<'a> {
             // Otherwise it's a key val here
 
             let line_offset =
-                i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize).unwrap();
+                i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize).expect("int cast");
 
             let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
 
@@ -517,7 +517,7 @@ impl<'a> Parser<'a> {
                                 bump,
                                 ropealloc,
                                 &line[eq_sign_idx + 1..],
-                                line_offset + i32::try_from(eq_sign_idx).unwrap() + 1,
+                                line_offset + i32::try_from(eq_sign_idx).expect("int cast") + 1,
                             )?
                             .into_value();
                     }
@@ -563,7 +563,7 @@ impl<'a> Parser<'a> {
             if let Some(mut val) = head_ref.get(key) {
                 if matches!(val.data, ExprData::EArray(_)) {
                     was_already_array = true;
-                    val.data.e_array_mut().unwrap().push(bump, value)?;
+                    val.data.e_array_mut().expect("infallible: variant checked").push(bump, value)?;
                     head_ref.put(bump, key, val)?;
                 }
             }

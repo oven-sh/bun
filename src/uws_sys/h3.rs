@@ -35,13 +35,13 @@ impl ListenSocket {
             c::uws_h3_listen_socket_local_address(
                 self,
                 buf.as_mut_ptr(),
-                c_int::try_from(buf.len()).unwrap(),
+                c_int::try_from(buf.len()).expect("int cast"),
             )
         };
         if n <= 0 {
             return None;
         }
-        Some(&buf[..usize::try_from(n).unwrap()])
+        Some(&buf[..usize::try_from(n).expect("int cast")])
     }
 }
 

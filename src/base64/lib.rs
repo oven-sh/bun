@@ -15,7 +15,7 @@ static MIXED_DECODER: LazyLock<zig_base64::Base64DecoderWithIgnore> = LazyLock::
 
     let mut i: usize = 62;
     for &c in &zig_base64::URL_SAFE_ALPHABET_CHARS[62..] {
-        decoder.decoder.char_to_index[c as usize] = u8::try_from(i).unwrap();
+        decoder.decoder.char_to_index[c as usize] = u8::try_from(i).expect("int cast");
         i += 1;
     }
 
@@ -526,7 +526,7 @@ pub mod zig_base64 {
                 debug_assert!(!char_in_alphabet[c as usize]);
                 debug_assert!(pad_char.is_none() || c != pad_char.unwrap());
 
-                result.char_to_index[c as usize] = u8::try_from(i).unwrap();
+                result.char_to_index[c as usize] = u8::try_from(i).expect("int cast");
                 char_in_alphabet[c as usize] = true;
             }
             result

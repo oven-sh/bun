@@ -688,7 +688,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                 // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
                 // the leaked task; libuv copies the array before return.
-                let rc = unsafe { uv::uv_fs_read(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).unwrap(), pos, Some(Self::uv_callback)) };
+                let rc = unsafe { uv::uv_fs_read(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).expect("int cast"), pos, Some(Self::uv_callback)) };
                 debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv readv({}, {:p}, {}, {}, {} total bytes) = scheduled", fd, bufs.as_ptr(), bufs.len(), pos, sum);
             }
@@ -706,7 +706,7 @@ impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, 
                 let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                 let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                 // SAFETY: see Readv arm.
-                let rc = unsafe { uv::uv_fs_write(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).unwrap(), pos, Some(Self::uv_callback)) };
+                let rc = unsafe { uv::uv_fs_write(loop_, &mut task.req, fd, bufs.as_ptr().cast(), c_uint::try_from(bufs.len()).expect("int cast"), pos, Some(Self::uv_callback)) };
                 debug_assert!(rc == uv::ReturnCode::ZERO);
                 sys::syslog!("uv writev({}, {:p}, {}, {}, {} total bytes) = scheduled", fd, bufs.as_ptr(), bufs.len(), pos, sum);
             }
@@ -1604,8 +1604,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
         // Capture lengths *before* re-borrowing the path buffers — `src`/`dest`
         // are slices into `src_buf`/`dest_buf` and must end their borrow first.
-        let src_len = PathInt::try_from(src.len()).unwrap();
-        let dest_len = PathInt::try_from(dest.len()).unwrap();
+        let src_len = PathInt::try_from(src.len()).expect("int cast");
+        let dest_len = PathInt::try_from(dest.len()).expect("int cast");
         let _ = Self::_cp_async_directory(
             nodefs,
             args.flags,
@@ -2414,7 +2414,7 @@ pub mod args {
                 )?
                 .max(0),
             )
-            .unwrap();
+            .expect("infallible: validated range");
             Ok(FTruncate { fd, len: Some(len) })
         }
     }
@@ -2812,10 +2812,10 @@ pub mod args {
                         else { path.deinit(); return Err(ctx.throw_invalid_arguments(format_args!("The \"options.force\" property must be of type boolean."))); }
                     }
                     if let Some(delay) = val.get(ctx, "retryDelay")? {
-                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).unwrap();
+                        retry_delay = c_uint::try_from(validators::validate_integer(ctx, delay, "options.retryDelay", Some(0), Some(c_uint::MAX as i64))?).expect("infallible: validated range");
                     }
                     if let Some(retries) = val.get(ctx, "maxRetries")? {
-                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).unwrap();
+                        max_retries = u32::try_from(validators::validate_integer(ctx, retries, "options.maxRetries", Some(0), Some(u32::MAX as i64))?).expect("infallible: validated range");
                     }
                 } else if !val.is_undefined() {
                     path.deinit();
@@ -3075,7 +3075,7 @@ pub mod args {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) => {
                         if current.is_undefined_or_null() || current.is_function() { break 'parse; }
-                        args.offset = u64::try_from(validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).unwrap();
+                        args.offset = u64::try_from(validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).expect("infallible: validated range");
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
@@ -3089,7 +3089,7 @@ pub mod args {
                         if length > max_len || length < 0 {
                             return Err(ctx.throw_range_error(length as f64, bun_jsc::RangeErrorOptions { field_name: b"length", min: 0, max: max_len, ..Default::default() }));
                         }
-                        args.length = u64::try_from(length).unwrap();
+                        args.length = u64::try_from(length).expect("int cast");
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
@@ -3150,7 +3150,7 @@ pub mod args {
             let offset: u64 = if offset_value.is_undefined_or_null() {
                 0
             } else {
-                u64::try_from(validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
+                u64::try_from(validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).expect("infallible: validated range")
             };
 
             // length |= 0;
@@ -3180,7 +3180,7 @@ pub mod args {
             if length_int > 0 && length_int as usize > buf_len {
                 return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", max: (buf_len as i64).min(i64::MAX), ..Default::default() }));
             }
-            if i64::try_from(offset).unwrap().saturating_add(length_int) > buf_len as i64 {
+            if i64::try_from(offset).expect("int cast").saturating_add(length_int) > buf_len as i64 {
                 return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", max: (buf_len as u64).saturating_sub(offset) as i64, ..Default::default() }));
             }
             if length_int < 0 {
@@ -5751,13 +5751,13 @@ impl NodeFS {
                     // on linux, it's absolutely positioned
                     match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
                         Err(_) => break 'preallocate,
-                        Ok(pos) => usize::try_from(pos).unwrap(),
+                        Ok(pos) => usize::try_from(pos).expect("int cast"),
                     }
                 };
                 let _ = sys::preallocate_file(
                     fd.native(),
-                    i64::try_from(offset).unwrap(),
-                    i64::try_from(buf.len()).unwrap(),
+                    i64::try_from(offset).expect("int cast"),
+                    i64::try_from(buf.len()).expect("int cast"),
                 );
             }
         }
@@ -6280,9 +6280,9 @@ impl NodeFS {
         let dest_len = args.dest.os_path(&mut dest_buf).len();
         self.cp_sync_inner(
             &mut src_buf,
-            PathInt::try_from(src_len).unwrap(),
+            PathInt::try_from(src_len).expect("int cast"),
             &mut dest_buf,
-            PathInt::try_from(dest_len).unwrap(),
+            PathInt::try_from(dest_len).expect("int cast"),
             args,
         )
     }

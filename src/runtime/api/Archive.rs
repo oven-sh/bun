@@ -310,7 +310,7 @@ fn parse_compression_options(global: &JSGlobalObject, options_arg: JSValue) -> J
             if level_num < 1 || level_num > 12 {
                 return Err(global.throw_invalid_arguments(format_args!("Archive: level must be between 1 and 12")));
             }
-            level = u8::try_from(level_num).unwrap();
+            level = u8::try_from(level_num).expect("int cast");
         }
 
         return Ok(Compression::Gzip(GzipOptions { level }));
@@ -395,7 +395,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let data = data_slice.slice();
         let _ = entry_ref.clear();
         entry_ref.set_pathname_utf8(key_str.as_zstr());
-        entry_ref.set_size(i64::try_from(data.len()).unwrap());
+        entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
         entry_ref.set_filetype(FILETYPE_REGULAR);
         entry_ref.set_perm(0o644);
         entry_ref.set_mtime(now_secs, 0);
@@ -561,7 +561,7 @@ fn parse_pattern_arg(
             return Ok(None);
         }
 
-        let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(usize::try_from(len).unwrap());
+        let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(usize::try_from(len).expect("int cast"));
         // errdefer { for p free; deinit } — handled by Drop on Vec<Box<[u8]>>
 
         // Use index-based iteration for safety (avoids issues if array mutates)
@@ -1163,7 +1163,7 @@ impl FilesContext {
                 }
             }
 
-            let size: usize = usize::try_from(entry_ref.size().max(0)).unwrap();
+            let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
             // Read data first before allocating path
@@ -1187,7 +1187,7 @@ impl FilesContext {
                     if read == 0 {
                         break;
                     }
-                    total_read += usize::try_from(read).unwrap();
+                    total_read += usize::try_from(read).expect("int cast");
                 }
             }
             // errdefer free(data) — handled by Drop
@@ -1490,11 +1490,11 @@ fn extract_to_disk_filtered(
                 count += 1;
             }
             bun_sys::FileKind::File => {
-                let size: usize = usize::try_from(entry_ref.size().max(0)).unwrap();
+                let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
                 // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
                 let entry_perm = entry_ref.perm();
                 let mode: Mode = if entry_perm != 0 {
-                    Mode::try_from(entry_perm & 0o777).unwrap()
+                    Mode::try_from(entry_perm & 0o777).expect("int cast")
                 } else {
                     0o644
                 };
@@ -1535,7 +1535,7 @@ fn extract_to_disk_filtered(
                             write_success = false;
                             break;
                         }
-                        let bytes_read: usize = usize::try_from(read).unwrap();
+                        let bytes_read: usize = usize::try_from(read).expect("int cast");
                         // Write all bytes, handling partial writes
                         let mut written: usize = 0;
                         while written < bytes_read {

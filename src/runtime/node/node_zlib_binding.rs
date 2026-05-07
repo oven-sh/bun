@@ -187,10 +187,10 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         bun_zlib::crc32(
             u64::from(value),
             slice_u8.as_ptr(),
-            u32::try_from(slice_u8.len()).unwrap(),
+            u32::try_from(slice_u8.len()).expect("int cast"),
         )
     };
-    Ok(JSValue::js_number(f64::from(u32::try_from(crc).unwrap())))
+    Ok(JSValue::js_number(f64::from(u32::try_from(crc).expect("int cast"))))
 }
 
 // ─── CompressionStream mixin trait ────────────────────────────────────────
@@ -366,7 +366,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.ref_();
 
         this.stream_mut().set_buffers(in_, out);
-        this.stream_mut().set_flush(i32::try_from(flush).unwrap());
+        this.stream_mut().set_flush(i32::try_from(flush).expect("int cast"));
 
         // Only create the strong handle when we have a pending write
         // And make sure to clear it when we are done.
@@ -586,7 +586,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.ref_();
 
         this.stream_mut().set_buffers(in_, out);
-        this.stream_mut().set_flush(i32::try_from(flush).unwrap());
+        this.stream_mut().set_flush(i32::try_from(flush).expect("int cast"));
         let this_value = callframe.this();
 
         this.stream_mut().do_work();

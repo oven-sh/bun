@@ -24,7 +24,7 @@ impl<'a> Close<'a> {
         let p = &self.p;
         let count: u32 = core::mem::size_of::<u32>() as u32
             + 1
-            + u32::try_from(p.slice().len()).unwrap()
+            + u32::try_from(p.slice().len()).expect("int cast")
             + 1;
         // PORT NOTE: Zig source builds `[_]u8{'C'} ++ @byteSwap(count) ++ [_]u8{p.tag()}`;
         // intent is 'C' · big-endian u32 count · tag byte. Reshaped to a fixed 6-byte buffer.

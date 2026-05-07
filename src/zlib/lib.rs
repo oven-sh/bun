@@ -197,8 +197,8 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
 
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: u32::try_from(input.len()).unwrap(),
-            total_in: u32::try_from(input.len()).unwrap() as _,
+            avail_in: u32::try_from(input.len()).expect("int cast"),
+            total_in: u32::try_from(input.len()).expect("int cast") as _,
 
             next_out: zlib_reader.buf.as_mut_ptr(),
             avail_out: BUFFER_SIZE as uInt,
@@ -985,7 +985,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
             ReturnCode::Ok => {
                 // SAFETY: zlib initialized; deflateBound returns upper bound on output.
                 let bound = unsafe {
-                    deflateBound(&mut zlib_reader.zlib, uLong::try_from(input.len()).unwrap())
+                    deflateBound(&mut zlib_reader.zlib, uLong::try_from(input.len()).expect("int cast"))
                 };
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());

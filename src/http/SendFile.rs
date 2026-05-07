@@ -34,7 +34,7 @@ impl SendFile {
         #[cfg(target_os = "linux")]
         {
             let _ = adjusted_count; // unused on Linux path (matches Zig)
-            let mut signed_offset: i64 = i64::try_from(self.offset).unwrap();
+            let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
             // SAFETY: fds are valid open descriptors owned by `self`/caller; offset ptr is a
@@ -47,7 +47,7 @@ impl SendFile {
                     self.remain,
                 )
             };
-            self.offset = u64::try_from(signed_offset).unwrap() as usize;
+            self.offset = u64::try_from(signed_offset).expect("int cast") as usize;
 
             let errcode = bun_sys::get_errno(val);
 
@@ -82,7 +82,7 @@ impl SendFile {
                     0,
                 )
             });
-            let wrote: u64 = u64::try_from(sbytes).unwrap();
+            let wrote: u64 = u64::try_from(sbytes).expect("int cast");
             self.offset = (self.offset as u64).saturating_add(wrote) as usize;
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
@@ -95,7 +95,7 @@ impl SendFile {
 
         #[cfg(all(unix, not(target_os = "linux"), not(target_os = "freebsd")))]
         {
-            let mut sbytes: i64 = i64::try_from(adjusted_count).unwrap(); // std.posix.off_t
+            let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // std.posix.off_t
             // SAFETY: same-size POD bitcast u64 -> i64 (Zig used @bitCast).
             let signed_offset: i64 = unsafe { core::mem::transmute::<u64, i64>(self.offset as u64) };
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
@@ -109,7 +109,7 @@ impl SendFile {
                     0,
                 )
             });
-            let wrote: u64 = u64::try_from(sbytes).unwrap();
+            let wrote: u64 = u64::try_from(sbytes).expect("int cast");
             self.offset = (self.offset as u64).saturating_add(wrote) as usize;
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
             if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {

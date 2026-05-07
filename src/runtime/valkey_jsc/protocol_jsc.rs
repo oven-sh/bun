@@ -111,7 +111,7 @@ pub fn resp_value_to_js_with_options(
             let js_array = JSValue::create_empty_array(global, array.len())?;
             for (i, item) in array.iter_mut().enumerate() {
                 let js_item = resp_value_to_js_with_options(item, global, options)?;
-                js_array.put_index(global, u32::try_from(i).unwrap(), js_item)?;
+                js_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
             }
             Ok(js_array)
         }
@@ -145,7 +145,7 @@ pub fn resp_value_to_js_with_options(
             let js_array = JSValue::create_empty_array(global, set.len())?;
             for (i, item) in set.iter_mut().enumerate() {
                 let js_item = resp_value_to_js_with_options(item, global, options)?;
-                js_array.put_index(global, u32::try_from(i).unwrap(), js_item)?;
+                js_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
             }
             Ok(js_array)
         }
@@ -165,7 +165,7 @@ pub fn resp_value_to_js_with_options(
             let data_array = JSValue::create_empty_array(global, push.data.len())?;
             for (i, item) in push.data.iter_mut().enumerate() {
                 let js_item = resp_value_to_js_with_options(item, global, options)?;
-                data_array.put_index(global, u32::try_from(i).unwrap(), js_item)?;
+                data_array.put_index(global, u32::try_from(i).expect("int cast"), js_item)?;
             }
             js_obj.put(global, b"data", data_array);
 

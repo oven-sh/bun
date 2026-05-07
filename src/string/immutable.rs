@@ -840,8 +840,8 @@ pub fn find_url_password(text: &[u8]) -> Option<(usize, usize)> {
     if colon == -1 || colon as usize == at - 1 {
         return None;
     }
-    offset += usize::try_from(colon + 1).unwrap();
-    let len: usize = at - usize::try_from(colon + 1).unwrap();
+    offset += usize::try_from(colon + 1).expect("int cast");
+    let len: usize = at - usize::try_from(colon + 1).expect("int cast");
     Some((offset, len))
 }
 
@@ -890,7 +890,7 @@ pub fn repeating_buf(self_: &mut [u8], char: u8) {
 pub fn index_of_char_neg(self_: &[u8], char: u8) -> i32 {
     for (i, &c) in self_.iter().enumerate() {
         if c == char {
-            return i32::try_from(i).unwrap();
+            return i32::try_from(i).expect("int cast");
         }
     }
     -1
@@ -903,7 +903,7 @@ pub fn index_of_signed(self_: &[u8], str: &[u8]) -> i32 {
         return 0;
     }
     match index_of(self_, str) {
-        Some(i) => i32::try_from(i).unwrap(),
+        Some(i) => i32::try_from(i).expect("int cast"),
         None => -1,
     }
 }
@@ -1063,7 +1063,7 @@ impl StringOrTinyString {
             1 => &self.remainder_buf[0..self.meta.remainder_len() as usize],
             0 => {
                 let ptr = usize::from_le_bytes(
-                    self.remainder_buf[0..core::mem::size_of::<usize>()].try_into().unwrap(),
+                    self.remainder_buf[0..core::mem::size_of::<usize>()].try_into().expect("infallible: size matches"),
                 ) as *const u8;
                 let len = usize::from_le_bytes(
                     self.remainder_buf
@@ -1699,7 +1699,7 @@ pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a 
 
 pub fn index(self_: &[u8], str: &[u8]) -> i32 {
     match index_of(self_, str) {
-        Some(i) => i32::try_from(i).unwrap(),
+        Some(i) => i32::try_from(i).expect("int cast"),
         None => -1,
     }
 }

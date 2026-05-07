@@ -289,7 +289,7 @@ impl Crypto {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
-        uuid.print((&mut bytes[0..36]).try_into().unwrap());
+        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
         str.transfer_to_js(global)
     }
 
@@ -307,7 +307,7 @@ impl Crypto {
         // NOTE(port): upstream lacks `rare_data_unchecked`; `rare_data()` lazy-inits anyway.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
-        uuid.print((&mut bytes[0..36]).try_into().unwrap());
+        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
         // DOMJIT fast path returns bare JSValue; OOM here is unrecoverable.
         str.to_js(global).unwrap_or(JSValue::ZERO)
     }
@@ -393,7 +393,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .unwrap();
         }
 
-        break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap();
+        break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
@@ -403,7 +403,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print((&mut bytes[0..36]).try_into().unwrap());
+        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
         return str.transfer_to_js(global);
     }
 
@@ -532,7 +532,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print((&mut bytes[0..36]).try_into().unwrap());
+        uuid.print((&mut bytes[0..36]).try_into().expect("infallible: size matches"));
         return str.transfer_to_js(global);
     }
 

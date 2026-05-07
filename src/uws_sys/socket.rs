@@ -537,7 +537,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         };
 
         // PERF(port): @intCast — profile in Phase B
-        let port: c_int = port.try_into().unwrap();
+        let port: c_int = port.try_into().expect("infallible: size matches");
 
         let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
         match g.connect(

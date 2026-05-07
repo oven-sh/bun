@@ -47,7 +47,7 @@ impl us_socket_t {
                     self,
                     is_client as i32,
                     ip.as_ptr(),
-                    i32::try_from(ip.len().min(MAX_I32)).unwrap(),
+                    i32::try_from(ip.len().min(MAX_I32)).expect("int cast"),
                 );
             }
         } else {
@@ -117,7 +117,7 @@ impl us_socket_t {
     /// Returned slice is a view into `buf`.
     // TODO(port): narrow error set
     pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).unwrap();
+        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_local_address(self, buf.as_mut_ptr(), &mut length);
@@ -129,13 +129,13 @@ impl us_socket_t {
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).unwrap()])
+        Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
     // TODO(port): narrow error set
     pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).unwrap();
+        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &mut length);
@@ -147,7 +147,7 @@ impl us_socket_t {
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).unwrap()])
+        Ok(&buf[..usize::try_from(length).expect("int cast")])
     }
 
     pub fn set_timeout(&mut self, seconds: u32) {
@@ -293,7 +293,7 @@ impl us_socket_t {
     pub fn write(&mut self, data: &[u8]) -> i32 {
         let rc = unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
-            c::us_socket_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).unwrap())
+            c::us_socket_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).expect("int cast"))
         };
         bun_core::scoped_log!(uws, "us_socket_write({:p}, {}) = {}", self, data.len(), rc);
         rc
@@ -306,7 +306,7 @@ impl us_socket_t {
             c::us_socket_ipc_write_fd(
                 self,
                 data.as_ptr(),
-                i32::try_from(data.len().min(MAX_I32)).unwrap(),
+                i32::try_from(data.len().min(MAX_I32)).expect("int cast"),
                 file_descriptor.native(),
             )
         };
@@ -339,7 +339,7 @@ impl us_socket_t {
         bun_core::scoped_log!(uws, "us_socket_raw_write({:p}, {})", self, data.len());
         unsafe {
             // SAFETY: data.as_ptr() valid for data.len() bytes
-            c::us_socket_raw_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).unwrap())
+            c::us_socket_raw_write(self, data.as_ptr(), i32::try_from(data.len().min(MAX_I32)).expect("int cast"))
         }
     }
 

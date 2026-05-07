@@ -3220,7 +3220,7 @@ impl<'a> BundleV2<'a> {
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
-        let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
+        let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
@@ -3265,7 +3265,7 @@ impl<'a> BundleV2<'a> {
         loader: Loader,
         known_target: options::Target,
     ) -> Result<IndexInt, AllocError> {
-        let source_index = Index::init(u32::try_from(self.graph.ast.len()).unwrap());
+        let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
         self.graph.ast.append(JSAst::empty());
 
         self.graph.input_files.append(crate::Graph::InputFile {
@@ -3383,7 +3383,7 @@ impl<'a> BundleV2<'a> {
         // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
         unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!((*task).task))) };
 
-        Ok(u32::try_from(source_index).unwrap())
+        Ok(u32::try_from(source_index).expect("int cast"))
     }
 }
 
@@ -4105,7 +4105,7 @@ impl<'a> BundleV2<'a> {
                         // duped the key into the map (see PathToSourceIndexMap.rs).
 
                         // We need to parse this
-                        let source_index = Index::init(u32::try_from(this.graph.ast.len()).unwrap());
+                        let source_index = Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
                         unsafe { *value_ptr = source_index.get() };
                         out_source_index = Some(source_index);
                         this.graph.ast.append(JSAst::empty());
@@ -4506,10 +4506,10 @@ impl<'a> BundleV2<'a> {
                         // CSS has restrictions on what files can be imported.
                         // This means the file can become an error after
                         // resolution, which is not usually the case.
-                        css_total_files.push(Index::init(u32::try_from(index).unwrap())); // PERF(port): was assume_capacity
+                        css_total_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
                         let mut log = Logger::Log::init();
                         if self.linker.scan_css_imports(
-                            u32::try_from(index).unwrap(),
+                            u32::try_from(index).expect("int cast"),
                             import_records.slice(),
                             // PORT NOTE: `scan_css_imports` takes the column as a raw
                             // `*const` slice (the scanImportsAndExports caller holds raw
@@ -4531,16 +4531,16 @@ impl<'a> BundleV2<'a> {
                             ).map_err(|_| AllocError)?;
                             // Since there is an error, do not treat it as a
                             // valid CSS chunk.
-                            let _ = start.css_entry_points.swap_remove(&Index::init(u32::try_from(index).unwrap()));
+                            let _ = start.css_entry_points.swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
                         }
                     } else {
                         // HTML files are special cased because they correspond
                         // to routes in DevServer. They have a JS chunk too,
                         // derived off of the import record list.
                         if loaders[index] == Loader::Html {
-                            html_files.put(Index::init(u32::try_from(index).unwrap()), ())?;
+                            html_files.put(Index::init(u32::try_from(index).expect("int cast")), ())?;
                         } else {
-                            js_files.push(Index::init(u32::try_from(index).unwrap())); // PERF(port): was assume_capacity
+                            js_files.push(Index::init(u32::try_from(index).expect("int cast"))); // PERF(port): was assume_capacity
 
                             // Mark every part live.
                             for p in part_list.slice_mut() {
@@ -4570,7 +4570,7 @@ impl<'a> BundleV2<'a> {
                     }
                 } else {
                     // Treat empty CSS files for removal.
-                    let _ = start.css_entry_points.swap_remove(&Index::init(u32::try_from(index).unwrap()));
+                    let _ = start.css_entry_points.swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
                 }
             }
 
@@ -6203,8 +6203,8 @@ impl<'a> BundleV2<'a> {
 
         // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`
         bun_core::scoped_log!(scan_counter, "in parse task .pending_items += {} = {}\n",
-            diff, i32::try_from(this.graph.pending_items).unwrap() + diff);
-        this.graph.pending_items = u32::try_from(i32::try_from(this.graph.pending_items).unwrap() + diff).unwrap();
+            diff, i32::try_from(this.graph.pending_items).expect("int cast") + diff);
+        this.graph.pending_items = u32::try_from(i32::try_from(this.graph.pending_items).expect("int cast") + diff).expect("int cast");
         if diff < 0 {
             this.on_after_decrement_scan_counter();
         }

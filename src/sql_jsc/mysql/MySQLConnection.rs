@@ -269,9 +269,9 @@ impl MySQLConnection {
         );
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
-            let wrote_usize = usize::try_from(wrote).unwrap();
+            let wrote_usize = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[0..wrote_usize]);
-            self.write_buffer.consume(u32::try_from(wrote_usize).unwrap());
+            self.write_buffer.consume(u32::try_from(wrote_usize).expect("int cast"));
         }
     }
 
@@ -1537,17 +1537,17 @@ impl ReaderContext for Reader {
                 rb.head = 0;
                 return;
             }
-            rb.head -= u32::try_from(abs_count).unwrap();
+            rb.head -= u32::try_from(abs_count).expect("int cast");
             return;
         }
 
-        let ucount: usize = usize::try_from(count).unwrap();
+        let ucount: usize = usize::try_from(count).expect("int cast");
         if rb.head as usize + ucount > rb.byte_list.len() as usize {
             rb.head = rb.byte_list.len() as u32;
             return;
         }
 
-        rb.head += u32::try_from(ucount).unwrap();
+        rb.head += u32::try_from(ucount).expect("int cast");
     }
 
     fn ensure_capacity(self, count: usize) -> bool {
@@ -1564,7 +1564,7 @@ impl ReaderContext for Reader {
 
         // PORT NOTE: reshaped for borrowck — capture slice ptr before skip().
         let slice = &remaining[0..count] as *const [u8];
-        self.skip(isize::try_from(count).unwrap());
+        self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
 
@@ -1573,7 +1573,7 @@ impl ReaderContext for Reader {
         let remaining = unsafe { (*self.connection).read_buffer.remaining() };
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
             let slice = &remaining[0..zero as usize] as *const [u8];
-            self.skip(isize::try_from(zero + 1).unwrap());
+            self.skip(isize::try_from(zero + 1).expect("int cast"));
             return Ok(Data::Temporary(slice));
         }
 

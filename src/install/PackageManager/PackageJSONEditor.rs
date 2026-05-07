@@ -191,13 +191,13 @@ pub fn edit_trusted_dependencies(
     };
 
     if trusted_dependencies_to_add > 0 && new_trusted_deps.len > 0 {
-        let arr = trusted_dependencies_array.data.e_array_mut().unwrap();
+        let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
         arr.items = new_trusted_deps;
         arr.alphabetize_strings();
     }
 
     if !matches!(package_json.data, js_ast::ExprData::EObject(_))
-        || package_json.data.e_object().unwrap().properties.len == 0
+        || package_json.data.e_object().expect("infallible: variant checked").properties.len == 0
     {
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
         root_properties.push(G::Property {
@@ -217,7 +217,7 @@ pub fn edit_trusted_dependencies(
             logger::Loc::EMPTY,
         );
     } else if needs_new_trusted_dependencies_list {
-        let obj = package_json.data.e_object().unwrap();
+        let obj = package_json.data.e_object().expect("infallible: variant checked");
         let old_props = obj.properties.slice();
         let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
         for p in old_props {
@@ -268,7 +268,7 @@ pub fn edit_update_no_args(
             if matches!(root.expr.data, js_ast::ExprData::EObject(_)) {
                 if options.before_install {
                     // set each npm dependency to latest
-                    for dep in root.expr.data.e_object_mut().unwrap().properties.slice_mut() {
+                    for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, js_ast::ExprData::EString(_)) {
                             continue;
@@ -373,7 +373,7 @@ pub fn edit_update_no_args(
                     let workspace_resolution_ids =
                         resolution_ids.get(lockfile.buffers.resolutions.as_slice());
 
-                    for dep in root.expr.data.e_object_mut().unwrap().properties.slice_mut() {
+                    for dep in root.expr.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut() {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, js_ast::ExprData::EString(_)) {
                             continue;
@@ -436,7 +436,7 @@ pub fn edit_update_no_args(
                                         };
                                         if options.exact_versions {
                                             let mut v = Vec::new();
-                                            write!(&mut v, "{}", version_fmt).unwrap();
+                                            write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
                                             break 'new_version v;
                                         }
 
@@ -465,13 +465,13 @@ pub fn edit_update_no_args(
                                         let mut v = Vec::new();
                                         match pinned_version {
                                             semver::PinnedVersion::Patch => {
-                                                write!(&mut v, "{}", version_fmt).unwrap()
+                                                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
                                             }
                                             semver::PinnedVersion::Minor => {
-                                                write!(&mut v, "~{}", version_fmt).unwrap()
+                                                write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
                                             }
                                             semver::PinnedVersion::Major => {
-                                                write!(&mut v, "^{}", version_fmt).unwrap()
+                                                write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
                                             }
                                         }
                                         v
@@ -679,7 +679,7 @@ pub fn edit(
                                         }
                                         if !only_add_missing {
                                             request.e_string = Some(
-                                                value.expr.data.e_string().unwrap().as_ptr(),
+                                                value.expr.data.e_string().expect("infallible: variant checked").as_ptr(),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -700,7 +700,7 @@ pub fn edit(
                                     || request.version.tag == dependency::Tag::Git
                                 {
                                     for item in
-                                        query.expr.data.e_object().unwrap().properties.slice()
+                                        query.expr.data.e_object().expect("infallible: variant checked").properties.slice()
                                     {
                                         if let Some(v) = &item.value {
                                             let url = request
@@ -710,7 +710,7 @@ pub fn edit(
                                             if let js_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
                                                     request.e_string = Some(
-                                                        v.data.e_string().unwrap().as_ptr(),
+                                                        v.data.e_string().expect("infallible: variant checked").as_ptr(),
                                                     );
                                                     remaining -= 1;
                                                     break;
@@ -811,7 +811,7 @@ pub fn edit(
             while k < new_dependencies.len() {
                 if let Some(key) = &new_dependencies[k].key {
                     let name = request.get_name();
-                    if !key.data.e_string().unwrap().eql_bytes(name) {
+                    if !key.data.e_string().expect("infallible: variant checked").eql_bytes(name) {
                         k += 1;
                         continue;
                     }
@@ -879,7 +879,7 @@ pub fn edit(
         };
 
         {
-            let obj = dependencies_object.data.e_object_mut().unwrap();
+            let obj = dependencies_object.data.e_object_mut().expect("infallible: variant checked");
             obj.properties = G::PropertyList::move_from_list(new_dependencies);
             if obj.properties.len > 1 {
                 obj.alphabetize_properties();
@@ -910,7 +910,7 @@ pub fn edit(
         };
 
         if options.add_trusted_dependencies && trusted_dependencies_to_add > 0 {
-            let arr = trusted_dependencies_array.data.e_array_mut().unwrap();
+            let arr = trusted_dependencies_array.data.e_array_mut().expect("infallible: variant checked");
             arr.items = new_trusted_deps;
             if arr.items.len > 1 {
                 arr.alphabetize_strings();
@@ -918,7 +918,7 @@ pub fn edit(
         }
 
         if !matches!(current_package_json.data, js_ast::ExprData::EObject(_))
-            || current_package_json.data.e_object().unwrap().properties.len == 0
+            || current_package_json.data.e_object().expect("infallible: variant checked").properties.len == 0
         {
             let n = if options.add_trusted_dependencies { 2 } else { 1 };
             let mut root_properties: Vec<G::Property> = Vec::with_capacity(n);
@@ -954,7 +954,7 @@ pub fn edit(
             );
         } else {
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
-                let obj = current_package_json.data.e_object().unwrap();
+                let obj = current_package_json.data.e_object().expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
                 let mut root_properties: Vec<G::Property> =
                     Vec::with_capacity(old_props.len() + 2);
@@ -988,7 +988,7 @@ pub fn edit(
                     logger::Loc::EMPTY,
                 );
             } else if needs_new_dependency_list || needs_new_trusted_dependencies_list {
-                let obj = current_package_json.data.e_object().unwrap();
+                let obj = current_package_json.data.e_object().expect("infallible: variant checked");
                 let old_props = obj.properties.slice();
                 let mut root_properties: Vec<G::Property> =
                     Vec::with_capacity(old_props.len() + 1);
@@ -1101,7 +1101,7 @@ pub fn edit(
                                 };
                                 if options.exact_versions {
                                     let mut v = Vec::new();
-                                    write!(&mut v, "{}", version_fmt).unwrap();
+                                    write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
                                     break 'new_version v;
                                 }
 
@@ -1129,13 +1129,13 @@ pub fn edit(
                                 let mut v = Vec::new();
                                 match pinned_version {
                                     semver::PinnedVersion::Patch => {
-                                        write!(&mut v, "{}", version_fmt).unwrap()
+                                        write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
                                     }
                                     semver::PinnedVersion::Minor => {
-                                        write!(&mut v, "~{}", version_fmt).unwrap()
+                                        write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
                                     }
                                     semver::PinnedVersion::Major => {
-                                        write!(&mut v, "^{}", version_fmt).unwrap()
+                                        write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
                                     }
                                 }
                                 v
@@ -1179,9 +1179,9 @@ pub fn edit(
                             };
                             let mut v = Vec::new();
                             if options.exact_versions {
-                                write!(&mut v, "{}", version_fmt).unwrap();
+                                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
                             } else {
-                                write!(&mut v, "^{}", version_fmt).unwrap();
+                                write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write");
                             }
                             // PERF(port): was comptime bool dispatch — profile in Phase B
                             v

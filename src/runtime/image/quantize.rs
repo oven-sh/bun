@@ -45,7 +45,7 @@ impl ColorBox {
             let s: i32 = i32::from(self.max[c]) - i32::from(self.min[c]);
             if s > span {
                 span = s;
-                best = u8::try_from(c).unwrap();
+                best = u8::try_from(c).expect("int cast");
             }
         }
         best
@@ -69,14 +69,14 @@ pub struct Options {
 
 pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeResult, AllocError> {
     let max_colors = opts.max_colors;
-    let n: u32 = u32::try_from(rgba.len() / 4).unwrap();
+    let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
     let want: u16 = 1.max(max_colors.min(256));
 
     // `order` is a permutation of pixel indices that we partition in-place;
     // each Box owns a contiguous [lo,hi) slice of it.
     let mut order: Vec<u32> = vec![0u32; n as usize];
     for (i, o) in order.iter_mut().enumerate() {
-        *o = u32::try_from(i).unwrap();
+        *o = u32::try_from(i).expect("int cast");
     }
 
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
@@ -118,7 +118,7 @@ pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeRe
         boxes.push(shrink(rgba, &order, mid, b.hi));
     }
 
-    let k: u16 = u16::try_from(boxes.len()).unwrap();
+    let k: u16 = u16::try_from(boxes.len()).expect("int cast");
     let mut palette = vec![0u8; k as usize * 4];
     let mut has_alpha = false;
     for (i, b) in boxes.iter().enumerate() {
@@ -130,7 +130,7 @@ pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeRe
         }
         let cnt: u64 = u64::from(b.hi - b.lo);
         for c in 0..4usize {
-            palette[i * 4 + c] = u8::try_from((sum[c] + cnt / 2) / cnt).unwrap();
+            palette[i * 4 + c] = u8::try_from((sum[c] + cnt / 2) / cnt).expect("int cast");
         }
         if palette[i * 4 + 3] < 255 {
             has_alpha = true;
@@ -205,8 +205,8 @@ fn map_floyd_steinberg(
         let step: i64 = if ltr { 1 } else { -1 };
         let mut x: i64 = if ltr { 0 } else { i64::from(w) - 1 };
         while x >= 0 && x < i64::from(w) {
-            let px: usize = y as usize * w as usize + usize::try_from(x).unwrap();
-            let off: usize = usize::try_from(x).unwrap() * 4;
+            let px: usize = y as usize * w as usize + usize::try_from(x).expect("int cast");
+            let off: usize = usize::try_from(x).expect("int cast") * 4;
 
             // Candidate colour = source + accumulated error (clamped for the
             // search; the *unclamped* error is what propagates so rounding
@@ -237,14 +237,14 @@ fn map_floyd_steinberg(
                 let xr = x + dir;
                 let xl = x - dir;
                 if xr >= 0 && xr < i64::from(w) {
-                    cur[usize::try_from(xr).unwrap() * 4 + c] += (err * 7) >> 4;
+                    cur[usize::try_from(xr).expect("int cast") * 4 + c] += (err * 7) >> 4;
                 }
                 if xl >= 0 && xl < i64::from(w) {
-                    nxt[usize::try_from(xl).unwrap() * 4 + c] += (err * 3) >> 4;
+                    nxt[usize::try_from(xl).expect("int cast") * 4 + c] += (err * 3) >> 4;
                 }
                 nxt[off + c] += (err * 5) >> 4;
                 if xr >= 0 && xr < i64::from(w) {
-                    nxt[usize::try_from(xr).unwrap() * 4 + c] += err >> 4;
+                    nxt[usize::try_from(xr).expect("int cast") * 4 + c] += err >> 4;
                 }
             }
 

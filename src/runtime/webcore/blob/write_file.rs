@@ -446,7 +446,7 @@ impl WriteFile {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
-                    i64::try_from(self.bytes_blob.shared_view().len()).unwrap(),
+                    i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
         }
@@ -767,7 +767,7 @@ mod windows_impl {
                 return;
             }
 
-            this.fd = i32::try_from(rc.int()).unwrap();
+            this.fd = i32::try_from(rc.int()).expect("int cast");
 
             // the loop must be copied
             if let Err(e) = this.do_write_loop(this.loop_()) {
@@ -859,7 +859,7 @@ mod windows_impl {
             let rc = this.io_request.result;
             if let Some(err) = rc.errno() {
                 match this.throw(sys::Error {
-                    errno: i32::try_from(err).unwrap(),
+                    errno: i32::try_from(err).expect("int cast"),
                     syscall: sys::Tag::write,
                     ..Default::default()
                 }) {
@@ -869,7 +869,7 @@ mod windows_impl {
                 return;
             }
 
-            this.total_written += usize::try_from(rc.int()).unwrap();
+            this.total_written += usize::try_from(rc.int()).expect("int cast");
             if let Err(e) = this.do_write_loop(this.loop_()) {
                 match e {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}

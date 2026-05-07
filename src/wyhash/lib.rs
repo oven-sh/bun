@@ -197,7 +197,7 @@ impl Wyhash11 {
 
         let tail = &b[off + aligned_len..];
         self.buf[self.buf_len..self.buf_len + tail.len()].copy_from_slice(tail);
-        self.buf_len += usize::from(u8::try_from(tail.len()).unwrap());
+        self.buf_len += usize::from(u8::try_from(tail.len()).expect("int cast"));
     }
 
     pub fn final_(&mut self) -> u64 {
@@ -290,7 +290,7 @@ impl Wyhash {
         }
 
         while i + 48 < input.len() {
-            self.round(input[i..i + 48].try_into().unwrap());
+            self.round(input[i..i + 48].try_into().expect("infallible: size matches"));
             i += 48;
         }
 
@@ -452,7 +452,7 @@ impl Wyhash {
             let mut i: usize = 0;
             if input.len() >= 48 {
                 while i + 48 < input.len() {
-                    this.round(input[i..i + 48].try_into().unwrap());
+                    this.round(input[i..i + 48].try_into().expect("infallible: size matches"));
                     i += 48;
                 }
                 this.final0();

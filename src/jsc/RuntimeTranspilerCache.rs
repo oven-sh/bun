@@ -422,7 +422,7 @@ impl Entry {
             let _ = sys::preallocate_file(
                 tmpfile.fd.cast(),
                 0,
-                i64::try_from(end_position).unwrap(),
+                i64::try_from(end_position).expect("int cast"),
             );
             while (position as usize) < end_position {
                 let written = sys::pwritev(tmpfile.fd, vecs, position)?;
@@ -430,7 +430,7 @@ impl Entry {
                     return Err(bun_core::err!(WriteFailed));
                 }
 
-                position += i64::try_from(written).unwrap();
+                position += i64::try_from(written).expect("int cast");
             }
 
             // disarm errdefer (success path)

@@ -331,7 +331,7 @@ impl FileResponseStream {
         #[cfg(target_os = "linux")]
         loop {
             let adjusted = self.sendfile.remain.min(i32::MAX as u64);
-            let mut off: i64 = i64::try_from(self.sendfile.offset).unwrap();
+            let mut off: i64 = i64::try_from(self.sendfile.offset).expect("int cast");
             // SAFETY: both fds are valid open file descriptors owned by `self`;
             // `off` is a stack local.
             let rc = unsafe {
@@ -344,8 +344,8 @@ impl FileResponseStream {
             };
             let errno = sys::get_errno(rc);
             let sent: u64 =
-                u64::try_from((off - i64::try_from(self.sendfile.offset).unwrap()).max(0)).unwrap();
-            self.sendfile.offset = u64::try_from(off).unwrap();
+                u64::try_from((off - i64::try_from(self.sendfile.offset).expect("int cast")).max(0)).unwrap();
+            self.sendfile.offset = u64::try_from(off).expect("int cast");
             self.sendfile.remain = self.sendfile.remain.saturating_sub(sent);
 
             match errno {
@@ -369,20 +369,20 @@ impl FileResponseStream {
         #[cfg(target_os = "macos")]
         loop {
             let mut sbytes: libc::off_t =
-                i64::try_from(self.sendfile.remain.min(i32::MAX as u64)).unwrap();
+                i64::try_from(self.sendfile.remain.min(i32::MAX as u64)).expect("int cast");
             // SAFETY: both fds are valid open file descriptors owned by `self`;
             // `sbytes` is a stack local; hdtr is null per spec.
             let errno = sys::get_errno(unsafe {
                 sys::c::sendfile(
                     self.fd.native(),
                     self.sendfile.socket_fd.native(),
-                    i64::try_from(self.sendfile.offset).unwrap(),
+                    i64::try_from(self.sendfile.offset).expect("int cast"),
                     &mut sbytes,
                     core::ptr::null_mut(),
                     0,
                 )
             });
-            let sent: u64 = u64::try_from(sbytes).unwrap();
+            let sent: u64 = u64::try_from(sbytes).expect("int cast");
             self.sendfile.offset += sent;
             self.sendfile.remain = self.sendfile.remain.saturating_sub(sent);
 

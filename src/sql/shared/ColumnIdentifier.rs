@@ -29,7 +29,7 @@ impl ColumnIdentifier {
 
                 // JSC only supports indexed property names up to 2^32
                 if int < u32::MAX as u64 {
-                    return Ok(Self::Index(u32::try_from(int).unwrap()));
+                    return Ok(Self::Index(u32::try_from(int).expect("int cast")));
                 }
             }
         }

@@ -382,7 +382,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let name = p.load_name_from_ref(private.ref_);
                 let range = logger::Range {
                     loc: value.loc,
-                    len: i32::try_from(name.len()).unwrap(),
+                    len: i32::try_from(name.len()).expect("int cast"),
                 };
                 p.log()
                     .add_range_error_fmt(

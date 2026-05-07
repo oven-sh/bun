@@ -131,14 +131,14 @@ pub fn download_slice(
                 end -= 1;
             }
             let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).unwrap();
+            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
             break 'brk Some(v);
         }
         if offset == 0 {
             break 'brk None;
         }
         let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).unwrap();
+        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
         Some(v)
     };
 
@@ -921,14 +921,14 @@ pub fn download_stream(
                 end -= 1;
             }
             let mut v = Vec::new();
-            write!(&mut v, "bytes={}-{}", offset, end).unwrap();
+            write!(&mut v, "bytes={}-{}", offset, end).expect("infallible: in-memory write");
             break 'brk Some(v);
         }
         if offset == 0 {
             break 'brk None;
         }
         let mut v = Vec::new();
-        write!(&mut v, "bytes={}-", offset).unwrap();
+        write!(&mut v, "bytes={}-", offset).expect("infallible: in-memory write");
         Some(v)
     };
 

@@ -90,13 +90,13 @@ impl OverrideMap {
             let ExprData::EObject(obj) = &overrides.expr.data else { return };
 
             for entry in obj.properties.slice() {
-                builder.count(entry.key.as_ref().unwrap().as_utf8_string_literal().unwrap());
-                match &entry.value.as_ref().unwrap().data {
+                builder.count(entry.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal().expect("infallible: is_string checked"));
+                match &entry.value.as_ref().expect("infallible: prop has value").data {
                     ExprData::EString(s) => {
                         builder.count(s.data);
                     }
                     ExprData::EObject(_) => {
-                        if let Some(dot) = entry.value.as_ref().unwrap().as_property(b".") {
+                        if let Some(dot) = entry.value.as_ref().expect("infallible: prop has value").as_property(b".") {
                             if let Some(s) = dot.expr.as_utf8_string_literal() {
                                 builder.count(s);
                             }
@@ -109,8 +109,8 @@ impl OverrideMap {
             let ExprData::EObject(obj) = &resolutions.expr.data else { return };
 
             for entry in obj.properties.slice() {
-                builder.count(entry.key.as_ref().unwrap().as_utf8_string_literal().unwrap());
-                let Some(v) = entry.value.as_ref().unwrap().as_utf8_string_literal() else { continue };
+                builder.count(entry.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal().expect("infallible: is_string checked"));
+                let Some(v) = entry.value.as_ref().expect("infallible: prop has value").as_utf8_string_literal() else { continue };
                 builder.count(v);
             }
         }
@@ -157,8 +157,8 @@ impl OverrideMap {
         self.map.ensure_unused_capacity(obj.properties.len as usize)?;
 
         'props: for prop in obj.properties.slice() {
-            let key = prop.key.as_ref().unwrap();
-            let k = key.as_utf8_string_literal().unwrap();
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let k = key.as_utf8_string_literal().expect("infallible: is_string checked");
             if k.is_empty() {
                 log.add_warning_fmt(Some(source), key.loc, format_args!("Missing overridden package name"))?;
                 continue;
@@ -168,7 +168,7 @@ impl OverrideMap {
 
             let value: Expr = 'value: {
                 // for one level deep, we will only support a string and  { ".": value }
-                let value_expr = prop.value.as_ref().unwrap();
+                let value_expr = prop.value.as_ref().expect("infallible: prop has value");
                 if value_expr.data.is_e_string() {
                     break 'value *value_expr;
                 } else if let ExprData::EObject(value_obj) = &value_expr.data {
@@ -191,7 +191,7 @@ impl OverrideMap {
                 continue 'props;
             };
 
-            let version_str = value.as_utf8_string_literal().unwrap();
+            let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
             if version_str.starts_with(b"patch:") {
                 // TODO(dylan-conway): apply .patch files to packages
                 log.add_warning_fmt(Some(source), key.loc, format_args!("Bun currently does not support patched package \"overrides\""))?;
@@ -234,8 +234,8 @@ impl OverrideMap {
         };
         self.map.ensure_unused_capacity(obj.properties.len as usize)?;
         for prop in obj.properties.slice() {
-            let key = prop.key.as_ref().unwrap();
-            let mut k = key.as_utf8_string_literal().unwrap();
+            let key = prop.key.as_ref().expect("infallible: prop has key");
+            let mut k = key.as_utf8_string_literal().expect("infallible: is_string checked");
             if k.starts_with(b"**/") {
                 k = &k[3..];
             }
@@ -243,7 +243,7 @@ impl OverrideMap {
                 log.add_warning_fmt(Some(source), key.loc, format_args!("Missing resolution package name"))?;
                 continue;
             }
-            let value = prop.value.as_ref().unwrap();
+            let value = prop.value.as_ref().expect("infallible: prop has value");
             let ExprData::EString(value_str) = &value.data else {
                 log.add_warning_fmt(Some(source), key.loc, format_args!("Expected string value for resolution \"{}\"", bstr::BStr::new(k)))?;
                 continue;

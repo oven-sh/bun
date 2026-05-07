@@ -302,7 +302,7 @@ impl Editor {
                         }
                     }
                 }
-                let pos = usize::try_from(cursor.position()).unwrap();
+                let pos = usize::try_from(cursor.position()).expect("int cast");
                 if pos > 0 {
                     let written = &spawned.file_path_buf[0..pos];
                     push_arg!(written);
@@ -310,7 +310,7 @@ impl Editor {
             }
             Editor::Textmate => {
                 cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
-                let file_path_len = usize::try_from(cursor.position()).unwrap();
+                let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
                 // PORT NOTE: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
                 // hoist all writes/position reads above the slice reads so NLL can
@@ -330,7 +330,7 @@ impl Editor {
                             }
                         }
 
-                        end_pos = usize::try_from(cursor.position()).unwrap();
+                        end_pos = usize::try_from(cursor.position()).expect("int cast");
                     }
                 }
                 // cursor's borrow of spawned.file_path_buf ends here (NLL).
@@ -348,7 +348,7 @@ impl Editor {
             _ => {
                 if !file.is_empty() {
                     cursor.write_all(file).map_err(|_| bun_core::err!("WriteFailed"))?;
-                    let pos = usize::try_from(cursor.position()).unwrap();
+                    let pos = usize::try_from(cursor.position()).expect("int cast");
                     let file_path = &spawned.file_path_buf[0..pos];
                     push_arg!(file_path);
                 }

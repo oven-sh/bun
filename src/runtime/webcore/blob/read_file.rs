@@ -1095,7 +1095,7 @@ impl<'a> ReadFileUV<'a> {
             file.last_modified = jsc::to_js_time(stat.mtime().sec, stat.mtime().nsec);
         }
 
-        if bun_sys::S::ISDIR(u32::try_from(stat.mode).unwrap()) {
+        if bun_sys::S::ISDIR(u32::try_from(stat.mode).expect("int cast")) {
             this.errno = Some(bun_core::err!("EISDIR"));
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
@@ -1215,7 +1215,7 @@ impl<'a> ReadFileUV<'a> {
                 self.opened_fd.uv(),
                 bufs.as_mut_ptr(),
                 bufs.len() as u32,
-                i64::try_from(self.offset + self.read_off).unwrap(),
+                i64::try_from(self.offset + self.read_off).expect("int cast"),
                 Some(Self::on_read),
             );
             self.req.data = self as *mut Self as *mut c_void;
@@ -1259,11 +1259,11 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
 
-        this.read_off += SizeType::try_from(result.int()).unwrap();
+        this.read_off += SizeType::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() initialized bytes into spare capacity.
         unsafe {
             this.buffer
-                .set_len(this.buffer.len() + usize::try_from(result.int()).unwrap())
+                .set_len(this.buffer.len() + usize::try_from(result.int()).expect("int cast"))
         };
 
         this.req.deinit();

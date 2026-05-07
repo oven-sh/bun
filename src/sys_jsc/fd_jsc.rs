@@ -28,7 +28,7 @@ impl FdJsc for Fd {
         if fd64 < 0 || fd64 > i64::from(i32::MAX) {
             return None;
         }
-        let fd: i32 = i32::try_from(fd64).unwrap();
+        let fd: i32 = i32::try_from(fd64).expect("int cast");
         // On Windows, JS-visible fds are libuv/CRT fds (see `to_js`). libuv fd
         // 0/1/2 already map to stdio, so there is no need to substitute the
         // cached `.system` HANDLE here — doing so forces every `sys_uv` call to
@@ -66,7 +66,7 @@ impl FdJsc for Fd {
             ));
         }
         let int: i64 = float as i64;
-        let fd: c_int = c_int::try_from(int).unwrap();
+        let fd: c_int = c_int::try_from(int).expect("int cast");
         // See `from_js` above for why stdio fds are not remapped to the cached
         // `.system` HANDLE on Windows.
         Ok(Some(Fd::from_uv(fd)))

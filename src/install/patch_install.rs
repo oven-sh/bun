@@ -728,7 +728,7 @@ impl PatchTask {
             }
             sys::Result::Ok(s) => s,
         };
-        let size: u64 = u64::try_from(stat.st_size).unwrap();
+        let size: u64 = u64::try_from(stat.st_size).expect("int cast");
         if size == 0 {
             log.add_error_fmt(
                 None,

@@ -1047,7 +1047,7 @@ impl Response {
 
     fn validate_redirect_status_code(global_this: &JSGlobalObject, status_code: i32) -> JsResult<u16> {
         match status_code {
-            301 | 302 | 303 | 307 | 308 => Ok(u16::try_from(status_code).unwrap()),
+            301 | 302 | 303 | 307 | 308 => Ok(u16::try_from(status_code).expect("int cast")),
             _ => {
                 let err = global_this.create_range_error_instance(format_args!(
                     "Failed to execute 'redirect' on 'Response': Invalid status code"
@@ -1382,7 +1382,7 @@ impl Init {
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
             let number = status_value.coerce_to_int64(global_this)?;
             if (200 <= number && number < 600) || number == 101 {
-                result.status_code = (u32::try_from(number).unwrap()) as u16;
+                result.status_code = (u32::try_from(number).expect("int cast")) as u16;
             } else {
                 if !global_this.has_exception() {
                     let err = global_this.create_range_error_instance(format_args!(

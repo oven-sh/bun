@@ -591,9 +591,9 @@ impl JSMySQLConnection {
                 ssl_mode,
             ),
             auto_flusher: AutoFlusher::default(),
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).unwrap(),
-            connection_timeout_ms: u32::try_from(connection_timeout).unwrap(),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).unwrap(),
+            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
+            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
+            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::MySQLConnectionTimeout),
             max_lifetime_timer: EventLoopTimer::init_paused(
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,

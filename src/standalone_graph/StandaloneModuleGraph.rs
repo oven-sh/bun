@@ -1382,7 +1382,7 @@ pub fn inject(
                 return Fd::INVALID;
             }
             // Truncate the file to the exact size of the modified ELF
-            let _ = Syscall::ftruncate(cloned_executable_fd, i64::try_from(elf_file.data.len()).unwrap());
+            let _ = Syscall::ftruncate(cloned_executable_fd, i64::try_from(elf_file.data.len()).expect("int cast"));
 
             #[cfg(not(windows))]
             {
@@ -2112,13 +2112,13 @@ pub fn serialize_json_source_map_for_standalone(
     }
 
     // SAFETY: matched `EString` above; `StoreRef` derefs `&mut` into the arena node.
-    let mut mappings_e_string = mappings_str.data.e_string().unwrap();
+    let mut mappings_e_string = mappings_str.data.e_string().expect("infallible: variant checked");
     let map_vlq: &[u8] = mappings_e_string.slice(&arena);
     let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
     header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len));
-    header_list.extend_from_slice(&u32::try_from(map_blob.len()).unwrap().to_le_bytes());
+    header_list.extend_from_slice(&u32::try_from(map_blob.len()).expect("int cast").to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
@@ -2136,8 +2136,8 @@ pub fn serialize_json_source_map_for_standalone(
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).unwrap(),
-            length: u32::try_from(string_payload.len() - offset).unwrap(),
+            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
+            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
@@ -2176,8 +2176,8 @@ pub fn serialize_json_source_map_for_standalone(
         }
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).unwrap(),
-            length: u32::try_from(string_payload.len() - offset).unwrap(),
+            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
+            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());

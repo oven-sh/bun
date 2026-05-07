@@ -21,9 +21,9 @@ impl PacketHeader {
 
     pub fn encode(self) -> [u8; 4] {
         [
-            u8::try_from(self.length & 0xff).unwrap(),
-            u8::try_from((self.length >> 8) & 0xff).unwrap(),
-            u8::try_from((self.length >> 16) & 0xff).unwrap(),
+            u8::try_from(self.length & 0xff).expect("int cast"),
+            u8::try_from((self.length >> 8) & 0xff).expect("int cast"),
+            u8::try_from((self.length >> 16) & 0xff).expect("int cast"),
             self.sequence_id,
         ]
     }

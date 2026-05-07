@@ -89,7 +89,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
             return Err(OverflowError::Overflow);
         }
         let mut s = Self::default();
-        s.len = Length::try_from(len).unwrap();
+        s.len = Length::try_from(len).expect("int cast");
         Ok(s)
     }
 
@@ -248,7 +248,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         T: Copy,
     {
         self.ensure_unused_capacity(items.len())?;
-        self.len += Length::try_from(items.len()).unwrap();
+        self.len += Length::try_from(items.len()).expect("int cast");
         // mem.copyBackwards(T, self.slice()[i + items.len .. self.len], self.constSlice()[i .. self.len - items.len]);
         let len = self.len;
         // SAFETY: ranges are within `[0..len)` after the length bump; overlapping memmove.
@@ -368,7 +368,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     {
         let old_len = self.len;
         let new_len: usize = old_len + items.len();
-        self.len = Length::try_from(new_len).unwrap();
+        self.len = Length::try_from(new_len).expect("int cast");
         self.slice()[old_len..][..items.len()].copy_from_slice(items);
     }
 
@@ -393,7 +393,7 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     {
         let old_len: usize = self.len;
         let new_len: usize = old_len + n;
-        self.len = Length::try_from(new_len).unwrap();
+        self.len = Length::try_from(new_len).expect("int cast");
         debug_assert!(self.len <= BUFFER_CAPACITY);
         let end = self.len;
         self.slice()[old_len..end].fill(value);

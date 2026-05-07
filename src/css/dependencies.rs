@@ -192,7 +192,7 @@ impl SourceRange {
             },
             end: Location {
                 line: loc.line,
-                column: loc.column + offset + u32::try_from(len).unwrap() - 1,
+                column: loc.column + offset + u32::try_from(len).expect("int cast") - 1,
             },
         }
     }

@@ -224,7 +224,7 @@ impl BunxCommand {
             // @org/some -> @org/create-some
             // @org/some@v -> @org/create-some@v
             if let Some(slash_i) = strings::index_of_char(input, b'/') {
-                let index = usize::try_from(slash_i + 1).unwrap();
+                let index = usize::try_from(slash_i + 1).expect("int cast");
                 new_str[0..index].copy_from_slice(&input[0..index]);
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"create-");
                 new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH].copy_from_slice(&input[index..]);
@@ -232,7 +232,7 @@ impl BunxCommand {
             }
             // @org@v -> @org/create@v
             else if let Some(at_i) = strings::index_of_char(&input[1..], b'@') {
-                let index = usize::try_from(at_i + 1).unwrap();
+                let index = usize::try_from(at_i + 1).expect("int cast");
                 new_str[0..index].copy_from_slice(&input[0..index]);
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"/create");
                 new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH].copy_from_slice(&input[index..]);
@@ -415,7 +415,7 @@ impl BunxCommand {
                             target_package_json_fd.cast(),
                             &mut io_status_block,
                             (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                            u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).unwrap(),
+                            u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),
                             win::FILE_INFORMATION_CLASS::FileBasicInformation,
                         )
                     };
@@ -566,7 +566,7 @@ impl BunxCommand {
             unsafe { update_request.version.value.github.repo.slice(update_request.version_buf()) }
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
-            &update_request.name[usize::try_from(index + 1).unwrap()..]
+            &update_request.name[usize::try_from(index + 1).expect("int cast")..]
         } else {
             &update_request.name
         };
@@ -894,7 +894,7 @@ impl BunxCommand {
                                         fd.cast(),
                                         &mut io_status_block,
                                         (&mut info as *mut win::FILE_BASIC_INFORMATION).cast(),
-                                        u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).unwrap(),
+                                        u32::try_from(size_of::<win::FILE_BASIC_INFORMATION>()).expect("int cast"),
                                         win::FILE_INFORMATION_CLASS::FileBasicInformation,
                                     )
                                 };

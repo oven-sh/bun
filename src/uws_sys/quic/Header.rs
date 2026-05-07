@@ -18,9 +18,9 @@ impl Header {
     pub fn init(name_: &[u8], value_: &[u8], idx: Option<Qpack>) -> Header {
         Header {
             name: name_.as_ptr(),
-            name_len: c_uint::try_from(name_.len()).unwrap(),
+            name_len: c_uint::try_from(name_.len()).expect("int cast"),
             value: value_.as_ptr(),
-            value_len: c_uint::try_from(value_.len()).unwrap(),
+            value_len: c_uint::try_from(value_.len()).expect("int cast"),
             qpack_index: if let Some(i) = idx { i as c_int } else { -1 },
         }
     }

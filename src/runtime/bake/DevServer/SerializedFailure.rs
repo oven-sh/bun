@@ -185,7 +185,7 @@ impl SerializedFailure {
 
         write_string32(owner_display_name, w);
 
-        write_u32_le(w, u32::try_from(messages.len()).unwrap());
+        write_u32_le(w, u32::try_from(messages.len()).expect("int cast"));
 
         for msg in messages {
             write_log_msg(msg, w);
@@ -227,7 +227,7 @@ fn write_log_msg(msg: &logger::Msg, w: &mut Writer) {
     w.push(kind_byte);
     write_log_data(&msg.data, w);
     let notes = &msg.notes;
-    write_u32_le(w, u32::try_from(notes.len()).unwrap());
+    write_u32_le(w, u32::try_from(notes.len()).expect("int cast"));
     for note in notes.iter() {
         write_log_data(note, w);
     }
@@ -242,9 +242,9 @@ fn write_log_data(data: &logger::Data, w: &mut Writer) {
         }
         debug_assert!(loc.column >= 0); // zero based and not negative
 
-        write_i32_le(w, i32::try_from(loc.line).unwrap());
-        write_u32_le(w, u32::try_from(loc.column).unwrap());
-        write_u32_le(w, u32::try_from(loc.length).unwrap());
+        write_i32_le(w, i32::try_from(loc.line).expect("int cast"));
+        write_u32_le(w, u32::try_from(loc.column).expect("int cast"));
+        write_u32_le(w, u32::try_from(loc.length).expect("int cast"));
 
         // TODO: syntax highlighted line text + give more context lines
         write_string32(loc.line_text.as_deref().unwrap_or(b""), w);
@@ -258,7 +258,7 @@ fn write_log_data(data: &logger::Data, w: &mut Writer) {
 }
 
 fn write_string32(data: &[u8], w: &mut Writer) {
-    write_u32_le(w, u32::try_from(data.len()).unwrap());
+    write_u32_le(w, u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
 

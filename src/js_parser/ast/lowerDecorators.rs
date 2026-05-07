@@ -236,7 +236,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Build property access: target.name or target[key].
     fn member_target(&mut self, target_expr: Expr, prop: &Property) -> Expr {
-        let key_expr = prop.key.unwrap();
+        let key_expr = prop.key.expect("infallible: prop has key");
         if prop.flags.contains(Flags::Property::IsComputed)
             || matches!(key_expr.data, js_ast::ExprData::ENumber(_))
         {
@@ -956,7 +956,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let binding = p.b(B::Identifier { r#ref: ecr }, loc);
             expr_var_decls.push(G::Decl { binding, value: None });
             if let Some(cn) = &class.class_name {
-                class_name_ref = cn.ref_.unwrap();
+                class_name_ref = cn.ref_.expect("infallible: ref bound");
                 class_name_loc = cn.loc;
             } else {
                 class_name_ref = ecr;
@@ -970,7 +970,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
         } else {
-            class_name_ref = class.class_name.as_ref().unwrap().ref_.unwrap();
+            class_name_ref = class.class_name.as_ref().unwrap().ref_.expect("infallible: ref bound");
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
@@ -1072,7 +1072,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let binding = p.b(B::Identifier { r#ref: key_ref }, loc);
                     expr_var_decls.push(G::Decl { binding, value: None });
                 }
-                let key_loc = prop.key.unwrap().loc;
+                let key_loc = prop.key.expect("infallible: prop has key").loc;
                 pre_eval_stmts.push(p.var_decl(key_ref, prop.key, loc));
                 prop.key = Some(p.use_ref(key_ref, key_loc));
             }
@@ -1200,11 +1200,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // ── Non-decorated property ──
                 if lower_all_private
                     && prop.key.is_some()
-                    && matches!(prop.key.unwrap().data, js_ast::ExprData::EPrivateIdentifier(_))
+                    && matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EPrivateIdentifier(_))
                     && prop.kind != PropertyKind::ClassStaticBlock
                     && prop.kind != PropertyKind::AutoAccessor
                 {
-                    let nk_expr = prop.key.unwrap();
+                    let nk_expr = prop.key.expect("infallible: prop has key");
                     let npriv_ref = match &nk_expr.data {
                         js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                         _ => unreachable!(),
@@ -1403,7 +1403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if prop.flags.contains(Flags::Property::IsStatic) {
                 flags += 8.0;
             }
-            let key_expr = prop.key.unwrap();
+            let key_expr = prop.key.expect("infallible: prop has key");
             let is_private = matches!(key_expr.data, js_ast::ExprData::EPrivateIdentifier(_));
             if is_private {
                 flags += 16.0;
@@ -1838,9 +1838,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         if entry.is_accessor || entry.is_private {
                             let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                                entry.prop.value.unwrap()
+                                entry.prop.value.expect("infallible: prop has value")
                             } else {
-                                entry.prop.key.unwrap()
+                                entry.prop.key.expect("infallible: prop has key")
                             };
                             let cn_e = p.use_ref(class_name_ref, class_name_loc);
                             suffix_exprs.push(p.call_rt(
@@ -1920,9 +1920,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 if entry.is_accessor || entry.is_private {
                     let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                        entry.prop.value.unwrap()
+                        entry.prop.value.expect("infallible: prop has value")
                     } else {
-                        entry.prop.key.unwrap()
+                        entry.prop.key.expect("infallible: prop has key")
                     };
                     let t_e = p.new_expr(E::This {}, loc);
                     let call =

@@ -11,7 +11,7 @@ pub mod linux {
         // @bitCast(rc) — usize → isize is a same-width bit reinterpretation
         let signed = rc as isize;
         let is_err = signed > -4096 && signed < 0;
-        let int: c_int = c_int::try_from(if is_err { -signed } else { 0 }).unwrap();
+        let int: c_int = c_int::try_from(if is_err { -signed } else { 0 }).expect("int cast");
         // SAFETY: errno_location() returns a valid thread-local *mut c_int
         // TODO(port): std.c._errno() — confirm bun_sys exposes the libc errno lvalue
         unsafe { *bun_sys::c::errno_location() = int; }

@@ -855,7 +855,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -864,7 +864,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -873,7 +873,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -882,7 +882,7 @@ impl FilePoll {
                     ext: [self.generation_number as u64, 0],
                 },
                 Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
@@ -955,7 +955,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -963,7 +963,7 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -971,7 +971,7 @@ impl FilePoll {
                     flags: EV::ADD | one_shot_flag,
                 },
                 Flags::Process => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -1137,7 +1137,7 @@ impl FilePoll {
 
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -1146,7 +1146,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Machport => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::MACHPORT,
                     data: 0,
                     fflags: 0,
@@ -1155,7 +1155,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Writable => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1164,7 +1164,7 @@ impl FilePoll {
                     ext: [0, 0],
                 },
                 Flags::Process => kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -1179,7 +1179,7 @@ impl FilePoll {
             if both_directions {
                 // kqueue keys on (fd, filter); delete EVFILT_WRITE as a second change.
                 changelist[1] = kevent64_s {
-                    ident: u64::try_from(fd.native()).unwrap(),
+                    ident: u64::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1239,7 +1239,7 @@ impl FilePoll {
             let mut changelist: [Kevent; 2] = unsafe { core::mem::zeroed() };
             changelist[0] = match flag {
                 Flags::Readable => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::READ,
                     data: 0,
                     fflags: 0,
@@ -1247,7 +1247,7 @@ impl FilePoll {
                     flags: EV::DELETE,
                 },
                 Flags::Writable => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1255,7 +1255,7 @@ impl FilePoll {
                     flags: EV::DELETE,
                 },
                 Flags::Process => Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::PROC,
                     data: 0,
                     fflags: NOTE::EXIT,
@@ -1274,7 +1274,7 @@ impl FilePoll {
             let mut nchanges: c_int = 1;
             if both_directions {
                 changelist[1] = Kevent {
-                    ident: usize::try_from(fd.native()).unwrap(),
+                    ident: usize::try_from(fd.native()).expect("int cast"),
                     filter: EVFILT::WRITE,
                     data: 0,
                     fflags: 0,
@@ -1619,7 +1619,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     // protected `&mut Loop` spanning that call would be SB-UB. Read the index and
     // event via raw `(*loop_)` place access only (event is POD), then hand the
     // handler a borrow of the disjoint stack copy.
-    let idx = unsafe { usize::try_from((*loop_).current_ready_poll).unwrap() };
+    let idx = unsafe { usize::try_from((*loop_).current_ready_poll).expect("int cast") };
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
@@ -1741,7 +1741,7 @@ impl KEventWaker {
                 events.as_ptr(),
                 0,
                 events.as_mut_ptr(),
-                c_int::try_from(events.len()).unwrap(),
+                c_int::try_from(events.len()).expect("int cast"),
                 0,
                 ptr::null(),
             );

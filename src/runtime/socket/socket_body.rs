@@ -213,7 +213,7 @@ extern "C" fn select_alpn_callback(
                 out as *mut *mut u8,
                 outlen,
                 protos.as_ptr(),
-                c_uint::try_from(protos.len()).unwrap(),
+                c_uint::try_from(protos.len()).expect("int cast"),
                 in_,
                 inlen,
             )
@@ -1578,7 +1578,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         log!("timeout({})", t);
 
-        this.socket.set_timeout(c_uint::try_from(t).unwrap());
+        this.socket.set_timeout(c_uint::try_from(t).expect("int cast"));
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1763,7 +1763,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let res = self.do_socket_write(buffer);
-        let uwrote: usize = usize::try_from(res.max(0)).unwrap();
+        let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written += uwrote as u64;
         log!("write({}) = {}", buffer.len(), res);
         res
@@ -1786,7 +1786,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, total } => {
-                    if usize::try_from(wrote.max(0)).unwrap() == total {
+                    if usize::try_from(wrote.max(0)).expect("int cast") == total {
                         JSValue::TRUE
                     } else {
                         JSValue::FALSE
@@ -1813,11 +1813,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).unwrap() == total {
+                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     this.internal_flush();
                 }
 
-                JSValue::from(usize::try_from(wrote.max(0)).unwrap() == total)
+                JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
             }
         };
         this.deref();
@@ -1911,7 +1911,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let rc = unsafe {
                             (*connected).write2(self.buffered_data_for_node_net.slice(), buffer.slice())
                         };
-                        let written: usize = usize::try_from(rc.max(0)).unwrap();
+                        let written: usize = usize::try_from(rc.max(0)).expect("int cast");
                         let leftover = total_to_write.saturating_sub(written);
                         if leftover == 0 {
                             self.buffered_data_for_node_net.clear_and_free();
@@ -1969,7 +1969,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             let rc = self.write_maybe_corked(buf_slice);
             if rc > 0 {
-                let wrote_u: usize = usize::try_from(rc.max(0)).unwrap();
+                let wrote_u: usize = usize::try_from(rc.max(0)).expect("int cast");
                 // did we write everything?
                 // we can free this temporary buffer.
                 if wrote_u == self.buffered_data_for_node_net.len() as usize {
@@ -2094,7 +2094,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 );
                 return WriteResult::Fail;
             }
-            usize::try_from(i).unwrap()
+            usize::try_from(i).expect("int cast")
         };
 
         let byte_length: usize = 'brk: {
@@ -2124,18 +2124,18 @@ impl<const SSL: bool> NewSocket<SSL> {
                 );
                 return WriteResult::Fail;
             }
-            usize::try_from(l).unwrap()
+            usize::try_from(l).expect("int cast")
         };
 
         let mut bytes = buffer.slice();
 
         if byte_offset > bytes.len() {
             let _ = global.throw_range_error(
-                i64::try_from(byte_offset).unwrap(),
+                i64::try_from(byte_offset).expect("int cast"),
                 jsc::RangeErrorOptions {
                     field_name: b"byteOffset",
                     min: 0,
-                    max: i64::try_from(bytes.len()).unwrap(),
+                    max: i64::try_from(bytes.len()).expect("int cast"),
                     msg: b"",
                 },
             );
@@ -2146,11 +2146,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         if byte_length > bytes.len() {
             let _ = global.throw_range_error(
-                i64::try_from(byte_length).unwrap(),
+                i64::try_from(byte_length).expect("int cast"),
                 jsc::RangeErrorOptions {
                     field_name: b"byteLength",
                     min: 0,
-                    max: i64::try_from(bytes.len()).unwrap(),
+                    max: i64::try_from(bytes.len()).expect("int cast"),
                     msg: b"",
                 },
             );
@@ -2191,7 +2191,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
-        let uwrote: usize = usize::try_from(wrote.max(0)).unwrap();
+        let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
         if buffer_unwritten_data {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
@@ -2365,7 +2365,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).unwrap() == total {
+                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     this.internal_flush();
                 }
                 JSValue::js_number(wrote as f64)

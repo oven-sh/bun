@@ -114,7 +114,7 @@ impl NativeZlib {
             task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
         });
         // SAFETY: mode_int is range-checked to 1..=7 above; NodeMode is #[repr(i64-compatible)].
-        ptr.stream.mode = unsafe { mem::transmute::<u8, c::NodeMode>(u8::try_from(mode_int).unwrap()) };
+        ptr.stream.mode = unsafe { mem::transmute::<u8, c::NodeMode>(u8::try_from(mode_int).expect("int cast")) };
         // TODO(port): @enumFromInt — confirm NodeMode repr width matches transmute above.
         Ok(ptr)
     }
@@ -301,7 +301,7 @@ impl Context {
                     mem_level,
                     strategy,
                     c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).unwrap(),
+                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
                 );
             },
             INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
@@ -309,7 +309,7 @@ impl Context {
                     &mut self.state,
                     window_bits_actual,
                     c::zlibVersion().cast(),
-                    c_int::try_from(mem::size_of::<c::z_stream>()).unwrap(),
+                    c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
                 );
             },
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
@@ -332,7 +332,7 @@ impl Context {
             if dict.is_empty() {
                 return Error::ok();
             }
-            (dict.as_ptr(), u32::try_from(dict.len()).unwrap())
+            (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
         };
         self.err = c::ReturnCode::Ok;
         // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
@@ -419,7 +419,7 @@ impl Context {
 
     pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
         self.state.avail_in = match &in_ {
-            Some(p) => u32::try_from(p.len()).unwrap(),
+            Some(p) => u32::try_from(p.len()).expect("int cast"),
             None => 0,
         };
         self.state.next_in = match in_ {
@@ -427,7 +427,7 @@ impl Context {
             None => core::ptr::null(),
         };
         self.state.avail_out = match &out {
-            Some(p) => u32::try_from(p.len()).unwrap(),
+            Some(p) => u32::try_from(p.len()).expect("int cast"),
             None => 0,
         };
         self.state.next_out = match out {
@@ -527,7 +527,7 @@ impl Context {
             // re-borrowing `self.state` mutably.
             let (dict_ptr, dict_len) = {
                 let dict = self.dictionary();
-                (dict.as_ptr(), u32::try_from(dict.len()).unwrap())
+                (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
             };
             // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
             self.err = unsafe {

@@ -336,7 +336,7 @@ impl ClientSession {
         payload: &[u8],
     ) {
         // Wire format: u24 length BE, u8 type, u8 flags, u32 stream-id BE.
-        let len = u32::try_from(payload.len()).unwrap();
+        let len = u32::try_from(payload.len()).expect("int cast");
         let mut header = [0u8; wire::FrameHeader::BYTE_SIZE];
         header[0..3].copy_from_slice(&len.to_be_bytes()[1..4]);
         header[3] = frame_type as u8;
@@ -352,7 +352,7 @@ impl ClientSession {
         debug_assert!(self.has_headroom());
 
         let send_window =
-            i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).unwrap();
+            i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).expect("int cast");
         let stream = Box::into_raw(Stream::new(
             self.next_stream_id,
             self as *mut _,

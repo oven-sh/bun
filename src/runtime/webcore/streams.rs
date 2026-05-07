@@ -2644,7 +2644,7 @@ impl ReadResult {
                 // `clear_and_free`. Mirror that by adopting the raw allocation
                 // instead of copying — copying would leak the original buffer.
                 break 'brk if owned && done {
-                    let len = u32::try_from(slice_len).unwrap();
+                    let len = u32::try_from(slice_len).expect("int cast");
                     // SAFETY: `owned` branch — `slice` is disjoint from `buf` and
                     // the caller transfers a default-allocator heap allocation of
                     // exactly `len` bytes (cap == len), all initialized.
@@ -2652,7 +2652,7 @@ impl ReadResult {
                         Vec::from_raw_parts(slice_ptr, len as usize, len as usize)
                     })
                 } else if owned {
-                    let len = u32::try_from(slice_len).unwrap();
+                    let len = u32::try_from(slice_len).expect("int cast");
                     // SAFETY: see above — ownership of `slice` is transferred here.
                     StreamResult::Owned(unsafe {
                         Vec::from_raw_parts(slice_ptr, len as usize, len as usize)

@@ -153,12 +153,12 @@ impl<'a> ImportScanner<'a> {
                         if let Some(default_name) = st.default_name {
                             found_imports = true;
                             let symbol =
-                                &p.symbols[default_name.ref_.unwrap().inner_index() as usize];
+                                &p.symbols[default_name.ref_.expect("infallible: ref bound").inner_index() as usize];
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
                                 && p.ts_use_counts
-                                    [default_name.ref_.unwrap().inner_index() as usize]
+                                    [default_name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                     != 0
                             {
                                 is_unused_in_typescript = false;
@@ -212,7 +212,7 @@ impl<'a> ImportScanner<'a> {
                             let mut items_end: usize = 0;
                             let len = items.len();
                             for idx in 0..len {
-                                let ref_ = items[idx].name.ref_.unwrap();
+                                let ref_ = items[idx].name.ref_.expect("infallible: ref bound");
                                 let symbol = &p.symbols[ref_.inner_index() as usize];
 
                                 // TypeScript has a separate definition of unused
@@ -341,7 +341,7 @@ impl<'a> ImportScanner<'a> {
                             for alias in &sorted {
                                 let item: LocRef = *existing.get(alias).unwrap();
                                 handle_oom(p.named_imports.put(
-                                    item.ref_.unwrap(),
+                                    item.ref_.expect("infallible: ref bound"),
                                     js_ast::NamedImport {
                                         alias: Some(*alias as *const [u8]),
                                         alias_loc: Some(item.loc),
@@ -354,7 +354,7 @@ impl<'a> ImportScanner<'a> {
                                 ));
 
                                 let name: LocRef = item;
-                                let name_ref = name.ref_.unwrap();
+                                let name_ref = name.ref_.expect("infallible: ref bound");
 
                                 // Make sure the printer prints this as a property access
                                 let symbol: &mut Symbol =
@@ -411,7 +411,7 @@ impl<'a> ImportScanner<'a> {
                                 .insert(import_record::Flags::CONTAINS_DEFAULT_ALIAS);
                             // PERF(port): was assume_capacity
                             p.named_imports.put_assume_capacity(
-                                default.ref_.unwrap(),
+                                default.ref_.expect("infallible: ref bound"),
                                 js_ast::NamedImport {
                                     alias: Some(raw_str(b"default")),
                                     alias_loc: Some(default.loc),
@@ -426,7 +426,7 @@ impl<'a> ImportScanner<'a> {
 
                         for item in st_items.iter() {
                             let name: LocRef = item.name;
-                            let name_ref = name.ref_.unwrap();
+                            let name_ref = name.ref_.expect("infallible: ref bound");
 
                             // PERF(port): was assume_capacity
                             p.named_imports.put_assume_capacity(
@@ -458,7 +458,7 @@ impl<'a> ImportScanner<'a> {
                             }
 
                             let name: LocRef = item.name;
-                            let name_ref = name.ref_.unwrap();
+                            let name_ref = name.ref_.expect("infallible: ref bound");
 
                             p.named_imports.put(
                                 name_ref,
@@ -543,10 +543,10 @@ impl<'a> ImportScanner<'a> {
                         if let Some(name) = st.func.name {
                             // SAFETY: arena-owned slice valid for 'p.
                             let original_name: &'p [u8] = unsafe {
-                                &*p.symbols[name.ref_.unwrap().inner_index() as usize]
+                                &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                     .original_name
                             };
-                            p.record_export(name.loc, original_name, name.ref_.unwrap())?;
+                            p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
@@ -561,10 +561,10 @@ impl<'a> ImportScanner<'a> {
                         if let Some(name) = st.class.class_name {
                             // SAFETY: arena-owned slice valid for 'p.
                             let original_name: &'p [u8] = unsafe {
-                                &*p.symbols[name.ref_.unwrap().inner_index() as usize]
+                                &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                     .original_name
                             };
-                            p.record_export(name.loc, original_name, name.ref_.unwrap())?;
+                            p.record_export(name.loc, original_name, name.ref_.expect("infallible: ref bound"))?;
                         } else {
                             p.log().add_range_error(
                                 Some(p.source),
@@ -658,7 +658,7 @@ impl<'a> ImportScanner<'a> {
                     for item in unsafe { &*st.items }.iter() {
                         // SAFETY: arena-owned alias slice valid for 'p.
                         let alias: &'p [u8] = unsafe { &*item.alias };
-                        p.record_export(item.alias_loc, alias, item.name.ref_.unwrap())?;
+                        p.record_export(item.alias_loc, alias, item.name.ref_.expect("infallible: ref bound"))?;
                     }
                 }
                 js_ast::StmtData::SExportStar(st) => {

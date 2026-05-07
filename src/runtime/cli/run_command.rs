@@ -1641,7 +1641,7 @@ impl RunCommand {
             let mut temp_path_buffer = WPathBuffer::uninit();
             let mut target_path_buffer = PathBuffer::uninit();
             let len = sys::windows::GetTempPathW(
-                u32::try_from(temp_path_buffer.len()).unwrap(),
+                u32::try_from(temp_path_buffer.len()).expect("int cast"),
                 temp_path_buffer.as_mut_ptr(),
             );
             if len == 0 {
@@ -1783,7 +1783,7 @@ impl RunCommand {
             let prefix = bun_str::w!("\\??\\");
 
             let len = sys::windows::GetTempPathW(
-                u32::try_from(target_path_buffer.len() - prefix.len()).unwrap(),
+                u32::try_from(target_path_buffer.len() - prefix.len()).expect("int cast"),
                 // SAFETY: prefix.len() < target_path_buffer.len(); pointer stays in bounds.
                 unsafe { target_path_buffer.as_mut_ptr().add(prefix.len()) },
             );
@@ -3420,7 +3420,7 @@ impl RunCommand {
                     {
                         let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
                         if w > 0 {
-                            break 'brk u16::try_from(w).unwrap();
+                            break 'brk u16::try_from(w).expect("int cast");
                         }
                     }
                 }

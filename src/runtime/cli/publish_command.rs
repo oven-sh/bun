@@ -205,7 +205,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
             let size = entry.size();
 
-            unpacked_size += usize::try_from(size.max(0)).unwrap();
+            unpacked_size += usize::try_from(size.max(0)).expect("int cast");
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
@@ -217,7 +217,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(usize::try_from(size.max(0)).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(usize::try_from(size.max(0)).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
                 ));
 
@@ -250,7 +250,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             } else {
                 Output::pretty(format_args!(
                     "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(usize::try_from(size.max(0)).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                    bun_fmt::size(usize::try_from(size.max(0)).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
                 ));
             }
@@ -1424,7 +1424,7 @@ impl PublishCommand {
                     });
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
+                    json.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
@@ -1499,7 +1499,7 @@ impl PublishCommand {
                     }
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
+                    json.data.e_object_mut().expect("infallible: variant checked").properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()

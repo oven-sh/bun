@@ -99,7 +99,7 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
 
     let arr = JSValue::create_empty_array(global, msgs.len())?;
     for (i, msg) in msgs.iter().enumerate() {
-        arr.put_index(global, u32::try_from(i).unwrap(), msg_to_js(msg.clone()?, global)?)?;
+        arr.put_index(global, u32::try_from(i).expect("int cast"), msg_to_js(msg.clone()?, global)?)?;
     }
     Ok(arr)
 }

@@ -191,8 +191,8 @@ impl SourceLocation {
     pub fn to_logger_location(&self, file: &'static [u8]) -> logger::Location {
         logger::Location {
             file,
-            line: i32::try_from(self.line).unwrap(),
-            column: i32::try_from(self.column).unwrap(),
+            line: i32::try_from(self.line).expect("int cast"),
+            column: i32::try_from(self.column).expect("int cast"),
             ..Default::default()
         }
     }
@@ -909,8 +909,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
             range: logger::Range {
-                loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
-                len: i32::try_from(end_position - start_position).unwrap(),
+                loc: logger::Loc { start: i32::try_from(start_position).expect("int cast") },
+                len: i32::try_from(end_position - start_position).expect("int cast"),
             },
             // NOTE: `ImportRecord` deliberately has no `Default` (range/path/kind
             // are required); spell out the remaining defaults explicitly.
@@ -964,7 +964,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {
         if amount > 0 {
-            this.anon_layer_count += u32::try_from(amount).unwrap();
+            this.anon_layer_count += u32::try_from(amount).expect("int cast");
         } else {
             this.anon_layer_count -= amount.unsigned_abs();
         }
@@ -1412,8 +1412,8 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 AtRuleParserT::on_import_rule(
                     this.at_rule_parser,
                     &mut import_rule,
-                    u32::try_from(start.position).unwrap(),
-                    u32::try_from(start.position + 1).unwrap(),
+                    u32::try_from(start.position).expect("int cast"),
+                    u32::try_from(start.position + 1).expect("int cast"),
                 );
                 this.rules.v.push(CssRule::Import(import_rule));
                 Ok(())
@@ -2166,8 +2166,8 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
                 let entry = this.local_properties.entry(*ref_).or_insert_with(|| {
                     PropertyUsage {
                         range: logger::Range {
-                            loc: logger::Loc { start: i32::try_from(location).unwrap() },
-                            len: i32::try_from(len).unwrap(),
+                            loc: logger::Loc { start: i32::try_from(location).expect("int cast") },
+                            len: i32::try_from(len).expect("int cast"),
                         },
                         ..Default::default()
                     }
@@ -3283,8 +3283,8 @@ impl<'a> ParserOptions<'a> {
             lg.add_range_warning_fmt_with_note(
                 None,
                 logger::Range {
-                    loc: logger::Loc { start: i32::try_from(line).unwrap() },
-                    len: i32::try_from(column).unwrap(),
+                    loc: logger::Loc { start: i32::try_from(line).expect("int cast") },
+                    len: i32::try_from(column).expect("int cast"),
                 },
                 args,
                 note_args,
@@ -3431,9 +3431,9 @@ impl<'a> Parser<'a> {
                 path: ast::fs::path_init(url_static),
                 kind,
                 range: logger::Range {
-                    loc: logger::Loc { start: i32::try_from(start_position).unwrap() },
+                    loc: logger::Loc { start: i32::try_from(start_position).expect("int cast") },
                     // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).unwrap(),
+                    len: i32::try_from(url.len()).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,
@@ -4114,7 +4114,7 @@ impl ParserState {
     pub fn source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from(self.position - self.current_line_start_position + 1).unwrap(),
+            column: u32::try_from(self.position - self.current_line_start_position + 1).expect("int cast"),
         }
     }
 }
@@ -4425,7 +4425,7 @@ impl<'a> Tokenizer<'a> {
     pub fn current_source_location(&self) -> SourceLocation {
         SourceLocation {
             line: self.current_line_number,
-            column: u32::try_from((self.position - self.current_line_start_position) + 1).unwrap(),
+            column: u32::try_from((self.position - self.current_line_start_position) + 1).expect("int cast"),
         }
     }
 
@@ -6570,14 +6570,14 @@ pub fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8]
     debug_assert!(value.is_finite());
     // bun_core::fmt::FormatDouble::dtoa wants a fixed-size [u8; 124] buffer.
     let buf_len = {
-        let inner: &mut [u8; 124] = (&mut buf[1..125]).try_into().unwrap();
+        let inner: &mut [u8; 124] = (&mut buf[1..125]).try_into().expect("infallible: size matches");
         bun_core::fmt::FormatDouble::dtoa(inner, value as f64).len()
     };
     restrict_prec(&mut buf[0..buf_len + 1], precision)
 }
 
 fn restrict_prec(buf: &mut [u8], prec: u8) -> (&[u8], Notation) {
-    let len: u8 = u8::try_from(buf.len()).unwrap();
+    let len: u8 = u8::try_from(buf.len()).expect("int cast");
 
     // Put a leading zero to capture any carry. Caller must prepare an empty
     // byte for us.

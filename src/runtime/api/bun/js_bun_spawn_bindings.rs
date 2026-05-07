@@ -652,7 +652,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             #[cfg(windows)]
                             let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
                             if is_ipc {
-                                ipc_channel = i32::try_from(extra_fds.len()).unwrap();
+                                ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                             }
                             extra_fds.push(opt);
                             i += 1;
@@ -722,7 +722,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             bun_sql_jsc::jsc::IntegerRange { min: 0, field_name: b"timeout", ..Default::default() },
                         )?;
                         if timeout_int > 0 {
-                            timeout = Some(i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).unwrap());
+                            timeout = Some(i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).expect("int cast"));
                             // PORT NOTE: Zig `@intCast(@as(u31, @truncate(timeout_int)))` — truncate to u31 then widen to i32.
                         }
                     }
@@ -915,7 +915,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             let ipc_fd: i32 = 'brk: {
                 if ipc_channel == -1 {
                     // If the user didn't specify an IPC channel, we need to add one
-                    ipc_channel = i32::try_from(extra_fds.len()).unwrap();
+                    ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
                     let mut ipc_extra_fd_default = Stdio::Ipc;
                     let fd: i32 = ipc_channel + 3;
                     match ipc_extra_fd_default.as_spawn_option(fd) {
@@ -928,7 +928,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                     break 'brk fd;
                 } else {
-                    break 'brk i32::try_from(ipc_channel + 3).unwrap();
+                    break 'brk i32::try_from(ipc_channel + 3).expect("int cast");
                 }
             };
 
@@ -1170,7 +1170,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
-        spawned_extra_pipes[usize::try_from(ipc_channel).unwrap()].fd()
+        spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
     } else {
         Fd::INVALID
     };
@@ -1423,21 +1423,21 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()] =
+            subprocess.stdio_pipes[usize::try_from(ipc_channel).expect("int cast")] =
                 ExtraPipe::Unavailable;
         }
         #[cfg(not(unix))]
         {
             if let Some(err) = ipc_data
                 .windows_configure_server(
-                    subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()].buffer,
+                    subprocess.stdio_pipes[usize::try_from(ipc_channel).expect("int cast")].buffer,
                 )
                 .as_err()
             {
                 subprocess.deref();
                 return Err(global_this.throw_value(err.to_js(global_this)?));
             }
-            subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()] =
+            subprocess.stdio_pipes[usize::try_from(ipc_channel).expect("int cast")] =
                 ExtraPipe::Unavailable;
         }
         ipc_data.write_version_packet(global_this);

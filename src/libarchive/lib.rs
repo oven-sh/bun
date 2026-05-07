@@ -770,13 +770,13 @@ pub mod lib {
             if size < 0 {
                 return Ok(IteratorResult::init_err(archive, b"invalid archive entry size"));
             }
-            let mut buf = vec![0u8; usize::try_from(size).unwrap()];
+            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: archive is valid for the lifetime of the iterator.
             let read = unsafe { &*archive }.read_data(&mut buf);
             if read < 0 {
                 return Ok(IteratorResult::init_err(archive, b"failed to read archive data"));
             }
-            buf.truncate(usize::try_from(read).unwrap());
+            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
     }
@@ -847,7 +847,7 @@ pub mod lib {
                 return -1;
             }
             this.list.extend_from_slice(data);
-            la_ssize_t::try_from(length).unwrap()
+            la_ssize_t::try_from(length).expect("int cast")
         }
 
         pub unsafe extern "C" fn close_callback(_a: *mut Archive, _client_data: *mut c_void) -> c_int {
@@ -899,13 +899,13 @@ pub mod lib {
             if size < 0 {
                 return Ok(Err(IteratorError { archive, message: b"invalid archive entry size" }));
             }
-            let mut buf = vec![0u8; usize::try_from(size).unwrap()];
+            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
             // SAFETY: `archive` came from `Archive::read_new()`.
             let read = unsafe { &*archive }.read_data(&mut buf);
             if read < 0 {
                 return Ok(Err(IteratorError { archive, message: b"failed to read archive data" }));
             }
-            buf.truncate(usize::try_from(read).unwrap());
+            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(Ok(buf))
         }
     }
@@ -1108,7 +1108,7 @@ impl BufferReadStream {
         // SAFETY: buffer is a non-null out-param provided by libarchive
         unsafe { *buffer = remaining[..diff].as_ptr().cast::<c_void>() };
         this.pos += diff;
-        isize::try_from(diff).unwrap()
+        isize::try_from(diff).expect("int cast")
     }
 
     pub extern "C" fn archive_skip_callback(
@@ -1120,12 +1120,12 @@ impl BufferReadStream {
         let this = unsafe { &mut *Self::from_ctx(ctx_) };
 
         // SAFETY: buf outlives self (see field comment)
-        let buflen = isize::try_from(unsafe { &*this.buf }.len()).unwrap();
-        let pos = isize::try_from(this.pos).unwrap();
+        let buflen = isize::try_from(unsafe { &*this.buf }.len()).expect("int cast");
+        let pos = isize::try_from(this.pos).expect("int cast");
 
-        let proposed = pos + isize::try_from(offset).unwrap();
+        let proposed = pos + isize::try_from(offset).expect("int cast");
         let new_pos = proposed.max(0).min(buflen - 1);
-        this.pos = usize::try_from(new_pos).unwrap();
+        this.pos = usize::try_from(new_pos).expect("int cast");
         (new_pos - pos) as lib::la_int64_t
     }
 
@@ -1139,25 +1139,25 @@ impl BufferReadStream {
         let this = unsafe { &mut *Self::from_ctx(ctx_) };
 
         // SAFETY: buf outlives self (see field comment)
-        let buflen = isize::try_from(unsafe { &*this.buf }.len()).unwrap();
-        let pos = isize::try_from(this.pos).unwrap();
-        let offset = isize::try_from(offset).unwrap();
+        let buflen = isize::try_from(unsafe { &*this.buf }.len()).expect("int cast");
+        let pos = isize::try_from(this.pos).expect("int cast");
+        let offset = isize::try_from(offset).expect("int cast");
 
         // SAFETY: whence is one of SEEK_SET/CUR/END from libarchive
         match unsafe { core::mem::transmute::<c_int, Seek>(whence) } {
             Seek::Current => {
                 let new_pos = (pos + offset).min(buflen - 1).max(0);
-                this.pos = usize::try_from(new_pos).unwrap();
+                this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::End => {
                 let new_pos = (buflen - offset).min(buflen).max(0);
-                this.pos = usize::try_from(new_pos).unwrap();
+                this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::Set => {
                 let new_pos = offset.min(buflen - 1).max(0);
-                this.pos = usize::try_from(new_pos).unwrap();
+                this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
         }
@@ -1651,7 +1651,7 @@ impl Archiver {
                     match kind {
                         bun_sys::FileKind::Directory => {
                             // SAFETY: entry valid
-                            let mut mode = i32::try_from(unsafe { (*entry).perm() }).unwrap();
+                            let mut mode = i32::try_from(unsafe { (*entry).perm() }).expect("int cast");
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -1680,7 +1680,7 @@ impl Archiver {
                                 match bun_sys::mkdirat_z(
                                     dir_fd,
                                     path_z,
-                                    bun_sys::Mode::try_from(mode).unwrap(),
+                                    bun_sys::Mode::try_from(mode).expect("int cast"),
                                 ) {
                                     Ok(()) => {}
                                     Err(err) => {
@@ -1893,7 +1893,7 @@ impl Archiver {
                                             };
                                             plucker_
                                                 .contents
-                                                .inflate(usize::try_from(read).unwrap())?;
+                                                .inflate(usize::try_from(read).expect("int cast"))?;
                                             plucker_.found = read > 0;
                                             plucker_.fd = *file_handle;
                                             *plucked_file = true;
@@ -1909,7 +1909,7 @@ impl Archiver {
                                         let _ = bun_sys::preallocate_file(
                                             file_handle.native(),
                                             0,
-                                            i64::try_from(size).unwrap(),
+                                            i64::try_from(size).expect("int cast"),
                                         );
                                     }
                                 }

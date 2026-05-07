@@ -247,7 +247,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
                     object_info.put(global_object, b"owner", js_owner);
                 }
 
-                js_contents.put_index(global_object, u32::try_from(i).unwrap(), object_info)?;
+                js_contents.put_index(global_object, u32::try_from(i).expect("int cast"), object_info)?;
             }
 
             js_result.put(global_object, b"contents", js_contents);
@@ -264,7 +264,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
                     b"prefix",
                     create_utf8_for_js(global_object, prefix)?,
                 );
-                js_common_prefixes.put_index(global_object, u32::try_from(i).unwrap(), js_prefix)?;
+                js_common_prefixes.put_index(global_object, u32::try_from(i).expect("int cast"), js_prefix)?;
             }
 
             js_result.put(

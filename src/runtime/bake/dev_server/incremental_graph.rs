@@ -435,7 +435,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edges[index.get() as usize] = edge;
             return Ok(index);
         }
-        let index = EdgeIndex::init(u32::try_from(self.edges.len()).unwrap());
+        let index = EdgeIndex::init(u32::try_from(self.edges.len()).expect("int cast"));
         self.edges.push(edge);
         Ok(index)
     }

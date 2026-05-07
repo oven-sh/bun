@@ -801,13 +801,13 @@ impl NameMinifier {
     ) -> core::result::Result<(), bun_alloc::AllocError> {
         name.clear();
         let mut i = i_;
-        let mut j = usize::try_from(i.rem_euclid(54)).unwrap();
+        let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
         name.extend_from_slice(&self.head[j..j + 1]);
         i = i.div_euclid(54);
 
         while i > 0 {
             i -= 1;
-            j = usize::try_from(i.rem_euclid(CHAR_FREQ_COUNT as isize)).unwrap();
+            j = usize::try_from(i.rem_euclid(CHAR_FREQ_COUNT as isize)).expect("int cast");
             name.extend_from_slice(&self.tail[j..j + 1]);
             i = i.div_euclid(CHAR_FREQ_COUNT as isize);
         }
@@ -816,14 +816,14 @@ impl NameMinifier {
 
     pub fn default_number_to_minified_name(i_: isize) -> core::result::Result<Vec<u8>, bun_alloc::AllocError> {
         let mut i = i_;
-        let mut j = usize::try_from(i.rem_euclid(54)).unwrap();
+        let mut j = usize::try_from(i.rem_euclid(54)).expect("int cast");
         let mut name: Vec<u8> = Vec::new();
         name.extend_from_slice(&Self::DEFAULT_HEAD[j..j + 1]);
         i = i.div_euclid(54);
 
         while i > 0 {
             i -= 1;
-            j = usize::try_from(i.rem_euclid(CHAR_FREQ_COUNT as isize)).unwrap();
+            j = usize::try_from(i.rem_euclid(CHAR_FREQ_COUNT as isize)).expect("int cast");
             name.extend_from_slice(&Self::DEFAULT_TAIL[j..j + 1]);
             i = i.div_euclid(CHAR_FREQ_COUNT as isize);
         }

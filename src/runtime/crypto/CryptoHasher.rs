@@ -172,11 +172,11 @@ impl CryptoHasher {
         match handle {
             CryptoHasher::Zig(zig) => {
                 let res = zig.final_with_len(digest_buf, buf_len);
-                u32::try_from(res.len()).unwrap()
+                u32::try_from(res.len()).expect("int cast")
             }
             CryptoHasher::Evp(evp) => {
                 let res = evp.r#final(boring_engine(global), digest_buf);
-                u32::try_from(res.len()).unwrap()
+                u32::try_from(res.len()).expect("int cast")
             }
             _ => 0,
         }

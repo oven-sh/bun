@@ -280,7 +280,7 @@ pub fn migrate_npm_lockfile<'a>(
             if !s.data.is_empty() {
                 return Err(err!("InvalidNPMLockfile"));
             }
-            let ExprData::EObject(rp) = &prop1.value.as_ref().unwrap().data else {
+            let ExprData::EObject(rp) = &prop1.value.as_ref().expect("infallible: prop has value").data else {
                 return Err(err!("InvalidNPMLockfile"));
             };
             // SAFETY: arena-backed StoreRef lives for duration of this fn
@@ -346,8 +346,8 @@ pub fn migrate_npm_lockfile<'a>(
     let mut num_extern_strings: u32 = 0;
     let mut package_idx: u32 = 0;
     for (i, entry) in packages_properties.iter().enumerate() {
-        let pkg_path = entry.key.as_ref().unwrap().as_string(&arena).unwrap();
-        let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else {
+        let pkg_path = entry.key.as_ref().expect("infallible: prop has key").as_string(&arena).unwrap();
+        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else {
             return Err(err!("InvalidNPMLockfile"));
         };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
@@ -519,11 +519,11 @@ pub fn migrate_npm_lockfile<'a>(
     for entry in packages_properties.iter() {
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
-        let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else { unreachable!() };
+        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else { unreachable!() };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
-        let pkg_path = entry.key.as_ref().unwrap().as_string(&arena).unwrap();
+        let pkg_path = entry.key.as_ref().expect("infallible: prop has key").as_string(&arena).unwrap();
 
         if let Some(link) = pkg.get(b"link") {
             if let Some(wksp) = &workspace_map {
@@ -588,7 +588,7 @@ pub fn migrate_npm_lockfile<'a>(
 
         let name_hash = string_hash(pkg_name);
 
-        let package_id: PackageID = u32::try_from(this.packages.len()).unwrap();
+        let package_id: PackageID = u32::try_from(this.packages.len()).expect("int cast");
         #[cfg(debug_assertions)]
         {
             // If this is false, then it means we wrote wrong resolved ids
@@ -620,8 +620,8 @@ pub fn migrate_npm_lockfile<'a>(
                 // we need to detect if it's a single entry and lower it to a file.
                 if bin_obj.properties.len == 1 {
                     let prop = bin_obj.properties.at(0);
-                    let key = prop.key.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
-                    let script_value = prop.value.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let key = prop.key.as_ref().expect("infallible: prop has key").as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let script_value = prop.value.as_ref().expect("infallible: prop has value").as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
 
                     if strings::eql(key, pkg_name) {
                         break 'bin Bin {
@@ -642,11 +642,11 @@ pub fn migrate_npm_lockfile<'a>(
                 }
 
                 let off = this.buffers.extern_strings.len() as u32;
-                let len = u32::try_from(bin_obj.properties.len * 2).unwrap();
+                let len = u32::try_from(bin_obj.properties.len * 2).expect("int cast");
 
                 for bin_entry in bin_obj.properties.slice() {
-                    let key = bin_entry.key.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
-                    let script_value = bin_entry.value.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let key = bin_entry.key.as_ref().expect("infallible: prop has key").as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let script_value = bin_entry.value.as_ref().expect("infallible: prop has value").as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
                     let ek = sb.append_external(key)?;
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
@@ -843,7 +843,7 @@ pub fn migrate_npm_lockfile<'a>(
     'pkg_loop: for entry in packages_properties.iter() {
         // this pass is allowed to make more assumptions because we already checked things during
         // the counting pass
-        let ExprData::EObject(pkg) = &entry.value.as_ref().unwrap().data else { unreachable!() };
+        let ExprData::EObject(pkg) = &entry.value.as_ref().expect("infallible: prop has value").data else { unreachable!() };
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
@@ -855,7 +855,7 @@ pub fn migrate_npm_lockfile<'a>(
             continue;
         }
 
-        let pkg_path = entry.key.as_ref().unwrap().as_string(&arena).unwrap();
+        let pkg_path = entry.key.as_ref().expect("infallible: prop has key").as_string(&arena).unwrap();
 
         let dependencies_start = deps_cursor;
         let resolutions_start = res_cursor;
@@ -966,14 +966,14 @@ pub fn migrate_npm_lockfile<'a>(
                 };
 
                 'dep_loop: for prop in deps_obj.properties.slice() {
-                    let name_bytes = prop.key.as_ref().unwrap().as_string(&arena).unwrap();
+                    let name_bytes = prop.key.as_ref().expect("infallible: prop has key").as_string(&arena).unwrap();
                     if let Some(bd) = &bundled_dependencies {
                         if bd.contains_key(name_bytes) {
                             continue 'dep_loop;
                         }
                     }
 
-                    let version_bytes = prop.value.as_ref().unwrap().as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let version_bytes = prop.value.as_ref().expect("infallible: prop has value").as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
                     let name_hash = string_hash(name_bytes);
                     let mut sb = this.string_buf();
                     let dep_name = sb.append_with_hash(name_bytes, name_hash)?;
@@ -1002,7 +1002,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let str_node_modules: &[u8] = if pkg_path.is_empty() { b"node_modules/" } else { b"/node_modules/" };
                     let suffix_len = str_node_modules.len() + name_bytes.len();
 
-                    let mut buf_len: u32 = u32::try_from(pkg_path.len() + suffix_len).unwrap();
+                    let mut buf_len: u32 = u32::try_from(pkg_path.len() + suffix_len).expect("int cast");
                     if buf_len as usize > name_checking_buf.len() {
                         return Err(err!("PathTooLong"));
                     }
@@ -1236,12 +1236,12 @@ pub fn migrate_npm_lockfile<'a>(
                         let prefix_len = (buf_len as usize).saturating_sub(b"node_modules/".len() + name_bytes.len());
                         if let Some(idx) = strings::last_index_of(&name_checking_buf[..prefix_len], b"node_modules/") {
                             debug!("found 'node_modules/' at {}", idx);
-                            buf_len = u32::try_from(idx + b"node_modules/".len() + name_bytes.len()).unwrap();
+                            buf_len = u32::try_from(idx + b"node_modules/".len() + name_bytes.len()).expect("int cast");
                             name_checking_buf[idx + b"node_modules/".len()..idx + b"node_modules/".len() + name_bytes.len()].copy_from_slice(name_bytes);
                         } else if !name_checking_buf[..buf_len as usize].starts_with(b"node_modules/") {
                             // this is hit if you are at something like `packages/etc`, from `packages/etc/node_modules/xyz`
                             // we need to hit the root `node_modules/{name}`
-                            buf_len = u32::try_from(b"node_modules/".len() + name_bytes.len()).unwrap();
+                            buf_len = u32::try_from(b"node_modules/".len() + name_bytes.len()).expect("int cast");
                             name_checking_buf[..b"node_modules/".len()].copy_from_slice(b"node_modules/");
                             name_checking_buf[buf_len as usize - name_bytes.len()..buf_len as usize].copy_from_slice(name_bytes);
                         } else {

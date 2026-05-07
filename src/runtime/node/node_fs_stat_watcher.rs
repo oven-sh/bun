@@ -349,7 +349,7 @@ impl StatWatcherScheduler {
         log!("pop batch of {} watchers", batch.count);
         let mut iter = batch.iterator();
         let mut min_interval: i32 = i32::MAX;
-        let mut closest_next_check: u64 = u64::try_from(min_interval).unwrap();
+        let mut closest_next_check: u64 = u64::try_from(min_interval).expect("int cast");
         let mut contain_watchers = false;
         loop {
             let watcher = iter.next();
@@ -366,8 +366,8 @@ impl StatWatcherScheduler {
             }
             contain_watchers = true;
 
-            let time_since = u64::try_from(now.duration_since(w.last_check).as_nanos()).unwrap();
-            let interval = u64::try_from(w.interval).unwrap() * 1_000_000;
+            let time_since = u64::try_from(now.duration_since(w.last_check).as_nanos()).expect("int cast");
+            let interval = u64::try_from(w.interval).expect("int cast") * 1_000_000;
 
             if time_since >= interval.saturating_sub(500) {
                 w.last_check = now;
@@ -382,7 +382,7 @@ impl StatWatcherScheduler {
 
         if contain_watchers {
             // choose the smallest interval or the closest time to the next check
-            Self::set_interval(this, min_interval.min(i32::try_from(closest_next_check).unwrap()));
+            Self::set_interval(this, min_interval.min(i32::try_from(closest_next_check).expect("int cast")));
         } else {
             // we do not have watchers, we can stop the timer
             Self::set_interval(this, 0);

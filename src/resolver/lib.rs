@@ -1652,7 +1652,7 @@ pub mod fs {
                         lim.cur = raised.cur;
                     }
                 }
-                Ok(usize::try_from(lim.cur).unwrap())
+                Ok(usize::try_from(lim.cur).expect("int cast"))
             }
         }
 
@@ -7374,10 +7374,10 @@ impl<'a> Resolver<'a> {
             // Path has more uncached components than our fixed queue can hold.
             // This only happens for user-controlled absolute import paths with
             // hundreds of short components — no real directory is this deep.
-            if usize::try_from(i).unwrap() >= bufs!(dir_entry_paths_to_resolve).len() {
+            if usize::try_from(i).expect("int cast") >= bufs!(dir_entry_paths_to_resolve).len() {
                 return Ok(None);
             }
-            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
+            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
                 unsafe_path: top as *const [u8],
                 result,
                 safe_path: b"" as *const [u8],
@@ -7389,7 +7389,7 @@ impl<'a> Resolver<'a> {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
-                        let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
+                        let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
                         slot.safe_path = entries.dir as *const [u8];
                         slot.fd = entries.fd;
                     }
@@ -7414,7 +7414,7 @@ impl<'a> Resolver<'a> {
             if result.status != allocators::Status::Unknown {
                 top_parent = result;
             } else {
-                bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].write(DirEntryResolveQueueItem {
+                bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(DirEntryResolveQueueItem {
                     unsafe_path: root_path as *const [u8],
                     result,
                     safe_path: b"" as *const [u8],
@@ -7425,7 +7425,7 @@ impl<'a> Resolver<'a> {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
-                            let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).unwrap()].assume_init_mut() };
+                            let slot = unsafe { bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].assume_init_mut() };
                             slot.safe_path = entries.dir as *const [u8];
                             slot.fd = entries.fd;
                         }
@@ -7445,7 +7445,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let mut queue_slice_len = usize::try_from(i).unwrap();
+        let mut queue_slice_len = usize::try_from(i).expect("int cast");
         if cfg!(debug_assertions) {
             debug_assert!(queue_slice_len > 0);
         }
@@ -7822,8 +7822,8 @@ impl<'a> Resolver<'a> {
                 // prefix length, pick the one with the longest suffix. This second edge
                 // case isn't handled by the TypeScript compiler, but we handle it
                 // because we want the output to always be deterministic
-                let plen = i32::try_from(prefix.len()).unwrap();
-                let slen = i32::try_from(suffix.len()).unwrap();
+                let plen = i32::try_from(prefix.len()).expect("int cast");
+                let slen = i32::try_from(suffix.len()).expect("int cast");
                 if path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length

@@ -2108,7 +2108,7 @@ pub fn last_index_of_non_separator_posix(slice: &[u8]) -> Option<u32> {
     let mut i: usize = slice.len();
     while i != 0 {
         if slice[i] != SEP_POSIX {
-            return Some(u32::try_from(i).unwrap());
+            return Some(u32::try_from(i).expect("int cast"));
         }
         i -= 1;
     }
@@ -2722,7 +2722,7 @@ impl PathChar for u16 {
     #[inline]
     fn to_u8(self) -> u8 {
         // narrowing u16→u8: callers only pass ASCII-range values
-        u8::try_from(self).unwrap()
+        u8::try_from(self).expect("int cast")
     }
     #[inline]
     fn to_ascii_upper(self) -> Self {

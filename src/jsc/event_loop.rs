@@ -560,19 +560,19 @@ impl EventLoop {
         #[cfg(windows)]
         {
             if delta > 0 {
-                loop_.add_active(u32::try_from(delta).unwrap());
+                loop_.add_active(u32::try_from(delta).expect("int cast"));
             } else {
-                loop_.sub_active(u32::try_from(-delta).unwrap());
+                loop_.sub_active(u32::try_from(-delta).expect("int cast"));
             }
         }
         #[cfg(not(windows))]
         {
             if delta > 0 {
                 loop_.num_polls += i32::from(delta);
-                loop_.active = loop_.active.saturating_add(u32::try_from(delta).unwrap());
+                loop_.active = loop_.active.saturating_add(u32::try_from(delta).expect("int cast"));
             } else {
                 loop_.num_polls -= i32::from(-delta);
-                loop_.active = loop_.active.saturating_sub(u32::try_from(-delta).unwrap());
+                loop_.active = loop_.active.saturating_sub(u32::try_from(-delta).expect("int cast"));
             }
         }
     }
@@ -1014,7 +1014,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
     );
     #[cfg(windows)]
-    let num_polls: i32 = i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles).unwrap();
+    let num_polls: i32 = i32::try_from(bun_sys::windows::libuv::Loop::get().active_handles).expect("int cast");
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };

@@ -664,7 +664,7 @@ pub mod ssl_wrapper {
             // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
             let pending = unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) };
             if pending > 0 {
-                return usize::try_from(pending).unwrap();
+                return usize::try_from(pending).expect("int cast");
             }
             0
         }
@@ -718,7 +718,7 @@ pub mod ssl_wrapper {
                 boring_sys::BIO_write(
                     input.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
-                    c_int::try_from(data.len()).unwrap(),
+                    c_int::try_from(data.len()).expect("int cast"),
                 )
             };
             if written > -1 {
@@ -745,7 +745,7 @@ pub mod ssl_wrapper {
                 boring_sys::SSL_write(
                     ssl.as_ptr(),
                     data.as_ptr().cast::<c_void>(),
-                    c_int::try_from(data.len()).unwrap(),
+                    c_int::try_from(data.len()).expect("int cast"),
                 )
             };
             if written <= 0 {
@@ -769,7 +769,7 @@ pub mod ssl_wrapper {
                 return Err(WriteDataError::ConnectionClosed);
             }
             self.handle_traffic();
-            Ok(usize::try_from(written).unwrap())
+            Ok(usize::try_from(written).expect("int cast"))
         }
 
         pub fn deinit(&mut self) {
@@ -929,7 +929,7 @@ pub mod ssl_wrapper {
                     boring_sys::SSL_read(
                         ssl.as_ptr(),
                         available.as_mut_ptr().cast::<c_void>(),
-                        c_int::try_from(available.len()).unwrap(),
+                        c_int::try_from(available.len()).expect("int cast"),
                     )
                 };
                 log!("just read {}", just_read);
@@ -984,7 +984,7 @@ pub mod ssl_wrapper {
 
                 self.handle_end_of_renegotiation();
 
-                read += usize::try_from(just_read).unwrap();
+                read += usize::try_from(just_read).expect("int cast");
                 if read == buffer.len() {
                     log!("triggering data callback (read {}) and resetting read buffer", read);
                     // we filled the buffer
@@ -1022,11 +1022,11 @@ pub mod ssl_wrapper {
                     boring_sys::BIO_read(
                         output.as_ptr(),
                         available.as_mut_ptr().cast::<c_void>(),
-                        c_int::try_from(available.len()).unwrap(),
+                        c_int::try_from(available.len()).expect("int cast"),
                     )
                 };
                 if just_read > 0 {
-                    read += usize::try_from(just_read).unwrap();
+                    read += usize::try_from(just_read).expect("int cast");
                     if read == buffer.len() {
                         self.trigger_wanna_write_callback(&buffer[0..read]);
                         read = 0;

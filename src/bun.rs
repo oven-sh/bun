@@ -621,7 +621,7 @@ pub fn is_writable(fd: FD) -> PollFlag {
         // SAFETY: polls is a valid 1-element WSAPOLLFD array; len=1 matches the buffer
         let rc = unsafe { bun_sys::windows::ws2_32::WSAPoll(polls.as_mut_ptr(), 1, 0) };
         let result = (if rc != bun_sys::windows::ws2_32::SOCKET_ERROR {
-            usize::try_from(rc).unwrap()
+            usize::try_from(rc).expect("int cast")
         } else {
             0
         }) != 0;
@@ -1904,7 +1904,7 @@ pub fn init_argv() -> Result<(), bun_core::Error> {
             };
         }
         let argvu16 =
-            unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).unwrap()) };
+            unsafe { core::slice::from_raw_parts(argvu16_ptr, usize::try_from(length).expect("int cast")) };
         let mut out_argv: Vec<Box<bun_str::ZStr>> = Vec::with_capacity(argvu16.len());
         let mut string_builder = StringBuilder::default();
         for &argraw in argvu16 {
@@ -2558,8 +2558,8 @@ pub fn get_rough_tick_count(mock_mode: TimespecMockMode) -> timespec {
     }
     let ns_value = hw_timer::now_ns();
     timespec {
-        sec: i64::try_from(ns_value / NS_PER_S).unwrap(),
-        nsec: i64::try_from(ns_value % NS_PER_S).unwrap(),
+        sec: i64::try_from(ns_value / NS_PER_S).expect("int cast"),
+        nsec: i64::try_from(ns_value % NS_PER_S).expect("int cast"),
     }
 }
 
@@ -2640,15 +2640,15 @@ impl timespec {
 
     pub fn ns(&self) -> u64 {
         if self.sec <= 0 {
-            return u64::try_from(self.nsec.max(0)).unwrap();
+            return u64::try_from(self.nsec.max(0)).expect("int cast");
         }
         debug_assert!(self.sec >= 0);
         debug_assert!(self.nsec >= 0);
-        let s_ns = match u64::try_from(self.sec.max(0)).unwrap().checked_mul(NS_PER_S) {
+        let s_ns = match u64::try_from(self.sec.max(0)).expect("int cast").checked_mul(NS_PER_S) {
             Some(v) => v,
             None => return u64::MAX,
         };
-        match s_ns.checked_add(u64::try_from(self.nsec.max(0)).unwrap()) {
+        match s_ns.checked_add(u64::try_from(self.nsec.max(0)).expect("int cast")) {
             Some(v) => v,
             None => i64::MAX as u64,
         }

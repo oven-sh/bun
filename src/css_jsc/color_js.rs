@@ -108,11 +108,11 @@ pub mod ansi256 {
 
     fn get(r: u32, g: u32, b: u32) -> u32 {
         let qr = to_6_cube(r);
-        let cr = Q2C[usize::try_from(qr).unwrap()];
+        let cr = Q2C[usize::try_from(qr).expect("int cast")];
         let qg = to_6_cube(g);
-        let cg = Q2C[usize::try_from(qg).unwrap()];
+        let cg = Q2C[usize::try_from(qg).expect("int cast")];
         let qb = to_6_cube(b);
-        let cb = Q2C[usize::try_from(qb).unwrap()];
+        let cb = Q2C[usize::try_from(qb).expect("int cast")];
 
         if cr == r && cg == g && cb == b {
             return 16u32
@@ -244,9 +244,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
                         break 'brk Ok(CssColor::Rgba(RGBA {
                             alpha: 255,
-                            red: u8::try_from(r).unwrap(),
-                            green: u8::try_from(g).unwrap(),
-                            blue: u8::try_from(b).unwrap(),
+                            red: u8::try_from(r).expect("int cast"),
+                            green: u8::try_from(g).expect("int cast"),
+                            blue: u8::try_from(b).expect("int cast"),
                         }));
                     }
                     4 => {
@@ -255,10 +255,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
                         let a = color_int_from_js(global, args[0].get_index(global, 3)?, "[3]")?;
                         break 'brk Ok(CssColor::Rgba(RGBA {
-                            alpha: u8::try_from(a).unwrap(),
-                            red: u8::try_from(r).unwrap(),
-                            green: u8::try_from(g).unwrap(),
-                            blue: u8::try_from(b).unwrap(),
+                            alpha: u8::try_from(a).expect("int cast"),
+                            red: u8::try_from(r).expect("int cast"),
+                            green: u8::try_from(g).expect("int cast"),
+                            blue: u8::try_from(b).expect("int cast"),
                         }));
                     }
                     _ => {
@@ -303,9 +303,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
                 break 'brk Ok(CssColor::Rgba(RGBA {
                     alpha: if let Some(a) = a { a } else { 255 },
-                    red: u8::try_from(r).unwrap(),
-                    green: u8::try_from(g).unwrap(),
-                    blue: u8::try_from(b).unwrap(),
+                    red: u8::try_from(r).expect("int cast"),
+                    green: u8::try_from(g).expect("int cast"),
+                    blue: u8::try_from(b).expect("int cast"),
                 }));
             }
 

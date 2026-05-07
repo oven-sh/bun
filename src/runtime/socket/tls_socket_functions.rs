@@ -268,7 +268,7 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
     Ok(JSValue::from(
         // SAFETY: ssl_ptr is a live *mut SSL; size is range-checked to [1, 16384] above.
-        unsafe { ffi::SSL_set_max_send_fragment(ssl_ptr, usize::try_from(size).unwrap()) } == 1,
+        unsafe { ffi::SSL_set_max_send_fragment(ssl_ptr, usize::try_from(size).expect("int cast")) } == 1,
     ))
 }
 
@@ -375,7 +375,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).unwrap();
+    let buffer_size = usize::try_from(size).expect("int cast");
     let buffer = create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -403,9 +403,9 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
         )
     };
 
-    let array = JSValue::create_empty_array(global, usize::try_from(nsig).unwrap())?;
+    let array = JSValue::create_empty_array(global, usize::try_from(nsig).expect("int cast"))?;
 
-    for i in 0..usize::try_from(nsig).unwrap() {
+    for i in 0..usize::try_from(nsig).expect("int cast") {
         let mut hash_nid: c_int = 0;
         let mut sign_nid: c_int = 0;
         let mut sig_with_md: &[u8] = b"";
@@ -414,7 +414,7 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
         unsafe {
             ffi::SSL_get_shared_sigalgs(
                 ssl_ptr,
-                c_int::try_from(i).unwrap(),
+                c_int::try_from(i).expect("int cast"),
                 &mut sign_nid,
                 &mut hash_nid,
                 core::ptr::null_mut(),
@@ -471,12 +471,12 @@ pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Cal
             buffer.extend_from_slice(sig_with_md);
             buffer.push(b'+');
             buffer.extend_from_slice(hash_slice);
-            array.put_index(global, u32::try_from(i).unwrap(), ZigString::from_utf8(&buffer).to_js(global))?;
+            array.put_index(global, u32::try_from(i).expect("int cast"), ZigString::from_utf8(&buffer).to_js(global))?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + 6);
             buffer.extend_from_slice(sig_with_md);
             buffer.extend_from_slice(b"+UNDEF");
-            array.put_index(global, u32::try_from(i).unwrap(), ZigString::from_utf8(&buffer).to_js(global))?;
+            array.put_index(global, u32::try_from(i).expect("int cast"), ZigString::from_utf8(&buffer).to_js(global))?;
         }
     }
     Ok(array)
@@ -544,7 +544,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).unwrap();
+    let buffer_size = usize::try_from(size).expect("int cast");
     let buffer = create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -589,7 +589,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
-            let buffer_size = usize::try_from(length).unwrap();
+            let buffer_size = usize::try_from(length).expect("int cast");
             let buffer = create_buffer_from_length(global, buffer_size)?;
             let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
@@ -614,7 +614,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
             Err(global.throw(format_args!("Expected context to be a string, Buffer or TypedArray")))
         }
     } else {
-        let buffer_size = usize::try_from(length).unwrap();
+        let buffer_size = usize::try_from(length).expect("int cast");
         let buffer = create_buffer_from_length(global, buffer_size)?;
         let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
 
@@ -740,7 +740,7 @@ pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).unwrap();
+    let buffer_size = usize::try_from(size).expect("int cast");
     let buffer = create_buffer_from_length(global, buffer_size)?;
     let mut buffer_ptr: *mut u8 = buffer.as_array_buffer(global).unwrap().ptr;
 
@@ -770,7 +770,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
         let session = unsafe {
-            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).unwrap())
+            ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).expect("int cast"))
         };
         if session.is_null() {
             return Ok(JSValue::UNDEFINED);

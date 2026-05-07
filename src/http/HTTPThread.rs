@@ -308,7 +308,7 @@ impl HttpThread {
     /// Checked narrow — overflows only after ~584 years of process uptime.
     #[inline]
     fn timer_read(&self) -> u64 {
-        u64::try_from(self.timer.elapsed().as_nanos()).unwrap()
+        u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
     }
 
     #[inline]

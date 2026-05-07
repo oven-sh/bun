@@ -127,8 +127,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     if rw <= 0 || rh <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let src_w: u32 = u32::try_from(rw).unwrap();
-    let src_h: u32 = u32::try_from(rh).unwrap();
+    let src_w: u32 = u32::try_from(rw).expect("int cast");
+    let src_h: u32 = u32::try_from(rh).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
 
     let mut w = src_w;
@@ -149,7 +149,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.
-            let sfs = unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).unwrap()) };
+            let sfs = unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
             for &sf in sfs {
                 // Only consider downscale factors.
                 if sf.num >= sf.denom {
@@ -197,8 +197,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         tj3SetCroppingRegion(h, CropRegion {
             x: 0,
             y: 0,
-            w: c_int::try_from(w).unwrap(),
-            h: c_int::try_from(ht).unwrap(),
+            w: c_int::try_from(w).expect("int cast"),
+            h: c_int::try_from(ht).expect("int cast"),
         });
     }
     // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile in Phase B
@@ -206,7 +206,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
     // region above bound libjpeg-turbo's writes to that allocation.
-    if unsafe { tj3Decompress8(h, bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), c_int::try_from(w * 4).unwrap(), TJPF_RGBA) } != 0 {
+    if unsafe { tj3Decompress8(h, bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), c_int::try_from(w * 4).expect("int cast"), TJPF_RGBA) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
@@ -290,9 +290,9 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
         tj3Compress8(
             h,
             rgba.as_ptr(),
-            c_int::try_from(w).unwrap(),
+            c_int::try_from(w).expect("int cast"),
             0,
-            c_int::try_from(ht).unwrap(),
+            c_int::try_from(ht).expect("int cast"),
             TJPF_RGBA,
             &mut out_ptr,
             &mut out_len,

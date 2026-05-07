@@ -16,7 +16,7 @@ impl Parser<'_> {
         }
 
         // Record block_byte offset in the container
-        let block_off: u32 = u32::try_from(self.block_bytes.len()).unwrap();
+        let block_off: u32 = u32::try_from(self.block_bytes.len()).expect("int cast");
         self.containers[self.n_containers as usize].block_byte_off = block_off;
 
         self.n_containers += 1;

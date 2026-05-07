@@ -602,7 +602,7 @@ impl JSValkeyClient {
                             "Invalid port number in URL. Port must be a number between 0 and 65535",
                         )));
                     }
-                    break 'brk u16::try_from(port_value).unwrap();
+                    break 'brk u16::try_from(port_value).expect("int cast");
                 }
             }
         };

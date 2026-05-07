@@ -146,7 +146,7 @@ impl SASL {
             let mut bytes: [u8; NONCE_BYTE_LEN] = [0; NONCE_BYTE_LEN];
             bun_core::csprng(&mut bytes);
             self.nonce_len =
-                u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes)).unwrap();
+                u8::try_from(bun_base64::encode(&mut self.nonce_base64_bytes, &bytes)).expect("int cast");
         }
         &self.nonce_base64_bytes[0..self.nonce_len as usize]
     }

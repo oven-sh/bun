@@ -309,7 +309,7 @@ impl<'a> ValkeyReader<'a> {
         if len < 0 {
             return Err(RedisError::InvalidVerbatimString);
         }
-        let len = usize::try_from(len).unwrap();
+        let len = usize::try_from(len).expect("int cast");
         if self.pos + len > self.buffer.len() {
             return Err(RedisError::InvalidVerbatimString);
         }
@@ -367,7 +367,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Ok(RESPValue::BulkString(None));
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
                     return Err(RedisError::InvalidResponse);
                 }
@@ -388,7 +388,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Ok(RESPValue::Array(Vec::new()));
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
                 let mut array = Vec::with_capacity(len);
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
@@ -417,7 +417,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidBlobError);
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
                     return Err(RedisError::InvalidBlobError);
                 }
@@ -441,7 +441,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidMap);
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
 
                 let mut entries = Vec::with_capacity(len);
                 // errdefer cleanup handled by Vec Drop on `?`
@@ -463,7 +463,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidSet);
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
 
                 let mut set = Vec::with_capacity(len);
                 // errdefer cleanup handled by Vec Drop on `?`
@@ -482,7 +482,7 @@ impl<'a> ValkeyReader<'a> {
                 if len < 0 {
                     return Err(RedisError::InvalidAttribute);
                 }
-                let len = usize::try_from(len).unwrap();
+                let len = usize::try_from(len).expect("int cast");
 
                 let mut attrs = Vec::with_capacity(len);
                 // errdefer cleanup handled by Vec Drop on `?`
@@ -532,7 +532,7 @@ impl<'a> ValkeyReader<'a> {
                 // errdefer free(push_type_dup) — drops automatically on `?`
 
                 // Read the rest of the data
-                let data_len = usize::try_from(len - 1).unwrap();
+                let data_len = usize::try_from(len - 1).expect("int cast");
                 let mut data = Vec::with_capacity(data_len);
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;

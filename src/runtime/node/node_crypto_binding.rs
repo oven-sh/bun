@@ -593,7 +593,7 @@ pub mod random {
             global.bun_vm().as_mut().rare_data().next_uuid()
         };
 
-        uuid.print((&mut bytes[..36]).try_into().unwrap());
+        uuid.print((&mut bytes[..36]).try_into().expect("infallible: size matches"));
         str.transfer_to_js(global)
     }
 
@@ -615,7 +615,7 @@ pub mod random {
                 jsc::RangeErrorOptions {
                     field_name: b"offset",
                     min: 0,
-                    max: i64::try_from(max_length).unwrap(),
+                    max: i64::try_from(max_length).expect("int cast"),
                     ..Default::default()
                 },
             ));
@@ -640,7 +640,7 @@ pub mod random {
                 jsc::RangeErrorOptions {
                     field_name: b"size",
                     min: 0,
-                    max: i64::try_from(MAX_POSSIBLE_LENGTH).unwrap(),
+                    max: i64::try_from(MAX_POSSIBLE_LENGTH).expect("int cast"),
                     ..Default::default()
                 },
             ));
@@ -651,7 +651,7 @@ pub mod random {
                 size + (offset as f64),
                 jsc::RangeErrorOptions {
                     field_name: b"size + offset",
-                    max: i64::try_from(length).unwrap(),
+                    max: i64::try_from(length).expect("int cast"),
                     ..Default::default()
                 },
             ));
@@ -976,8 +976,8 @@ impl Scrypt {
             n: n.unwrap(),
             r: r.unwrap(),
             p: p.unwrap(),
-            maxmem: u64::try_from(maxmem.unwrap()).unwrap(),
-            keylen: u32::try_from(keylen).unwrap(),
+            maxmem: u64::try_from(maxmem.unwrap()).expect("int cast"),
+            keylen: u32::try_from(keylen).expect("int cast"),
             buf: StrongOptional::empty(),
             result: &mut [] as *mut [u8],
             err: None,
@@ -1285,7 +1285,7 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
 
     for (i, hash) in hashes.keys().iter().enumerate() {
         let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
-        array.put_index(global, u32::try_from(i).unwrap(), str)?;
+        array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
     }
 
     Ok(array)

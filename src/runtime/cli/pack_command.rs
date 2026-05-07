@@ -998,7 +998,7 @@ fn add_bundled_dep(
                                 // JSON parse always yields UTF-8 EString slices, so route
                                 // through the inherent `Expr::as_utf8_string_literal` instead
                                 // of the (now crate-private) `bun_install::bun_json::ExprAccessors`.
-                                let Some(dep_name) = dep.key.as_ref().unwrap().as_utf8_string_literal() else { continue };
+                                let Some(dep_name) = dep.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal() else { continue };
 
                                 // allocPrintSentinel(.., "{s}/node_modules/{s}", ..)
                                 let mut dep_subpath_buf: Vec<u8> = Vec::with_capacity(
@@ -1260,7 +1260,7 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Result<Option<Vec<Bundl
                                 continue;
                             }
 
-                            let Some(bundled_dep) = dependency.key.as_ref().unwrap().as_string_cloned(pack_bump())? else {
+                            let Some(bundled_dep) = dependency.key.as_ref().expect("infallible: prop has key").as_string_cloned(pack_bump())? else {
                                 break 'invalid_field;
                             };
                             deps.push(BundledDep {
@@ -2271,7 +2271,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         if log_level.show_progress() {
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
-            node.as_mut().unwrap().unit = Progress::Unit::Files;
+            node.as_mut().expect("infallible: progress active").unit = Progress::Unit::Files;
         }
         // PORT NOTE: Zig had `defer node.end()` / `defer node.completeOne()`.
         // The loop bodies' only early exits are `continue` (where the Zig
@@ -2282,7 +2282,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         entry = archive_package_json(ctx, unsafe { &mut *archive }, entry, &root_dir, &edited_package_json)?;
         if log_level.show_progress() {
-            node.as_mut().unwrap().complete_one();
+            node.as_mut().expect("infallible: progress active").complete_one();
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
@@ -2292,7 +2292,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     if item.optional {
                         ctx.stats.total_files -= 1;
                         if log_level.show_progress() {
-                            node.as_mut().unwrap().complete_one();
+                            node.as_mut().expect("infallible: progress active").complete_one();
                         }
                         continue;
                     }
@@ -2321,7 +2321,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(item.path.as_bytes()),
-                size: usize::try_from(stat.st_size).unwrap(),
+                size: usize::try_from(stat.st_size).expect("int cast"),
             });
 
             entry = add_archive_entry(
@@ -2338,7 +2338,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             )?;
 
             if log_level.show_progress() {
-                node.as_mut().unwrap().complete_one();
+                node.as_mut().expect("infallible: progress active").complete_one();
             }
         }
 
@@ -2349,7 +2349,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     if item.optional {
                         ctx.stats.total_files -= 1;
                         if log_level.show_progress() {
-                            node.as_mut().unwrap().complete_one();
+                            node.as_mut().expect("infallible: progress active").complete_one();
                         }
                         continue;
                     }
@@ -2380,7 +2380,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             )?;
 
             if log_level.show_progress() {
-                node.as_mut().unwrap().complete_one();
+                node.as_mut().expect("infallible: progress active").complete_one();
             }
         }
 
@@ -2676,7 +2676,7 @@ fn tarball_destination<'a>(
             );
             Global::crash();
         }
-        let tarball_name_len = usize::try_from(cursor.position()).unwrap();
+        let tarball_name_len = usize::try_from(cursor.position()).expect("int cast");
 
         // SAFETY: NUL is the final byte written
         return (
@@ -2768,10 +2768,10 @@ fn archive_package_json(
 
     entry.set_pathname(bun_core::zstr!("package/package.json"));
     // TODO(port): PACKAGE_PREFIX ++ "package.json" comptime concat
-    entry.set_size(i64::try_from(edited_package_json.len()).unwrap());
+    entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(u32::try_from(stat.st_mode).unwrap());
+    entry.set_perm(u32::try_from(stat.st_mode).expect("int cast"));
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -2784,7 +2784,7 @@ fn archive_package_json(
         _ => {}
     }
 
-    ctx.stats.unpacked_size += usize::try_from(archive.write_data(edited_package_json)).unwrap();
+    ctx.stats.unpacked_size += usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
 
     Ok(entry.clear())
 }
@@ -2811,17 +2811,17 @@ fn add_archive_entry(
     entry.set_pathname(pathname);
     print_buf.clear();
 
-    entry.set_size(i64::try_from(stat.st_size).unwrap());
+    entry.set_size(i64::try_from(stat.st_size).expect("int cast"));
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
 
-    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.st_mode).unwrap();
+    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.st_mode).expect("int cast");
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;
     }
-    entry.set_perm(u32::try_from(perm).unwrap());
+    entry.set_perm(u32::try_from(perm).expect("int cast"));
 
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
@@ -2845,7 +2845,7 @@ fn add_archive_entry(
         }
     };
     while read > 0 {
-        ctx.stats.unpacked_size += usize::try_from(archive.write_data(&read_buf[..read])).unwrap();
+        ctx.stats.unpacked_size += usize::try_from(archive.write_data(&read_buf[..read])).expect("int cast");
         read = match buffered_file_reader_read(file_reader, read_buf) {
             Ok(n) => n,
             Err(err) => {
@@ -2881,7 +2881,7 @@ fn edit_root_package_json(
                         continue;
                     }
 
-                    let Some(package_spec) = dependency.value.as_ref().unwrap().as_utf8_string_literal() else { continue };
+                    let Some(package_spec) = dependency.value.as_ref().expect("infallible: prop has value").as_utf8_string_literal() else { continue };
                     if let Some(without_workspace_protocol) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
                     {
@@ -2892,7 +2892,7 @@ fn edit_root_package_json(
                             // TODO: this might be too strict
                             let c = without_workspace_protocol[0];
                             if c == b'^' || c == b'~' || c == b'*' {
-                                let dependency_name = match dependency.key.as_ref().unwrap().as_utf8_string_literal() {
+                                let dependency_name = match dependency.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal() {
                                     Some(n) => n,
                                     None => {
                                         Output::err_generic(
@@ -2960,7 +2960,7 @@ fn edit_root_package_json(
                     } else if let Some(catalog_name_str) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
                     {
-                        let dep_name_str = dependency.key.as_ref().unwrap().as_utf8_string_literal().unwrap();
+                        let dep_name_str = dependency.key.as_ref().expect("infallible: prop has key").as_utf8_string_literal().expect("infallible: is_string checked");
 
                         let lockfile = match maybe_lockfile {
                             Some(l) => l,
@@ -3374,11 +3374,11 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             }
         };
 
-        ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).unwrap();
+        ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).expect("int cast");
 
         Output::prettyln(format_args!(
             "\n<r><b><cyan>packed<r> {} {}",
-            bun_fmt::size(usize::try_from(package_json_stat.st_size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+            bun_fmt::size(usize::try_from(package_json_stat.st_size).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
             "package.json",
         ));
 
@@ -3395,11 +3395,11 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 }
             };
 
-            ctx.stats.unpacked_size += usize::try_from(stat.st_size).unwrap();
+            ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
 
             Output::prettyln(format_args!(
                 "<r><b><cyan>packed<r> {} {}",
-                bun_fmt::size(usize::try_from(stat.st_size).unwrap(), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
+                bun_fmt::size(usize::try_from(stat.st_size).expect("int cast"), bun_fmt::SizeFormatterOptions { space_between_number_and_unit: false }),
                 bstr::BStr::new(item.path.as_bytes()),
             ));
         }
@@ -3631,7 +3631,7 @@ pub mod bindings {
                     };
 
                     if kind == bun_sys::FileKind::File {
-                        let size: usize = usize::try_from(archive_entry_ref.size()).unwrap();
+                        let size: usize = usize::try_from(archive_entry_ref.size()).expect("int cast");
                         read_buf.resize(size, 0);
 
                         let read = archive.read_data(&mut read_buf);
@@ -3643,7 +3643,7 @@ pub mod bindings {
                                 bstr::BStr::new(archive.error_string()),
                             )));
                         }
-                        read_buf.truncate(usize::try_from(read).unwrap());
+                        read_buf.truncate(usize::try_from(read).expect("int cast"));
                         entry_info.contents = Some(BunString::clone_utf8(&read_buf));
                         read_buf.clear();
                     }
@@ -3677,7 +3677,7 @@ pub mod bindings {
             if let Some(contents) = &entry.contents {
                 obj.put(global, b"contents", contents.to_js(global)?);
             }
-            entries.put_index(global, u32::try_from(i).unwrap(), obj)?;
+            entries.put_index(global, u32::try_from(i).expect("int cast"), obj)?;
         }
 
         let result = JSValue::create_empty_object(global, 4);

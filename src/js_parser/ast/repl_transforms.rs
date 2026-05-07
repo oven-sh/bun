@@ -134,7 +134,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     // Hoist as: var funcName;
                     // Inner: this.funcName = funcName; function funcName() {}
                     if let Some(name_loc) = func.func.name {
-                        let name_ref = name_loc.ref_.unwrap();
+                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -188,7 +188,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
                     if let Some(name_loc) = class.class.class_name {
-                        let name_ref = name_loc.ref_.unwrap();
+                        let name_ref = name_loc.ref_.expect("infallible: ref bound");
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -286,7 +286,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     } else if let Some(default_name) = import_data.default_name {
                         // import X from 'mod' -> var X = (await import('mod')).default
                         // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
-                        let default_ref = default_name.ref_.unwrap();
+                        let default_ref = default_name.ref_.expect("infallible: ref bound");
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind: S::Kind::KVar,
@@ -493,7 +493,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
 
         // For each named import: var name; name = __ns.originalName;
         for item in import_items.iter() {
-            let item_ref = item.name.ref_.unwrap();
+            let item_ref = item.name.ref_.expect("infallible: ref bound");
             hoisted_stmts.push(self.s(
                 S::Local {
                     kind: S::Kind::KVar,

@@ -89,7 +89,7 @@ impl<T, const N: usize> SmallList<T, N> {
     {
         debug_assert!(values.len() <= N);
         let mut this = SmallList::<T, N> {
-            capacity: u32::try_from(values.len()).unwrap(),
+            capacity: u32::try_from(values.len()).expect("int cast"),
             data: Data {
                 // SAFETY: array of MaybeUninit<T> needs no initialization
                 inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }),
@@ -155,8 +155,8 @@ impl<T, const N: usize> SmallList<T, N> {
     // TODO(port): bun_alloc::ArenaVec<'bump, T> in css arena context (see impl-block note)
     pub fn from_list(list: Vec<T>) -> Self {
         if list.capacity() > N {
-            let cap = u32::try_from(list.capacity()).unwrap();
-            let len = u32::try_from(list.len()).unwrap();
+            let cap = u32::try_from(list.capacity()).expect("int cast");
+            let len = u32::try_from(list.len()).expect("int cast");
             let mut list = list;
             let ptr = list.as_mut_ptr();
             core::mem::forget(list);
@@ -165,7 +165,7 @@ impl<T, const N: usize> SmallList<T, N> {
                 data: Data { heap: HeapData { len, ptr } },
             };
         }
-        let len = u32::try_from(list.len()).unwrap();
+        let len = u32::try_from(list.len()).expect("int cast");
         let mut this = SmallList::<T, N> {
             capacity: len,
             // SAFETY: array of MaybeUninit<T> needs no initialization
@@ -196,10 +196,10 @@ impl<T, const N: usize> SmallList<T, N> {
         let mut list = core::mem::ManuallyDrop::new(list);
         if list.capacity() > N {
             return SmallList {
-                capacity: u32::try_from(list.capacity()).unwrap(),
+                capacity: u32::try_from(list.capacity()).expect("int cast"),
                 data: Data {
                     heap: HeapData {
-                        len: u32::try_from(list.len()).unwrap(),
+                        len: u32::try_from(list.len()).expect("int cast"),
                         ptr: list.as_mut_ptr(),
                     },
                 },
@@ -207,7 +207,7 @@ impl<T, const N: usize> SmallList<T, N> {
         }
         let len = list.len();
         let mut this = SmallList::<T, N> {
-            capacity: u32::try_from(len).unwrap(),
+            capacity: u32::try_from(len).expect("int cast"),
             // SAFETY: array of MaybeUninit<T> needs no initialization
             data: Data { inlined: core::mem::ManuallyDrop::new(unsafe { MaybeUninit::uninit().assume_init() }) },
         };
@@ -224,9 +224,9 @@ impl<T, const N: usize> SmallList<T, N> {
 
     /// NOTE: This will deinit the list
     pub fn from_baby_list(mut list: Vec<T>) -> Self {
-        let cap = u32::try_from(list.capacity()).unwrap();
-        let len = u32::try_from(list.len()).unwrap();
-        if cap > u32::try_from(N).unwrap() {
+        let cap = u32::try_from(list.capacity()).expect("int cast");
+        let len = u32::try_from(list.len()).expect("int cast");
+        if cap > u32::try_from(N).expect("int cast") {
             let ptr = list.as_mut_ptr();
             // Ownership of the buffer transfers to SmallList; suppress Vec's Drop to avoid double-free.
             core::mem::forget(list);
@@ -339,7 +339,7 @@ impl<T, const N: usize> SmallList<T, N> {
     /// need it to be stable then you should use `.to_owned_slice()`
     #[inline]
     pub fn slice(&self) -> &[T] {
-        if self.capacity > u32::try_from(N).unwrap() {
+        if self.capacity > u32::try_from(N).expect("int cast") {
             // SAFETY: spilled => heap active
             unsafe { core::slice::from_raw_parts(self.data.heap.ptr, self.data.heap.len as usize) }
         } else {
@@ -352,7 +352,7 @@ impl<T, const N: usize> SmallList<T, N> {
     /// need it to be stable then you should use `.to_owned_slice()`
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [T] {
-        if self.capacity > u32::try_from(N).unwrap() {
+        if self.capacity > u32::try_from(N).expect("int cast") {
             // SAFETY: spilled => heap active
             unsafe { core::slice::from_raw_parts_mut(self.data.heap.ptr, self.data.heap.len as usize) }
         } else {
@@ -532,7 +532,7 @@ impl<T, const N: usize> SmallList<T, N> {
     }
 
     pub fn init_capacity(capacity: u32) -> Self {
-        if capacity > u32::try_from(N).unwrap() {
+        if capacity > u32::try_from(N).expect("int cast") {
             let mut list = Self::default();
             list.capacity = capacity;
             list.data = Data { heap: HeapData::init_capacity(capacity) };
@@ -632,7 +632,7 @@ impl<T, const N: usize> SmallList<T, N> {
     where
         T: Copy,
     {
-        self.reserve(u32::try_from(items.len()).unwrap());
+        self.reserve(u32::try_from(items.len()).expect("int cast"));
         self.insert_slice_assume_capacity(index, items);
     }
 
@@ -650,7 +650,7 @@ impl<T, const N: usize> SmallList<T, N> {
             ptr::copy(ptr_, ptr_.add(items.len()), count);
             ptr::copy_nonoverlapping(items.as_ptr(), ptr_, items.len());
         }
-        self.set_len(length + u32::try_from(items.len()).unwrap());
+        self.set_len(length + u32::try_from(items.len()).expect("int cast"));
     }
 
     pub fn set_len(&mut self, new_len: u32) {
@@ -710,7 +710,7 @@ impl<T, const N: usize> SmallList<T, N> {
         // SAFETY: len_ptr returned by triple_mut points into self (heap.len or self.capacity)
         let length = unsafe { *len_ptr };
         debug_assert!(new_cap >= length);
-        if new_cap <= u32::try_from(N).unwrap() {
+        if new_cap <= u32::try_from(N).expect("int cast") {
             if unspilled {
                 return;
             }
@@ -759,7 +759,7 @@ impl<T, const N: usize> SmallList<T, N> {
             (
                 unsafe { (*self.data.inlined).as_mut_ptr().cast::<T>() },
                 &mut self.capacity as *mut u32,
-                u32::try_from(N).unwrap(),
+                u32::try_from(N).expect("int cast"),
             )
         }
     }
@@ -776,7 +776,7 @@ impl<T, const N: usize> SmallList<T, N> {
 
     fn grow_to_heap(&mut self, additional: usize) {
         debug_assert!(!self.spilled());
-        let new_size = grow_capacity(self.capacity, self.capacity + u32::try_from(additional).unwrap());
+        let new_size = grow_capacity(self.capacity, self.capacity + u32::try_from(additional).expect("int cast"));
         let mut slc: Vec<T> = Vec::with_capacity(new_size as usize);
         let slc_ptr = slc.as_mut_ptr();
         core::mem::forget(slc);
@@ -794,7 +794,7 @@ impl<T, const N: usize> SmallList<T, N> {
 
     #[inline]
     fn spilled(&self) -> bool {
-        self.capacity > u32::try_from(N).unwrap()
+        self.capacity > u32::try_from(N).expect("int cast")
     }
 
     // TODO(port): Zig had `pub const looksLikeContainerTypeSmallList = T;` — used for comptime

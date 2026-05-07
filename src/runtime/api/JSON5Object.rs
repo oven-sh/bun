@@ -466,7 +466,7 @@ impl Stringifier {
 }
 
 fn hex_digit(v: u16) -> u8 {
-    let nibble = u8::try_from(v & 0x0f).unwrap();
+    let nibble = u8::try_from(v & 0x0f).expect("int cast");
     if nibble < 10 {
         b'0' + nibble
     } else {
@@ -496,7 +496,7 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::EArray(arr) => {
             let js_arr = JSValue::create_empty_array(global, arr.items.len as usize)?;
             for (_i, item) in arr.slice().iter().enumerate() {
-                let i = u32::try_from(_i).unwrap();
+                let i = u32::try_from(_i).expect("int cast");
                 let value = expr_to_js(*item, global)?;
                 js_arr.put_index(global, i, value)?;
             }
@@ -505,8 +505,8 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::EObject(obj) => {
             let js_obj = JSValue::create_empty_object(global, obj.properties.len as usize);
             for prop in obj.properties.slice() {
-                let key_expr = prop.key.unwrap();
-                let value = expr_to_js(prop.value.unwrap(), global)?;
+                let key_expr = prop.key.expect("infallible: prop has key");
+                let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
                 let key_js = expr_to_js(key_expr, global)?;
                 let key_str = key_js.to_bun_string(global)?;
                 js_obj.put_may_be_index(global, &key_str, value)?;

@@ -18,7 +18,7 @@ impl ParameterDescription {
         let _ = remaining_bytes;
 
         let count = reader.short()?;
-        let n = usize::try_from(count.max(0)).unwrap();
+        let n = usize::try_from(count.max(0)).expect("int cast");
         let mut parameters: Box<[Int4]> = vec![Int4::default(); n].into_boxed_slice();
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;

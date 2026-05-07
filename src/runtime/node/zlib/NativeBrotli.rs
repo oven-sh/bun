@@ -144,7 +144,7 @@ impl NativeBrotli {
         });
         // SAFETY: mode_int is 8 or 9, both valid NodeMode discriminants.
         ptr.stream.mode = unsafe {
-            core::mem::transmute::<u8, bun_zlib::NodeMode>(u8::try_from(mode_int).unwrap())
+            core::mem::transmute::<u8, bun_zlib::NodeMode>(u8::try_from(mode_int).expect("int cast"))
         };
         // TODO(port): NodeMode repr width — confirm #[repr(u8)] vs wider.
         Ok(ptr)
@@ -210,7 +210,7 @@ impl NativeBrotli {
             }
             err = this
                 .stream
-                .set_params(u32::try_from(i).unwrap() as c_uint, d);
+                .set_params(u32::try_from(i).expect("int cast") as c_uint, d);
             if err.is_error() {
                 // impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
                 this.stream.close();
@@ -419,8 +419,8 @@ impl Context {
     }
 
     pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-        *avail_in = u32::try_from(self.avail_in).unwrap();
-        *avail_out = u32::try_from(self.avail_out).unwrap();
+        *avail_in = u32::try_from(self.avail_in).expect("int cast");
+        *avail_out = u32::try_from(self.avail_out).expect("int cast");
     }
 
     pub fn get_error_info(&self) -> Error {

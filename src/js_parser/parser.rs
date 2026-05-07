@@ -927,7 +927,7 @@ pub mod Runtime {
                 self.i += 1; // Zig: `defer this.i += 1;`
                 if let Some(val) = self.runtime_imports.field(t) {
                     return Some(ImportsIteratorEntry {
-                        key: u16::try_from(t).unwrap(),
+                        key: u16::try_from(t).expect("int cast"),
                         value: val,
                     });
                 }
@@ -1039,30 +1039,30 @@ pub struct JSXImportSymbols {
 impl JSXImportSymbols {
     pub fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
-            return self.jsx.map(|jsx| jsx.ref_.unwrap());
+            return self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
         }
         if name == b"jsxDEV" {
-            return self.jsx_dev.map(|jsx| jsx.ref_.unwrap());
+            return self.jsx_dev.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
         }
         if name == b"jsxs" {
-            return self.jsxs.map(|jsxs| jsxs.ref_.unwrap());
+            return self.jsxs.map(|jsxs| jsxs.ref_.expect("infallible: ref bound"));
         }
         if name == b"Fragment" {
-            return self.fragment.map(|f| f.ref_.unwrap());
+            return self.fragment.map(|f| f.ref_.expect("infallible: ref bound"));
         }
         if name == b"createElement" {
-            return self.create_element.map(|c| c.ref_.unwrap());
+            return self.create_element.map(|c| c.ref_.expect("infallible: ref bound"));
         }
         None
     }
 
     pub fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
-            JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.unwrap()),
-            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.ref_.unwrap()),
-            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_.unwrap()),
-            JSXImport::Fragment => self.fragment.map(|f| f.ref_.unwrap()),
-            JSXImport::CreateElement => self.create_element.map(|c| c.ref_.unwrap()),
+            JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
+            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
+            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_.expect("infallible: ref bound")),
+            JSXImport::Fragment => self.fragment.map(|f| f.ref_.expect("infallible: ref bound")),
+            JSXImport::CreateElement => self.create_element.map(|c| c.ref_.expect("infallible: ref bound")),
         }
     }
 
@@ -1379,7 +1379,7 @@ impl<'a> JSXTag<'a> {
                 p.log().add_error(
                     Some(source),
                     logger::Loc {
-                        start: member_range.loc.start + i32::try_from(index).unwrap(),
+                        start: member_range.loc.start + i32::try_from(index).expect("int cast"),
                     },
                     b"Unexpected \"-\"",
                 )?;

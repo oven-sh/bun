@@ -291,7 +291,7 @@ pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
             core::ptr::null_mut(),
             &mut io,
             data.as_ptr(),
-            u32::try_from(data.len()).unwrap(),
+            u32::try_from(data.len()).expect("int cast"),
             core::ptr::null(),
             core::ptr::null(),
         )
@@ -748,7 +748,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             core::ptr::null_mut(),
             &mut io,
             read_ptr.cast::<c_void>(),
-            u32::try_from(read_max_len).unwrap(),
+            u32::try_from(read_max_len).expect("int cast"),
             core::ptr::null(),
             core::ptr::null(),
         )

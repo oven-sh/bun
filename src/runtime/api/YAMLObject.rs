@@ -1166,7 +1166,7 @@ impl<'a> ParserCtx<'a> {
                 self.seen_objects.put(key, arr)?;
 
                 for (_i, item) in e_array.slice().iter().enumerate() {
-                    let i: u32 = u32::try_from(_i).unwrap();
+                    let i: u32 = u32::try_from(_i).expect("int cast");
                     let value = self.to_js(args, *item)?;
                     arr.put_index(self.global, i, value)?;
                 }
@@ -1186,8 +1186,8 @@ impl<'a> ParserCtx<'a> {
                 self.seen_objects.put(key, obj)?;
 
                 for prop in e_object.properties.slice() {
-                    let key_expr = prop.key.unwrap();
-                    let value_expr = prop.value.unwrap();
+                    let key_expr = prop.key.expect("infallible: prop has key");
+                    let value_expr = prop.value.expect("infallible: prop has value");
 
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;

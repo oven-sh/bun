@@ -674,7 +674,7 @@ impl NodeHTTPResponse {
         'do_it: {
             if status_message_slice.slice().is_empty() {
                 if let Some(status_message) =
-                    HTTPStatusText::get(u16::try_from(status_code).unwrap())
+                    HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
                     write_head_internal(
                         self.raw_response.as_ref().unwrap(),
@@ -1408,7 +1408,7 @@ impl NodeHTTPResponse {
                     }
 
                     // PERF(port): @intCast — bounded by min().
-                    let clamped = i64::try_from(written.min(i64::MAX as usize)).unwrap();
+                    let clamped = i64::try_from(written.min(i64::MAX as usize)).expect("int cast");
                     Ok(JSValue::js_number((-clamped) as f64))
                 }
             }

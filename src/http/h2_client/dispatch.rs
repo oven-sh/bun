@@ -186,7 +186,7 @@ pub fn dispatch_frame(
                                 session.fatal_error = Some(err!(HTTP2FlowControlError));
                                 return;
                             }
-                            s.send_window = i32::try_from(next).unwrap();
+                            s.send_window = i32::try_from(next).expect("int cast");
                         }
                     }
                     _ => {}
@@ -211,7 +211,7 @@ pub fn dispatch_frame(
                 return;
             }
             let inc =
-                i32::try_from(wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31()).unwrap();
+                i32::try_from(wire::UInt31WithReserved::from_bytes(&payload[0..4]).uint31()).expect("int cast");
             if stream_id == 0 {
                 // RFC 9113 §6.9: zero increment on stream 0 is a
                 // connection PROTOCOL_ERROR; §6.9.1: overflow past
@@ -225,7 +225,7 @@ pub fn dispatch_frame(
                     session.fatal_error = Some(err!(HTTP2FlowControlError));
                     return;
                 }
-                session.conn_send_window = i32::try_from(next).unwrap();
+                session.conn_send_window = i32::try_from(next).expect("int cast");
                 session.stream_progressed = true;
             } else if let Some(&stream_ptr) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
                 // SAFETY: stream pointer valid for session lifetime; aliases neither
@@ -244,7 +244,7 @@ pub fn dispatch_frame(
                     stream.fatal_error = Some(err!(HTTP2FlowControlError));
                     return;
                 }
-                stream.send_window = i32::try_from(next).unwrap();
+                stream.send_window = i32::try_from(next).expect("int cast");
                 session.stream_progressed = true;
             } else {
                 // §5.1: WINDOW_UPDATE on an idle/server-initiated stream
@@ -647,14 +647,14 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
             stream.header_block.clear();
             return;
         }
-        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).unwrap();
+        let name_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
         stream.decoded_bytes.extend_from_slice(result.name);
-        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).unwrap();
+        let value_start: u32 = u32::try_from(stream.decoded_bytes.len()).expect("int cast");
         stream.decoded_bytes.extend_from_slice(result.value);
         bounds.push([
             name_start,
             value_start,
-            u32::try_from(stream.decoded_bytes.len()).unwrap(),
+            u32::try_from(stream.decoded_bytes.len()).expect("int cast"),
         ]);
     }
 

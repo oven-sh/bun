@@ -815,7 +815,7 @@ impl FetchTasklet {
                     d2i_X509(
                         core::ptr::null_mut(),
                         &mut cert_ptr,
-                        core::ffi::c_long::try_from(cert.len()).unwrap(),
+                        core::ffi::c_long::try_from(cert.len()).expect("int cast"),
                     )
                 };
                 if !x509.is_null() {

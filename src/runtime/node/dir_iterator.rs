@@ -143,9 +143,9 @@ mod platform {
                     }
 
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).unwrap();
+                    self.end_index = usize::try_from(rc).expect("int cast");
                     let eof_flag =
-                        u32::from_ne_bytes(self.buf[len - 4..len].try_into().unwrap());
+                        u32::from_ne_bytes(self.buf[len - 4..len].try_into().expect("infallible: size matches"));
                     self.received_eof =
                         self.end_index <= (self.buf.len() - 4) && eof_flag == 1;
                 }
@@ -228,7 +228,7 @@ mod platform {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).unwrap();
+                    self.end_index = usize::try_from(rc).expect("int cast");
                 }
                 // SAFETY: index within filled buf; packed dirent
                 let entry = unsafe {

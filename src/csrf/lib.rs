@@ -199,12 +199,12 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
     // it could also be a handcrafted token that is invalid
 
     // Extract timestamp (first 8 bytes)
-    let timestamp = u64::from_be_bytes(decoded[0..8].try_into().unwrap());
+    let timestamp = u64::from_be_bytes(decoded[0..8].try_into().expect("infallible: size matches"));
 
     // Check if token has expired
     let current_time: u64 = bun_core::time::milli_timestamp() as u64; // @bitCast i64 -> u64
     // Extract expires_in (last 8 bytes)
-    let expires_in = u64::from_be_bytes(decoded[24..32].try_into().unwrap());
+    let expires_in = u64::from_be_bytes(decoded[24..32].try_into().expect("infallible: size matches"));
     {
         // respect the token's expiration time
         if expires_in > 0 {

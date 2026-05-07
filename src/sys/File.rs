@@ -97,7 +97,7 @@ impl File {
                         return SysResult::Ok(());
                     }
                     remain = &remain[amt..];
-                    offset += i64::try_from(amt).unwrap();
+                    offset += i64::try_from(amt).expect("int cast");
                 }
             }
         }
@@ -264,7 +264,7 @@ impl File {
             let rc = sys::pread(
                 self.handle,
                 &mut buf[read_amount..],
-                i64::try_from(read_amount).unwrap(),
+                i64::try_from(read_amount).expect("int cast"),
             );
             #[cfg(not(unix))]
             let rc = sys::read(self.handle, &mut buf[read_amount..]);
@@ -334,12 +334,12 @@ impl File {
                     // SAFETY: bytes_read <= spare.len() <= capacity - len, and the
                     // syscall initialized those bytes.
                     unsafe { list.set_len(list.len() + bytes_read) };
-                    total += i64::try_from(bytes_read).unwrap();
+                    total += i64::try_from(bytes_read).expect("int cast");
                 }
             }
         }
 
-        SysResult::Ok(usize::try_from(total).unwrap())
+        SysResult::Ok(usize::try_from(total).expect("int cast"))
     }
 
     /// Use this function on potentially large files.
@@ -478,7 +478,7 @@ impl From<Fd> for File {
 #[cfg(target_os = "linux")]
 impl From<u64> for File {
     fn from(other: u64) -> File {
-        File { handle: Fd::from_native(c_int::try_from(other).unwrap()) }
+        File { handle: Fd::from_native(c_int::try_from(other).expect("int cast")) }
     }
 }
 

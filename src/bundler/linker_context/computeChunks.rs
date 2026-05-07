@@ -202,7 +202,7 @@ pub fn compute_chunks(
         // always generated even if the resulting file is empty
         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
         entry_point_to_js_chunk_idx[entry_id_] =
-            u32::try_from(js_chunk_entry.index).unwrap();
+            u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {
             entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
             entry_bits: entry_point_chunk_bits,
@@ -250,7 +250,7 @@ pub fn compute_chunks(
 
                 if let chunk::Content::Javascript(js) = &mut js_chunk_entry.value_ptr.content {
                     js.css_chunks =
-                        Box::<[u32]>::from(&[u32::try_from(css_chunk_entry.index).unwrap()][..]);
+                        Box::<[u32]>::from(&[u32::try_from(css_chunk_entry.index).expect("int cast")][..]);
                 }
                 js_chunks_with_css += 1;
 
@@ -479,7 +479,7 @@ pub fn compute_chunks(
                 // PERF(port): was assume_capacity
                 let owned = core::mem::take(&mut css_chunks.values_mut()[index]);
                 sorted_chunks.append_assume_capacity(owned);
-                remapped_css_indexes[index] = u32::try_from(sorted_index).unwrap();
+                remapped_css_indexes[index] = u32::try_from(sorted_index).expect("int cast");
             }
 
             // Update all affected JS chunks to point at the correct CSS chunk index.
@@ -521,7 +521,7 @@ pub fn compute_chunks(
                 continue;
             }
             entry_point_chunk_indices[chunk.entry_point.source_index() as usize] =
-                u32::try_from(chunk_id).unwrap();
+                u32::try_from(chunk_id).expect("int cast");
         }
     }
 

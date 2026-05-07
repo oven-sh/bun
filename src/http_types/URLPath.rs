@@ -104,10 +104,10 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     let mut first_segment_end: i16 = i16::MAX;
     let mut last_slash: i16 = -1;
 
-    let mut i: i16 = i16::try_from(decoded_pathname.len()).unwrap() - 1;
+    let mut i: i16 = i16::try_from(decoded_pathname.len()).expect("int cast") - 1;
 
     while i >= 0 {
-        let c = decoded_pathname[usize::try_from(i).unwrap()];
+        let c = decoded_pathname[usize::try_from(i).expect("int cast")];
 
         match c {
             b'?' => {
@@ -146,10 +146,10 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         if question_mark_i > -1 && period_i > -1 {
             period_i += 1;
             break 'brk &decoded_pathname
-                [usize::try_from(period_i).unwrap()..usize::try_from(question_mark_i).unwrap()];
+                [usize::try_from(period_i).expect("int cast")..usize::try_from(question_mark_i).expect("int cast")];
         } else if period_i > -1 {
             period_i += 1;
-            break 'brk &decoded_pathname[usize::try_from(period_i).unwrap()..];
+            break 'brk &decoded_pathname[usize::try_from(period_i).expect("int cast")..];
         } else {
             break 'brk &[];
         }
@@ -158,11 +158,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     let mut path: &[u8] = if question_mark_i < 0 {
         &decoded_pathname[1..]
     } else {
-        &decoded_pathname[1..usize::try_from(question_mark_i).unwrap()]
+        &decoded_pathname[1..usize::try_from(question_mark_i).expect("int cast")]
     };
 
     let first_segment =
-        &decoded_pathname[1..(usize::try_from(first_segment_end).unwrap()).min(decoded_pathname.len())];
+        &decoded_pathname[1..(usize::try_from(first_segment_end).expect("int cast")).min(decoded_pathname.len())];
     let is_source_map = extname == b"map";
     let mut backup_extname: &[u8] = extname;
     if is_source_map && path.len() > b".map".len() {
@@ -201,7 +201,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
                 path
             }),
             query_string: extend(if question_mark_i > -1 {
-                &decoded_pathname[usize::try_from(question_mark_i).unwrap()..decoded_pathname.len()]
+                &decoded_pathname[usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
             } else {
                 b""
             }),

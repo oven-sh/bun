@@ -1076,7 +1076,7 @@ impl ServerConfig {
                 }
                 args.has_idle_timeout = true;
 
-                let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).unwrap();
+                let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).expect("int cast");
                 if idle_timeout > 255 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be 255 or less",
@@ -1243,7 +1243,7 @@ impl ServerConfig {
         if let Some(max_request_body_size) = arg.get_truthy(global, "maxRequestBodySize")? {
             if max_request_body_size.is_number() {
                 args.max_request_body_size =
-                    u64::try_from(max_request_body_size.to_int64().max(0)).unwrap() as usize;
+                    u64::try_from(max_request_body_size.to_int64().max(0)).expect("int cast") as usize;
             }
         }
         if global.has_exception() {

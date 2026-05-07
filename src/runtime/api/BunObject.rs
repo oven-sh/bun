@@ -1095,7 +1095,7 @@ pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     // TODO(port): std.Thread.sleep — bun owns its own sleep; using thread::sleep
     // here matches Zig's blocking semantics (this is a sync API).
     std::thread::sleep(core::time::Duration::from_millis(
-        u64::try_from(milliseconds).unwrap(),
+        u64::try_from(milliseconds).expect("int cast"),
     ));
     Ok(JSValue::UNDEFINED)
 }
@@ -1739,7 +1739,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                         "size must be a non-negative integer",
                     )));
                 }
-                map_size = Some(usize::try_from(size_value).unwrap());
+                map_size = Some(usize::try_from(size_value).expect("int cast"));
             }
 
             if let Some(value) = opts.get(global_this, "offset")? {
@@ -1749,7 +1749,7 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                         "offset must be a non-negative integer",
                     )));
                 }
-                offset = usize::try_from(offset_value).unwrap();
+                offset = usize::try_from(offset_value).expect("int cast");
                 // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
                 let page = bun_sys::page_size();
                 offset -= offset % page;
@@ -2433,7 +2433,7 @@ pub mod JSZlib {
                 //  |     CRC32     |     ISIZE     |
                 //  +---+---+---+---+---+---+---+---+
                 let estimated_size: u32 = u32::from_ne_bytes(
-                    compressed[compressed.len() - 4..][..4].try_into().unwrap(),
+                    compressed[compressed.len() - 4..][..4].try_into().expect("infallible: size matches"),
                 );
                 // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
                 if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {

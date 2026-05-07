@@ -601,7 +601,7 @@ mod tests {
         {
             let mut a = FmtAdapter::new(&mut s);
             a.write_all(b"hi ").unwrap();
-            write!(a, "{}", 42).unwrap();
+            write!(a, "{}", 42).expect("infallible: in-memory write");
         }
         assert_eq!(s, "hi 42");
     }

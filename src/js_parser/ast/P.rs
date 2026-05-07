@@ -1083,7 +1083,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let import_record_index = self.add_import_record(
             ImportKind::RequireResolve,
             arg.loc,
-            arg.data.e_string().unwrap().string(self.allocator).expect("unreachable"),
+            arg.data.e_string().expect("infallible: variant checked").string(self.allocator).expect("unreachable"),
         );
         self.import_records.items_mut()[import_record_index as usize].flags.set(
             bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS,
@@ -1179,7 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     return self.new_expr(
                         E::RequireString {
                             import_record_index,
-                            unwrapped_id: u32::try_from(self.imports_to_convert_from_require.len() - 1).unwrap(),
+                            unwrapped_id: u32::try_from(self.imports_to_convert_from_require.len() - 1).expect("int cast"),
                         },
                         arg.loc,
                     );
@@ -1336,7 +1336,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     break 'can_remove_part false;
                                 }
                                 if let Some(name) = &func.func.name {
-                                    let name_ref = name.ref_.unwrap();
+                                    let name_ref = name.ref_.expect("infallible: ref bound");
                                     let symbol: &Symbol = &self.symbols[name_ref.inner_index() as usize];
 
                                     if name_ref.eql(default_export_ref)
@@ -1360,7 +1360,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                     break 'can_remove_part false;
                                 }
                                 if let Some(name) = &class.class.class_name {
-                                    let name_ref = name.ref_.unwrap();
+                                    let name_ref = name.ref_.expect("infallible: ref bound");
                                     let symbol: &Symbol = &self.symbols[name_ref.inner_index() as usize];
 
                                     if name_ref.eql(default_export_ref)
@@ -1482,7 +1482,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol: &Symbol = &symbols[member.ref_.inner_index() as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: Symbol.original_name is an arena-owned slice valid for the parser lifetime.
-                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).unwrap()));
+                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).expect("int cast")));
                 }
             }
 
@@ -1490,7 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 let symbol = &symbols[r#ref.inner_index() as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: see above.
-                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).unwrap()) - 1);
+                    char_freq.scan(unsafe { &*symbol.original_name }, -(i32::try_from(symbol.use_count_estimate).expect("int cast")) - 1);
                 }
             }
 
@@ -2536,7 +2536,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     for property in e.properties.slice_mut() {
                         // Check the key
                         if property.flags.contains(Flags::Property::IsComputed) {
-                            match self.substitute_single_use_symbol_in_expr(property.key.unwrap(), r#ref, replacement, replacement_can_be_removed) {
+                            match self.substitute_single_use_symbol_in_expr(property.key.expect("infallible: prop has key"), r#ref, replacement, replacement_can_be_removed) {
                                 Substitution::Continue(_) => {}
                                 Substitution::Success(result) => {
                                     property.key = Some(result);
@@ -3237,7 +3237,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     let mut item = ex.items.slice()[i];
                     if matches!(item.data, js_ast::ExprData::ESpread(_)) {
                         is_spread = true;
-                        item = item.data.e_spread().unwrap().value;
+                        item = item.data.e_spread().expect("infallible: variant checked").value;
                     }
                     let res = self.convert_expr_to_binding_and_initializer(&mut item, invalid_loc, is_spread);
 
@@ -3277,7 +3277,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         || item.kind == js_ast::g::PropertyKind::Set
                     {
                         invalid_loc.push(InvalidLoc {
-                            loc: item.key.unwrap().loc,
+                            loc: item.key.expect("infallible: prop has key").loc,
                             kind: if item.flags.contains(Flags::Property::IsMethod) {
                                 crate::parser::InvalidLocTag::Method
                             } else if item.kind == js_ast::g::PropertyKind::Get {
@@ -3431,7 +3431,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.import_records.items_mut()[id as usize].flags.insert(bun_options_types::ImportRecordFlags::IS_UNUSED);
 
             if let Some(name_loc) = stmt.default_name {
-                let name = self.load_name_from_ref(name_loc.ref_.unwrap());
+                let name = self.load_name_from_ref(name_loc.ref_.expect("infallible: ref bound"));
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
                 self.macro_.refs.put(r#ref, crate::parser::MacroRefData { import_record_id: id, name: Some(b"default") })?;
@@ -3446,7 +3446,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
             for item in unsafe { &*stmt.items }.iter() {
-                let name = self.load_name_from_ref(item.name.ref_.unwrap());
+                let name = self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
                 // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
@@ -3478,7 +3478,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         continue;
                     }
                     // Declare the symbol and store the ref
-                    let name = self.load_name_from_ref(item.name.ref_.unwrap());
+                    let name = self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                     let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
                 } else {
@@ -3538,7 +3538,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut item_refs = ImportItemForNamespaceMap::new();
         // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
         let count_excluding_namespace =
-            u16::try_from(unsafe { &*stmt.items }.len()).unwrap() + u16::from(stmt.default_name.is_some());
+            u16::try_from(unsafe { &*stmt.items }.len()).expect("int cast") + u16::from(stmt.default_name.is_some());
 
         item_refs.ensure_unused_capacity(count_excluding_namespace as usize)?;
         // Even though we allocate ahead of time here
@@ -3549,7 +3549,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Link the default item to the namespace
         if let Some(name_loc) = &mut stmt.default_name {
             'outer: {
-                let name = self.load_name_from_ref(name_loc.ref_.unwrap());
+                let name = self.load_name_from_ref(name_loc.ref_.expect("infallible: ref bound"));
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = Some(r#ref);
                 self.is_import_item.insert(r#ref, ());
@@ -3751,7 +3751,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
-        scope.generated.append(name.ref_.unwrap())?;
+        scope.generated.append(name.ref_.expect("infallible: ref bound"))?;
 
         Ok(name)
     }
@@ -4296,7 +4296,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] =
-                unsafe { &*self.symbols[name.ref_.unwrap().inner_index() as usize].original_name };
+                unsafe { &*self.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name };
 
             if func.flags.contains(Flags::Function::IsAsync) && original_name == b"await" {
                 self.log()
@@ -4366,13 +4366,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         if contents_ptr <= name_ptr && (name_ptr + name.len()) <= (contents_ptr + self.source.contents.len()) {
             // Zig: `.{ .source_index = offset, .inner_index = len, .tag = .source_contents_slice }`
             Ok(Ref::new(
-                u32::try_from(name.len()).unwrap(),
-                u32::try_from(name_ptr - contents_ptr).unwrap(),
+                u32::try_from(name.len()).expect("int cast"),
+                u32::try_from(name_ptr - contents_ptr).expect("int cast"),
                 js_ast::base::RefTag::SourceContentsSlice,
             ))
         } else {
             // TODO(port): Zig u31 — Rust has no u31; using u32 and trusting bit-width
-            let inner_index = u32::try_from(self.allocated_names.len()).unwrap();
+            let inner_index = u32::try_from(self.allocated_names.len()).expect("int cast");
             self.allocated_names.push(name);
             Ok(Ref::init(inner_index, self.source.index.0, false))
         }
@@ -4411,7 +4411,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             original_path: b"",
             flags: bun_options_types::import_record::Flags::empty(),
         });
-        u32::try_from(index).unwrap()
+        u32::try_from(index).expect("int cast")
     }
 
     pub fn pop_scope(&mut self) {
@@ -6041,7 +6041,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // TODO: prop.kind == .declare and prop.value == null
 
                     if prop.ts_decorators.len > 0 {
-                        let descriptor_key = prop.key.unwrap();
+                        let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
 
                         // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
@@ -6054,7 +6054,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                         // SAFETY: re-borrow arena class.
                         let class_name = unsafe { (*class).class_name }.unwrap();
-                        let class_ref = class_name.ref_.unwrap();
+                        let class_ref = class_name.ref_.expect("infallible: ref bound");
                         let target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
                             self.record_usage(class_ref);
@@ -6089,7 +6089,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // SAFETY: arena slice; never grown.
                         let args = unsafe { ExprNodeList::from_bump_slice(args_slice) };
 
-                        let decorator = self.call_runtime(prop.key.unwrap().loc, b"__legacyDecorateClassTS", args);
+                        let decorator = self.call_runtime(prop.key.expect("infallible: prop has key").loc, b"__legacyDecorateClassTS", args);
                         let decorator_stmt = self.s(S::SExpr { value: decorator, ..Default::default() }, decorator.loc);
 
                         if prop.flags.contains(Flags::Property::IsStatic) {
@@ -6111,29 +6111,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if prop.flags.contains(Flags::Property::IsStatic) {
                             // SAFETY: re-borrow arena class.
                             let class_name = unsafe { (*class).class_name }.unwrap();
-                            let class_ref = class_name.ref_.unwrap();
+                            let class_ref = class_name.ref_.expect("infallible: ref bound");
                             self.record_usage(class_ref);
                             target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                         } else {
-                            target = self.new_expr(E::This {}, prop.key.unwrap().loc);
+                            target = self.new_expr(E::This {}, prop.key.expect("infallible: prop has key").loc);
                         }
 
                         if prop.flags.contains(Flags::Property::IsComputed)
-                            || matches!(prop.key.unwrap().data, js_ast::ExprData::ENumber(_))
+                            || matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::ENumber(_))
                         {
                             target = self.new_expr(
-                                E::Index { target, index: prop.key.unwrap(), optional_chain: None },
-                                prop.key.unwrap().loc,
+                                E::Index { target, index: prop.key.expect("infallible: prop has key"), optional_chain: None },
+                                prop.key.expect("infallible: prop has key").loc,
                             );
                         } else {
                             target = self.new_expr(
                                 E::Dot {
                                     target,
-                                    name: prop.key.unwrap().data.e_string().unwrap().data,
-                                    name_loc: prop.key.unwrap().loc,
+                                    name: prop.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data,
+                                    name_loc: prop.key.expect("infallible: prop has key").loc,
                                     ..Default::default()
                                 },
-                                prop.key.unwrap().loc,
+                                prop.key.expect("infallible: prop has key").loc,
                             );
                         }
 
@@ -6282,7 +6282,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
                     // SAFETY: re-borrow arena class.
                     let class_name = unsafe { (*class).class_name }.unwrap();
-                    let class_ref = class_name.ref_.unwrap();
+                    let class_ref = class_name.ref_.expect("infallible: ref bound");
                     let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(E::Array { items: array_items, ..Default::default() }, stmt.loc);
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
@@ -6339,7 +6339,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // design:paramtypes and design:returntype if method
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     if let Some(prop_value) = prop.value {
-                        let func = prop_value.data.e_function().unwrap();
+                        let func = prop_value.data.e_function().expect("infallible: variant checked");
                         // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
@@ -6363,7 +6363,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     // typescript sets design:type to the return value & design:paramtypes to [].
                     if let Some(prop_value) = prop.value {
-                        let func = prop_value.data.e_function().unwrap();
+                        let func = prop_value.data.e_function().expect("infallible: variant checked");
                         {
                             let v = self.serialize_metadata(func.func.return_ts_metadata.clone()).expect("unreachable");
                             push_metadata!(b"design:type", v);
@@ -6381,7 +6381,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // note that typescript does not allow you to put a decorator on both the getter and the setter.
                     // if you do anyway, bun will set design:type and design:paramtypes twice, so it's fine.
                     if let Some(prop_value) = prop.value {
-                        let func = prop_value.data.e_function().unwrap();
+                        let func = prop_value.data.e_function().expect("infallible: variant checked");
                         // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
                         let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
@@ -6461,7 +6461,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     logger::Loc::EMPTY,
                 );
 
-                let mut current_expr: *mut Expr = &mut dots.data.e_dot_mut().unwrap().target;
+                let mut current_expr: *mut Expr = &mut dots.data.e_dot_mut().expect("infallible: variant checked").target;
                 let mut i: usize = refs.len() - 2;
                 while i > 0 {
                     // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
@@ -6475,7 +6475,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             },
                             logger::Loc::EMPTY,
                         );
-                        current_expr = &mut (*current_expr).data.e_dot_mut().unwrap().target;
+                        current_expr = &mut (*current_expr).data.e_dot_mut().expect("infallible: variant checked").target;
                     }
                     i -= 1;
                 }
@@ -6504,9 +6504,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 );
 
                 if i < refs.len() - 2 {
-                    current_dot = current_dot.data.e_dot().unwrap().target;
+                    current_dot = current_dot.data.e_dot().expect("infallible: variant checked").target;
                 }
-                current_expr = &mut maybe_defined_dots.data.e_binary_mut().unwrap().left;
+                current_expr = &mut maybe_defined_dots.data.e_binary_mut().expect("infallible: variant checked").left;
 
                 while i < refs.len() - 2 {
                     let right_n = self.check_if_defined_helper(current_dot)?;
@@ -6520,11 +6520,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             },
                             logger::Loc::EMPTY,
                         );
-                        current_expr = &mut (*current_expr).data.e_binary_mut().unwrap().left;
+                        current_expr = &mut (*current_expr).data.e_binary_mut().expect("infallible: variant checked").left;
                     }
                     i += 1;
                     if i < refs.len() - 2 {
-                        current_dot = current_dot.data.e_dot().unwrap().target;
+                        current_dot = current_dot.data.e_dot().expect("infallible: variant checked").target;
                     }
                 }
 
@@ -6543,7 +6543,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 
     pub fn wrap_identifier_namespace(&mut self, loc: logger::Loc, r#ref: Ref) -> Expr {
-        let enclosing_ref = self.enclosing_namespace_arg_ref.unwrap();
+        let enclosing_ref = self.enclosing_namespace_arg_ref.expect("infallible: in namespace");
         self.record_usage(enclosing_ref);
 
         // TODO(port): E::Dot.name is `&'static [u8]` pending crate-wide 'bump
@@ -6834,7 +6834,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         };
 
         Some(js_ast::ExprData::ESpecial(E::Special::ResolvedSpecifierString(
-            u32::try_from(import_record_index).unwrap(),
+            u32::try_from(import_record_index).expect("int cast"),
         )))
     }
 
@@ -7357,7 +7357,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
                         // SAFETY: ExportClause.items is an arena-owned slice valid for 'a.
                         for item in unsafe { &*clause.items }.iter() {
-                            if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_.unwrap()) {
+                            if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_.expect("infallible: ref bound")) {
                                 import.is_exported = true;
                             }
                         }

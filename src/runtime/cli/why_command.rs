@@ -452,7 +452,7 @@ impl WhyCommand {
                     version: dep_pkg_version,
                     spec,
                     dep_type,
-                    pkg_id: PackageID::try_from(pkg_idx).unwrap(),
+                    pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
                     workspace,
                 });
             }
@@ -476,7 +476,7 @@ impl WhyCommand {
 
             target_versions.push(VersionInfo {
                 version,
-                pkg_id: PackageID::try_from(pkg_idx).unwrap(),
+                pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
             });
         }
 

@@ -201,15 +201,15 @@ impl SSLConfig {
 
         if let Some(key) = &self.key {
             ctx_opts.key = key.as_ptr_array();
-            ctx_opts.key_count = u32::try_from(key.len()).unwrap();
+            ctx_opts.key_count = u32::try_from(key.len()).expect("int cast");
         }
         if let Some(cert) = &self.cert {
             ctx_opts.cert = cert.as_ptr_array();
-            ctx_opts.cert_count = u32::try_from(cert.len()).unwrap();
+            ctx_opts.cert_count = u32::try_from(cert.len()).expect("int cast");
         }
         if let Some(ca) = &self.ca {
             ctx_opts.ca = ca.as_ptr_array();
-            ctx_opts.ca_count = u32::try_from(ca.len()).unwrap();
+            ctx_opts.ca_count = u32::try_from(ca.len()).expect("int cast");
         }
 
         if let Some(v) = &self.ssl_ciphers {

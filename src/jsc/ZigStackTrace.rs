@@ -59,7 +59,7 @@ impl ZigStackTrace {
             let source_line_len = source_lines_iter.get_length();
 
             if source_line_len > 0 {
-                let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).unwrap();
+                let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
                 // PORT NOTE: Zig packed all line texts into a single contiguous
                 // `source_line_buf` and stored sub-slices in each `SourceLine`.
@@ -113,7 +113,7 @@ impl ZigStackTrace {
         };
         for (j, &num) in nums.iter().enumerate() {
             if num >= 0 {
-                i = i32::try_from(j).unwrap().max(i);
+                i = i32::try_from(j).expect("int cast").max(i);
             }
         }
         SourceLineIterator { trace: self, i }
@@ -133,7 +133,7 @@ pub struct SourceLine {
 impl<'a> SourceLineIterator<'a> {
     pub fn get_length(&mut self) -> usize {
         let mut count: usize = 0;
-        let n = usize::try_from(self.i + 1).unwrap();
+        let n = usize::try_from(self.i + 1).expect("int cast");
         // SAFETY: source_lines_ptr points to a caller-owned buffer of at least
         // source_lines_len elements; self.i < source_lines_len by construction in
         // source_line_iterator().
@@ -157,7 +157,7 @@ impl<'a> SourceLineIterator<'a> {
             return None;
         }
 
-        let idx = usize::try_from(self.i).unwrap();
+        let idx = usize::try_from(self.i).expect("int cast");
         // SAFETY: idx < source_lines_len by construction in source_line_iterator();
         // both buffers have at least source_lines_len valid elements.
         let (source_line, line_number) = unsafe {

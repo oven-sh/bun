@@ -727,7 +727,7 @@ unsafe fn expand_nested(
     }
 
     for i_ in (start as usize)..many_len {
-        let i: u16 = u16::try_from(i_).unwrap();
+        let i: u16 = u16::try_from(i_).expect("int cast");
         let atom: &ast::Atom = &(*many)[i_];
         match atom {
             ast::Atom::Text(txt) => {
@@ -1138,7 +1138,7 @@ fn build_expansion_table(
     while (i as usize) < tokens.len() {
         match &mut tokens[i as usize] {
             Token::Open(open) => {
-                let table_idx: u16 = u16::try_from(table.len()).unwrap();
+                let table_idx: u16 = u16::try_from(table.len()).expect("int cast");
                 open.idx = table_idx;
                 brace_stack.push(BraceState {
                     tok_idx: i,
@@ -1155,7 +1155,7 @@ fn build_expansion_table(
                 top.variants += 1;
 
                 if let Token::Open(open) = &mut tokens[top.tok_idx as usize] {
-                    open.end = u16::try_from(table.len()).unwrap();
+                    open.end = u16::try_from(table.len()).expect("int cast");
                 }
                 prev_close = true;
             }
@@ -1255,7 +1255,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 // PORT NOTE: `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
-                        brace_stack.push(u32::try_from(self.tokens.len()).unwrap());
+                        brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }

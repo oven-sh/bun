@@ -173,7 +173,7 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             if w <= 0 {
                 break;
             }
-            written += usize::try_from(w).unwrap();
+            written += usize::try_from(w).expect("int cast");
         }
         buffer.cursor += written;
         let drained = buffer.is_empty();
@@ -203,7 +203,7 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         if w <= 0 {
             break;
         }
-        remaining = &remaining[usize::try_from(w).unwrap()..];
+        remaining = &remaining[usize::try_from(w).expect("int cast")..];
     }
     stream.pending_body = remaining as *const [u8];
     if remaining.is_empty() {

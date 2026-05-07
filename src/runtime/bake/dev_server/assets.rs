@@ -179,7 +179,7 @@ impl Assets {
             // Release the owned blob on the duplicate-content path.
             contents.detach();
         }
-        let entry = EntryIndex::init(u32::try_from(file_index).unwrap());
+        let entry = EntryIndex::init(u32::try_from(file_index).expect("int cast"));
         self.path_map.values_mut()[path_index] = entry;
         debug_assert_eq!(self.files.count(), self.refs.len());
         Ok(entry)
@@ -211,7 +211,7 @@ impl Assets {
         let index = self.files.get_index(&content_hash).unwrap_or_else(|| {
             Output::panic(format_args!("Asset double unref: {:x?}", content_hash.to_ne_bytes()))
         });
-        self.unref_by_index(EntryIndex::init(u32::try_from(index).unwrap()), dec_count);
+        self.unref_by_index(EntryIndex::init(u32::try_from(index).expect("int cast")), dec_count);
     }
 
     pub fn unref_by_index(&mut self, index: EntryIndex, dec_count: u32) {
@@ -228,7 +228,7 @@ impl Assets {
             // at the new slot, otherwise the next lookup for that path would read
             // past the end of `files`/`refs`, or alias an unrelated asset if a
             // new entry is appended afterwards.
-            let moved_from = u32::try_from(self.files.count()).unwrap();
+            let moved_from = u32::try_from(self.files.count()).expect("int cast");
             if moved_from != index.0 {
                 for entry_index in self.path_map.values_mut() {
                     if entry_index.0 == moved_from {

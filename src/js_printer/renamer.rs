@@ -148,7 +148,7 @@ pub struct InlineString {
 impl InlineString {
     pub fn init(str_: &[u8]) -> InlineString {
         let mut this = InlineString::default();
-        this.len = u8::try_from(str_.len().min(15)).unwrap();
+        this.len = u8::try_from(str_.len().min(15)).expect("int cast");
         for (b, c) in this.bytes[0..this.len as usize]
             .iter_mut()
             .zip(&str_[0..this.len as usize])
@@ -384,7 +384,7 @@ impl MinifyRenamer {
 
             for (i, (elem, slot)) in sorted.iter_mut().zip(slots.iter()).enumerate() {
                 *elem = SlotAndCount {
-                    slot: u32::try_from(i).unwrap(),
+                    slot: u32::try_from(i).expect("int cast"),
                     count: slot.count,
                 };
             }
@@ -743,7 +743,7 @@ impl NumberRenamer {
             for &inner_index in sorted.iter() {
                 self.assign_name(
                     s,
-                    Ref::init(u32::try_from(inner_index).unwrap(), source_index, false),
+                    Ref::init(u32::try_from(inner_index).expect("int cast"), source_index, false),
                 );
             }
         }

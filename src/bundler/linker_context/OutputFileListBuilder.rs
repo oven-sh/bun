@@ -72,7 +72,7 @@ impl OutputFileList {
             } else {
                 Some(chunks.len() as u32) // @truncate
             },
-            additional_output_files_start: u32::try_from(chunks.len()).unwrap()
+            additional_output_files_start: u32::try_from(chunks.len()).expect("int cast")
                 + supplementary_file_count,
             total_insertions: 0,
         })
@@ -161,7 +161,7 @@ impl OutputFileList {
                     + additional_output_files_count,
             )
             .unwrap(),
-            u32::try_from(source_map_count + bytecode_count + module_info_count).unwrap(),
+            u32::try_from(source_map_count + bytecode_count + module_info_count).expect("int cast"),
         )
     }
 
@@ -214,7 +214,7 @@ impl OutputFileList {
         for (i, of) in additional_output_files.drain(..).enumerate() {
             dest[i] = of;
         }
-        self.total_insertions += u32::try_from(len).unwrap();
+        self.total_insertions += u32::try_from(len).expect("int cast");
     }
 
     pub fn get_mutable_additional_output_files(&mut self) -> &mut [options::OutputFile] {

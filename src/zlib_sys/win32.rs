@@ -210,27 +210,27 @@ pub const Z_NULL: c_int = 0;
 #[inline]
 pub unsafe fn deflate_init(strm: z_streamp, level: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer; zlib reads version/stream_size for ABI check.
-    unsafe { deflateInit_(strm, level, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).unwrap()) }
+    unsafe { deflateInit_(strm, level, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 #[inline]
 pub unsafe fn inflate_init(strm: z_streamp) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { inflateInit_(strm, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).unwrap()) }
+    unsafe { inflateInit_(strm, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 #[inline]
 pub unsafe fn deflate_init2(strm: z_streamp, level: c_int, method: c_int, window_bits: c_int, mem_level: c_int, strategy: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { deflateInit2_(strm, level, method, window_bits, mem_level, strategy, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).unwrap()) }
+    unsafe { deflateInit2_(strm, level, method, window_bits, mem_level, strategy, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 #[inline]
 pub unsafe fn inflate_init2(strm: z_streamp, window_bits: c_int) -> ReturnCode {
     // SAFETY: caller guarantees `strm` is a valid z_stream pointer.
-    unsafe { inflateInit2_(strm, window_bits, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).unwrap()) }
+    unsafe { inflateInit2_(strm, window_bits, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 #[inline]
 pub unsafe fn inflate_back_init(strm: z_streamp, window_bits: c_int, window: *mut u8) -> ReturnCode {
     // SAFETY: caller guarantees `strm` and `window` are valid.
-    unsafe { inflateBackInit_(strm, window_bits, window, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).unwrap()) }
+    unsafe { inflateBackInit_(strm, window_bits, window, zlibVersion(), c_int::try_from(core::mem::size_of::<z_stream>()).expect("int cast")) }
 }
 
 pub type internal_state = struct_internal_state;

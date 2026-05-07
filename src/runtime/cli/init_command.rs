@@ -455,11 +455,11 @@ impl InitCommand {
                     }
                 };
 
-                package_json_contents = MutableString::init(usize::try_from(size).unwrap())?;
+                package_json_contents = MutableString::init(usize::try_from(size).expect("int cast"))?;
                 // Zig: list_mut().expand_to_capacity()
                 package_json_contents
                     .list
-                    .resize(usize::try_from(size).unwrap(), 0);
+                    .resize(usize::try_from(size).expect("int cast"), 0);
 
                 #[cfg(windows)]
                 let prev_file_pos = pkg.get_pos()?;
@@ -859,7 +859,7 @@ impl InitCommand {
                 package_json_file = None;
                 break 'write_package_json;
             }
-            if let Err(err) = bun_sys::ftruncate(fd, i64::try_from(written.len()).unwrap()) {
+            if let Err(err) = bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast")) {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -1188,7 +1188,7 @@ impl RadioChoice for ProjectTemplateChoice {
     fn from_index(i: usize) -> Self {
         debug_assert!(i < Self::COUNT);
         // SAFETY: caller guarantees i < COUNT; #[repr(u8)] with contiguous discriminants 0..COUNT
-        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).unwrap()) }
+        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).expect("int cast")) }
     }
     fn to_index(self) -> usize {
         self as usize
@@ -1216,7 +1216,7 @@ impl RadioChoice for ReactTemplateChoice {
     fn from_index(i: usize) -> Self {
         debug_assert!(i < Self::COUNT);
         // SAFETY: caller guarantees i < COUNT; #[repr(u8)] with contiguous discriminants 0..COUNT
-        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).unwrap()) }
+        unsafe { core::mem::transmute::<u8, Self>(u8::try_from(i).expect("int cast")) }
     }
     fn to_index(self) -> usize {
         self as usize

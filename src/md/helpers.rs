@@ -184,7 +184,7 @@ pub fn is_hex_digit(c: u8) -> bool {
 /// This includes ASCII whitespace + Unicode Zs category.
 pub fn is_unicode_whitespace(codepoint: u32) -> bool {
     if codepoint < 128 {
-        return is_whitespace(u8::try_from(codepoint).unwrap());
+        return is_whitespace(u8::try_from(codepoint).expect("int cast"));
     }
     matches!(
         codepoint,
@@ -200,7 +200,7 @@ pub fn is_unicode_whitespace(codepoint: u32) -> bool {
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
 pub fn is_unicode_punctuation(codepoint: u32) -> bool {
     if codepoint < 128 {
-        return is_ascii_punctuation(u8::try_from(codepoint).unwrap());
+        return is_ascii_punctuation(u8::try_from(codepoint).expect("int cast"));
     }
     // Unicode categories Pc, Pd, Pe, Pf, Pi, Po, Ps, Sc, Sk, Sm, So
     is_unicode_punctuation_extended(codepoint)
@@ -298,7 +298,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     buf[..n].copy_from_slice(&text[off..][..n]);
 
     let cp = strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
-    Utf8DecodeResult { codepoint: cp, len: u8::try_from(seq_len).unwrap() }
+    Utf8DecodeResult { codepoint: cp, len: u8::try_from(seq_len).expect("int cast") }
 }
 
 /// Decode the UTF-8 codepoint ending just before position `off` (i.e. the
@@ -323,7 +323,7 @@ pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
 
 /// Encode a Unicode codepoint as UTF-8.
 pub fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
-    u8::try_from(strings::encode_wtf8_rune_t::<u32>(buf, codepoint)).unwrap()
+    u8::try_from(strings::encode_wtf8_rune_t::<u32>(buf, codepoint)).expect("int cast")
 }
 
 /// Skip UTF-8 BOM if present at the start of the text.
@@ -513,11 +513,11 @@ pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
 /// Returns decoded bytes as a slice of `out`, or null for unknown entities.
 pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Option<&'a [u8]> {
     if let Some(cp) = parse_entity_codepoint(entity_text) {
-        let len = encode_utf8(cp, (&mut out[0..4]).try_into().unwrap());
+        let len = encode_utf8(cp, (&mut out[0..4]).try_into().expect("infallible: size matches"));
         return Some(&out[..len as usize]);
     }
     if let Some(codepoints) = entity_mod::lookup(entity_text) {
-        let len1 = encode_utf8(codepoints[0], (&mut out[0..4]).try_into().unwrap()) as usize;
+        let len1 = encode_utf8(codepoints[0], (&mut out[0..4]).try_into().expect("infallible: size matches")) as usize;
         if codepoints[1] != 0 {
             let mut tmp: [u8; 4] = [0; 4];
             let len2 = encode_utf8(codepoints[1], &mut tmp) as usize;
@@ -582,7 +582,7 @@ pub fn generate_slug<'a>(
         let mut i: usize = dec_buf.len();
         while v > 0 {
             i -= 1;
-            dec_buf[i] = u8::try_from(u32::from(b'0') + v % 10).unwrap();
+            dec_buf[i] = u8::try_from(u32::from(b'0') + v % 10).expect("int cast");
             v /= 10;
         }
         text_buf.extend_from_slice(&dec_buf[i..]);

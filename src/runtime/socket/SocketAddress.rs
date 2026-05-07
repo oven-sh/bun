@@ -95,7 +95,7 @@ impl Options {
             if port32 < 0 || port32 > i32::from(u16::MAX) {
                 return Err(Self::throw_bad_port(global, p));
             }
-            u16::try_from(port32).unwrap()
+            u16::try_from(port32).expect("int cast")
         } else {
             0
         };
@@ -194,7 +194,7 @@ impl SocketAddress {
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
-            if port32 > u32::from(u16::MAX) { 0 } else { u16::try_from(port32).unwrap() }
+            if port32 > u32::from(u16::MAX) { 0 } else { u16::try_from(port32).expect("int cast") }
         };
         debug_assert!(host.tag() != bun_str::Tag::Dead);
         debug_assert!(host.length() >= 2);

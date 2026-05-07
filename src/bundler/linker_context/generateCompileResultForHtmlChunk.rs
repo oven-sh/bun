@@ -376,7 +376,7 @@ impl<'a> HTMLLoader<'a> {
                 return lol::Directive::Stop;
             }
         } else {
-            this.end_tag_indices.head = Some(u32::try_from(this.output.len()).unwrap());
+            this.end_tag_indices.head = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
         lol::Directive::Continue
     }
@@ -399,7 +399,7 @@ impl<'a> HTMLLoader<'a> {
                 }
             }
         } else {
-            this.end_tag_indices.body = Some(u32::try_from(this.output.len()).unwrap());
+            this.end_tag_indices.body = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
         lol::Directive::Continue
     }
@@ -425,7 +425,7 @@ impl<'a> HTMLLoader<'a> {
                 }
             }
         } else {
-            this.end_tag_indices.html = Some(u32::try_from(this.output.len()).unwrap());
+            this.end_tag_indices.html = Some(u32::try_from(this.output.len()).expect("int cast"));
         }
         lol::Directive::Continue
     }
@@ -497,7 +497,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
                 break 'brk head;
             }
             if let Some(head) = strings::index_of(&html_loader.output, b"</head>") {
-                break 'brk u32::try_from(head).unwrap();
+                break 'brk u32::try_from(head).expect("int cast");
             }
             if let Some(body) = html_loader.end_tag_indices.body {
                 break 'brk body;
@@ -505,7 +505,7 @@ unsafe fn generate_compile_result_for_html_chunk_impl<'a>(
             if let Some(html) = html_loader.end_tag_indices.html {
                 break 'brk html;
             }
-            u32::try_from(html_loader.output.len()).unwrap() // inject at end of file.
+            u32::try_from(html_loader.output.len()).expect("int cast") // inject at end of file.
         }
     } else {
         'brk: {

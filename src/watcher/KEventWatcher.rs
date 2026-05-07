@@ -93,7 +93,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // Give the events more time to coalesce
     if count < 128 / 2 {
         let remain: c_int = 128 - count;
-        let off = usize::try_from(count).unwrap();
+        let off = usize::try_from(count).expect("int cast");
         let ts = libc::timespec { tv_sec: 0, tv_nsec: 100_000 }; // 0.0001 seconds
         // SAFETY: off < CHANGELIST_COUNT (count < 64), remain entries fit in the buffer
         let extra: c_int = unsafe {
@@ -110,7 +110,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         count += extra;
     }
 
-    let changes_len = usize::try_from(count.max(0)).unwrap();
+    let changes_len = usize::try_from(count.max(0)).expect("int cast");
     let changes = &changelist[0..changes_len];
     // PORT NOTE: reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
     // and slices once at the end to avoid overlapping &mut borrows of `this`.

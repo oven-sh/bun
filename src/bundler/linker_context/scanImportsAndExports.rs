@@ -1689,7 +1689,7 @@ mod __css_validation {
                         // SAFETY: bitset indices are valid PropertyIdTag discriminants by construction.
                         unsafe {
                             core::mem::transmute::<u16, PropertyIdTag>(
-                                u16::try_from(property_tag).unwrap(),
+                                u16::try_from(property_tag).expect("int cast"),
                             )
                         };
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);

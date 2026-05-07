@@ -289,10 +289,10 @@ pub fn write_sourcemap_to_disk(
     };
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
-    write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
+    write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
     source_maps.put(
         &key,
-        OutputFileIndex(u32::try_from(source_map_index).unwrap()),
+        OutputFileIndex(u32::try_from(source_map_index).expect("int cast")),
     )?;
     Ok(())
 }
@@ -729,7 +729,7 @@ pub fn build_with_vm(
             if let Some(entry_point) = file.entry_point_index {
                 if (entry_point as usize) < output_indexes.len() {
                     output_indexes[entry_point as usize] =
-                        OutputFileIndex(u32::try_from(i).unwrap());
+                        OutputFileIndex(u32::try_from(i).expect("int cast"));
                 }
             }
 
@@ -743,7 +743,7 @@ pub fn build_with_vm(
                         "Runtime file should only be in one chunk."
                     );
                 }
-                maybe_runtime_file_index = Some(u32::try_from(i).unwrap());
+                maybe_runtime_file_index = Some(u32::try_from(i).expect("int cast"));
             }
 
             // TODO: Maybe not do all the disk-writing in 1 thread?
@@ -807,10 +807,10 @@ pub fn build_with_vm(
                             );
 
                             let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix)).unwrap();
+                            write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
-                                OutputFileIndex(u32::try_from(i).unwrap()),
+                                OutputFileIndex(u32::try_from(i).expect("int cast")),
                             )?;
                         }
                         OutputKind::Asset => {}
@@ -875,9 +875,9 @@ pub fn build_with_vm(
                 BStr::new(&pt.output_file(client_file).dest_path),
             ))
             .to_js(global).map_err(js_err)?;
-            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), str).map_err(js_err)?;
+            client_entry_urls.put_index(global, u32::try_from(i).expect("int cast"), str).map_err(js_err)?;
         } else {
-            client_entry_urls.put_index(global, u32::try_from(i).unwrap(), JSValue::NULL).map_err(js_err)?;
+            client_entry_urls.put_index(global, u32::try_from(i).expect("int cast"), JSValue::NULL).map_err(js_err)?;
         }
 
         let server_file = router_type.server_file;
@@ -933,8 +933,8 @@ pub fn build_with_vm(
         } else {
             JSValue::NULL
         };
-        server_render_funcs.put_index(global, u32::try_from(i).unwrap(), server_render_func).map_err(js_err)?;
-        server_param_funcs.put_index(global, u32::try_from(i).unwrap(), server_param_func).map_err(js_err)?;
+        server_render_funcs.put_index(global, u32::try_from(i).expect("int cast"), server_render_func).map_err(js_err)?;
+        server_param_funcs.put_index(global, u32::try_from(i).expect("int cast"), server_param_func).map_err(js_err)?;
     }
 
     let mut navigatable_routes: Vec<framework_router::RouteIndex> = Vec::new();
@@ -942,7 +942,7 @@ pub fn build_with_vm(
         if route.file_page.is_none() {
             continue;
         }
-        navigatable_routes.push(framework_router::RouteIndex::init(u32::try_from(i).unwrap()));
+        navigatable_routes.push(framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")));
     }
 
     let mut css_chunk_js_strings: Vec<JSValue> = vec![JSValue::ZERO; css_chunks_count];
@@ -1025,10 +1025,10 @@ pub fn build_with_vm(
                 .referenced_css_chunks
                 .len(),
         )
-        .unwrap();
+        .expect("int cast");
         if let Some(file) = route.file_layout {
             css_file_count +=
-                u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
+                u32::try_from(pt.output_file(file).referenced_css_chunks.len()).expect("int cast");
             file_count += 1;
         }
         let mut next: Option<framework_router::RouteIndex> = route.parent;
@@ -1051,7 +1051,7 @@ pub fn build_with_vm(
             }
             if let Some(file) = parent.file_layout {
                 css_file_count +=
-                    u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
+                    u32::try_from(pt.output_file(file).referenced_css_chunks.len()).expect("int cast");
                 file_count += 1;
             }
             next = parent.parent;
@@ -1108,7 +1108,7 @@ pub fn build_with_vm(
         // defer pattern_string.deref() — Drop handles deref
         route_patterns.put_index(
             global,
-            u32::try_from(nav_index).unwrap(),
+            u32::try_from(nav_index).expect("int cast"),
             pattern_string.to_js(global).map_err(js_err)?,
         ).map_err(js_err)?;
 
@@ -1118,14 +1118,14 @@ pub fn build_with_vm(
         ));
         route_source_files.put_index(
             global,
-            u32::try_from(nav_index).unwrap(),
+            u32::try_from(nav_index).expect("int cast"),
             jsc::bun_string_jsc::transfer_to_js(&mut src_path, global).map_err(js_err)?,
         ).map_err(js_err)?;
 
-        route_nested_files.put_index(global, u32::try_from(nav_index).unwrap(), file_list).map_err(js_err)?;
+        route_nested_files.put_index(global, u32::try_from(nav_index).expect("int cast"), file_list).map_err(js_err)?;
         route_type_and_flags.put_index(
             global,
-            u32::try_from(nav_index).unwrap(),
+            u32::try_from(nav_index).expect("int cast"),
             JSValue::js_number_from_int32(
                 TypeAndFlags::new(
                     route.r#type.get(),
@@ -1140,19 +1140,19 @@ pub fn build_with_vm(
             for (i, param) in params_buf.iter().enumerate() {
                 param_info_array.put_index(
                     global,
-                    u32::try_from(params_buf.len() - i - 1).unwrap(),
+                    u32::try_from(params_buf.len() - i - 1).expect("int cast"),
                     jsc::bun_string_jsc::create_utf8_for_js(global, param).map_err(js_err)?,
                 ).map_err(js_err)?;
             }
             route_param_info.put_index(
                 global,
-                u32::try_from(nav_index).unwrap(),
+                u32::try_from(nav_index).expect("int cast"),
                 param_info_array,
             ).map_err(js_err)?;
         } else {
-            route_param_info.put_index(global, u32::try_from(nav_index).unwrap(), JSValue::NULL).map_err(js_err)?;
+            route_param_info.put_index(global, u32::try_from(nav_index).expect("int cast"), JSValue::NULL).map_err(js_err)?;
         }
-        route_style_references.put_index(global, u32::try_from(nav_index).unwrap(), styles).map_err(js_err)?;
+        route_style_references.put_index(global, u32::try_from(nav_index).expect("int cast"), styles).map_err(js_err)?;
     }
 
     // SAFETY: FFI; all JSValue args are stack-held; global is live.
@@ -1587,13 +1587,13 @@ impl PerThread {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(
                 global,
-                u32::try_from(id.get()).unwrap(),
+                u32::try_from(id.get()).expect("int cast"),
                 self.module_keys[id.get() as usize].to_js(global)?,
             )?;
         }
 
         Ok(JSValue::js_number_from_int32(
-            i32::try_from(id.get()).unwrap(),
+            i32::try_from(id.get()).expect("int cast"),
         ))
     }
 }

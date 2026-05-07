@@ -58,7 +58,7 @@ where
     for _dep_id in resolutions_list[workspace_package_id as usize].begin()
         ..resolutions_list[workspace_package_id as usize].end()
     {
-        let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+        let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
         match should_print_package_install(
             this,
@@ -100,7 +100,7 @@ where
     for _dep_id in resolutions_list[workspace_package_id as usize].begin()
         ..resolutions_list[workspace_package_id as usize].end()
     {
-        let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+        let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
         match should_print_package_install(
             this,
@@ -385,7 +385,7 @@ where
             for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
                 let dep = &dependencies_buffer[dep_id as usize];
                 if dep.behavior.is_workspace() {
-                    workspaces_to_print.push(DependencyID::try_from(dep_id).unwrap());
+                    workspaces_to_print.push(DependencyID::try_from(dep_id).expect("int cast"));
                 }
             }
 
@@ -398,7 +398,7 @@ where
                     match should_print_package_install(
                         this,
                         manager,
-                        DependencyID::try_from(dep_id).unwrap(),
+                        DependencyID::try_from(dep_id).expect("int cast"),
                         installed,
                         Some(&mut id_map),
                         pkg_metas,

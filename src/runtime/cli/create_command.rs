@@ -91,9 +91,9 @@ struct UnsupportedPackages {
 
 impl UnsupportedPackages {
     pub fn update(&mut self, expr: js_ast::Expr) {
-        for prop in expr.data.e_object().unwrap().properties.slice() {
+        for prop in expr.data.e_object().expect("infallible: variant checked").properties.slice() {
             // inline for over field names — only one field: "styled-jsx"
-            if prop.key.unwrap().data.e_string().unwrap().data == b"styled-jsx" {
+            if prop.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data == b"styled-jsx" {
                 self.styled_jsx = true;
             }
         }
@@ -680,7 +680,7 @@ impl CreateCommand {
                             }
                         };
 
-                        package_json_contents = MutableString::init(usize::try_from(size).unwrap())?;
+                        package_json_contents = MutableString::init(usize::try_from(size).expect("int cast"))?;
                         // Zig: list.expandToCapacity() — set len to capacity so the buffer is readable.
                         let cap = package_json_contents.list.capacity();
                         package_json_contents.list.resize(cap, 0);
@@ -770,7 +770,7 @@ impl CreateCommand {
                 }
 
                 let mut properties_list: Vec<logger::js_ast::G::Property> =
-                    package_json_expr.data.e_object_mut().unwrap().properties.move_to_list_managed();
+                    package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties.move_to_list_managed();
                 // PORT NOTE: Zig used fromOwnedSlice; here we move into Vec for mutation.
 
                 if log.errors > 0 {
@@ -845,12 +845,12 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
+                    if property.data.is_e_object() && property.data.e_object().expect("infallible: variant checked").properties.len > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().unwrap().properties.len > 0 {
+                        if property.data.e_object().expect("infallible: variant checked").properties.len > 0 {
                             has_dependencies = true;
                             dev_dependencies = Some(q.expr.into());
 
@@ -865,12 +865,12 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"dependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
+                    if property.data.is_e_object() && property.data.e_object().expect("infallible: variant checked").properties.len > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().unwrap().properties.len > 0 {
+                        if property.data.e_object().expect("infallible: variant checked").properties.len > 0 {
                             has_dependencies = true;
                             dependencies = Some(q.expr.into());
 
@@ -1166,25 +1166,25 @@ impl CreateCommand {
                 //     }
                 // }
 
-                package_json_expr.data.e_object_mut().unwrap().is_single_line = false;
+                package_json_expr.data.e_object_mut().expect("infallible: variant checked").is_single_line = false;
 
-                package_json_expr.data.e_object_mut().unwrap().properties =
+                package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties =
                     bun_logger::js_ast::G::PropertyList::move_from_list(properties_list);
                 {
                     use bun_logger::js_ast::expr::Data as LExprData;
                     let mut i: usize = 0;
                     let mut property_i: usize = 0;
-                    let props = &mut package_json_expr.data.e_object_mut().unwrap().properties;
+                    let props = &mut package_json_expr.data.e_object_mut().expect("infallible: variant checked").properties;
                     while i < props.len as usize {
                         let key_expr = props.slice()[i].key.unwrap();
-                        let key = key_expr.as_utf8_string_literal().unwrap();
+                        let key = key_expr.as_utf8_string_literal().expect("infallible: is_string checked");
 
                         if key == b"scripts" {
                             let mut value_data = props.slice()[i].value.unwrap().data;
                             if value_data.is_e_object() {
                                 // SAFETY: StoreRef<E::Object> derefs to arena-backed storage; mutating
                                 // through the local `value_data` copy mutates the same arena E::Object.
-                                let scripts_obj = value_data.e_object_mut().unwrap();
+                                let scripts_obj = value_data.e_object_mut().expect("infallible: variant checked");
                                 let mut script_property_out_i: usize = 0;
                                 {
                                     let scripts_properties = scripts_obj.properties.slice_mut();
@@ -2188,11 +2188,11 @@ impl Example {
                 header_entries.append(bun_http::headers::Entry {
                     name: bun_http_types::ETag::StringPointer {
                         offset: 0,
-                        length: u32::try_from(b"Authorization".len()).unwrap(),
+                        length: u32::try_from(b"Authorization".len()).expect("int cast"),
                     },
                     value: bun_http_types::ETag::StringPointer {
-                        offset: u32::try_from(b"Authorization".len()).unwrap(),
-                        length: u32::try_from(headers_buf.len() - b"Authorization".len()).unwrap(),
+                        offset: u32::try_from(b"Authorization".len()).expect("int cast"),
+                        length: u32::try_from(headers_buf.len() - b"Authorization".len()).expect("int cast"),
                     },
                 })?;
             }
@@ -2552,11 +2552,11 @@ impl Example {
 
         if let Some(q) = examples_object.as_property(b"examples") {
             if q.expr.data.is_e_object() {
-                let count = q.expr.data.e_object().unwrap().properties.len as usize;
+                let count = q.expr.data.e_object().expect("infallible: variant checked").properties.len as usize;
 
                 let mut list: Box<[Example]> = (0..count).map(|_| Example::default()).collect();
-                for (i, property) in q.expr.data.e_object().unwrap().properties.slice().iter().enumerate() {
-                    let name = property.key.unwrap().data.e_string().unwrap().data;
+                for (i, property) in q.expr.data.e_object().expect("infallible: variant checked").properties.slice().iter().enumerate() {
+                    let name = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").data;
                     list[i] = Example {
                         name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {
                             &name[slash as usize + 1..]

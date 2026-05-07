@@ -697,7 +697,7 @@ impl<'a> TablePrinter<'a> {
     ) -> JsResult<()> {
         // update size of "(index)" column
         let row_key_len: u32 = match &row_key {
-            RowKey::Str(value) => u32::try_from(value.visible_width_exclude_ansi_colors(false)).unwrap(),
+            RowKey::Str(value) => u32::try_from(value.visible_width_exclude_ansi_colors(false)).expect("int cast"),
             RowKey::Num(value) => bun_core::fmt::fast_digit_count(u64::from(*value)) as u32,
         };
         columns[0].width = columns[0].width.max(row_key_len);
@@ -975,7 +975,7 @@ impl<'a> TablePrinter<'a> {
                 // also update the col width with the length of the column name itself
                 col.width = col
                     .width
-                    .max(u32::try_from(col.name.visible_width_exclude_ansi_colors(false)).unwrap());
+                    .max(u32::try_from(col.name.visible_width_exclude_ansi_colors(false)).expect("int cast"));
             }
 
             writer.write_all("┌".as_bytes()).ok();
@@ -3429,7 +3429,7 @@ pub mod formatter {
                             i = -i;
                         }
                         let digits = if i != 0 {
-                            bun_core::fmt::fast_digit_count(u64::try_from(i).unwrap())
+                            bun_core::fmt::fast_digit_count(u64::try_from(i).expect("int cast"))
                                 + (is_negative as u64)
                         } else {
                             1
@@ -4936,7 +4936,7 @@ pub mod formatter {
 
                                             let mut j: usize = 0;
                                             while (j as u64) < length {
-                                                let child = children.get_index(self.global_this, u32::try_from(j).unwrap())?;
+                                                let child = children.get_index(self.global_this, u32::try_from(j).expect("int cast"))?;
                                                 if writer.failed { self.failed = true; }
                                                 drop(writer);
                                                 self.format::<C>(

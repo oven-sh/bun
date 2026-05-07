@@ -162,11 +162,11 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
             return;
         }
 
-        let start_bit = u32::try_from(range.start).unwrap();
+        let start_bit = u32::try_from(range.start).expect("int cast");
 
         let mut mask = bool_mask_usize(true) << start_bit;
         if range.end != Self::BIT_LENGTH {
-            let end_bit = u32::try_from(range.end).unwrap();
+            let end_bit = u32::try_from(range.end).expect("int cast");
             // Zig shifts a SIZE-bit MaskInt so `~0 >> (SIZE - end_bit)` yields the
             // low `end_bit` bits. With a usize backing the shift must be relative
             // to usize::BITS to get the same low-`end_bit`-bits mask.
@@ -178,7 +178,7 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
 
         let mut mask = bool_mask_usize(value) << start_bit;
         if range.end != Self::BIT_LENGTH {
-            let end_bit = u32::try_from(range.end).unwrap();
+            let end_bit = u32::try_from(range.end).expect("int cast");
             mask &= bool_mask_usize(value) >> (usize::BITS - end_bit);
         }
         mask &= Self::FULL_MASK;
@@ -903,7 +903,7 @@ impl DynamicBitSetUnmanaged {
             // set the padding bits in the old last item to 1
             if fill && old_masks > 0 {
                 let old_padding_bits =
-                    u32::try_from(old_masks * DYN_MASK_BITS as usize - old_len).unwrap();
+                    u32::try_from(old_masks * DYN_MASK_BITS as usize - old_len).expect("int cast");
                 let old_mask = usize::MAX >> old_padding_bits;
                 // SAFETY: index in [0, new_masks).
                 unsafe { *self.masks.add(old_masks - 1) |= !old_mask };
@@ -923,7 +923,7 @@ impl DynamicBitSetUnmanaged {
         // Zero out the padding bits
         if new_len > 0 {
             let padding_bits =
-                u32::try_from(new_masks * DYN_MASK_BITS as usize - new_len).unwrap();
+                u32::try_from(new_masks * DYN_MASK_BITS as usize - new_len).expect("int cast");
             let last_item_mask = usize::MAX >> padding_bits;
             // SAFETY: new_masks > 0 here.
             unsafe { *self.masks.add(new_masks - 1) &= last_item_mask };
@@ -1105,7 +1105,7 @@ impl DynamicBitSetUnmanaged {
         }
 
         let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1122,7 +1122,7 @@ impl DynamicBitSetUnmanaged {
         }
 
         let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1142,7 +1142,7 @@ impl DynamicBitSetUnmanaged {
         }
 
         let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1162,7 +1162,7 @@ impl DynamicBitSetUnmanaged {
         }
 
         let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).unwrap();
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
         // SAFETY: num_masks > 0.
         unsafe { *self.masks.add(num_masks - 1) &= last_item_mask };
@@ -1327,7 +1327,7 @@ impl DynamicBitSetUnmanaged {
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         let num_masks = Self::num_masks(self.bit_length);
         let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - self.bit_length).unwrap();
+            u32::try_from(num_masks * DYN_MASK_BITS as usize - self.bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
         BitSetIterator::init(self.masks_slice(), last_item_mask)
     }

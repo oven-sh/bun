@@ -302,7 +302,7 @@ impl UDPSocketConfig {
                         "Expected \"port\" to be an integer between 0 and 65535"
                     )));
                 }
-                break 'brk u16::try_from(number).unwrap();
+                break 'brk u16::try_from(number).expect("int cast");
             } else {
                 break 'brk 0;
             }
@@ -401,7 +401,7 @@ impl UDPSocketConfig {
                 port: if connect_port < 1 || connect_port > 0xffff {
                     0
                 } else {
-                    u16::try_from(connect_port).unwrap()
+                    u16::try_from(connect_port).expect("int cast")
                 },
                 address: connect_host,
             });
@@ -1256,7 +1256,7 @@ impl UDPSocket {
         let port: u16 = if number < 1 || number > 0xffff {
             0
         } else {
-            u16::try_from(number).unwrap()
+            u16::try_from(number).expect("int cast")
         };
 
         let str = address_val.to_bun_string(global_this)?;
@@ -1438,10 +1438,10 @@ impl UDPSocket {
         // SAFETY: !closed implies socket is Some and valid.
         unsafe { (*this.socket.unwrap()).bound_ip(buf.as_mut_ptr(), &mut length) };
 
-        let address_bytes = &buf[..usize::try_from(length).unwrap()];
+        let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         // SAFETY: !closed implies socket is Some and valid.
         let port = unsafe { (*this.socket.unwrap()).bound_port() };
-        Self::create_sock_addr(global_this, address_bytes, u16::try_from(port).unwrap())
+        Self::create_sock_addr(global_this, address_bytes, u16::try_from(port).expect("int cast"))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1457,7 +1457,7 @@ impl UDPSocket {
         // SAFETY: !closed implies socket is Some and valid.
         unsafe { (*this.socket.unwrap()).remote_ip(buf.as_mut_ptr(), &mut length) };
 
-        let address_bytes = &buf[..usize::try_from(length).unwrap()];
+        let address_bytes = &buf[..usize::try_from(length).expect("int cast")];
         Self::create_sock_addr(global_this, address_bytes, connect_info.port)
     }
 
@@ -1527,7 +1527,7 @@ impl UDPSocket {
         let port: u16 = if connect_port < 1 || connect_port > 0xffff {
             0
         } else {
-            u16::try_from(connect_port).unwrap()
+            u16::try_from(connect_port).expect("int cast")
         };
 
         let Some(socket) = this.socket else {

@@ -509,7 +509,7 @@ impl WebSocketProxyTunnel {
         }
 
         // Buffer remaining data
-        let written_usize = usize::try_from(written).unwrap();
+        let written_usize = usize::try_from(written).expect("int cast");
         if written_usize < encrypted_data.len() {
             bun_core::handle_oom(write_buffer.write(&encrypted_data[written_usize..]));
         }
@@ -549,7 +549,7 @@ impl WebSocketProxyTunnel {
                     return;
                 }
 
-                let written_usize = usize::try_from(written).unwrap();
+                let written_usize = usize::try_from(written).expect("int cast");
                 if written_usize == to_send_len {
                     (*this).write_buffer.reset();
                 } else {

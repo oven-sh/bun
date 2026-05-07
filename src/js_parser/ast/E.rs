@@ -1102,7 +1102,7 @@ impl Object {
         #[cfg(debug_assertions)]
         {
             for prop in self.properties.slice() {
-                debug_assert!(matches!(prop.key.as_ref().unwrap().data, crate::ast::expr::Data::EString(_)));
+                debug_assert!(matches!(prop.key.as_ref().expect("infallible: prop has key").data, crate::ast::expr::Data::EString(_)));
             }
         }
         self.properties.slice_mut().sort_by(object_sorter_is_less_than);
@@ -1168,8 +1168,8 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
         Ordering::Equal => {
             // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
             // a full `Ordering` so this is usable with `sort_by`.
-            let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
-            let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+            let a = lhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
+            let b = rhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
             a.cmp(&b)
         }
         ord => ord,
@@ -1177,8 +1177,8 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 }
 
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
-    let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
-    let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
+    let a = lhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
+    let b = rhs.key.as_ref().unwrap().data.e_string().expect("infallible: variant checked").data;
     a.cmp(&b)
 }
 
@@ -1612,7 +1612,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
     lhs.data
         .e_string()
         .unwrap()
-        .order(rhs.data.e_string().unwrap().get())
+        .order(rhs.data.e_string().expect("infallible: variant checked").get())
 }
 
 impl EString {
@@ -1649,7 +1649,7 @@ impl EString {
         let mut buf = [0u8; 4096];
         let mut i: usize = 0;
         for &char in self.slice16() {
-            buf[i] = u8::try_from(char).unwrap();
+            buf[i] = u8::try_from(char).expect("int cast");
             i += 1;
             if i >= 4096 {
                 break;
@@ -1836,13 +1836,13 @@ impl Template {
 
             if matches!(part.value.data, crate::ast::expr::Data::EString(_))
                 && part.tail.cooked().is_utf8()
-                && part.value.data.e_string().unwrap().is_utf8()
+                && part.value.data.e_string().expect("infallible: variant checked").is_utf8()
             {
                 if parts.is_empty() {
-                    if part.value.data.e_string().unwrap().len() > 0 {
-                        head.data.e_string_mut().unwrap().push(
+                    if part.value.data.e_string().expect("infallible: variant checked").len() > 0 {
+                        head.data.e_string_mut().expect("infallible: variant checked").push(
                             Expr::init(
-                                part.value.data.e_string().unwrap().shallow_clone(),
+                                part.value.data.e_string().expect("infallible: variant checked").shallow_clone(),
                                 logger::Loc::EMPTY,
                             )
                             .data
@@ -1852,7 +1852,7 @@ impl Template {
                     }
 
                     if part.tail.cooked().len() > 0 {
-                        head.data.e_string_mut().unwrap().push(
+                        head.data.e_string_mut().expect("infallible: variant checked").push(
                             Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
                                 .data
                                 .e_string_mut()
@@ -1866,10 +1866,10 @@ impl Template {
                     debug_assert!(matches!(prev_part.tail, TemplateContents::Cooked(_)));
 
                     if prev_part.tail.cooked().is_utf8() {
-                        if part.value.data.e_string().unwrap().len() > 0 {
+                        if part.value.data.e_string().expect("infallible: variant checked").len() > 0 {
                             prev_part.tail.cooked_mut().push(
                                 Expr::init(
-                                    part.value.data.e_string().unwrap().shallow_clone(),
+                                    part.value.data.e_string().expect("infallible: variant checked").shallow_clone(),
                                     logger::Loc::EMPTY,
                                 )
                                 .data
@@ -1899,7 +1899,7 @@ impl Template {
 
         if parts.is_empty() {
             // parts.deinit() — drop is implicit
-            head.data.e_string_mut().unwrap().resolve_rope_if_needed(bump);
+            head.data.e_string_mut().expect("infallible: variant checked").resolve_rope_if_needed(bump);
             return head;
         }
 
@@ -1910,7 +1910,7 @@ impl Template {
             Template {
                 tag: None,
                 parts: parts_slice,
-                head: TemplateContents::Cooked(head.data.e_string().unwrap().shallow_clone()),
+                head: TemplateContents::Cooked(head.data.e_string().expect("infallible: variant checked").shallow_clone()),
             },
             loc,
         )

@@ -164,7 +164,7 @@ impl TarballStream {
         // env_var.get() returns Option<u64> in the Rust port even when a default
         // is configured (Zig collapses it at comptime); the var has a 2 MiB
         // default so unwrap is infallible here.
-        usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).unwrap()
+        usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
     pub fn init(
@@ -794,18 +794,18 @@ impl TarballStream {
                 #[cfg(windows)]
                 let mode: Mode = 0;
                 #[cfg(not(windows))]
-                let mode: Mode = Mode::try_from(entry.perm() | 0o666).unwrap();
+                let mode: Mode = Mode::try_from(entry.perm() | 0o666).expect("int cast");
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 
                 #[cfg(target_os = "linux")]
                 {
-                    let size: usize = usize::try_from(entry.size().max(0)).unwrap();
+                    let size: usize = usize::try_from(entry.size().max(0)).expect("int cast");
                     if size > 1_000_000 {
                         let _ = bun_sys::preallocate_file(
                             fd.native(),
                             0,
-                            i64::try_from(size).unwrap(),
+                            i64::try_from(size).expect("int cast"),
                         );
                     }
                 }
@@ -838,7 +838,7 @@ impl TarballStream {
 
         self.entry_final_offset = self
             .entry_final_offset
-            .max(block.offset + i64::try_from(data.len()).unwrap());
+            .max(block.offset + i64::try_from(data.len()).expect("int cast"));
 
         #[cfg(unix)]
         {
@@ -847,7 +847,7 @@ impl TarballStream {
                     Ok(_) => {
                         self.entry_actual_offset = self
                             .entry_actual_offset
-                            .max(block.offset + i64::try_from(data.len()).unwrap());
+                            .max(block.offset + i64::try_from(data.len()).expect("int cast"));
                         return Ok(());
                     }
                     Err(_) => self.use_pwrite = false,
@@ -860,7 +860,7 @@ impl TarballStream {
                 break 'seek;
             }
             if self.use_lseek {
-                match bun_sys::set_file_offset(fd, u64::try_from(block.offset).unwrap()) {
+                match bun_sys::set_file_offset(fd, u64::try_from(block.offset).expect("int cast")) {
                     Ok(_) => {
                         self.entry_actual_offset = block.offset;
                         break 'seek;
@@ -870,7 +870,7 @@ impl TarballStream {
             }
             if block.offset > self.entry_actual_offset {
                 let zero_count: usize =
-                    usize::try_from(block.offset - self.entry_actual_offset).unwrap();
+                    usize::try_from(block.offset - self.entry_actual_offset).expect("int cast");
                 match lib::Archive::write_zeros_to_file(&file, zero_count) {
                     lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
@@ -884,7 +884,7 @@ impl TarballStream {
 
         match file.write_all(data) {
             Ok(_) => {
-                self.entry_actual_offset += i64::try_from(data.len()).unwrap();
+                self.entry_actual_offset += i64::try_from(data.len()).expect("int cast");
                 Ok(())
             }
             Err(e) => Err(e.to_zig_err()),
@@ -1168,7 +1168,7 @@ unsafe extern "C" fn archive_read_callback(
         if !remaining.is_empty() {
             *out_buffer = remaining.as_ptr().cast();
             (*this).read_pos = (*this).reading.len();
-            return lib::la_ssize_t::try_from(remaining.len()).unwrap();
+            return lib::la_ssize_t::try_from(remaining.len()).expect("int cast");
         }
     }
 
@@ -1201,7 +1201,7 @@ unsafe extern "C" fn archive_read_callback(
             if !again.is_empty() {
                 *out_buffer = again.as_ptr().cast();
                 (*this).read_pos = (*this).reading.len();
-                return lib::la_ssize_t::try_from(again.len()).unwrap();
+                return lib::la_ssize_t::try_from(again.len()).expect("int cast");
             }
         }
     }
@@ -1268,7 +1268,7 @@ fn make_directory(
     path: OSPathZ,
     path_slice: &[OSPathChar],
 ) {
-    let mut mode = i32::try_from(entry.perm()).unwrap();
+    let mut mode = i32::try_from(entry.perm()).expect("int cast");
     // if dirs are readable, then they should be listable
     // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
     if (mode & 0o400) != 0 {
@@ -1287,7 +1287,7 @@ fn make_directory(
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).unwrap()) {
+        match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).expect("int cast")) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}

@@ -429,14 +429,14 @@ impl<'a> Printer<'a> {
             return Err(self.add_fmt_error());
         }
         let new_lines = comment.iter().filter(|&&b| b == b'\n').count();
-        self.line += u32::try_from(new_lines).unwrap();
+        self.line += u32::try_from(new_lines).expect("int cast");
         self.col = 0;
         let last_line_start = comment.len()
             - comment
                 .iter()
                 .rposition(|&b| b == b'\n')
                 .unwrap_or(comment.len());
-        self.col += u32::try_from(last_line_start).unwrap();
+        self.col += u32::try_from(last_line_start).expect("int cast");
         Ok(())
     }
 
@@ -450,7 +450,7 @@ impl<'a> Printer<'a> {
         {
             debug_assert!(!s.contains(&b'\n'));
         }
-        self.col += u32::try_from(s.len()).unwrap();
+        self.col += u32::try_from(s.len()).expect("int cast");
         if self.dest.write_all(s).is_err() {
             return Err(self.add_fmt_error());
         }
@@ -463,7 +463,7 @@ impl<'a> Printer<'a> {
     pub fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
         // TODO(port): Zig writeBytes did not assert no-newline; tracked
         // line/col separately. For now route through write_str.
-        self.col += u32::try_from(s.len()).unwrap();
+        self.col += u32::try_from(s.len()).expect("int cast");
         if self.dest.write_all(s).is_err() {
             return Err(self.add_fmt_error());
         }
@@ -481,7 +481,7 @@ impl<'a> Printer<'a> {
             return Err(self.add_fmt_error());
         }
         let written = Self::get_written_amt(self.dest) - start;
-        self.col += u32::try_from(written).unwrap();
+        self.col += u32::try_from(written).expect("int cast");
         Ok(())
     }
 
@@ -555,7 +555,7 @@ impl<'a> Printer<'a> {
                     } else {
                         Printer::replace_dots(allocator, s1)
                     };
-                    self.col += u32::try_from(s.len()).unwrap();
+                    self.col += u32::try_from(s.len()).expect("int cast");
                     let r = if first {
                         first = false;
                         css::serializer::serialize_identifier(s, self)
@@ -616,7 +616,7 @@ impl<'a> Printer<'a> {
                 } else {
                     Printer::replace_dots(allocator, s1)
                 };
-                self.col += u32::try_from(s.len()).unwrap();
+                self.col += u32::try_from(s.len()).expect("int cast");
                 if let Err(e) = css::serializer::serialize_name(s, self) {
                     err = Some(e);
                 }

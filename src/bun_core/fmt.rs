@@ -2374,7 +2374,7 @@ pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes as usize, opts }
 }
 pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    SizeFormatter { value: usize::try_from(bytes).unwrap(), opts }
+    SizeFormatter { value: usize::try_from(bytes).expect("int cast"), opts }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2566,7 +2566,7 @@ fn format_duration_one_decimal(data: FormatDurationData, writer: &mut impl fmt::
             push_fmt!("{}", kunits / 1000);
             let frac = (kunits % 1000) / 100;
             if frac > 0 {
-                let decimal_buf = [b'.', b'0' + u8::try_from(frac).unwrap()];
+                let decimal_buf = [b'.', b'0' + u8::try_from(frac).expect("int cast")];
                 push_str!(&decimal_buf);
             }
             push_str!(sep);

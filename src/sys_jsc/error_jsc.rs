@@ -67,7 +67,7 @@ pub mod TestingAPIs {
         {
             let err = Error {
                 // @intCast → checked narrowing; target is Error.errno's int type.
-                errno: arguments[0].to_int32().try_into().unwrap(),
+                errno: arguments[0].to_int32().try_into().expect("infallible: size matches"),
                 syscall: bun_sys::Tag::open,
                 from_libuv: true,
                 ..Default::default()

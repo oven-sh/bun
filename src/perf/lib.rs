@@ -223,7 +223,7 @@ impl Linux {
         let _ = unsafe {
             Bun__linux_trace_emit(
                 self.event.as_cstr().as_ptr(),
-                i64::try_from(duration).unwrap(),
+                i64::try_from(duration).expect("int cast"),
             )
         };
     }

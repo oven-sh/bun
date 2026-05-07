@@ -419,27 +419,27 @@ pub fn stop() {
 
 #[allow(non_snake_case)]
 fn ___tracy_connected() -> c_int {
-    let f = dlsym::<tracy_fns::connected>(c"___tracy_connected").unwrap();
+    let f = dlsym::<tracy_fns::connected>(c"___tracy_connected").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f() }
 }
 
 #[allow(non_snake_case)]
 fn ___tracy_set_thread_name(name: *const c_char) {
-    let f = dlsym::<tracy_fns::set_thread_name>(c"___tracy_set_thread_name").unwrap();
+    let f = dlsym::<tracy_fns::set_thread_name>(c"___tracy_set_thread_name").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
 
 #[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark_start(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark_start>(c"___tracy_emit_frame_mark_start").unwrap();
+    let f = dlsym::<tracy_fns::emit_frame_mark_start>(c"___tracy_emit_frame_mark_start").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark_end(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark_end>(c"___tracy_emit_frame_mark_end").unwrap();
+    let f = dlsym::<tracy_fns::emit_frame_mark_end>(c"___tracy_emit_frame_mark_end").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
@@ -448,7 +448,7 @@ fn ___tracy_emit_zone_begin(
     srcloc: *const ___tracy_source_location_data,
     active: c_int,
 ) -> ___tracy_c_zone_context {
-    let f = dlsym::<tracy_fns::emit_zone_begin>(c"___tracy_emit_zone_begin").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_begin>(c"___tracy_emit_zone_begin").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(srcloc, active) }
 }
@@ -459,43 +459,43 @@ fn ___tracy_emit_zone_begin_callstack(
     active: c_int,
 ) -> ___tracy_c_zone_context {
     let f = dlsym::<tracy_fns::emit_zone_begin_callstack>(c"___tracy_emit_zone_begin_callstack")
-        .unwrap();
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(srcloc, depth, active) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_zone_text(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize) {
-    let f = dlsym::<tracy_fns::emit_zone_text>(c"___tracy_emit_zone_text").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_text>(c"___tracy_emit_zone_text").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx, txt, size) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_zone_name(ctx: ___tracy_c_zone_context, txt: *const u8, size: usize) {
-    let f = dlsym::<tracy_fns::emit_zone_name>(c"___tracy_emit_zone_name").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_name>(c"___tracy_emit_zone_name").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx, txt, size) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_zone_color(ctx: ___tracy_c_zone_context, color: u32) {
-    let f = dlsym::<tracy_fns::emit_zone_color>(c"___tracy_emit_zone_color").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_color>(c"___tracy_emit_zone_color").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx, color) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_zone_value(ctx: ___tracy_c_zone_context, value: u64) {
-    let f = dlsym::<tracy_fns::emit_zone_value>(c"___tracy_emit_zone_value").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_value>(c"___tracy_emit_zone_value").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx, value) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_zone_end(ctx: ___tracy_c_zone_context) {
-    let f = dlsym::<tracy_fns::emit_zone_end>(c"___tracy_emit_zone_end").unwrap();
+    let f = dlsym::<tracy_fns::emit_zone_end>(c"___tracy_emit_zone_end").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_alloc(ptr: *const c_void, size: usize, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").unwrap();
+    let f = dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, secure) }
 }
@@ -507,20 +507,20 @@ fn ___tracy_emit_memory_alloc_callstack(
     secure: c_int,
 ) {
     let f = dlsym::<tracy_fns::emit_memory_alloc_callstack>(c"___tracy_emit_memory_alloc_callstack")
-        .unwrap();
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, depth, secure) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_free(ptr: *const c_void, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").unwrap();
+    let f = dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, secure) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_free_callstack(ptr: *const c_void, depth: c_int, secure: c_int) {
     let f = dlsym::<tracy_fns::emit_memory_free_callstack>(c"___tracy_emit_memory_free_callstack")
-        .unwrap();
+        .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, depth, secure) }
 }
@@ -532,7 +532,7 @@ fn ___tracy_emit_memory_alloc_named(
     name: *const c_char,
 ) {
     let f =
-        dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named").unwrap();
+        dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, secure, name) }
 }
@@ -547,13 +547,13 @@ fn ___tracy_emit_memory_alloc_callstack_named(
     let f = dlsym::<tracy_fns::emit_memory_alloc_callstack_named>(
         c"___tracy_emit_memory_alloc_callstack_named",
     )
-    .unwrap();
+    .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, size, depth, secure, name) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_memory_free_named(ptr: *const c_void, secure: c_int, name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named").unwrap();
+    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, secure, name) }
 }
@@ -567,37 +567,37 @@ fn ___tracy_emit_memory_free_callstack_named(
     let f = dlsym::<tracy_fns::emit_memory_free_callstack_named>(
         c"___tracy_emit_memory_free_callstack_named",
     )
-    .unwrap();
+    .expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ptr, depth, secure, name) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_message(txt: *const u8, size: usize, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message>(c"___tracy_emit_message").unwrap();
+    let f = dlsym::<tracy_fns::emit_message>(c"___tracy_emit_message").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(txt, size, callstack) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_message_l(txt: *const c_char, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message_l>(c"___tracy_emit_messageL").unwrap();
+    let f = dlsym::<tracy_fns::emit_message_l>(c"___tracy_emit_messageL").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(txt, callstack) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_message_c(txt: *const u8, size: usize, color: u32, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message_c>(c"___tracy_emit_messageC").unwrap();
+    let f = dlsym::<tracy_fns::emit_message_c>(c"___tracy_emit_messageC").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(txt, size, color, callstack) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_message_lc(txt: *const c_char, color: u32, callstack: c_int) {
-    let f = dlsym::<tracy_fns::emit_message_lc>(c"___tracy_emit_messageLC").unwrap();
+    let f = dlsym::<tracy_fns::emit_message_lc>(c"___tracy_emit_messageLC").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(txt, color, callstack) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_frame_mark(name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_frame_mark>(c"___tracy_emit_frame_mark").unwrap();
+    let f = dlsym::<tracy_fns::emit_frame_mark>(c"___tracy_emit_frame_mark").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name) }
 }
@@ -630,7 +630,7 @@ pub fn is_connected() -> bool {
         return false;
     }
 
-    let f = dlsym::<tracy_fns::connected>(c"___tracy_connected").unwrap();
+    let f = dlsym::<tracy_fns::connected>(c"___tracy_connected").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f() != 0 }
 }
@@ -645,7 +645,7 @@ pub fn init_thread(name: &'static core::ffi::CStr) {
         return;
     }
 
-    let f = dlsym::<tracy_fns::set_thread_name>(c"___tracy_set_thread_name").unwrap();
+    let f = dlsym::<tracy_fns::set_thread_name>(c"___tracy_set_thread_name").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(name.as_ptr()) }
 }

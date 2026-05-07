@@ -89,7 +89,7 @@ impl Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
         #[cfg(not(windows))]
-        let n = u16::try_from(errno).unwrap();
+        let n = u16::try_from(errno).expect("int cast");
         Error {
             errno: n,
             syscall: syscall_tag,
@@ -355,7 +355,7 @@ impl Error {
                     }
                 }
             }
-            usize::try_from(cursor.position()).unwrap()
+            usize::try_from(cursor.position()).expect("int cast")
         };
         let message = &message_buf[..pos];
         err.message = BunString::clone_utf8(message);

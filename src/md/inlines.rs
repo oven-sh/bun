@@ -667,14 +667,14 @@ impl Parser<'_> {
                     self.emph_delims[oi].open_count += use_;
                     if (self.emph_delims[oi].open_num as usize) < MAX_EMPH_MATCHES {
                         let n = self.emph_delims[oi].open_num as usize;
-                        self.emph_delims[oi].open_sizes[n] = u8::try_from(use_).unwrap();
+                        self.emph_delims[oi].open_sizes[n] = u8::try_from(use_).expect("int cast");
                         self.emph_delims[oi].open_num += 1;
                     }
                     self.emph_delims[closer_idx].remaining -= use_;
                     self.emph_delims[closer_idx].close_count += use_;
                     if (self.emph_delims[closer_idx].close_num as usize) < MAX_EMPH_MATCHES {
                         let n = self.emph_delims[closer_idx].close_num as usize;
-                        self.emph_delims[closer_idx].close_sizes[n] = u8::try_from(use_).unwrap();
+                        self.emph_delims[closer_idx].close_sizes[n] = u8::try_from(use_).expect("int cast");
                         self.emph_delims[closer_idx].close_num += 1;
                     }
 

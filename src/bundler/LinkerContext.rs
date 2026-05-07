@@ -394,9 +394,9 @@ impl<'a> LinkerContext<'a> {
 
         let runtime_named_exports = &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
 
-        self.esm_runtime_ref = runtime_named_exports.get(b"__esm").unwrap().ref_;
-        self.cjs_runtime_ref = runtime_named_exports.get(b"__commonJS").unwrap().ref_;
-        self.promise_all_runtime_ref = runtime_named_exports.get(b"__promiseAll").unwrap().ref_;
+        self.esm_runtime_ref = runtime_named_exports.get(b"__esm").expect("infallible: runtime export").ref_;
+        self.cjs_runtime_ref = runtime_named_exports.get(b"__commonJS").expect("infallible: runtime export").ref_;
+        self.promise_all_runtime_ref = runtime_named_exports.get(b"__promiseAll").expect("infallible: runtime export").ref_;
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(Index::RUNTIME.get(), js_ast::ast::symbol::Kind::Unbound, b"module");
@@ -499,7 +499,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn schedule_tasks(&self, batch: ThreadPoolLib::Batch) {
-        let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).unwrap(), Ordering::Relaxed);
+        let _ = self.pending_task_count.fetch_add(u32::try_from(batch.len).expect("int cast"), Ordering::Relaxed);
         // SAFETY: parse_graph backref valid for self lifetime; `pool` is a
         // `NonNull<ThreadPool>` whose `worker_pool` is the live worker-pool
         // backref (initialized by `ThreadPool::start`).
@@ -560,7 +560,7 @@ impl<'a> LinkerContext<'a> {
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
                 // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
                 // SoA symbol table; sole writer here.
-                unsafe { (*self.graph.symbols.get(original_ref).unwrap()).link = actual_ref };
+                unsafe { (*self.graph.symbols.get(original_ref).expect("infallible: ref in symbol table")).link = actual_ref };
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph.generate_symbol_import_and_use(
@@ -982,7 +982,7 @@ impl<'a> LinkerContext<'a> {
             // TODO(port): allocPrint into arena — using Vec<u8> + write!
             let mut buf = Vec::<u8>::new();
             use std::io::Write;
-            write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash }).unwrap();
+            write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash }).expect("infallible: in-memory write");
             j.push_owned(buf.into_boxed_slice());
             j.push_static(b"\",\n  \"names\": []\n}");
         } else {
@@ -1533,7 +1533,7 @@ impl<'a> LinkerContext<'a> {
                     {
                         result_tla_check.depth = parent.depth + 1;
                         result_tla_check.parent = record.source_index.get();
-                        result_tla_check.import_record_index = u32::try_from(import_record_index).unwrap();
+                        result_tla_check.import_record_index = u32::try_from(import_record_index).expect("int cast");
                         continue;
                     }
 
@@ -1555,7 +1555,7 @@ impl<'a> LinkerContext<'a> {
                                 tla_pretty_path = &source.path.pretty;
                                 let mut text = Vec::new();
                                 use std::io::Write;
-                                write!(&mut text, "The top-level await in {} is here:", bstr::BStr::new(tla_pretty_path)).unwrap();
+                                write!(&mut text, "The top-level await in {} is here:", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
                                 notes.push(Data {
                                     text: text.into(),
                                     location: Logger::Location::init_or_null(Some(source), parent_result_tla_keyword),
@@ -1599,9 +1599,9 @@ impl<'a> LinkerContext<'a> {
                         let mut text = Vec::new();
                         use std::io::Write;
                         if imported_pretty_path[..] == tla_pretty_path[..] {
-                            write!(&mut text, "This require call is not allowed because the imported file \"{}\" contains a top-level await", bstr::BStr::new(imported_pretty_path)).unwrap();
+                            write!(&mut text, "This require call is not allowed because the imported file \"{}\" contains a top-level await", bstr::BStr::new(imported_pretty_path)).expect("infallible: in-memory write");
                         } else {
-                            write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).unwrap();
+                            write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
                         }
 
                         self.log.add_range_error_with_notes(Some(source), record.range, text, notes.into_boxed_slice())?;
@@ -1921,8 +1921,8 @@ impl<'a> LinkerContext<'a> {
                             // PORT NOTE: Zig set `.tag = .symbol` after `init`;
                             // `Ref` is packed in Rust — construct via `new`.
                             let mut r#ref = Ref::new(
-                                u32::try_from(inner_index).unwrap(),
-                                u32::try_from(source_index).unwrap(),
+                                u32::try_from(inner_index).expect("int cast"),
+                                u32::try_from(source_index).expect("int cast"),
                                 js_ast::RefTag::Symbol,
                             );
                             while symbol.has_link() {
@@ -1955,7 +1955,7 @@ impl<'a> LinkerContext<'a> {
 
                         let mut final_generated_name = Vec::<u8>::new();
                         use std::io::Write;
-                        write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(path_hash)).unwrap();
+                        write!(&mut final_generated_name, "{}_{}", bstr::BStr::new(original_name), bstr::BStr::new(path_hash)).expect("infallible: in-memory write");
                         // TODO(port): allocator() is arena; mangled_props key/value lifetime
                         self.mangled_props.put(r#ref, final_generated_name.into_boxed_slice()).expect("OOM");
                     }
@@ -2065,7 +2065,7 @@ impl<'a> LinkerContext<'a> {
                 // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
                 // SoA symbol table; read-only here. `parse_graph` is a backref
                 // into BundleV2 (LIFETIMES.tsv).
-                let sym = unsafe { &*self.graph.symbols.get(export_ref).unwrap() };
+                let sym = unsafe { &*self.graph.symbols.get(export_ref).expect("infallible: ref in symbol table") };
                 debug_tree_shake!(
                     "Export name: {} (in {})",
                     bstr::BStr::new(unsafe { &*sym.original_name }),
@@ -2339,7 +2339,7 @@ impl<'a> LinkerContext<'a> {
                     && entry_point_kinds[source_index as usize].is_entry_point())
             {
                 self.mark_part_live_for_tree_shaking(
-                    u32::try_from(part_index).unwrap(),
+                    u32::try_from(part_index).expect("int cast"),
                     source_index,
                     side_effects,
                     parts,
@@ -2890,7 +2890,7 @@ impl<'a> LinkerContext<'a> {
         // Match this import up with an export from the imported file
         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
         if let Some(matching_export) = self.graph.meta.items_resolved_exports()[other_id as usize]
-            .get(unsafe { &*named_import.alias.unwrap() })
+            .get(unsafe { &*named_import.alias.expect("infallible: alias present") })
         {
             // Check to see if this is a re-export of another import
             return ImportTrackerIterator {
@@ -3018,16 +3018,16 @@ impl<'a> LinkerContext<'a> {
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
 
-                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.expect("infallible: checked is_some").is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
-                            result.namespace_ref = named_import.namespace_ref.unwrap();
-                            result.alias = named_import.alias.unwrap();
+                            result.namespace_ref = named_import.namespace_ref.expect("infallible: checked is_some");
+                            result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
-                                namespace_ref: named_import.namespace_ref.unwrap(),
-                                alias: named_import.alias.unwrap(),
+                                namespace_ref: named_import.namespace_ref.expect("infallible: checked is_some"),
+                                alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
                         }
@@ -3037,10 +3037,10 @@ impl<'a> LinkerContext<'a> {
                     if status == ImportTrackerStatus::CjsWithoutExports {
                         let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
-                        let alias = unsafe { &*named_import.alias.unwrap() };
+                        let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
                         self.log.add_range_warning_fmt(
                             Some(source),
-                            source.range_of_identifier(named_import.alias_loc.unwrap()),
+                            source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present")),
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
@@ -3057,16 +3057,16 @@ impl<'a> LinkerContext<'a> {
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
 
-                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.expect("infallible: checked is_some").is_valid() {
                         // SAFETY: get() yields a stable *mut into the symbols NestedList
                         // (NonNull-backed heap, never reallocated during linking). Sole
                         // live &mut into that allocation here — `named_import` borrows
                         // `graph.ast`, a disjoint allocation.
-                        let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
+                        let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).expect("infallible: ref in symbol table") };
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;
                         result.namespace_ref = tracker.import_ref;
-                        result.alias = named_import.alias.unwrap();
+                        result.alias = named_import.alias.expect("infallible: alias present");
                         result.name_loc = named_import.alias_loc.unwrap_or(Loc::EMPTY);
                     }
                 }
@@ -3075,16 +3075,16 @@ impl<'a> LinkerContext<'a> {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
-                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.expect("infallible: checked is_some").is_valid() {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
                             result.namespace_ref = next_tracker.import_ref;
-                            result.alias = named_import.alias.unwrap();
+                            result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
                                 namespace_ref: next_tracker.import_ref,
-                                alias: named_import.alias.unwrap(),
+                                alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
                         }
@@ -3097,15 +3097,15 @@ impl<'a> LinkerContext<'a> {
                     // &mut into that allocation for this scope — subsequent borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
                     // `self.log`) touch disjoint allocations and never reach symbols.
-                    let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
+                    let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).expect("infallible: ref in symbol table") };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
                     let source = self.get_source(prev_source_index);
 
                     let next_source = self.get_source(next_tracker.source_index.get());
-                    let r = source.range_of_identifier(named_import.alias_loc.unwrap());
+                    let r = source.range_of_identifier(named_import.alias_loc.expect("infallible: alias present"));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.unwrap() };
+                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
 
                     // Report mismatched imports and exports
                     if symbol.import_item_status == ImportItemStatus::Generated {
@@ -3336,7 +3336,7 @@ impl<'a> LinkerContext<'a> {
                     // (NonNull-backed heap, never reallocated during linking). Sole
                     // live &mut into that allocation — one-shot field store, no other
                     // borrow of symbols is live in this arm.
-                    unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() }.namespace_alias =
+                    unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3360,7 +3360,7 @@ impl<'a> LinkerContext<'a> {
                     // (NonNull-backed heap, never reallocated during linking). Sole
                     // live &mut into that allocation — one-shot field store after
                     // `imports_to_bind.put` (disjoint map) has fully returned.
-                    unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() }.namespace_alias =
+                    unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
@@ -3371,7 +3371,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.unwrap() };
+                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
                     self.log.add_range_error_fmt(
                         Some(source), r,
                         format_args!(
@@ -3396,9 +3396,9 @@ impl<'a> LinkerContext<'a> {
                     // live &mut into that allocation for this scope — `source`/`r`
                     // borrow parse_graph, `named_import`/`alias` borrow arena slices,
                     // and `self.log` is a disjoint field; none reach symbols.
-                    let symbol = unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() };
+                    let symbol = unsafe { &mut *self.graph.symbols.get(import_ref).expect("infallible: ref in symbol table") };
                     // SAFETY: arena `*const [u8]` valid for the link pass.
-                    let alias = unsafe { &*named_import.alias.unwrap() };
+                    let alias = unsafe { &*named_import.alias.expect("infallible: alias present") };
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
                         self.log.add_range_warning_fmt(
@@ -3531,7 +3531,7 @@ impl<'a> LinkerContext<'a> {
 
             let mut index: usize = 0;
             // SAFETY: bounds checked above (start + 9 <= output.len())
-            let digits: [u8; 8] = output[start + 1..start + 9].try_into().unwrap();
+            let digits: [u8; 8] = output[start + 1..start + 9].try_into().expect("infallible: size matches");
             for char in digits {
                 if char < b'0' || char > b'9' {
                     if cfg!(debug_assertions) {
@@ -3577,7 +3577,7 @@ impl<'a> LinkerContext<'a> {
             // construct via `new` rather than field-init.
             pieces.push(OutputPiece::init(
                 &output[0..boundary],
-                crate::chunk::Query::new(u32::try_from(index).unwrap(), kind),
+                crate::chunk::Query::new(u32::try_from(index).expect("int cast"), kind),
             ));
             output = &output[boundary + prefix.len() + 9..];
         }
@@ -3683,12 +3683,12 @@ impl InsideWrapperPrefix {
         // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors Zig's
         // untagged-union field reads (panic on shape mismatch).
         let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
-            .data.s_expr_mut().unwrap().value.data.e_await_mut().unwrap().value;
-        let call = first_dep_call_expr.data.e_call_mut().unwrap();
+            .data.s_expr_mut().unwrap().value.data.e_await_mut().expect("infallible: variant checked").value;
+        let call = first_dep_call_expr.data.e_call_mut().expect("infallible: variant checked");
 
-        if call.target.data.e_identifier().unwrap().ref_.eql(promise_all_ref) {
+        if call.target.data.e_identifier().expect("infallible: variant checked").ref_.eql(promise_all_ref) {
             // `await __promiseAll` already in place, append to the array argument
-            call.args.mut_(0).data.e_array_mut().unwrap().items.append(call_expr)?;
+            call.args.mut_(0).data.e_array_mut().expect("infallible: variant checked").items.append(call_expr)?;
         } else {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 

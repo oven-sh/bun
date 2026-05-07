@@ -427,9 +427,9 @@ impl<'a> Request<'a> {
                 // SAFETY: on success, ptr/len point into `buf`.
                 method: unsafe { core::slice::from_raw_parts(method_ptr, method_len) },
                 path: unsafe { core::slice::from_raw_parts(path_ptr, path_len) },
-                minor_version: usize::try_from(minor_version).unwrap(),
+                minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
-                bytes_read: u32::try_from(rc).unwrap(),
+                bytes_read: u32::try_from(rc).expect("int cast"),
             }),
         }
     }
@@ -651,8 +651,8 @@ impl<'a> Response<'a> {
                 Err(ParseResponseError::ShortRead)
             }
             _ => Ok(Response {
-                minor_version: usize::try_from(minor_version).unwrap(),
-                status_code: u32::try_from(status_code).unwrap(),
+                minor_version: usize::try_from(minor_version).expect("int cast"),
+                status_code: u32::try_from(status_code).expect("int cast"),
                 // SAFETY: on success, ptr/len point into `buf`.
                 status: unsafe { core::slice::from_raw_parts(status_ptr, status_len) },
                 headers: HeaderList { list: &src[0..num_headers.min(src.len())] },

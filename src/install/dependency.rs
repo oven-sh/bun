@@ -349,10 +349,10 @@ pub struct Context<'a> {
 
 pub fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
     let name = String {
-        bytes: this[0..8].try_into().unwrap(),
+        bytes: this[0..8].try_into().expect("infallible: size matches"),
     };
     // SAFETY: same-size POD bitcast
-    let name_hash: u64 = u64::from_ne_bytes(this[8..16].try_into().unwrap());
+    let name_hash: u64 = u64::from_ne_bytes(this[8..16].try_into().expect("infallible: size matches"));
     Dependency {
         name,
         name_hash,
@@ -360,7 +360,7 @@ pub fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
         version: Version::to_version(
             name,
             name_hash,
-            this[17..SIZE].try_into().unwrap(),
+            this[17..SIZE].try_into().expect("infallible: size matches"),
             ctx,
         ),
     }
@@ -652,7 +652,7 @@ impl VersionExt for Version {
         ctx: &mut Context<'_>,
     ) -> Version {
         let slice = String {
-            bytes: bytes[1..9].try_into().unwrap(),
+            bytes: bytes[1..9].try_into().expect("infallible: size matches"),
         };
         // SAFETY: bytes[0] was written by to_external from a valid Tag
         let tag: Tag = unsafe { core::mem::transmute::<u8, Tag>(bytes[0]) };

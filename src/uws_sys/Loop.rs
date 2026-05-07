@@ -145,7 +145,7 @@ impl PosixLoop {
     pub fn unref_count(&mut self, count: i32) {
         bun_core::scoped_log!(Loop, "unref x {}", count);
         self.num_polls -= count;
-        self.active = self.active.saturating_sub(u32::try_from(count).unwrap());
+        self.active = self.active.saturating_sub(u32::try_from(count).expect("int cast"));
     }
 
     pub fn get() -> *mut Loop {

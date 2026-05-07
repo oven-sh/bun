@@ -402,7 +402,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                                         let dns_name = &*name.d.dNSName;
                                         let dns_name_slice = core::slice::from_raw_parts(
                                             dns_name.data,
-                                            usize::try_from(dns_name.length).unwrap(),
+                                            usize::try_from(dns_name.length).expect("int cast"),
                                         );
                                         if match_dns_name(dns_name_slice, hostname) {
                                             return true;
@@ -445,7 +445,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                         continue;
                     }
                     let cn =
-                        core::slice::from_raw_parts(cn_ptr, usize::try_from(cn_len).unwrap());
+                        core::slice::from_raw_parts(cn_ptr, usize::try_from(cn_len).expect("int cast"));
                     if match_dns_name(cn, hostname) {
                         return true;
                     }

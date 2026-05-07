@@ -167,7 +167,7 @@ impl<'a> Parser<'a> {
     }
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Parser<'a> {
-        let size: OFF = OFF::try_from(text.len()).unwrap();
+        let size: OFF = OFF::try_from(text.len()).expect("int cast");
         let mut p = Parser {
             text,
             size,

@@ -13,7 +13,7 @@ use bun_semver::version::VersionInt;
 use bun_string::strings;
 
 use crate::dependency::{self, Dependency};
-use crate::repository::Repository;
+use crate::repository::{Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;

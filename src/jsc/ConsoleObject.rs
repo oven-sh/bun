@@ -804,20 +804,28 @@ impl<'a> TablePrinter<'a> {
                     !(matches!(tag.tag, TagPayload::String | TagPayload::StringPossiblyFormatted));
 
                 // `defer` block: release pooled visit map after formatting.
-                let release = scopeguard::guard(&mut self.value_formatter, |vf| {
+                // PORT NOTE: Zig's `defer` body also nulls
+                // `this.value_formatter.map_node`, but `shallow_clone()`
+                // already guarantees the source's `map_node` is `None`, so
+                // only the local clone needs draining. `Formatter::Drop` does
+                // the same release, so a plain scope is sufficient.
+                {
+                    let result = value_formatter
+                        .format::<ENABLE_ANSI_COLORS>(tag, writer, value, self.global_object);
                     if let Some(node) = value_formatter.map_node.take() {
-                        vf.map_node = None;
-                        if node.data.capacity() > 512 {
-                            node.data.clear_and_free();
+                        self.value_formatter.map_node = None;
+                        // SAFETY: `node` came from `visited::Pool::get_node()`
+                        // (INIT = Some), so `data` is initialized.
+                        let data = unsafe { node.as_mut().data.assume_init_mut() };
+                        if data.capacity() > 512 {
+                            data.clear_and_free();
                         } else {
-                            node.data.clear();
+                            data.clear();
                         }
-                        node.release();
+                        formatter::visited::Pool::release(node.as_ptr());
                     }
-                });
-                value_formatter
-                    .format::<ENABLE_ANSI_COLORS>(tag, writer, value, self.global_object)?;
-                drop(release);
+                    result?;
+                }
 
                 writer
                     .splat_byte_all(b' ', (needed + PADDING) as usize)

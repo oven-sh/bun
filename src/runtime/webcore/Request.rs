@@ -600,15 +600,10 @@ impl Request {
             bun_fmt::size(self.body.size() as usize, Default::default())
         )?;
         {
-            formatter.indent_inc();
-            // Zig: `defer formatter.indent -|= 1;` — must run on every exit incl. `?` error paths.
-            // SAFETY: `formatter` outlives `_indent_guard` (same scope, guard dropped first);
-            // the raw pointer is only dereferenced in the closure at scope exit, at which point
-            // no other borrow of `formatter` is live.
-            let formatter_ptr: *mut F = formatter;
-            let _indent_guard = scopeguard::guard((), move |_| unsafe {
-                (*formatter_ptr).indent_dec()
-            });
+            // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;` — RAII guard
+            // restores indent on every exit incl. `?` error paths. Shadows `formatter`
+            // for the block; auto-derefs to `&mut F`.
+            let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
             formatter.write_indent(writer)?;
             writer.write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref())?;
@@ -672,7 +667,7 @@ impl Request {
                 BodyValue::Blob(blob) => {
                     writer.write_str("\n")?;
                     formatter.write_indent(writer)?;
-                    blob.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                    blob.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                 }
                 BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                     writer.write_str("\n")?;
@@ -682,7 +677,7 @@ impl Request {
                         // TODO(port): Blob.initEmpty(undefined) — `undefined` global ptr;
                         // Phase B should pass a real global or make initEmpty not need one.
                         let mut empty = Blob::init_empty(formatter.global_this());
-                        empty.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
+                        empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
                         crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
                             false, size as usize, writer,

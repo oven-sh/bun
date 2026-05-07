@@ -60,32 +60,6 @@ pub enum URITag {
 /// `bun_install_types::resolver_hooks::Dependency` (same field order; `Version`
 /// ↔ `DependencyVersion` overlay is asserted in `crate::auto_installer`).
 #[repr(C)]
-pub struct Dependency {
-    pub name_hash: PackageNameHash,
-    pub name: String,
-    pub version: Version,
-
-    /// This is how the dependency is specified in the package.json file.
-    /// This allows us to track whether a package originated in any permutation of:
-    /// - `dependencies`
-    /// - `devDependencies`
-    /// - `optionalDependencies`
-    /// - `peerDependencies`
-    /// Technically, having the same package name specified under multiple fields is invalid
-    /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-    pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Dependency {
-            name_hash: 0,
-            name: String::default(),
-            version: Version::default(),
-            behavior: Behavior::default(),
-        }
-    }
-}
 
 impl Dependency {
     /// Forwards to the module-level `is_tarball` (Zig: `Dependency.isTarball`).
@@ -263,46 +237,6 @@ impl Dependency {
 // freed through these handles. Rust can't `derive(Clone)` because `Value` is
 // an untagged union with `ManuallyDrop` fields, so we implement a shallow
 // bitwise clone matching Zig's copy semantics.
-impl Clone for Value {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `Value` is `repr(C)` with no `Drop` glue; every active variant
-        // is either `Copy` or `ManuallyDrop<_>` over arena-backed data. Zig
-        // copies these structs by value; we replicate that with a bitwise read.
-        unsafe { core::ptr::read(self) }
-    }
-}
-
-impl core::fmt::Debug for Value {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Untagged union — caller must consult `Version.tag`; debug output
-        // intentionally opaque (Zig prints via `Version.literal` instead).
-        f.write_str("dependency::Value { <untagged> }")
-    }
-}
-
-impl Clone for Version {
-    #[inline]
-    fn clone(&self) -> Self {
-        Version {
-            tag: self.tag,
-            literal: self.literal,
-            value: Clone::clone(&self.value),
-        }
-    }
-}
-
-impl Clone for Dependency {
-    #[inline]
-    fn clone(&self) -> Self {
-        Dependency {
-            name_hash: self.name_hash,
-            name: self.name,
-            version: Clone::clone(&self.version),
-            behavior: self.behavior,
-        }
-    }
-}
 
 // TODO(port): `comptime StringBuilder: type` param replaced with trait bound;
 // the only methods called are `.count`, `.append(String, ...)`, and access to
@@ -612,21 +546,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 /// `#[repr(C)]` so this overlays `bun_install_types::DependencyVersion` (same
 /// field order; `Value` is `#[repr(C)] union` ≤ 40 B, projected as `[u64; 5]`).
 #[repr(C)]
-pub struct Version {
-    pub tag: Tag,
-    pub literal: String,
-    pub value: Value,
-}
-
-impl Default for Version {
-    fn default() -> Self {
-        Version {
-            tag: Tag::Uninitialized,
-            literal: String::default(),
-            value: Value { uninitialized: () },
-        }
-    }
-}
 
 pub type VersionExternal = [u8; 9];
 
@@ -1176,73 +1095,9 @@ impl Tag {
 // Version payload types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NpmInfo {
-    pub name: String,
-    pub version: Semver::query::Group,
-    pub is_alias: bool,
-}
 
-impl NpmInfo {
-    fn eql(&self, that: &NpmInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf) && self.version.eql(&that.version)
-    }
-}
 
-#[derive(Clone, Copy)]
-pub struct TagInfo {
-    pub name: String,
-    pub tag: String,
-}
 
-impl TagInfo {
-    fn eql(&self, that: &TagInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf)
-            && self.tag.eql(that.tag, this_buf, that_buf)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TarballInfo {
-    pub uri: URI,
-    pub package_name: String,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(String::default()),
-            package_name: String::default(),
-        }
-    }
-}
-
-impl TarballInfo {
-    fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        URI::eql(self.uri, that.uri, this_buf, that_buf)
-    }
-}
-
-/// Untagged union; discriminant is stored in `Version.tag`.
-#[repr(C)]
-pub union Value {
-    pub uninitialized: (),
-
-    pub npm: ManuallyDrop<NpmInfo>,
-    pub dist_tag: TagInfo,
-    pub tarball: TarballInfo,
-    pub folder: String,
-
-    /// Equivalent to npm link
-    pub symlink: String,
-
-    pub workspace: String,
-    pub git: ManuallyDrop<Repository>,
-    pub github: ManuallyDrop<Repository>,
-
-    // dep version without 'catalog:' protocol
-    // empty string == default catalog
-    pub catalog: String,
-}
 
 impl Value {
     // TODO(port): `clone` is called in Version::clone but not defined in

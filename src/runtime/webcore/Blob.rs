@@ -50,6 +50,8 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
 #[path = "blob/Store.rs"]
 pub mod store;
 pub use store::{Store, StoreRef};
+use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
+use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;

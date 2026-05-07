@@ -6,7 +6,7 @@ import { isLinux } from "../../../harness";
 
 // Only runs on Linux because that is where we can most reliably allocate a 32-bit pointer.
 test.skipIf(!isLinux)("can use addresses encoded as int32s", async () => {
-  const compiler = Bun.spawn(["cc", "-shared", "-o", "libaddr32.so", "addr32.c"], {
+  const compiler = Bun.spawn(["cc", "-fPIC", "-shared", "-o", "libaddr32.so", "addr32.c"], {
     cwd: __dirname,
   });
   await compiler.exited;

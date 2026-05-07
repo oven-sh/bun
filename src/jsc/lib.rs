@@ -256,6 +256,43 @@ pub trait ConsoleFormatter {
     ) -> core::fmt::Result;
 }
 
+/// RAII indent guard for [`ConsoleFormatter`] — Zig's
+/// `formatter.indent += 1; defer formatter.indent -|= 1;` pair.
+///
+/// Increments on construction, decrements on `Drop`. `Deref`s to the wrapped
+/// formatter so the guard can shadow the original binding for the indented
+/// block:
+///
+/// ```ignore
+/// {
+///     let mut formatter = IndentScope::new(&mut *formatter);
+///     formatter.write_indent(writer)?;   // auto-derefs to &mut F
+///     // …
+/// } // indent restored here, even on `?` early-return
+/// ```
+pub struct IndentScope<'a, F: ConsoleFormatter + ?Sized>(&'a mut F);
+
+impl<'a, F: ConsoleFormatter + ?Sized> IndentScope<'a, F> {
+    #[inline]
+    pub fn new(f: &'a mut F) -> Self {
+        f.indent_inc();
+        Self(f)
+    }
+}
+impl<F: ConsoleFormatter + ?Sized> core::ops::Deref for IndentScope<'_, F> {
+    type Target = F;
+    #[inline]
+    fn deref(&self) -> &F { self.0 }
+}
+impl<F: ConsoleFormatter + ?Sized> core::ops::DerefMut for IndentScope<'_, F> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut F { self.0 }
+}
+impl<F: ConsoleFormatter + ?Sized> Drop for IndentScope<'_, F> {
+    #[inline]
+    fn drop(&mut self) { self.0.indent_dec(); }
+}
+
 impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     #[inline]
     fn global_this(&self) -> &JSGlobalObject { self.global_this }

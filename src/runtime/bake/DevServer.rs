@@ -3224,7 +3224,11 @@ impl DevServer {
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
         // SAFETY: see `self_ptr` SAFETY above.
-        scopeguard::defer! { unsafe { (*self_ptr).client_graph.reset() } };
+        // PORT NOTE: copy `self_ptr` so the `defer!` closure captures a distinct
+        // local — otherwise borrowck treats `*self_ptr` as held for the guard's
+        // lifetime and rejects later `&mut (*self_ptr).…` reborrows.
+        let self_ptr_defer: *mut Self = self_ptr;
+        scopeguard::defer! { unsafe { (*self_ptr_defer).client_graph.reset() } };
         self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
 
         let mut react_fast_refresh_id: &[u8] = b"";
@@ -3271,8 +3275,15 @@ impl DevServer {
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
+        // PORT NOTE: `take_js_bundle` mutably borrows `client_graph` while
+        // `initial_entry` aliases `client_graph.bundled_files.keys()[idx]`.
+        // `take_js_bundle` does not reallocate the keys storage, so erase the
+        // key borrow to a raw slice (Zig held the same overlapping slice).
         let initial_entry: &[u8] = if let Some(idx) = client_file {
-            &self.client_graph.bundled_files.keys()[idx.get() as usize]
+            let key = &self.client_graph.bundled_files.keys()[idx.get() as usize];
+            // SAFETY: `bundled_files` keys storage is stable across
+            // `take_js_bundle` (it only drains scratch buffers).
+            unsafe { ::core::slice::from_raw_parts(key.as_ptr(), key.len()) }
         } else {
             b""
         };
@@ -3494,10 +3505,14 @@ pub fn finalize_bundle(
     // (Zig `defer` had no aliasing analysis).
     let dev_ptr = dev as *mut DevServer;
     let bv2_ptr = bv2 as *mut BundleV2;
+    // PORT NOTE: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
+    // capture does not hold `*dev_ptr`/`*bv2_ptr` borrowed for the entire fn body.
+    let dev_ptr_outer: *mut DevServer = dev_ptr;
+    let bv2_ptr_outer: *mut BundleV2 = bv2_ptr;
     scopeguard::defer! {
         // SAFETY: `dev`/`bv2` are `&mut` params; both outlive this fn-scoped guard.
-        let dev = unsafe { &mut *dev_ptr };
-        let bv2 = unsafe { &mut *bv2_ptr };
+        let dev = unsafe { &mut *dev_ptr_outer };
+        let bv2 = unsafe { &mut *bv2_ptr_outer };
         // TODO(port): heap moved out before deinit
         let mut heap = ::core::mem::replace(&mut bv2.graph.heap, bun_alloc::Arena::new());
         bv2.deinit_without_freeing_arena();
@@ -3551,10 +3566,13 @@ pub fn finalize_bundle(
             unsafe { &mut *current_bundle_ptr }
         };
     }
+    // PORT NOTE: see `dev_ptr_outer` rationale above — separate copy for the
+    // `defer!` capture so `current_bundle!()` keeps reborrowing freely.
+    let current_bundle_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
     scopeguard::defer! {
         // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
         // before `_outer_defer` (LIFO), so `current_bundle_ptr` is still live.
-        let current_bundle = unsafe { &mut *current_bundle_ptr };
+        let current_bundle = unsafe { &mut *current_bundle_ptr_defer };
         if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
             Output::debug(
@@ -3578,6 +3596,11 @@ pub fn finalize_bundle(
     // `[0] | [1..1+n_css] | [1+n_css..1+n_css+n_html]`).
     let n_css = result.css_file_list.count();
     let n_html = result.html_files.count();
+    // PORT NOTE: snapshot `result.chunks` ptr/len before `split_at_mut` so the
+    // CSS-chunk loop can re-form the full slice for `intermediate_output.code()`
+    // without re-borrowing `result.chunks` (already split).
+    let chunks_ptr: *mut bun_bundler::bundle_v2::Chunk = result.chunks.as_mut_ptr();
+    let chunks_len = result.chunks.len();
     let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
     let js_chunk = &mut js_chunk_slice[0];
     let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
@@ -3701,13 +3724,9 @@ pub fn finalize_bundle(
                 // SAFETY: see above; same allocation, disjoint field access.
                 unsafe { &mut *chunk_ptr },
                 // SAFETY: `result.chunks` outlives this loop body; Zig passed
-                // the same slice while iterating it.
-                unsafe {
-                    ::core::slice::from_raw_parts_mut(
-                        result.chunks.as_mut_ptr(),
-                        result.chunks.len(),
-                    )
-                },
+                // the same slice while iterating it. `chunks_ptr/len` were
+                // snapshotted before `split_at_mut`.
+                unsafe { ::core::slice::from_raw_parts_mut(chunks_ptr, chunks_len) },
                 None,
                 false,
                 false,

@@ -21,8 +21,11 @@ use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 use super::protocol_jsc;
 
-/// `bun.JSTerminated!T` — convenience alias (no public re-export in `bun_jsc` yet).
-type JsTerminatedResult<T> = Result<T, jsc::JsTerminated>;
+/// `bun.JSTerminated!T`
+// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs` (Phase A — narrow
+// once `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
+// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`).
+type JsTerminatedResult<T> = jsc::JsResult<T>;
 
 /// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`
 /// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only

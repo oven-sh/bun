@@ -960,6 +960,17 @@ impl JSGlobalObject {
         self.bun_vm_unsafe() as *mut VirtualMachine
     }
 
+    /// Shared-reference accessor for the Bun `VirtualMachine`. Prefer
+    /// [`bun_vm`](Self::bun_vm) when you need to write through; this is for
+    /// read-only callers (e.g. `ArgumentsSlice::init`) so they don't have to
+    /// open-code `unsafe { &*global.bun_vm() }` at every site.
+    #[inline]
+    pub fn bun_vm_ref(&self) -> &VirtualMachine {
+        // SAFETY: the VM owns this global and outlives it; pointer is non-null
+        // (debug-asserted in `bun_vm()`) and never freed while a global exists.
+        unsafe { &*self.bun_vm() }
+    }
+
     /// Returns the Bun `VirtualMachine` owning this global. Returns a raw
     /// pointer (mirroring Zig's `*jsc.VirtualMachine`) so re-entrant callers
     /// don't mint aliased `&mut`; deref locally at the use site.
@@ -978,6 +989,17 @@ impl JSGlobalObject {
             }
         }
         self.bun_vm_unsafe() as *mut VirtualMachine
+    }
+
+    /// Shared-reference flavour of [`bun_vm`] for callers that only need to
+    /// read VM state (e.g. constructing an [`ArgumentsSlice`]). The VM
+    /// outlives every `JSGlobalObject` it owns, so a `&self`-tied borrow is
+    /// sound; callers that need mutation must go through the raw pointer.
+    #[inline]
+    pub fn bun_vm_ref(&self) -> &VirtualMachine {
+        // SAFETY: `bun_vm()` returns the live VM owning this global; the VM is
+        // heap-allocated and outlives `self` (JSC_BORROW: VM-lifetime).
+        unsafe { &*self.bun_vm() }
     }
 
     pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {

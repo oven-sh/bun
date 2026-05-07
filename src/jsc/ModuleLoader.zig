@@ -683,10 +683,21 @@ pub fn transpileSourceCode(
                 );
             }
 
+            // `readFileWithAllocator(bun.default_allocator, ..., use_shared_buffer=false)`
+            // hands us an owned heap buffer. `cloneLatin1` copies it into a
+            // fresh WTFStringImpl, so the original buffer must be freed
+            // afterwards on both the success and bad-magic-header paths —
+            // otherwise every `import('./x.wasm')` from disk leaks the file.
+            var owned_entry: ?CacheEntry = null;
+            defer if (owned_entry) |*e| {
+                _ = e.closeFD();
+                e.deinit(bun.default_allocator);
+            };
+
             const wasm_bytes: []const u8 = if (virtual_source) |source|
                 source.contents
             else brk: {
-                const entry = jsc_vm.transpiler.resolver.caches.fs.readFileWithAllocator(
+                owned_entry = jsc_vm.transpiler.resolver.caches.fs.readFileWithAllocator(
                     bun.default_allocator,
                     jsc_vm.transpiler.fs,
                     path.text,
@@ -703,7 +714,7 @@ pub fn transpileSourceCode(
                     ) catch {};
                     return error.ParseError;
                 };
-                break :brk entry.contents;
+                break :brk owned_entry.?.contents;
             };
 
             if (wasm_bytes.len < 4 or !strings.eqlComptime(wasm_bytes[0..4], "\x00asm")) {
@@ -1412,6 +1423,7 @@ const string = []const u8;
 
 const Fs = @import("../resolver/fs.zig");
 const Runtime = @import("../js_parser/runtime.zig");
+const CacheEntry = @import("../bundler/cache.zig").Fs.Entry;
 const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.zig");
 const ast = @import("../options_types/import_record.zig");
 const node_module_module = @import("./NodeModuleModule.zig");

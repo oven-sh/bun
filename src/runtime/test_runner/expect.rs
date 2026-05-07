@@ -1526,8 +1526,8 @@ impl Expect {
                 debug_assert!(message.is_callable()); // checked above
             }
 
-            // PORT NOTE: Zig `callWithGlobalThis` == call with globalThis as `this`.
-            let message_result = message.call(global_this, JSValue::UNDEFINED, &[])?;
+            // .zig:1112 `callWithGlobalThis` — pass the global object itself as `this`.
+            let message_result = message.call_with_global_this(global_this, &[])?;
             bun_str::OwnedString::new(bun_str::String::from_js(message_result, global_this)?)
         };
 

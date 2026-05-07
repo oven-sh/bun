@@ -703,6 +703,22 @@ pub mod semver_string {
         }
     }
 
+    // Bridge to `bun_collections::ArrayHashMap` adapted lookups so callers can
+    // pass `ArrayHashContext` directly to `get_adapted` / `get_or_put_adapted`
+    // / `put_assume_capacity_context` without a per-crate orphan-rule wrapper.
+    impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<String, String>
+        for ArrayHashContext<'a>
+    {
+        #[inline]
+        fn hash(&self, key: &String) -> u32 {
+            ArrayHashContext::hash(self, *key)
+        }
+        #[inline]
+        fn eql(&self, a: &String, b: &String, b_index: usize) -> bool {
+            ArrayHashContext::eql(self, *a, *b, b_index)
+        }
+    }
+
     // ── String.Pointer ────────────────────────────────────────────────────
     #[repr(C)]
     #[derive(Copy, Clone, Default)]

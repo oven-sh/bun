@@ -579,6 +579,17 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.get_index_adapted(key, adapter).map(|i| &self.values[i])
     }
 
+    /// Zig `getPtrContext` / `getPtrAdapted` — mutable value lookup using an
+    /// externally-supplied hash/eql adapter.
+    #[inline]
+    pub fn get_ptr_adapted<Q: ?Sized, A>(&mut self, key: &Q, adapter: A) -> Option<&mut V>
+    where
+        A: ArrayHashAdapter<Q, K>,
+    {
+        let i = self.get_index_adapted(key, adapter)?;
+        Some(&mut self.values[i])
+    }
+
     #[inline]
     pub fn contains_adapted<Q: ?Sized, A>(&self, key: &Q, adapter: A) -> bool
     where

@@ -1849,10 +1849,11 @@ impl ResultListEntryValue {
                 res.clear();
             }
             ResultListEntryValue::Buffers(res) => {
-                for item in res.iter() {
-                    // TODO(port): free item.buffer.byteSlice() — owned bytes
-                    let _ = item;
-                }
+                // Zig: `bun.default_allocator.free(item.buffer.byteSlice())`.
+                // `MarkedArrayBuffer::destroy` frees the owned byte slice when
+                // `owns_buffer` (set by `Buffer::from_string` in
+                // `ReaddirEntry::append_entry*`).
+                for item in res.iter_mut() { item.destroy(); }
                 res.clear();
             }
             ResultListEntryValue::Files(res) => {
@@ -1962,7 +1963,20 @@ impl AsyncReaddirRecursiveTask {
             ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
             ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
         };
-        let root_path = PathString::init(args.path.slice());
+        // Zig: `bun.default_allocator.dupeZ(u8, args.path.slice())`. The
+        // subtasks call `root_path.slice_assume_z()` from the work pool after
+        // `args.to_thread_safe()` may have rehomed the original slice, so we
+        // must own a NUL-terminated copy. Freed in `finish_concurrently()` or
+        // `destroy()` via `free_root_path()`.
+        let root_path = {
+            let src = args.path.slice();
+            let mut owned = Vec::with_capacity(src.len() + 1);
+            owned.extend_from_slice(src);
+            owned.push(0);
+            let raw = Box::into_raw(owned.into_boxed_slice()) as *mut u8;
+            // SAFETY: `raw[..src.len()]` is the duped bytes; `raw[src.len()] == 0`.
+            PathString::init(unsafe { core::slice::from_raw_parts(raw, src.len()) })
+        };
         let mut task = Self::new(AsyncReaddirRecursiveTask {
             promise: JSPromiseStrong::init(global_object),
             args,
@@ -2006,8 +2020,7 @@ impl AsyncReaddirRecursiveTask {
                 match res {
                     Maybe::Err(err) => {
                         for item in &mut entries {
-                            // TODO(port): per-type deref/free
-                            let _ = item;
+                            <$T as ReaddirEntry>::destroy_entry(item);
                         }
                         {
                             let _lock = self.pending_err_mutex.lock();
@@ -6928,8 +6941,32 @@ impl NodeFS {
             NodeFSFunctionEnum::Write => call!(uv_write, args::Write, ret::Write),
             NodeFSFunctionEnum::Readv => call!(uv_readv, args::Readv, ret::Readv),
             NodeFSFunctionEnum::Writev => call!(uv_writev, args::Writev, ret::Writev),
-            // Statfs takes `req` too — handled via uv_callbackreq, not this path.
+            // Statfs takes `req` too — handled via uv_callbackreq → uv_dispatch_req.
             _ => unreachable!("uv_dispatch: not a UVFSRequest variant"),
+        }
+    }
+
+    /// Variant of [`Self::uv_dispatch`] for `uv_callbackreq` — passes the live
+    /// `uv::fs_t` through so the handler can read `req.ptr` (only `statfs`
+    /// needs it; node_fs.zig:276-288).
+    #[cfg(windows)]
+    pub fn uv_dispatch_req<R, A, const F: NodeFSFunctionEnum>(
+        &mut self,
+        args: &A,
+        req: &mut uv::fs_t,
+        rc: i64,
+    ) -> Maybe<R> {
+        match F {
+            NodeFSFunctionEnum::Statfs => {
+                debug_assert_eq!(core::mem::size_of::<A>(), core::mem::size_of::<args::StatFS>());
+                debug_assert_eq!(core::mem::size_of::<Maybe<R>>(), core::mem::size_of::<Maybe<ret::StatFS>>());
+                // SAFETY: identity cast — `A == args::StatFS` for `F == Statfs`.
+                let args: &args::StatFS = unsafe { &*(args as *const A as *const args::StatFS) };
+                let r = core::mem::ManuallyDrop::new(self.uv_statfs(args, req, rc));
+                // SAFETY: identity cast — `R == ret::StatFS` for `F == Statfs`.
+                unsafe { core::mem::transmute_copy::<Maybe<ret::StatFS>, Maybe<R>>(&r) }
+            }
+            _ => unreachable!("uv_dispatch_req: not a req-passing UVFSRequest variant"),
         }
     }
 }

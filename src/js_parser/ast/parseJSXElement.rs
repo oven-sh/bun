@@ -153,7 +153,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         }
                                         ExprData::EDot(dot) => {
                                             break 'brk p.new_expr(
-                                                E::EString::init(dot.name),
+                                                E::EString::init(&dot.name),
                                                 dot.name_loc,
                                             );
                                         }

@@ -778,7 +778,7 @@ impl PackageJSON {
                                 if e_str.data.is_empty() || e_str.data[0] != b'.' {
                                     continue;
                                 }
-                                extensions.push(&e_str.data);
+                                extensions.push(e_str.data.slice());
                             }
                             // TODO(port): `extensions` is computed but never assigned anywhere (matches Zig)
                             let _ = extensions;
@@ -905,7 +905,7 @@ impl PackageJSON {
                 }
 
                 let remap_value_str: &[u8] = match remap_value.data.e_string() {
-                    Some(s) => s.data,
+                    Some(s) => s.data.slice(),
                     None => continue,
                 };
 
@@ -1173,7 +1173,7 @@ impl PackageJSON {
                                     // If this is a string, it's a replacement package
                                     package_json
                                         .browser_map
-                                        .put(&key, Box::from(str.data))
+                                        .put(&key, Box::from(str.data.slice()))
                                         .expect("unreachable");
                                 }
                                 js_ast::ExprData::EBoolean(boolean) => {
@@ -1627,7 +1627,7 @@ impl<'a> Visitor<'a> {
                 // `str.data` is the raw slice, no bump-arena transcode needed.
                 debug_assert!(!str.is_utf16);
                 return Entry {
-                    data: EntryData::String(Box::from(str.data)),
+                    data: EntryData::String(Box::from(str.data.slice())),
                     first_token: self.source.range_of_string(expr.loc),
                 };
             }
@@ -1656,7 +1656,7 @@ impl<'a> Visitor<'a> {
                 for (i, prop) in e_obj.properties.slice().iter().enumerate() {
                     let prop_key = prop.key.as_ref().unwrap();
                     let key: Box<[u8]> = match prop_key.data.e_string() {
-                        Some(s) => Box::from(s.data),
+                        Some(s) => Box::from(s.data.slice()),
                         None => Box::from([].as_slice()),
                     };
                     let key_range: logger::Range = self.source.range_of_string(prop_key.loc);

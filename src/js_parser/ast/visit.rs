@@ -1179,12 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let dot = self.new_expr(
                                 E::Dot {
                                     target: this_target,
-                                    // TODO(port): E::Dot::name is `&'static [u8]` placeholder for
-                                    // arena str (see visitStmt.rs:30 `as_static`). Phase B threads
-                                    // `'bump` through E::Dot and removes this transmute.
-                                    name: unsafe {
-                                        core::mem::transmute::<&[u8], &'static [u8]>(name)
-                                    },
+                                    name: name.into(),
                                     name_loc: bind_loc,
                                     ..Default::default()
                                 },

@@ -148,9 +148,9 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     E::Dot {
                                         target: hmr_api_id,
                                         name: if record.tag == ImportRecordTag::Runtime {
-                                            b"require"
+                                            b"require".into()
                                         } else {
-                                            b"builtin"
+                                            b"builtin".into()
                                         },
                                         name_loc: stmt.loc,
                                         ..Default::default()
@@ -160,9 +160,9 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 args: ExprNodeList::from_slice(&[Expr::init(
                                     E::String {
                                         data: if record.tag == ImportRecordTag::Runtime {
-                                            b"bun:wrap"
+                                            b"bun:wrap".into()
                                         } else {
-                                            record.path.pretty
+                                            record.path.pretty.into()
                                         },
                                         ..Default::default()
                                     },
@@ -268,7 +268,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     value: Some(Expr::init(
                         E::Dot {
                             target: hmr_api_id,
-                            name: b"imports",
+                            name: b"imports".into(),
                             name_loc: Loc::EMPTY,
                             ..Default::default()
                         },
@@ -290,7 +290,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         left: Expr::init(
                             E::Dot {
                                 target: hmr_api_id,
-                                name: b"updateImport",
+                                name: b"updateImport".into(),
                                 name_loc: Loc::EMPTY,
                                 ..Default::default()
                             },

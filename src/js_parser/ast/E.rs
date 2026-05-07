@@ -22,11 +22,11 @@ use crate::ast::{
 };
 
 // In Zig: `const string = []const u8;`
-// AST string fields are arena-owned (bulk-freed via Store/arena reset; never individually
-// freed). Phase A models them as `&'static [u8]` to keep node types lifetime-free; Phase B
-// will likely introduce a `StoreSlice`/`&'arena [u8]` newtype.
-// TODO(port): arena-owned slice lifetime — revisit in Phase B.
-type Str = &'static [u8];
+// AST string fields are arena-owned (bulk-freed via Store/arena reset; never
+// individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
+// lifetime-erased pointer with safe construction (no `transmute`) and
+// `Deref<Target=[u8]>` under the same valid-until-arena-reset contract.
+pub use crate::StoreStr as Str;
 
 /// This represents an internal property name that can be mangled. The symbol
 /// referenced by this expression should be a "SymbolMangledProp" symbol.
@@ -317,7 +317,7 @@ impl Default for Dot {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            name: b"",
+            name: Str::EMPTY,
             name_loc: logger::Loc::EMPTY,
             optional_chain: None,
             can_be_removed_if_unused: false,
@@ -612,22 +612,22 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub fn to_string(&self, bump: &Bump) -> Option<&'static [u8]> {
+    pub fn to_string(&self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value, bump)
     }
 
-    pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<&'static [u8]> {
+    pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
             let abs = int_value.unsigned_abs();
 
             // do not allocate for a small set of constant numbers: -100 through 100
             if (abs as usize) < DOUBLE_DIGIT.len() {
-                return Some(if int_value < 0 {
+                return Some(Str::new(if int_value < 0 {
                     NEG_DOUBLE_DIGIT[abs as usize]
                 } else {
                     DOUBLE_DIGIT[abs as usize]
-                });
+                }));
             }
 
             // std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
@@ -653,34 +653,26 @@ impl Number {
             if write!(w, "{}", int_value as i32).is_err() {
                 return None;
             }
-            // TODO(port): arena slice lifetime — see Str alias note.
-            // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase B StoreRef/Str.
-            return Some(unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(&w.buf[..w.len]))
-            });
+            return Some(Str::new(bump.alloc_slice_copy(&w.buf[..w.len])));
         }
 
         if value.is_nan() {
-            return Some(b"NaN");
+            return Some(Str::new(b"NaN"));
         }
 
         if value.is_infinite() && value.is_sign_negative() {
-            return Some(b"-Infinity");
+            return Some(Str::new(b"-Infinity"));
         }
 
         if value.is_infinite() {
-            return Some(b"Infinity");
+            return Some(Str::new(b"Infinity"));
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut buf = [0u8; 124];
             let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
-            // TODO(port): arena slice lifetime
-            // SAFETY: arena-owned slice; lifetime erased to 'static pending Phase B StoreRef/Str.
-            return Some(unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(s))
-            });
+            return Some(Str::new(bump.alloc_slice_copy(s)));
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -747,10 +739,10 @@ pub struct BigInt {
     pub value: Str,
 }
 impl BigInt {
-    pub const EMPTY: BigInt = BigInt { value: b"" };
+    pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
 
     pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        writer.write(self.value)
+        writer.write(&self.value)
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
@@ -890,7 +882,7 @@ impl Object {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
         };
-        if let Some(existing) = self.get(head_key) {
+        if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
                     if rope.next.is_null() {
@@ -956,7 +948,7 @@ impl Object {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
         };
-        if self.has_property(head_key) {
+        if self.has_property(&head_key) {
             return Err(SetError::Clobber);
         }
         // Zig takes `*const Object` here and mutates through BabyList's interior pointer;
@@ -980,7 +972,7 @@ impl Object {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
         };
-        if let Some(existing) = self.get(head_key) {
+        if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
                     if rope.next.is_null() {
@@ -1046,7 +1038,7 @@ impl Object {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
         };
-        if let Some(existing) = self.get(head_key) {
+        if let Some(existing) = self.get(&head_key) {
             match existing.data {
                 crate::ast::expr::Data::EArray(mut array) => {
                     if rope.next.is_null() {
@@ -1162,14 +1154,14 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
     if let Some(k) = &lhs.key {
         if let crate::ast::expr::Data::EString(s) = &k.data {
             lhs_key_size =
-                *PACKAGE_JSON_SORT_MAP.get(s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
+                *PACKAGE_JSON_SORT_MAP.get(&s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
     }
 
     if let Some(k) = &rhs.key {
         if let crate::ast::expr::Data::EString(s) = &k.data {
             rhs_key_size =
-                *PACKAGE_JSON_SORT_MAP.get(s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
+                *PACKAGE_JSON_SORT_MAP.get(&s.data).unwrap_or(&PackageJsonSortFields::Fake) as u8;
         }
     }
 
@@ -1179,7 +1171,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
             // a full `Ordering` so this is usable with `sort_by`.
             let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
             let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
-            a.cmp(b)
+            a.cmp(&b)
         }
         ord => ord,
     }
@@ -1188,7 +1180,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let a = lhs.key.as_ref().unwrap().data.e_string().unwrap().data;
     let b = rhs.key.as_ref().unwrap().data.e_string().unwrap().data;
-    a.cmp(b)
+    a.cmp(&b)
 }
 
 pub struct Spread {
@@ -1218,7 +1210,7 @@ pub use EString as String;
 impl Default for EString {
     fn default() -> Self {
         Self {
-            data: b"",
+            data: Str::EMPTY,
             prefer_template: false,
             next: None,
             end: None,
@@ -1237,7 +1229,7 @@ impl EString {
     #[inline]
     pub fn slice8(&self) -> &[u8] {
         debug_assert!(!self.is_utf16);
-        self.data
+        self.data.slice()
     }
     #[inline]
     pub fn slice16(&self) -> &[u16] {
@@ -1248,15 +1240,12 @@ impl EString {
     }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {
-        Self { data, prefer_template: false, next: None, end: None, rope_len: 0, is_utf16: false }
+        Self { data: Str::new(data), prefer_template: false, next: None, end: None, rope_len: 0, is_utf16: false }
     }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
-    /// and bulk-freed; per the Phase-A `Str` convention the lifetime is
-    /// erased. Phase B threads `'bump`.
+    /// and bulk-freed; `StoreStr` records it under the `StoreRef` contract.
     pub fn init(data: &[u8]) -> Self {
-        // SAFETY: arena-owned slice; lifetime erased pending Phase-B `'bump`.
-        let data: &'static [u8] = unsafe { core::mem::transmute(data) };
-        Self { data, ..Default::default() }
+        Self { data: Str::new(data), ..Default::default() }
     }
     /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
     /// stores the **u16 element count** (not byte count) — Zig:
@@ -1268,9 +1257,7 @@ impl EString {
         let bytes = unsafe {
             core::slice::from_raw_parts(data.as_ptr().cast::<u8>(), data.len())
         };
-        // TODO(port): arena-owned slice lifetime — see `Str` alias note.
-        let bytes_static: &'static [u8] = unsafe { core::mem::transmute(bytes) };
-        Self { data: bytes_static, is_utf16: true, ..Default::default() }
+        Self { data: Str::new(bytes), is_utf16: true, ..Default::default() }
     }
     /// E.String containing non-ascii characters may not fully work.
     /// https://github.com/oven-sh/bun/issues/11963
@@ -1295,10 +1282,7 @@ impl EString {
             return Ok(());
         }
         let v = strings::to_utf8_alloc(self.slice16());
-        // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str` convention.
-        self.data = unsafe {
-            core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(&v))
-        };
+        self.data = Str::new(bump.alloc_slice_copy(&v));
         self.is_utf16 = false;
         Ok(())
     }
@@ -1337,7 +1321,7 @@ impl EString {
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
-            strings::eql_long(self.data, other, true)
+            strings::eql_long(&self.data, other, true)
         } else {
             strings::utf16_eql_string(self.slice16(), other)
         }
@@ -1362,7 +1346,7 @@ impl EString {
         let mut i = 0usize;
         let mut next: Option<&EString> = Some(self);
         while let Some(cur) = next {
-            if !strings::eql_long(cur.data, &value[i..i + cur.data.len()], false) {
+            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()], false) {
                 return false;
             }
             i += cur.data.len();
@@ -1377,15 +1361,13 @@ impl EString {
         }
         let mut bytes =
             bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
-        bytes.extend_from_slice(self.data);
+        bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
         while let Some(part) = str_ {
-            bytes.extend_from_slice(part.get().data);
+            bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str` convention.
-        self.data =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(bytes.into_bump_slice()) };
+        self.data = Str::new(bytes.into_bump_slice());
         self.next = None;
     }
 
@@ -1394,10 +1376,9 @@ impl EString {
     /// `bump` (Zig used the passed allocator directly).
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
-            // SAFETY: `self.data` is arena-owned with the same lifetime as `bump`
-            // (Zig invariant); reborrowing under `'b` is sound while the AST
-            // store is alive.
-            Ok(unsafe { core::mem::transmute::<&[u8], &'b [u8]>(self.data) })
+            // `self.data` is arena-owned with the same lifetime as `bump`
+            // (Zig invariant); StoreStr re-borrows under that contract.
+            Ok(self.data.slice())
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
             Ok(bump.alloc_slice_copy(&v))
@@ -1406,7 +1387,7 @@ impl EString {
 
     pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
-            Ok(bump.alloc_slice_copy(self.data))
+            Ok(bump.alloc_slice_copy(&self.data))
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
             Ok(bump.alloc_slice_copy(&v))
@@ -1418,7 +1399,7 @@ impl EString {
             return 0;
         }
         if self.is_utf8() {
-            bun_wyhash::hash(self.data)
+            bun_wyhash::hash(&self.data)
         } else {
             let s16 = self.slice16();
             // SAFETY: reinterpreting &[u16] as &[u8] of double length for hashing.
@@ -1469,7 +1450,7 @@ impl EString {
     pub fn order(&self, other: &EString) -> Ordering {
         debug_assert!(self.is_utf8() == other.is_utf8());
         if self.is_utf8() {
-            Self::string_compare_for_javascript(self.data, other.data)
+            Self::string_compare_for_javascript(&self.data,&other.data)
         } else {
             Self::string_compare_for_javascript(self.slice16(), other.slice16())
         }
@@ -1477,10 +1458,7 @@ impl EString {
 
     pub fn clone(&self, bump: &Bump) -> Result<EString, AllocError> {
         Ok(EString {
-            // SAFETY: arena-owned slice; lifetime erased to 'static per Phase-A `Str`.
-            data: unsafe {
-                core::mem::transmute::<&[u8], &'static [u8]>(bump.alloc_slice_copy(self.data))
-            },
+            data: Str::new(bump.alloc_slice_copy(&self.data)),
             prefer_template: self.prefer_template,
             is_utf16: !self.is_utf8(),
             ..EString::default()
@@ -1500,7 +1478,7 @@ impl EString {
             return Some(self.rope_len);
         }
         if self.is_utf8() {
-            if !strings::is_all_ascii(self.data) {
+            if !strings::is_all_ascii(&self.data) {
                 return None;
             }
             return Some(self.data.len() as u32);
@@ -1512,12 +1490,12 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long(self.data, other.data, true)
+                strings::eql_long(&self.data,&other.data, true)
             } else {
-                strings::utf16_eql_string(other.slice16(), self.data)
+                strings::utf16_eql_string(other.slice16(), &self.data)
             }
         } else if other.is_utf8() {
-            strings::utf16_eql_string(self.slice16(), other.data)
+            strings::utf16_eql_string(self.slice16(), &other.data)
         } else {
             self.slice16() == other.slice16()
         }
@@ -1525,7 +1503,7 @@ impl EString {
 
     pub fn eql_utf16(&self, other: &[u16]) -> bool {
         if self.is_utf8() {
-            strings::utf16_eql_string(other, self.data)
+            strings::utf16_eql_string(other, &self.data)
         } else {
             other == self.slice16()
         }
@@ -1643,7 +1621,7 @@ impl EString {
         // Zig: `if (self.isUTF8()) self.data else strings.toUTF8AllocZ(...)`, NUL-terminated.
         // Port: copy into the bump arena with a trailing NUL and wrap as `ZStr`.
         let bytes: &[u8] = if self.is_utf8() {
-            self.data
+            &self.data
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
             bump.alloc_slice_copy(&v)
@@ -1690,7 +1668,7 @@ impl fmt::Display for EString {
         if self.next.is_none() {
             f.write_str("(")?;
             if self.is_utf8() {
-                write!(f, "\"{}\"", bstr::BStr::new(self.data))?;
+                write!(f, "\"{}\"", bstr::BStr::new(&self.data))?;
             } else {
                 write!(f, "\"{}\"", bun_core::fmt::utf16(self.slice16()))?;
             }
@@ -1700,7 +1678,7 @@ impl fmt::Display for EString {
             let mut it: Option<&EString> = Some(self);
             while let Some(part) = it {
                 if part.is_utf8() {
-                    write!(f, "\"{}\"", bstr::BStr::new(part.data))?;
+                    write!(f, "\"{}\"", bstr::BStr::new(&part.data))?;
                 } else {
                     write!(f, "\"{}\"", bun_core::fmt::utf16(part.slice16()))?;
                 }
@@ -1790,7 +1768,7 @@ impl TemplateContents {
     fn shallow_clone(&self) -> TemplateContents {
         match self {
             TemplateContents::Cooked(c) => TemplateContents::Cooked(c.shallow_clone()),
-            TemplateContents::Raw(r) => TemplateContents::Raw(r),
+            TemplateContents::Raw(r) => TemplateContents::Raw(*r),
         }
     }
 }
@@ -1836,7 +1814,7 @@ impl Template {
             match &part.value.data {
                 crate::ast::expr::Data::ENumber(n) => {
                     if let Some(s) = n.to_string(bump) {
-                        part.value = Expr::init(EString::init(s), part.value.loc);
+                        part.value = Expr::init(EString::init(&s), part.value.loc);
                     }
                 }
                 crate::ast::expr::Data::ENull(_) => {
@@ -1852,7 +1830,7 @@ impl Template {
                     part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
                 }
                 crate::ast::expr::Data::EBigInt(value) => {
-                    part.value = Expr::init(EString::init(value.value), part.value.loc);
+                    part.value = Expr::init(EString::init(&value.value), part.value.loc);
                 }
                 _ => {}
             }
@@ -1953,7 +1931,7 @@ pub struct RegExp {
     pub flags_offset: Option<u16>,
 }
 impl RegExp {
-    pub const EMPTY: RegExp = RegExp { value: b"", flags_offset: None };
+    pub const EMPTY: RegExp = RegExp { value: Str::EMPTY, flags_offset: None };
 
     pub fn pattern(&self) -> &[u8] {
         // rewind until we reach the /foo/gim
@@ -1969,7 +1947,7 @@ impl RegExp {
             return bun_string::strings::trim(&self.value[..i as usize], b"/");
         }
 
-        bun_string::strings::trim(self.value, b"/")
+        bun_string::strings::trim(&self.value, b"/")
     }
 
     pub fn flags(&self) -> &[u8] {
@@ -1985,7 +1963,7 @@ impl RegExp {
     }
 
     pub fn json_stringify<W: crate::JsonWriter>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        writer.write(self.value)
+        writer.write(&self.value)
     }
 }
 
@@ -2062,7 +2040,7 @@ impl Import {
         let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
 
         if !str_.is_utf16 {
-            if let Some(loader) = bun_options_types::Loader::from_string(str_.data) {
+            if let Some(loader) = bun_options_types::Loader::from_string(&str_.data) {
                 if loader == bun_options_types::Loader::Sqlite {
                     let Some(embed) = Object::get(with_obj, b"embed") else { return Some(loader) };
                     let Some(embed_str) = embed.data.as_e_string() else { return Some(loader) };

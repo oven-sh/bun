@@ -422,7 +422,7 @@ pub fn post_process_js_chunk(
 
             // If source file has a hashbang, use it
             if !source_hashbang.is_empty() {
-                break 'brk (source_hashbang, c.options.banner);
+                break 'brk (source_hashbang.slice(), c.options.banner);
             }
 
             // Otherwise check if banner starts with hashbang
@@ -1102,7 +1102,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     key: Some(Expr::init(
                                         E::String {
                                             // SAFETY: alias is an arena `*const [u8]`; never null.
-                                            data: unsafe { &*export_item.alias },
+                                            data: unsafe { &*export_item.alias }.into(),
                                             is_utf16: false,
                                             ..Default::default()
                                         },
@@ -1163,7 +1163,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         Expr::init(
                             E::Dot {
                                 target: Expr::init_identifier(c.unbound_module_ref, Logger::Loc::EMPTY),
-                                name: b"exports",
+                                name: b"exports".into(),
                                 name_loc: Logger::Loc::EMPTY,
                                 ..Default::default()
                             },

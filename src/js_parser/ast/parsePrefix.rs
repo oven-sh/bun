@@ -316,11 +316,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn pfx_t_big_integer_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        // TODO(port): `E::BigInt::value` is `&'static [u8]` (arena slice placeholder);
-        // Phase B threads `'a` through E.* — until then, erase the lifetime.
-        // SAFETY: identifier borrows source text, which outlives every AST node.
-        let value: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
+        let value = E::Str::new(p.lexer.identifier);
         // markSyntaxFeature bigInt
         p.lexer.next()?;
         Ok(p.new_expr(E::BigInt { value }, loc))
@@ -333,11 +329,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: Zig `defer p.lexer.regex_flags_start = null` — reset after both success and
         // the `next()?` error path. Reshaped: capture, advance, then unconditionally reset before
         // propagating any error from `next()`.
-        // TODO(port): `E::RegExp::value` is `&'static [u8]` (arena slice placeholder);
-        // Phase B threads `'a` through E.* — until then, erase the lifetime.
-        // SAFETY: raw() borrows source text, which outlives every AST node.
-        let value: &'static [u8] =
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw()) };
+        let value = E::Str::new(p.lexer.raw());
         let next_result = p.lexer.next();
         let flags_offset = p.lexer.regex_flags_start;
         p.lexer.regex_flags_start = None;

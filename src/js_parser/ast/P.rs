@@ -1718,12 +1718,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             js_ast::ts::Data::Namespace(map) => {
                                 let map: *const js_ast::TSNamespaceMemberMap = *map;
                                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
-                                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
-                                // SAFETY: alias is arena-owned and outlives every Expr.
-                                let alias_static: &'static [u8] =
-                                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(alias) };
                                 let expr = self.new_expr(
-                                    E::Dot { target, name: alias_static, name_loc: loc, ..Default::default() },
+                                    E::Dot { target, name: alias.into(), name_loc: loc, ..Default::default() },
                                     loc,
                                 );
                                 self.ts_namespace = RecentlyVisitedTSNamespace { expr: expr.data, map: Some(map) };
@@ -1783,15 +1779,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if let Some(ns_ref) = self.is_exported_inside_namespace.get(&ref_).copied() {
                 // SAFETY: arena-owned original_name slice.
                 let name: &'a [u8] = unsafe { &*self.symbols[ref_.inner_index() as usize].original_name };
-                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
-                // SAFETY: name is arena-owned and outlives every Expr.
-                let name_static: &'static [u8] =
-                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
 
                 self.record_usage(ns_ref);
                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
                 let prop = self.new_expr(
-                    E::Dot { target, name: name_static, name_loc: loc, ..Default::default() },
+                    E::Dot { target, name: name.into(), name_loc: loc, ..Default::default() },
                     loc,
                 );
 
@@ -4570,14 +4562,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             ) {
                 value = rewrote;
             } else {
-                // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
-                // SAFETY: part is arena-owned ('a) and outlives every Expr.
-                let name: &'static [u8] =
-                    unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(*part) };
                 value = self.new_expr(
                     E::Dot {
                         target: value,
-                        name,
+                        name: (*part).into(),
                         name_loc: loc,
                         can_be_removed_if_unused: self.options.features.dead_code_elimination,
                         ..Default::default()
@@ -5688,7 +5676,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         E::Dot {
                             target: Expr::init_identifier(namespace, name_loc),
                             // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                            name: unsafe { &*name },
+                            name: unsafe { (&*name).into() },
                             name_loc,
                             ..Default::default()
                         },
@@ -5792,14 +5780,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         // Wrap with a comment
         let loc = value.loc;
-        // TODO(port): E::InlinedEnum.comment is `&'static [u8]` pending crate-wide
-        // 'bump threading (see E.rs TODO). The slice is arena-owned (lives for the
-        // parser 'a, which outlives every Expr). Erase the lifetime to fit the
-        // current placeholder field type.
-        // SAFETY: arena-owned slice valid for the AST lifetime; replaced once
-        // E::InlinedEnum gains `'bump`.
-        let comment: &'static [u8] = unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(comment) };
-        self.new_expr(E::InlinedEnum { value, comment }, loc)
+        self.new_expr(E::InlinedEnum { value, comment: comment.into() }, loc)
     }
 
     pub fn runtime_identifier_ref(&mut self, loc: logger::Loc, name: &'static [u8]) -> Ref {
@@ -5896,7 +5877,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(&parts[last], ex.name);
+                    let is_tail_match = strings::eql(&parts[last], &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
                 }
             }
@@ -6092,7 +6073,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         } else {
                             let inner = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                             target = self.new_expr(
-                                E::Dot { target: inner, name: b"prototype", name_loc: loc, ..Default::default() },
+                                E::Dot { target: inner, name: b"prototype".into(), name_loc: loc, ..Default::default() },
                                 loc,
                             );
                         }
@@ -6475,13 +6456,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 debug_assert!(refs.len() >= 2);
                 // (refs.deinit(p.allocator) — arena-backed; nothing to free in Rust)
 
-                // PORT NOTE: E::Dot.name is `&'static [u8]` pending crate-wide
-                // 'bump threading. `load_name_from_ref` returns `&'a [u8]`;
-                // erase the lifetime to fit the placeholder field type.
-                // SAFETY: arena-owned slice valid for the AST lifetime.
                 macro_rules! ref_name {
                     ($r:expr) => {
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.load_name_from_ref($r)) }
+                        E::Str::new(self.load_name_from_ref($r))
                     };
                 }
 
@@ -6590,7 +6567,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         self.new_expr(
             E::Dot {
                 target: Expr::init_identifier(enclosing_ref, loc),
-                name,
+                name: name.into(),
                 name_loc: loc,
                 ..Default::default()
             },
@@ -6705,7 +6682,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let target = self.new_expr(E::Identifier { ref_: self.module_ref, ..Default::default() }, loc);
         self.new_expr(
             E::Dot {
-                name: exports_string_name,
+                name: exports_string_name.into(),
                 name_loc: loc,
                 target,
                 ..Default::default()
@@ -6859,7 +6836,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         let import_record_index = 'found: {
             for (i, import_record) in self.import_records.items().iter().enumerate() {
-                if strings::eql(specifier, import_record.path.text) {
+                if strings::eql(&specifier, import_record.path.text) {
                     break 'found i;
                 }
             }
@@ -7656,7 +7633,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             top_level_symbols_to_parts,
             char_freq,
             directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(b"use strict" as &[u8])
+                Some(crate::StoreStr::new(b"use strict"))
             } else {
                 None
             },
@@ -7676,12 +7653,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             has_import_meta: self.has_import_meta,
 
             // Spec P.zig:6689: `.hashbang = hashbang`.
-            // TODO(port): Ast.hashbang is `&'static [u8]` (placeholder lifetime);
-            // once Ast gains an arena lifetime param, drop the unsafe erasure.
-            // SAFETY: `hashbang` borrows source-text/arena storage that lives for
-            // 'a, which outlives the returned Ast — same justification as the
-            // `from_bump_slice` calls for `symbols`/`parts`/`import_records` above.
-            hashbang: unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(hashbang) },
+            hashbang: hashbang.into(),
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,

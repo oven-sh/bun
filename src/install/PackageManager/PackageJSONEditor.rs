@@ -30,9 +30,8 @@ pub struct EditOptions {
 }
 
 /// Leak a freshly-allocated byte buffer to obtain a `'static` slice for
-/// storage in `E::EString.data` (the AST `Str` alias is `&'static [u8]` until
-/// Phase B threads `'bump`). Mirrors Zig's `allocator.dupe(u8, ...)` against
-/// the leaked-singleton `manager.allocator`.
+/// storage in `E::EString.data`. Mirrors Zig's `allocator.dupe(u8, ...)`
+/// against the leaked-singleton `manager.allocator`.
 #[inline]
 fn leak_str(bytes: Vec<u8>) -> &'static [u8] {
     Box::leak(bytes.into_boxed_slice())
@@ -1057,7 +1056,7 @@ pub fn edit(
                     if manager.subcommand == Subcommand::Update
                         && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
                     {
-                        break 'uninitialized b"latest" as &'static [u8];
+                        break 'uninitialized b"latest".into();
                     }
 
                     if manager.subcommand != Subcommand::Update
@@ -1066,10 +1065,10 @@ pub fn edit(
                         || request.version.tag == dependency::Tag::Npm
                     {
                         break 'uninitialized match request.version.tag {
-                            dependency::Tag::Uninitialized => b"latest" as &'static [u8],
+                            dependency::Tag::Uninitialized => b"latest".into(),
                             _ => leak_dup(
                                 request.version.literal.slice(request.version_buf()),
-                            ),
+                            ).into(),
                         };
                     } else {
                         break 'uninitialized e_string.data;
@@ -1078,7 +1077,7 @@ pub fn edit(
 
                 continue;
             }
-            e_string.data = match resolutions[request.package_id as usize].tag {
+            e_string.data = bun_js_parser::StoreStr::new(match resolutions[request.package_id as usize].tag {
                 resolution::Tag::Npm => 'npm: {
                     if manager.subcommand == Subcommand::Update
                         && (request.version.tag == dependency::Tag::DistTag
@@ -1215,7 +1214,7 @@ pub fn edit(
 
                 resolution::Tag::Workspace => b"workspace:*",
                 _ => leak_dup(request.version.literal.slice(request.version_buf())),
-            };
+            });
         }
     }
     Ok(())

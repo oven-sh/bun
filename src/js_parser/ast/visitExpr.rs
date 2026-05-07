@@ -704,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.macro_call_count += 1;
                         let name: &[u8] = macro_ref_data
                             .name
-                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().unwrap().name);
+                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().unwrap().name.slice());
                         let (record_path_text, record_range) = {
                             let record = &p.import_records.items()
                                 [macro_ref_data.import_record_id as usize];
@@ -856,13 +856,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
                 if !s.is_utf16 && s.is_identifier(p.allocator) {
-                    // PORT NOTE: `E::Dot.name: &'static [u8]` is the arena-erased
-                    // `Str` newtype; matches the transmute pattern in E.rs.
                     let dot = p.new_expr(
                         E::Dot {
-                            name: unsafe {
-                                core::mem::transmute::<&[u8], &'static [u8]>(s.data)
-                            },
+                            name: s.data,
                             name_loc: e_.index.loc,
                             target: e_.target,
                             optional_chain: e_.optional_chain,
@@ -988,11 +984,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if p.options.features.minify_syntax && s.is_identifier(p.allocator) {
                             let dot = p.new_expr(
                                 E::Dot {
-                                    name: unsafe {
-                                        core::mem::transmute::<&[u8], &'static [u8]>(
-                                            s.data,
-                                        )
-                                    },
+                                    name: s.data,
                                     name_loc: unwrapped.loc,
                                     target: e_.target,
                                     optional_chain: e_.optional_chain,
@@ -1019,7 +1011,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if let Some(rewrite) = p.maybe_rewrite_property_access(
                             expr.loc,
                             e_.target,
-                            s.data,
+                            s.data.slice(),
                             unwrapped.loc,
                             IdentifierOpts::default()
                                 .with_is_call_target(is_call_target)
@@ -1049,16 +1041,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let literal = str_.data;
                             let num: usize = index.data.e_number().unwrap().to_usize();
                             if cfg!(debug_assertions) {
-                                debug_assert!(strings::is_all_ascii(literal));
+                                debug_assert!(strings::is_all_ascii(&literal));
                             }
                             if num < literal.len() {
                                 return p.new_expr(
                                     E::String {
-                                        data: unsafe {
-                                            core::mem::transmute::<&[u8], &'static [u8]>(
-                                                &literal[num..num + 1],
-                                            )
-                                        },
+                                        data: E::Str::new(&literal[num..num + 1]),
                                         ..Default::default()
                                     },
                                     expr.loc,
@@ -1151,13 +1139,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
                     p.ignore_usage_of_runtime_require();
                     return p.new_expr(
-                        E::String { data: b"function", ..Default::default() },
+                        E::String { data: b"function".into(), ..Default::default() },
                         expr.loc,
                     );
                 }
 
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
-                    return p.new_expr(E::String { data: typeof_, ..Default::default() }, expr.loc);
+                    return p.new_expr(E::String { data: typeof_.into(), ..Default::default() }, expr.loc);
                 }
             }
             Op::UnDelete => {
@@ -1262,7 +1250,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
 
-        if let Some(parts) = p.define.dots.get(e_.name) {
+        if let Some(parts) = p.define.dots.get(e_.name.slice()) {
             // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
             // borrow so `&mut self` helpers below can be called while iterating.
             let parts: &[crate::defines::DotDefine] =
@@ -1345,7 +1333,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
-                e_.name,
+                e_.name.slice(),
                 e_.name_loc,
                 IdentifierOpts::default()
                     .with_is_call_target(is_call_target)
@@ -1362,7 +1350,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         && matches!(e_.target.data, Data::EObject(..))
                         && e_.target.data.e_object().unwrap().was_originally_macro
                     {
-                        if let Some(obj) = e_.target.get(e_.name) {
+                        if let Some(obj) = e_.target.get(&e_.name) {
                             return obj;
                         }
                     }
@@ -1603,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // PORT NOTE: Zig `string(allocator)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data) } else { None };
+                    p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data.slice()) } else { None };
                 }
                 property.value = Some(p.visit_expr_in_out(
                     property.value.unwrap(),
@@ -2004,7 +1992,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let name: &[u8] = macro_ref_data
                     .name
-                    .unwrap_or_else(|| e_.target.data.e_dot().unwrap().name);
+                    .unwrap_or_else(|| e_.target.data.e_dot().unwrap().name.slice());
                 let (record_path_text, record_range) = {
                     let record =
                         &p.import_records.items()[macro_ref_data.import_record_id as usize];
@@ -2083,7 +2071,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Data::ECommonjsExportIdentifier(id) => unsafe {
                         &*p.symbols[id.ref_.inner_index() as usize].original_name
                     },
-                    Data::EDot(dot) => dot.name,
+                    Data::EDot(dot) => dot.name.slice(),
                     _ => break 'try_record_hook,
                 };
                 if !ReactRefresh::is_hook_name(original_name) {
@@ -2263,7 +2251,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             .features
             .bundler_feature_flags
             .as_ref()
-            .is_some_and(|flags| flags.contains(flag_string.data));
+            .is_some_and(|flags| flags.contains(&flag_string.data));
         Some(Expr {
             data: Data::EBranchBoolean(E::Boolean { value: is_enabled }),
             loc,

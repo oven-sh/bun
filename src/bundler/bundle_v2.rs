@@ -3080,10 +3080,10 @@ impl<'a> BundleV2<'a> {
         let scbs = self.graph.server_component_boundaries.list.slice();
         let named_exports_array = self.graph.ast.items_named_exports();
 
-        let id_string = server.new_expr(E::EString { data: b"id", ..Default::default() });
-        let name_string = server.new_expr(E::EString { data: b"name", ..Default::default() });
-        let chunks_string = server.new_expr(E::EString { data: b"chunks", ..Default::default() });
-        let specifier_string = server.new_expr(E::EString { data: b"specifier", ..Default::default() });
+        let id_string = server.new_expr(E::EString { data: b"id".into(), ..Default::default() });
+        let name_string = server.new_expr(E::EString { data: b"name".into(), ..Default::default() });
+        let chunks_string = server.new_expr(E::EString { data: b"chunks".into(), ..Default::default() });
+        let specifier_string = server.new_expr(E::EString { data: b"specifier".into(), ..Default::default() });
         let empty_array = server.new_expr(E::Array::default());
 
         for ((r#use, source_id), ssr_index) in scbs.use_directive().iter()
@@ -3118,11 +3118,11 @@ impl<'a> BundleV2<'a> {
                 let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
 
                 let client_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, source_id).as_bytes())),
+                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, source_id).as_bytes())).into(),
                     ..Default::default()
                 });
                 let ssr_path = server.new_expr(E::EString {
-                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, ssr_index).as_bytes())),
+                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, ssr_index).as_bytes())).into(),
                     ..Default::default()
                 });
 
@@ -3132,11 +3132,11 @@ impl<'a> BundleV2<'a> {
                         "{:x}S{:08}#{}",
                         self.unique_key, source_id, bstr::BStr::new(export_name_string)
                     ).as_bytes()));
-                    let export_name = server.new_expr(E::EString { data: astr(export_name_string), ..Default::default() });
+                    let export_name = server.new_expr(E::EString { data: astr(export_name_string).into(), ..Default::default() });
 
                     // write dependencies on the underlying module, not the proxy
                     server_manifest_props.push(G::Property {
-                        key: Some(server.new_expr(E::EString { data: server_key_string, ..Default::default() })),
+                        key: Some(server.new_expr(E::EString { data: server_key_string.into(), ..Default::default() })),
                         value: Some(server.new_expr(E::Object {
                             properties: js_ast::ast::g::PropertyList::from_owned_slice(Box::new([
                                 G::Property { key: Some(id_string), value: Some(client_path), ..Default::default() },
@@ -5819,7 +5819,7 @@ impl<'a> BundleV2<'a> {
             unsafe { &mut *define_ptr },
             js_parser_options,
             unsafe { &mut *log_ptr },
-            Expr::init(E::EString { data: unique_key, ..Default::default() }, Logger::Loc::EMPTY),
+            Expr::init(E::EString { data: unique_key.into(), ..Default::default() }, Logger::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.
             b"__jsonParse",

@@ -52,11 +52,11 @@ pub struct Ast {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList,
 
-    // TODO(port): lifetime — `hashbang`/`directive` are `[]const u8` slices into source text
-    // (not freed in Zig `deinit`). Using &'static as placeholder; Phase B may need arena lifetime
-    // or a StoreRef.
-    pub hashbang: &'static [u8],
-    pub directive: Option<&'static [u8]>,
+    // `hashbang`/`directive` are `[]const u8` slices into source text (not
+    // freed in Zig `deinit`). `StoreStr` records them under the same
+    // lifetime-erased contract as `StoreRef`.
+    pub hashbang: crate::StoreStr,
+    pub directive: Option<crate::StoreStr>,
     pub parts: PartList,
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList,
@@ -121,7 +121,7 @@ impl Default for Ast {
             export_keyword: logger::Range::NONE,
             top_level_await_keyword: logger::Range::NONE,
             import_records: Default::default(),
-            hashbang: b"",
+            hashbang: crate::StoreStr::EMPTY,
             directive: None,
             parts: Default::default(),
             symbols: Default::default(),

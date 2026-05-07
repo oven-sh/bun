@@ -566,7 +566,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(E::Dot { target: desc, name: b"get", name_loc: l, ..Default::default() }, l);
+            let dot = self.new_expr(E::Dot { target: desc, name: b"get".into(), name_loc: l, ..Default::default() }, l);
             self.call_rt(l, b"__privateGet", &[obj, storage, dot])
         } else if let Some(fn_ref) = info.getter_fn_ref {
             let storage = self.use_ref(info.storage_ref, l);
@@ -586,7 +586,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
-            let dot = self.new_expr(E::Dot { target: desc, name: b"set", name_loc: l, ..Default::default() }, l);
+            let dot = self.new_expr(E::Dot { target: desc, name: b"set".into(), name_loc: l, ..Default::default() }, l);
             self.call_rt(l, b"__privateSet", &[obj, storage, val, dot])
         } else if let Some(fn_ref) = info.setter_fn_ref {
             let storage = self.use_ref(info.storage_ref, l);
@@ -659,7 +659,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let call_target = self.new_expr(
                                 E::Dot {
                                     target: private_access,
-                                    name: b"call",
+                                    name: b"call".into(),
                                     name_loc: expr_loc,
                                     ..Default::default()
                                 },
@@ -1296,7 +1296,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     let accessor_name: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
                             if let js_ast::ExprData::EString(s) = &k.data {
-                                break 'brk p.bump_name2(b"_", s.data);
+                                break 'brk p.bump_name2(b"_", &s.data);
                             }
                         }
                         let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
@@ -1506,7 +1506,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Decorated public auto-accessor → WeakMap
                 let accessor_name: &'a [u8] = 'brk: {
                     if let js_ast::ExprData::EString(s) = &key_expr.data {
-                        break 'brk p.bump_name2(b"_", s.data);
+                        break 'brk p.bump_name2(b"_", &s.data);
                     }
                     let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
                     accessor_storage_counter += 1;
@@ -1533,14 +1533,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                     _ => unreachable!(),
                 };
-                // SAFETY: arena-owned.
-                let priv_name: &'static [u8] = unsafe {
-                    // Phase-A: original_name is arena-owned for 'a; E::EString.data is
-                    // typed `&'static [u8]` as a stand-in. Transmute the lifetime.
-                    core::mem::transmute::<&[u8], &'static [u8]>(
-                        &*p.symbols[priv_ref.inner_index() as usize].original_name,
-                    )
-                };
+                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
+                let priv_name = E::Str::new(unsafe {
+                    &*p.symbols[priv_ref.inner_index() as usize].original_name
+                });
                 p.new_expr(E::EString { data: priv_name, ..Default::default() }, loc)
             } else {
                 key_expr
@@ -1716,22 +1712,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // 5: Class decorator
         if class_decorators_len > 0 {
             p.record_usage(class_name_ref);
-            let class_name_str: &'static [u8] = if let Some(name) = original_class_name_for_decorator
+            let class_name_str: E::Str = if let Some(name) = original_class_name_for_decorator
             {
-                // SAFETY: Phase-A `Str` lifetime erasure.
-                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(name) }
+                name.into()
             } else if is_expr && expr_class_is_anonymous {
-                // SAFETY: Phase-A `Str` lifetime erasure.
-                unsafe {
-                    core::mem::transmute::<&[u8], &'static [u8]>(name_from_context.unwrap_or(b""))
-                }
+                name_from_context.unwrap_or(b"").into()
             } else {
-                // SAFETY: arena-owned + Phase-A `Str` lifetime erasure.
-                unsafe {
-                    core::mem::transmute::<&[u8], &'static [u8]>(
-                        &*p.symbols[class_name_ref.inner_index() as usize].original_name,
-                    )
-                }
+                // SAFETY: `original_name` is arena-owned (`ArenaStr = *const [u8]`).
+                E::Str::new(unsafe {
+                    &*p.symbols[class_name_ref.inner_index() as usize].original_name
+                })
             };
 
             let mut cls_dec_args = BumpVec::with_capacity_in(5, bump);
@@ -1739,7 +1729,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 .push(p.new_expr(E::Identifier { ref_: init_ref, ..Default::default() }, loc));
             cls_dec_args.push(p.new_expr(E::Number { value: 0.0 }, loc));
             cls_dec_args
-                .push(p.new_expr(E::EString { data: class_name_str, ..Default::default() }, loc));
+                .push(p.new_expr(E::EString { data: class_name_str.into(), ..Default::default() }, loc));
             cls_dec_args.push(if let Some(cdr) = class_dec_ref {
                 p.use_ref(cdr, loc)
             } else {
@@ -2035,7 +2025,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let value =
                     Some(p.new_expr(E::Function { func }, loc));
                 let key =
-                    Some(p.new_expr(E::EString { data: b"constructor", ..Default::default() }, loc));
+                    Some(p.new_expr(E::EString { data: b"constructor".into(), ..Default::default() }, loc));
                 new_properties.insert(0, G::Property {
                     flags: Flags::Property::IsMethod.into(),
                     key,

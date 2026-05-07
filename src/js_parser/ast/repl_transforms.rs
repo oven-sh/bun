@@ -158,7 +158,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         let this_dot = self.new_expr(
                             E::Dot {
                                 target: this_expr,
-                                name: name_str,
+                                name: name_str.into(),
                                 name_loc: name_loc.loc,
                                 ..Default::default()
                             },
@@ -236,7 +236,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                         .path
                         .text;
                     let str_expr = self.new_expr(
-                        E::String { data: path_str, ..Default::default() },
+                        E::String { data: path_str.into(), ..Default::default() },
                         stmt.loc,
                     );
                     let import_expr = self.new_expr(
@@ -325,7 +325,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             let dot_default = self.new_expr(
                                 E::Dot {
                                     target: ns_ref_expr,
-                                    name: b"default",
+                                    name: b"default".into(),
                                     name_loc: stmt.loc,
                                     ..Default::default()
                                 },
@@ -351,7 +351,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                             let dot_default = self.new_expr(
                                 E::Dot {
                                     target: await_expr,
-                                    name: b"default",
+                                    name: b"default".into(),
                                     name_loc: stmt.loc,
                                     ..Default::default()
                                 },
@@ -398,7 +398,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     // SAFETY: arena-owned `*const [u8]` valid for 'a; Phase-A `Str` is `&'static [u8]`.
                     let value_str: &'static [u8] = unsafe { &*directive.value };
                     let str_expr = self.new_expr(
-                        E::String { data: value_str, ..Default::default() },
+                        E::String { data: value_str.into(), ..Default::default() },
                         stmt.loc,
                     );
                     inner_stmts.push(
@@ -515,7 +515,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
             let prop_access = self.new_expr(
                 E::Dot {
                     target: ns_ref_expr,
-                    name: alias_str,
+                    name: alias_str.into(),
                     name_loc: item.name.loc,
                     ..Default::default()
                 },
@@ -604,7 +604,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {
             key: Some(self.new_expr(
-                E::String { data: b"__proto__", ..Default::default() },
+                E::String { data: b"__proto__".into(), ..Default::default() },
                 expr.loc,
             )),
             value: Some(self.new_expr(E::Null {}, expr.loc)),
@@ -613,7 +613,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
         // value: expr - the actual result value
         properties.push(G::Property {
             key: Some(
-                self.new_expr(E::String { data: b"value", ..Default::default() }, expr.loc),
+                self.new_expr(E::String { data: b"value".into(), ..Default::default() }, expr.loc),
             ),
             value: Some(expr),
             ..Default::default()

@@ -137,13 +137,6 @@ pub mod js {
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data);
 }
 
-unsafe extern "C" {
-    fn ServerWebSocket__create(
-        global: *mut JSGlobalObject,
-        ptr: *mut ServerWebSocket,
-    ) -> JSValue;
-}
-
 impl ServerWebSocket {
     #[inline]
     fn websocket(&self) -> AnyWebSocket {

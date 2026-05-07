@@ -477,11 +477,16 @@ impl OutdatedCommand {
 
         // PORT NOTE: reshaped for borrowck — `manifests.by_name_allow_expired`
         // needs `&mut manager.manifests` while we hold shared field-path borrows
-        // on `manager.lockfile.*` / `manager.options.*`. Route the `pm` argument
-        // as a raw pointer (Zig passes `*PackageManager` freely) and clone the
-        // per-package `Scope` so the only mutable borrow is the disjoint
-        // `manager.manifests` field.
+        // on `manager.lockfile.*` / `manager.options.*`. Establish a single
+        // raw provenance root and project every disjoint field through it so
+        // the `&mut manifests` borrow is never invalidated by sibling reads
+        // (Stacked Borrows). `pm` is routed raw end-to-end; the callee never
+        // materializes `&mut PackageManager`.
         let pm_ptr: *mut PackageManager = manager;
+        // SAFETY: `pm_ptr` is the sole provenance root for the loop body; all
+        // field projections below are disjoint (`options`, `lockfile`,
+        // `manifests`).
+        let manager = unsafe { &mut *pm_ptr };
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;

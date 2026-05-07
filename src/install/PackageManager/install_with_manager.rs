@@ -145,7 +145,6 @@ pub fn install_with_manager(
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
                     manager.log_mut()
                         .print(Output::error_writer() as *mut _)
                         .map_err(|_| bun_core::err!("WriteFailed"))?;
@@ -206,7 +205,6 @@ pub fn install_with_manager(
                             // clone because don't know if lockfile buffer will reallocate
                             let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
                             let mut ptr = &mut tag_buf[..];
-                            // SAFETY: same `.npm` active-arm guarantee as above.
                             original.tag = original_resolution.npm()
                                 .version
                                 .tag
@@ -812,7 +810,6 @@ pub fn install_with_manager(
         }
     }
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager.log_mut()
         .print(Output::error_writer() as *mut _)
@@ -1120,12 +1117,10 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
         manager.log_mut()
             .print(Output::error_writer() as *mut _)
             .map_err(|_| bun_core::err!("WriteFailed"))?;
     }
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
     }
@@ -1631,7 +1626,6 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
         },
     );
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     let log = manager.log_mut();
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         bun_core::handle_oom(log.add_warning_with_note(

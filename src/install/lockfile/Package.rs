@@ -995,7 +995,6 @@ impl Package<u64> {
 
             #[cfg(debug_assertions)]
             {
-                // SAFETY: `resolution` was initialised with `TaggedValue::Npm` just above.
                 if package.resolution.npm().url.is_empty() {
                     Output::panic(format_args!(
                         "tarball_url is empty for package {}@{}",
@@ -1737,7 +1736,6 @@ impl Package<u64> {
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
             dependency::version::Tag::Npm => {
-                // SAFETY: tag == Npm selects the `npm` union member.
                 let npm_name = dependency_version.npm().name;
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
@@ -1789,7 +1787,6 @@ impl Package<u64> {
 
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
-                // SAFETY: tag == Folder selects the `folder` union member.
                 let folder = *dependency_version.folder();
                 let relative = resolve_path::relative(
                     FileSystem::instance().top_level_dir(),
@@ -2085,7 +2082,6 @@ impl Package<u64> {
             if R::IS_GIT_RESOLVER {
                 let resolution: &Resolution<u64> = resolver.resolution();
                 let repo = match resolution.tag {
-                    // SAFETY: tag selects the active union member.
                     ResolutionTag::Git => *resolution.git(),
                     ResolutionTag::Github => *resolution.github(),
                     _ => break 'name,

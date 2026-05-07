@@ -618,7 +618,6 @@ pub fn is_filtered_dependency_or_workspace(
                     return false;
                 }
 
-                // SAFETY: `res.tag == Workspace` checked immediately above.
                 filter_path.join(&[res.workspace()
                     .slice(lockfile.buffers.string_bytes.as_slice())]);
 
@@ -1003,11 +1002,9 @@ impl Tree {
                 if dependency.version.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
-                    // SAFETY: `dependency.version.tag == Npm` checked immediately above.
                     let version = &dependency.version.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(
-                            // SAFETY: `resolution.tag == Npm` checked on the line above.
                             resolution.npm().version,
                             builder.buf(),
                             builder.buf(),

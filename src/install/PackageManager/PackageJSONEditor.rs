@@ -1188,7 +1188,6 @@ pub fn edit(
                         };
 
                         if request.version.tag == dependency::Tag::Npm
-                            // SAFETY: `tag == Npm` checked above.
                             && request.version.npm().is_alias
                         {
                             let dep_literal = request.version.literal.slice(request.version_buf());

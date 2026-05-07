@@ -589,7 +589,6 @@ impl<'a> NamesIterator<'a> {
             return Ok(None);
         }
         if self.dir_iterator.is_none() {
-            // SAFETY: tag == Dir checked by caller
             let dir_str = *self.bin.dir();
             let mut target = dir_str.slice(self.string_buffer);
             if strings::has_prefix(target, b"./") || strings::has_prefix(target, b".\\") {
@@ -644,7 +643,6 @@ impl<'a> NamesIterator<'a> {
                 }
                 self.i += 1;
                 self.done = true;
-                // SAFETY: tag == NamedFile
                 let named = *self.bin.named_file();
                 let base = path::basename(named[0].slice(self.string_buffer));
                 if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
@@ -655,7 +653,6 @@ impl<'a> NamesIterator<'a> {
 
             Tag::Dir => self.next_in_dir(),
             Tag::Map => {
-                // SAFETY: tag == Map
                 let map = *self.bin.map();
                 if self.i >= map.len as usize {
                     return Ok(None);

@@ -701,11 +701,9 @@ impl<'a> PackageInstall<'a> {
     pub fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: Dir) -> bool {
         let verified = match resolution.tag {
             resolution::Tag::Git => {
-                // SAFETY: tag == Git ⇒ `value.git` is the active field.
                 self.verify_git_resolution(resolution.git(), root_node_modules_dir)
             }
             resolution::Tag::Github => {
-                // SAFETY: tag == Github ⇒ `value.github` is the active field.
                 self.verify_git_resolution(resolution.github(), root_node_modules_dir)
             }
             resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),

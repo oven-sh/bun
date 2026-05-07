@@ -1264,7 +1264,6 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
                     self.manager,
                     pkg_name.slice(string_buf!()),
-                    // SAFETY: tag == Npm checked by match arm.
                     resolution.npm().version,
                     patch_contents_hash,
                 );
@@ -1273,7 +1272,6 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Git => {
                 installer.cache_dir_subpath = package_manager::cached_git_folder_name(
                     self.manager,
-                    // SAFETY: tag == Git checked by match arm.
                     resolution.git(),
                     patch_contents_hash,
                 );
@@ -1282,14 +1280,12 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Github => {
                 installer.cache_dir_subpath = package_manager::cached_github_folder_name(
                     self.manager,
-                    // SAFETY: tag == Github checked by match arm.
                     resolution.github(),
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Folder => {
-                // SAFETY: tag == Folder checked by match arm.
                 let folder_str = *resolution.folder();
                 let folder = folder_str.slice(string_buf!());
 
@@ -1323,7 +1319,6 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::LocalTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
                     self.manager,
-                    // SAFETY: tag == LocalTarball checked by match arm.
                     *resolution.local_tarball(),
                     patch_contents_hash,
                 );
@@ -1332,14 +1327,12 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::RemoteTarball => {
                 installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
                     self.manager,
-                    // SAFETY: tag == RemoteTarball checked by match arm.
                     *resolution.remote_tarball(),
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager);
             }
             resolution::Tag::Workspace => {
-                // SAFETY: tag == Workspace checked by match arm.
                 let folder_str = *resolution.workspace();
                 let folder = folder_str.slice(string_buf!());
                 // Handle when a package depends on itself
@@ -1361,7 +1354,6 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Symlink => {
                 let directory = package_manager::global_link_dir(self.manager);
 
-                // SAFETY: tag == Symlink checked by match arm.
                 let folder_str = *resolution.symlink();
                 let folder = folder_str.slice(string_buf!());
 
@@ -1434,7 +1426,6 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     resolution::Tag::Github => {
-                        // SAFETY: tag == Github checked by match arm.
                         let url = self.manager.alloc_github_url(resolution.github());
                         // PORT NOTE: `defer this.manager.allocator.free(url)` — url: Vec<u8> drops.
                         match package_manager::enqueue_tarball_for_download(
@@ -1466,7 +1457,6 @@ impl<'a> PackageInstaller<'a> {
                             self.manager,
                             dependency_id,
                             package_id,
-                            // SAFETY: tag == RemoteTarball checked by match arm.
                             resolution.remote_tarball()
                                 .slice(string_buf!()),
                             context,
@@ -1479,7 +1469,6 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
                     resolution::Tag::Npm => {
-                        // SAFETY: tag == Npm checked by match arm.
                         let npm = *resolution.npm();
                         #[cfg(debug_assertions)]
                         {
@@ -1730,7 +1719,6 @@ impl<'a> PackageInstaller<'a> {
                                 postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if resolution.tag == resolution::Tag::Npm {
-                                        // SAFETY: tag == Npm checked above.
                                         Some(resolution.npm().version)
                                     } else {
                                         None
@@ -2048,7 +2036,6 @@ impl<'a> PackageInstaller<'a> {
                         postinstall_optimizer::PkgInfo {
                             name_hash: pkg_name_hash,
                             version: if resolution.tag == resolution::Tag::Npm {
-                                // SAFETY: tag == Npm checked above.
                                 Some(resolution.npm().version)
                             } else {
                                 None

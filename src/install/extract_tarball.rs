@@ -500,7 +500,6 @@ impl ExtractTarball {
                     package_manager,
                     &mut bufs.folder_name_buf,
                     name,
-                    // SAFETY: tag == Npm guarantees the `npm` union variant is active.
                     self.resolution.npm().version,
                     None,
                 )

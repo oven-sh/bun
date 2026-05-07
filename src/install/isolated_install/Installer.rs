@@ -810,7 +810,6 @@ impl Task {
                         ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
                                 ResolutionTag::Folder => {
-                                    // SAFETY: `tag == Folder` discriminates the active variant.
                                     pkg_res.folder().slice(string_buf)
                                 }
                                 ResolutionTag::Root => b".",
@@ -832,7 +831,6 @@ impl Task {
                                     InstallMethod::Hardlink => {
                                         let mut src =
                                             OsAutoAbsPath::init_top_level_dir_long_path();
-                                        // SAFETY: outer match guarantees `tag == Folder` here.
                                         src.append_join(pkg_res.folder().slice(string_buf));
 
                                         let mut dest = OsAutoPath::init();
@@ -1498,7 +1496,6 @@ impl Task {
                                 postinstall_optimizer::PkgInfo {
                                     name_hash: pkg_name_hash,
                                     version: if pkg_res.tag == ResolutionTag::Npm {
-                                        // SAFETY: `tag == Npm` discriminates the active variant.
                                         Some(pkg_res.npm().version)
                                     } else {
                                         None
@@ -2429,7 +2426,6 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
             }
             ResolutionTag::Workspace => {
-                // SAFETY: `tag == Workspace` discriminates the active variant.
                 buf.append(pkg_res.workspace().slice(string_buf));
                 buf.append(b"node_modules");
             }
@@ -2527,7 +2523,6 @@ impl<'a> Installer<'a> {
                 }
             }
             ResolutionTag::Workspace => {
-                // SAFETY: `tag == Workspace` discriminates the active variant.
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
@@ -2545,7 +2540,6 @@ impl<'a> Installer<'a> {
 
                 buf.clear();
                 buf.append(symlink_dir_path);
-                // SAFETY: `tag == Symlink` discriminates the active variant.
                 buf.append(pkg_res.symlink().slice(string_buf));
             }
             _ => {

@@ -658,7 +658,6 @@ pub fn migrate_pnpm_lockfile<'a>(
                 b"."
             } else {
                 let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
-                // SAFETY: tag == Workspace for ids in [1, workspace_pkgs_end).
                 let ws = *workspace_res.workspace();
                 workspace_path_buf = ws.slice(string_bytes!(lockfile)).to_vec();
                 &workspace_path_buf
@@ -893,11 +892,9 @@ pub fn migrate_pnpm_lockfile<'a>(
                         &strings::StringOrTinyString::init(
                             name.slice(string_bytes!(lockfile)),
                         ),
-                        // SAFETY: tag == Npm → `value.npm` active.
                         res.npm().version,
                         string_bytes!(lockfile),
                     )?;
-                    // SAFETY: tag == Npm.
                     res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 }
 
@@ -985,7 +982,6 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             // implicit workspace dependencies
             if dep.behavior.is_workspace() {
-                // SAFETY: tag == Workspace.
                 let ws = *dep.version.workspace();
                 let workspace_path = ws.slice(string_buf);
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
@@ -1047,7 +1043,6 @@ pub fn migrate_pnpm_lockfile<'a>(
         let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
 
         let workspace_res = lockfile.packages.items_resolution()[pkg_id as usize];
-        // SAFETY: tag == Workspace for ids in [workspace_pkgs_off, workspace_pkgs_end).
         let ws = *workspace_res.workspace();
         let workspace_path = ws.slice(string_bytes!(lockfile));
 

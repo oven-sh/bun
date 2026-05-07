@@ -289,7 +289,6 @@ impl Stringifier {
                 workspace_sort_buf.sort_by(|&l, &r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
-                    // SAFETY: both resolutions were filtered to `tag == Workspace` above.
                     l_res.workspace().order(r_res.workspace(), buf, buf)
                 });
                 // PERF(port): std.sort.pdq — Rust sort_by is also pattern-defeating quicksort
@@ -652,7 +651,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@file:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Folder` in this match arm.
                                 res.folder().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
@@ -678,7 +676,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == LocalTarball` in this match arm.
                                 res.local_tarball().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
@@ -708,7 +705,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == RemoteTarball` in this match arm.
                                 res.remote_tarball().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
@@ -738,7 +734,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@link:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Symlink` in this match arm.
                                 res.symlink().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
@@ -764,7 +759,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Npm` in this match arm.
                                 res.npm().version.fmt(buf),
                             )?;
 
@@ -809,7 +803,6 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@workspace:{}\"]",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                // SAFETY: `tag == Workspace` in this match arm.
                                 res.workspace().fmt_json(buf, JsonOpts { quote: false }),
                             )?;
                         }
@@ -2036,7 +2029,6 @@ pub fn parse_into_binary_lockfile(
                     let url = ExtractTarball::build_url(
                         registry_url,
                         &strings::StringOrTinyString::init(name.slice(lockfile.buffers.string_bytes.as_slice())),
-                        // SAFETY: `tag == Npm` was checked just above.
                         res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
@@ -2097,7 +2089,6 @@ pub fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         res_info.loc,
-                        // SAFETY: `tag == Workspace` was checked above.
                         format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.workspace().slice(lockfile.buffers.string_bytes.as_slice()))),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);

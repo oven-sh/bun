@@ -57,7 +57,6 @@ pub fn do_patch_commit(
 ) -> Result<Option<PatchCommitResult>, bun_core::Error> {
     let mut folder_path_buf = PathBuffer::uninit();
     let mut lockfile: Box<Lockfile> = Box::new(Lockfile::default());
-    // SAFETY: `manager.log` is set by `PackageManager::init` and lives for the manager's lifetime.
     let log = manager.log_mut();
     // TODO(port): narrow error set
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
@@ -156,7 +155,6 @@ pub fn do_patch_commit(
             // `defer manager.allocator.free(package_json_source.contents);` — Drop of Source frees contents
 
             initialize_store();
-            // SAFETY: see `log` above.
             let log = manager.log_mut();
             let bump = bun_alloc::Arena::new();
             let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
@@ -187,7 +185,6 @@ pub fn do_patch_commit(
 
             let mut resolver: () = ();
             let mut package = Package::default();
-            // SAFETY: see `log` above.
             let log = manager.log_mut();
             package.parse_with_json::<()>(&mut lockfile, manager, log, &package_json_source, json, &mut resolver, Features::FOLDER)?;
 
@@ -698,7 +695,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
             // `defer manager.allocator.free(package_json_source.contents);` — Drop
 
             initialize_store();
-            // SAFETY: `manager.log` is set by `PackageManager::init` and lives for the manager's lifetime.
             let log = manager.log_mut();
             let bump = bun_alloc::Arena::new();
             let json = match JSON::parse_package_json_utf8(&package_json_source, log, &bump) {
@@ -729,7 +725,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
             let mut resolver: () = ();
             let mut package = Package::default();
-            // SAFETY: see `log` above.
             let log = manager.log_mut();
             // PORT NOTE: borrowck — `parse_with_json` needs `&mut Lockfile` and
             // `&mut PackageManager` simultaneously, but the lockfile here is
@@ -1255,7 +1250,6 @@ fn path_argument_relative_to_root_workspace_package(
         return None;
     }
     let workspace_res = &lockfile.packages.items_resolution()[workspace_package_id as usize];
-    // SAFETY: workspace package resolution always has tag == Workspace.
     let workspace_str = *workspace_res.workspace();
     let rel_path: &[u8] = workspace_str.slice(lockfile.buffers.string_bytes.as_slice());
     Some(Box::<[u8]>::from(resolve_path::join::<platform::Posix>(&[rel_path, argument])))

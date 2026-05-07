@@ -2294,7 +2294,6 @@ pub fn install_isolated_packages(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
-                                // SAFETY: pkg_res_tag == Npm guarantees `value.npm` is active.
                                 pkg_res.npm().version,
                                 pkg_res.npm().url.slice(string_buf),
                                 ctx,
@@ -2381,7 +2380,6 @@ pub fn install_isolated_packages(
                             match manager.enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
-                                // SAFETY: pkg_res_tag == RemoteTarball.
                                 pkg_res.remote_tarball().slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),

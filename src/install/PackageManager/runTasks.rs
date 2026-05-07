@@ -189,7 +189,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     node.set_estimated_total_items(manager.total_tasks as usize);
                 }
             }
-            // SAFETY: see above.
             manager.downloads_node_mut().activate();
             manager.progress.maybe_refresh();
         }
@@ -1405,7 +1404,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `env` is set during `PackageManager::init` and
                         // outlives all tasks.
                         unsafe { manager.env.unwrap().as_mut() },
-                        // SAFETY: `manager.log` is a non-null backref to the CLI log.
                         manager.log_mut(),
                         bun_sys::Dir { fd: repo_fd },
                         dep_name,

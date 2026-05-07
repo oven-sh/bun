@@ -92,7 +92,6 @@ impl PackageManager {
         let _ = package_name;
         match resolution.tag {
             ResolutionTag::Npm => {
-                // SAFETY: tag-guarded union access (`resolution.tag == Npm` matched above).
                 let npm_version = resolution.npm().version;
                 if npm_version.tag.has_pre() {
                     // TODO:
@@ -247,7 +246,6 @@ impl PackageManager {
             installed_versions
                 .sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
         }
-        // SAFETY: tag-guarded union access (`version.tag == Npm` checked above).
         let npm_query = version.npm();
         for installed_version in installed_versions.iter().copied() {
             if npm_query.version.satisfies(

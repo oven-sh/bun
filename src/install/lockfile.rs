@@ -811,7 +811,6 @@ impl Lockfile {
 
                                 // PORT NOTE: Zig's `switch (exact_versions) { else => |exact| ... }` is just a
                                 // way to capture a comptime-ish bool; in Rust we use it directly.
-                                // SAFETY: tag checked == .npm above; `npm` is the active union field.
                                 let npm_ver = res.npm().version;
                                 let len = bun_core::fmt::count(format_args!(
                                     "{}{}",
@@ -866,7 +865,6 @@ impl Lockfile {
 
                                 // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                                // SAFETY: tag checked == .npm above; `npm` is the active union field.
                                 let npm_ver = res.npm().version;
                                 let buf = {
                                     let mut cursor: &mut [u8] = &mut temp_buf[..];
@@ -933,7 +931,6 @@ impl Lockfile {
             return Some(dep.version.clone());
         }
 
-        // SAFETY: tag checked == .catalog above; `catalog` is the active union field.
         let catalog_name = *dep.version.catalog();
         let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
@@ -1551,7 +1548,6 @@ impl Lockfile {
                         continue;
                     };
 
-                    // SAFETY: tag checked == .npm above; `npm` is the active union field.
                     let npm_ver = pkg_res.npm().version;
                     let Some(pkg) = manifest.find_by_version(npm_ver) else {
                         continue;
@@ -2057,7 +2053,6 @@ impl Lockfile {
         // list head). `version` is held by-value for the whole fn body so the
         // borrow is sound; Zig's by-value copy is replaced with a `&Group`.
         let npm_version = match &version {
-            // SAFETY: tag checked == .npm; `npm` is the active union field.
             Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
             _ => None,
         };
@@ -2075,7 +2070,6 @@ impl Lockfile {
 
                 if resolutions[*id as usize].tag == ResolutionTag::Npm {
                     if let Some(npm_v) = npm_version {
-                        // SAFETY: tag checked == .npm above; `npm` is the active union field.
                         let res_ver = resolutions[*id as usize].npm().version;
                         if npm_v.satisfies(res_ver, buf, buf) {
                             return Some(*id);
@@ -2095,7 +2089,6 @@ impl Lockfile {
 
                     if resolutions[id as usize].tag == ResolutionTag::Npm {
                         if let Some(npm_v) = npm_version {
-                            // SAFETY: tag checked == .npm above; `npm` is the active union field.
                             let res_ver = resolutions[id as usize].npm().version;
                             if npm_v.satisfies(res_ver, buf, buf) {
                                 return Some(id);

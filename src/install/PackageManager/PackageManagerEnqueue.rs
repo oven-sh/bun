@@ -152,7 +152,6 @@ pub fn enqueue_dependency_list(
                 bun_fmt::PathFormatOptions { path_sep, escape_backslashes: false },
             );
             // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
-            // SAFETY: `this.log` is non-null after `PackageManager::init()`.
             let log = this.log_mut();
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log
@@ -687,7 +686,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let version: dependency::Version = 'version: {
         if dependency.version.tag == dependency::version::Tag::Npm {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
-                // SAFETY: `tag == Npm` checked above; `npm` is the active arm.
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
@@ -699,7 +697,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         if group.satisfies(query.range.left.version, buf, buf)
                             || group.satisfies(query.range.right.version, buf, buf)
                         {
-                            // SAFETY: see above — npm arm.
                             name = aliased.npm().name;
                             name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
                             break 'version aliased.clone();
@@ -718,7 +715,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         // if it's a workspaceOnly dependency
         if !dependency.behavior.is_workspace()
             && (dependency.version.tag != dependency::version::Tag::Npm
-                // SAFETY: short-circuit — this arm only evaluated when `tag == Npm`.
                 || !dependency.version.npm().is_alias)
         {
             if let Some(new) = this.lockfile.overrides.get(name_hash) {
@@ -735,7 +731,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if new.tag == dependency::version::Tag::Catalog {
                     if let Some(catalog_dep) = this.lockfile.catalogs.get(
                         &this.lockfile,
-                        // SAFETY: `new.tag == Catalog` checked above.
                         *new.catalog(),
                         name,
                     ) {
@@ -757,7 +752,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if dependency.version.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) = this.lockfile.catalogs.get(
                     &this.lockfile,
-                    // SAFETY: `tag == Catalog` checked above.
                     *dependency.version.catalog(),
                     name,
                 ) {
@@ -890,7 +884,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 logger::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    // SAFETY: `version.tag == Folder` checked above.
                                                     bstr::BStr::new(this.lockfile.str(version.folder())),
                                                     bstr::BStr::new(this.lockfile.str(&name)),
                                                 ),
@@ -1064,14 +1057,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
                                         if version.tag == dependency::version::Tag::Npm
-                                            // SAFETY: `version.tag == Npm` checked above.
                                             && version.npm().version.is_exact()
                                         {
                                             if let Some(find_result) = loaded_manifest
                                                 .as_ref()
                                                 .unwrap()
                                                 .find_by_version(
-                                                    // SAFETY: `version.tag == Npm` checked above.
                                                     version.npm()
                                                         .version.head.head.range.left.version,
                                                 )
@@ -1208,7 +1199,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             return Ok(());
         }
         dependency::version::Tag::Git => {
-            // SAFETY: `version.tag == Git` discriminates the union arm.
             let dep: Repository = *version.git();
             let res = Resolution::init(ResolutionTagged::Git(dep));
 
@@ -1249,7 +1239,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let resolved = Repository::find_commit(
                     // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
                     unsafe { this.env.unwrap().as_mut() },
-                    // SAFETY: `log` is set during init; raw `*mut Log` per LIFETIMES.tsv (BACKREF).
                     this.log_mut(),
                     bun_sys::Dir::from_fd(repo_fd),
                     alias,
@@ -1331,7 +1320,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         dependency::version::Tag::Github => {
-            // SAFETY: `version.tag == Github` discriminates the union arm.
             let dep: &Repository = version.github();
             let res = Resolution::init(ResolutionTagged::Github(*dep));
 
@@ -1544,7 +1532,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         dependency::version::Tag::Tarball => {
-            // SAFETY: `version.tag == Tarball` discriminates the union arm.
             let tarball = version.tarball();
             let res: Resolution = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => {
@@ -1903,7 +1890,6 @@ fn enqueue_local_tarball(
         // Construct an absolute path to the tarball.
         // Normally tarball paths are always relative to the root directory, but if a
         // workspace depends on a tarball path, it should be relative to the workspace.
-        // SAFETY: `workspace_res.tag == Workspace` checked above.
         let workspace_str = *workspace_res.workspace();
         let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
         let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
@@ -2083,7 +2069,6 @@ fn get_or_put_resolved_package_with_find_result(
     let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
         unsafe { &mut *this_ptr },
         unsafe { &mut *(*this_ptr).lockfile },
-        // SAFETY: `this.log` is non-null after `PackageManager::init()`.
         this.log_mut(),
         manifest,
         find_result.version,
@@ -2135,7 +2120,6 @@ fn get_or_put_resolved_package_with_find_result(
 
             let task_id = Task::Id::for_npm_package(
                 this.lockfile.str(&name),
-                // SAFETY: `package.resolution.tag == Npm` for the npm install path.
                 package.resolution.npm().version,
             );
             debug_assert!(!this.network_dedupe_map.contains(&task_id));
@@ -2328,7 +2312,6 @@ fn get_or_put_resolved_package(
                     };
                     let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    // SAFETY: `version.tag == Npm` checked above; `npm` is the active arm.
                     let npm_group = &version.npm().version;
                     if this.options.link_workspace_packages
                         && ((workspace_version.is_some()
@@ -2411,7 +2394,6 @@ fn get_or_put_resolved_package(
                     this.options.minimum_release_age_excludes,
                 ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
-                    // SAFETY: `version.tag == Npm`.
                     &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),
                     this.options.minimum_release_age_ms,
@@ -2551,7 +2533,6 @@ fn get_or_put_resolved_package(
         }
 
         dependency::version::Tag::Folder => {
-            // SAFETY: `version.tag == Folder` discriminates the union arm.
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
                 if this.lockfile.is_workspace_dependency(dependency_id) {
@@ -2751,7 +2732,6 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
-        // SAFETY: tags checked above discriminate both unions.
         return dependency.npm()
             .version
             .satisfies(resolution.npm().version, buf, buf);

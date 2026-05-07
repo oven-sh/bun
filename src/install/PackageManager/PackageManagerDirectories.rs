@@ -814,7 +814,6 @@ pub fn path_for_resolution<'a>(
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
-            // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
             let npm = *resolution.npm();
             let package_name_ = this.lockfile.packages.items_name()[package_id as usize];
             // PORT NOTE: borrowck — `path_for_cached_npm_path` reborrows `this`
@@ -848,26 +847,22 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
     match resolution.tag {
         ResolutionTag::Npm => {
-            // SAFETY: tag == Npm guarantees `value.npm` is the active union arm.
             let version = resolution.npm().version;
             cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {
-            // SAFETY: tag == Git guarantees `value.git` is the active union arm.
             let git = resolution.git();
             cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Github => {
-            // SAFETY: tag == Github guarantees `value.github` is the active union arm.
             let github = resolution.github();
             cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
-            // SAFETY: tag == Folder guarantees `value.folder` is the active union arm.
             let folder = resolution.folder().slice(buf);
             // Handle when a package depends on itself via file:
             // example:
@@ -883,20 +878,17 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Dir::cwd();
         }
         ResolutionTag::LocalTarball => {
-            // SAFETY: tag == LocalTarball guarantees `value.local_tarball` is the active union arm.
             let tarball = *resolution.local_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {
-            // SAFETY: tag == RemoteTarball guarantees `value.remote_tarball` is the active union arm.
             let tarball = *resolution.remote_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Workspace => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
-            // SAFETY: tag == Workspace guarantees `value.workspace` is the active union arm.
             let folder = resolution.workspace().slice(buf);
             // Handle when a package depends on itself
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
@@ -915,7 +907,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
             // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
-            // SAFETY: tag == Symlink guarantees `value.symlink` is the active union arm.
             let folder = resolution.symlink()
                 .slice(manager.lockfile.buffers.string_bytes.as_slice())
                 .to_vec();

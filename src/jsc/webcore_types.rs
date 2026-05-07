@@ -233,6 +233,38 @@ impl Blob {
         self.dupe_with_content_type(false)
     }
 
+    /// Rust spelling of Zig's raw `blob.*` bitwise copy (e.g.
+    /// `PathOrBlob.fromJSNoCopy`, `var blob_internal = .{ .blob = this.* }`).
+    ///
+    /// In Zig that copy bumps **no** refcounts and is never `deinit()`ed — it
+    /// just borrows `self`'s store/name/content_type for the caller's stack
+    /// frame. In Rust, `StoreRef` has drop glue, so the only sound translation
+    /// is: clone the `StoreRef` (its `Drop` balances the +1 at scope exit) and
+    /// **alias** `name`/`content_type` as borrowed bits (both are `Copy` raw
+    /// data with no `Drop`, so nothing runs on scope exit).
+    ///
+    /// Do **not** use [`Blob::dupe`] for this — it `dupe_ref()`s `name` and
+    /// boxes a fresh `content_type`, neither of which is freed by drop glue,
+    /// so both leak when the result is treated as a no-copy view.
+    #[inline]
+    pub fn borrowed_view(&self) -> Blob {
+        Blob {
+            reported_estimated_size: self.reported_estimated_size,
+            size: self.size,
+            offset: self.offset,
+            store: self.store.clone(), // +1 ↔ StoreRef::drop on scope exit
+            content_type: self.content_type, // borrowed; `self` owns it
+            content_type_allocated: self.content_type_allocated,
+            content_type_was_set: self.content_type_was_set,
+            charset: self.charset,
+            is_jsdom_file: self.is_jsdom_file,
+            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+            global_this: self.global_this,
+            last_modified: self.last_modified,
+            name: self.name, // borrowed; no `dupe_ref()`
+        }
+    }
+
     /// `Blob.dupeWithContentType()` (Blob.zig:3688). The Zig spec ignores
     /// `include_content_type` and **always** deep-copies a heap-allocated
     /// `content_type` so freeing one side does not dangle the other (the old

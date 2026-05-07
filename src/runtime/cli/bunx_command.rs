@@ -1018,13 +1018,11 @@ impl BunxCommand {
                                 if opts.specified_package.is_some() && opts.binary_name.is_some() {
                                     Output::err_generic(
                                         "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                                        format_args!(
-                                            "{} {}",
+                                        (
                                             BStr::new(&update_request.name),
                                             BStr::new(opts.binary_name.unwrap()),
                                         ),
                                     );
-                                    // TODO(port): Output API takes a single format_args; Zig had two slots.
                                     Output::prettyln(format_args!(
                                         "  <d>hint: try running without --package to install and run {} directly<r>",
                                         BStr::new(opts.binary_name.unwrap()),
@@ -1284,9 +1282,8 @@ impl BunxCommand {
         if opts.specified_package.is_some() && opts.binary_name.is_some() {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                format_args!("{} {}", BStr::new(&update_request.name), BStr::new(opts.binary_name.unwrap())),
+                (BStr::new(&update_request.name), BStr::new(opts.binary_name.unwrap())),
             );
-            // TODO(port): Output API — Zig used two positional {s} slots
             Output::prettyln(format_args!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",
                 BStr::new(opts.binary_name.unwrap()),

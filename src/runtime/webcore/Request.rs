@@ -1314,11 +1314,13 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Url) {
-                        // `Response::url()` already returns a `dupeRef`'d clone
-                        // (Zig: `response.url.dupeRef()`), so move it directly.
+                        // `Response::url()` returns a bitwise `Copy` of the underlying
+                        // `bun.String` (no ref bump). Zig spec is `response.url.dupeRef()`,
+                        // so take a +1 ref before storing — `req.url` is later released by
+                        // `finalize_without_deinit` / the bail!-path `deref()`.
                         let url = response.url();
                         if !url.is_empty() {
-                            req.url = url;
+                            req.url = url.dupe_ref();
                             fields.insert(Fields::Url);
                         }
                     }
@@ -1666,10 +1668,15 @@ impl Request {
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
         // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value (HiveRef pool)
         let body: Box<BodyValue> = Box::new(body_);
-        // TODO(port): errdefer chain — the Zig has 3 cascading errdefers; ScopeGuard
-        // captures only one &mut at a time. Phase B should verify error-path cleanup.
+        // Zig: `const url = if (preserve_url) req.url else self.url.dupeRef();`
+        //      `errdefer if (!preserve_url) url.deref();`
+        // `BunString` is `Copy` and has no `Drop`, so in the preserve_url case we
+        // bitwise-copy and *leave `req.url` in place* — if `clone_headers` errors
+        // below, the caller's `finalize_without_deinit` still owns and releases it.
+        // (Previously this used `mem::replace`, which moved the ref out and leaked
+        // it on the preserve_url error path.)
         let url = if preserve_url {
-            core::mem::replace(&mut req.url, BunString::empty())
+            req.url
         } else {
             self.url.dupe_ref()
         };

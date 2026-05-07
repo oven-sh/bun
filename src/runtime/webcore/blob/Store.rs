@@ -334,7 +334,7 @@ impl S3Ext for S3 {
 
     fn unlink(
         &mut self,
-        store: &Store,
+        store: NonNull<Store>,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -408,7 +408,7 @@ impl S3Ext for S3 {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
                 // intrusive refcount (Zig: `store.ref()`).
-                store: unsafe { StoreRef::retained(NonNull::from(store)) },
+                store: unsafe { StoreRef::retained(store) },
                 global: global_this as *const _,
             })) as *mut c_void,
             proxy,

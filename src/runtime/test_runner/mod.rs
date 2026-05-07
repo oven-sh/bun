@@ -129,7 +129,6 @@ pub mod expect {
     // Phase B once the upstream method lands in `bun_jsc`.
 
     use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
-    #[allow(unused_imports)] use bun_jsc::JsError as _; // (kept for matcher re-exports)
     use bun_jsc::console_object::Formatter;
     use bun_jsc::console_object::formatter::ZigFormatter;
 

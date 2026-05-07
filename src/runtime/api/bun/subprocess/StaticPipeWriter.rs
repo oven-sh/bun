@@ -110,9 +110,9 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::PosixBufferedWriterParent
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly (rather than via `&self`) so the
-        // returned lifetime `'a` is unbound from `P`'s lifetime parameter.
-        unsafe { &*(*this).buffer }
+        // The `&*this` autoref derived from a raw pointer is lifetime-unbounded,
+        // so the returned `&'a [u8]` is unconstrained by any `P` lifetime.
+        unsafe { (*this).get_buffer() }
     }
     const HAS_ON_WRITABLE: bool = false;
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -156,8 +156,9 @@ impl<P: StaticPipeWriterProcess> bun_io::pipe_writer::WindowsBufferedWriterParen
     }
     unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
         // SAFETY: see on_write. Shared-only borrow of `self.source`'s storage.
-        // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`.
-        unsafe { &*(*this).buffer }
+        // The `&*this` autoref derived from a raw pointer is lifetime-unbounded,
+        // so the returned `&'a [u8]` is unconstrained by any `P` lifetime.
+        unsafe { (*this).get_buffer() }
     }
     const HAS_ON_WRITABLE: bool = false;
 }
@@ -179,10 +180,30 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.writer.update_ref(self.io_evtloop(), add);
     }
 
+    /// Returns the remaining unwritten slice.
+    ///
+    /// # Safety (internal invariant)
+    /// `self.buffer` is never null: it is initialized to `b""` in `create()` and
+    /// thereafter always points into `self.source`'s storage (set in `start()`,
+    /// advanced in `on_write()`). `self.source` is owned by `self` and detached
+    /// only in `on_error`/`on_close`/`Drop`, after which `buffer` is no longer
+    /// read. The pointee bytes are immutable for the lifetime of `self`.
+    #[inline]
     pub fn get_buffer(&self) -> &[u8] {
-        // SAFETY: `buffer` always points into `self.source`'s storage (or the empty
-        // literal), which is kept alive for the lifetime of `self`.
+        // SAFETY: see doc comment — non-null, points into owned `self.source`.
         unsafe { &*self.buffer }
+    }
+
+    /// Raw backref to the owning process.
+    ///
+    /// Returns a raw pointer (NOT `&P`/`&mut P`) because `StaticPipeWriter` is
+    /// itself a field of `P`: any live `&self`/`&mut self` already aliases the
+    /// process's memory, so materializing `&P` here would violate Rust's
+    /// aliasing rules. Callers must go through `P`'s `*mut Self`-taking methods
+    /// (e.g. [`StaticPipeWriterProcess::on_close_io`]).
+    #[inline]
+    pub fn process_ptr(&self) -> *mut P {
+        self.process
     }
 
     pub fn close(&mut self) {
@@ -195,7 +216,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn flush(&mut self) {
-        if self.buffer.len() > 0 {
+        if !self.get_buffer().is_empty() {
             self.writer.write();
         }
     }
@@ -281,11 +302,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WriteStatus::Pending => "pending",
             }
         );
-        let len = self.buffer.len();
-        // SAFETY: `buffer` points into `self.source`'s storage, alive for `self`'s lifetime.
-        // Explicit `&*` avoids the implicit-autoref-on-raw-pointer lint when slicing.
-        self.buffer = unsafe { &(&*self.buffer)[amount.min(len)..] } as *const [u8];
-        if status == WriteStatus::EndOfFile || self.buffer.len() == 0 {
+        let buf = self.get_buffer();
+        self.buffer = &buf[amount.min(buf.len())..] as *const [u8];
+        if status == WriteStatus::EndOfFile || self.get_buffer().is_empty() {
             self.writer.close();
         }
     }
@@ -307,9 +326,10 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             self as *const _ as usize
         );
         self.source.detach();
-        // SAFETY: `process` is a backref to the owning process, guaranteed alive
-        // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
+        // SAFETY: `process_ptr()` is a non-null backref to the owning process,
+        // guaranteed alive for the lifetime of this writer (the process owns/
+        // outlives its stdio writers). Passed raw — see `process_ptr()` doc.
+        unsafe { P::on_close_io(self.process_ptr(), StdioKind::Stdin) };
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -328,7 +348,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     pub fn watch(&mut self) {
-        if self.buffer.len() > 0 {
+        if !self.get_buffer().is_empty() {
             self.writer.watch();
         }
     }

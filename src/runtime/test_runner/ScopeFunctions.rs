@@ -361,8 +361,7 @@ impl ScopeFunctions {
                 // TODO(port): Zig used non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
                 let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
-                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let parent: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
+                let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
                 } else {
@@ -450,12 +449,10 @@ impl ScopeFunctions {
                 group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
                     bstr::BStr::new(description.unwrap_or(b"(unnamed)")),
-                    // SAFETY: active_scope is a valid cursor into root_scope's tree.
-                    bstr::BStr::new(unsafe { bun_test.collection.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)"))
+                    bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let _ = unsafe { bun_test.collection.active_scope.as_mut() }.append_test(
+                let _ = bun_test.collection.active_scope_mut().append_test(
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {

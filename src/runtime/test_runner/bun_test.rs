@@ -253,8 +253,7 @@ pub mod js_fns {
                             tag_name
                         )));
                     }
-                    // SAFETY: `active_scope` is a NonNull into the live collection tree.
-                    let _ = unsafe { bun_test.collection.active_scope.as_mut() }.append_hook(
+                    let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,

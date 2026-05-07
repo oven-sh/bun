@@ -125,8 +125,8 @@ impl<'a> AnyEventLoop<'a> {
         match self {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             AnyEventLoop::Js { owner } => unsafe { js::iteration_number(*owner) },
-            // SAFETY: `loop_` is the live C-owned uws loop (set in `MiniEventLoop::init`).
-            AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_).iteration_number() },
+            // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
+            AnyEventLoop::Mini(mini) => unsafe { (*mini.loop_ptr()).iteration_number() },
         }
     }
 
@@ -176,7 +176,7 @@ impl<'a> AnyEventLoop<'a> {
         match self {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             AnyEventLoop::Js { owner } => unsafe { js::uws_loop(*owner) },
-            AnyEventLoop::Mini(mini) => mini.loop_,
+            AnyEventLoop::Mini(mini) => mini.loop_ptr(),
         }
     }
 
@@ -282,12 +282,11 @@ impl<'a> AnyEventLoop<'a> {
                     if mini.tick_concurrent_with_count() == 0
                         && mini.tasks.readable_length() == 0
                     {
-                        // SAFETY: `loop_` is the live C-owned uws loop set in
-                        // `MiniEventLoop::init()`.
+                        // SAFETY: see `MiniEventLoop::loop_ptr()` invariant.
                         unsafe {
-                            (*mini.loop_).inc();
-                            (*mini.loop_).tick();
-                            (*mini.loop_).dec();
+                            (*mini.loop_ptr()).inc();
+                            (*mini.loop_ptr()).tick();
+                            (*mini.loop_ptr()).dec();
                         }
                         mini.on_after_event_loop();
                     }
@@ -611,7 +610,7 @@ impl EventLoopHandle {
             // SAFETY: owner is the live erased `*mut jsc::EventLoop`.
             EventLoopHandle::Js { owner } => unsafe { js::uws_loop(owner) },
             // SAFETY: see `stdout`.
-            EventLoopHandle::Mini(mini) => unsafe { (*mini).loop_ },
+            EventLoopHandle::Mini(mini) => unsafe { (*mini).loop_ptr() },
         }
     }
 

@@ -869,6 +869,15 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
         unsafe { &mut *self.parser }
     }
+    /// Shortcut for `self.parser().input` that returns the slice with its
+    /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
+    /// above `match &mut self.str` without tripping borrowck.
+    // SAFETY: see `parser()` note above; `input` is a `&'a` borrow stored in
+    // the Parser and is unaffected by any mutation this builder performs.
+    #[inline]
+    fn input(&self) -> &'a [Enc::Unit] {
+        unsafe { (*self.parser).input }
+    }
 
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
@@ -896,11 +905,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
         // PORT NOTE: reshaped for borrowck — take ownership of buf, process, clear.
         let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
+        let input = self.input();
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
                     if cfg!(feature = "ci_assert") {
-                        let actual = self.parser().input[pos.cast()];
+                        let actual = input[pos.cast()];
                         debug_assert!(actual == *unit);
                     }
                     match &mut self.str {
@@ -918,8 +928,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 Whitespace::New(unit) => match &mut self.str {
                     YamlString::Range(range) => {
                         let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                        // SAFETY: see StringBuilder::parser() note.
-                        list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
+                        list.extend_from_slice(range.slice(input));
                         list.push(*unit);
                         // PERF(port): was assume_capacity
                         self.str = YamlString::List(list);
@@ -953,6 +962,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 
     pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
+        let input = self.input();
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -963,8 +973,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 range.end = end;
             }
             YamlString::List(list) => {
-                // SAFETY: see StringBuilder::parser() note.
-                let input = unsafe { (*self.parser).input };
                 list.extend_from_slice(&input[off.cast()..end.cast()]);
             }
         }
@@ -979,8 +987,9 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     ) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
+        let input = self.input();
         if cfg!(feature = "ci_assert") {
-            let actual = &self.parser().input[off.cast()..end.cast()];
+            let actual = &input[off.cast()..end.cast()];
             debug_assert!(actual == expected);
         }
 
@@ -994,8 +1003,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 range.end = end;
             }
             YamlString::List(list) => {
-                // SAFETY: see StringBuilder::parser() note.
-                let input = unsafe { (*self.parser).input };
                 list.extend_from_slice(&input[off.cast()..end.cast()]);
             }
         }
@@ -1004,11 +1011,11 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 
     pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.drain_whitespace()?;
+        let input = self.input();
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
-                // SAFETY: see StringBuilder::parser() note.
-                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
+                list.extend_from_slice(range.slice(input));
                 list.push(unit);
                 // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
@@ -1023,11 +1030,11 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
+        let input = self.input();
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
-                // SAFETY: see StringBuilder::parser() note.
-                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
+                list.extend_from_slice(range.slice(input));
                 list.extend_from_slice(s);
                 // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
@@ -1042,11 +1049,11 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
+        let input = self.input();
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
-                // SAFETY: see StringBuilder::parser() note.
-                list.extend_from_slice(range.slice(unsafe { (*self.parser).input }));
+                list.extend_from_slice(range.slice(input));
                 for _ in 0..n {
                     list.push(unit);
                 }

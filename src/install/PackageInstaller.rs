@@ -845,10 +845,8 @@ impl<'a> PackageInstaller<'a> {
             self.manager.report_slow_lifecycle_scripts();
 
             if log_level.show_progress() {
-                if let Some(scripts_node) = self.manager.scripts_node {
-                    // SAFETY: `scripts_node` is a caller stack-local that
-                    // outlives the install pass (see PackageManager field doc).
-                    unsafe { (*scripts_node.as_ptr()).activate() };
+                if let Some(scripts_node) = self.manager.scripts_node_mut() {
+                    scripts_node.activate();
                     self.manager.progress.refresh();
                 }
             }
@@ -2181,16 +2179,14 @@ impl<'a> PackageInstaller<'a> {
 
         if self.manager.options.do_.contains(Options::Do::RUN_SCRIPTS) {
             self.manager.total_scripts += scripts_list.total as usize;
-            if let Some(scripts_node) = self.manager.scripts_node {
+            if let Some(scripts_node) = self.manager.scripts_node_mut() {
                 self.manager.set_node_name::<true>(
-                    scripts_node.as_ptr(),
+                    scripts_node,
                     &scripts_list.package_name,
                     ProgressStrings::SCRIPT_EMOJI.as_bytes(),
                 );
-                // SAFETY: `scripts_node` is a caller stack-local that outlives the install pass.
-                let node = unsafe { scripts_node.as_ref() };
-                node.set_estimated_total_items(
-                    node.unprotected_estimated_total_items.load(Ordering::Relaxed)
+                scripts_node.set_estimated_total_items(
+                    scripts_node.unprotected_estimated_total_items.load(Ordering::Relaxed)
                         + scripts_list.total as usize,
                 );
             }

@@ -568,6 +568,14 @@ pub mod resolve_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut ResolveInfoRequest<T> { self.lookup }
     }
 }
 
@@ -698,6 +706,14 @@ pub mod get_host_by_addr_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetHostByAddrInfoRequest { self.lookup }
     }
 }
 
@@ -920,6 +936,14 @@ pub mod get_name_info_request {
             let hash = wyhash(name);
             Self { hash, len: name.len() as u16, lookup: ptr::null_mut() }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetNameInfoRequest { self.lookup }
     }
 }
 
@@ -1053,6 +1077,14 @@ pub mod get_addr_info_request {
                 lookup: ptr::null_mut(),
             }
         }
+
+        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
+        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
+        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
+        /// callbacks then `Box::from_raw`s it — a live `&`/`&mut` across either
+        /// would be UB. Callers must keep using raw derefs.
+        #[inline]
+        pub fn lookup_ptr(&self) -> *mut GetAddrInfoRequest { self.lookup }
     }
 
     pub struct BackendLibInfo {

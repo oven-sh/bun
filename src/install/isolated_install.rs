@@ -205,7 +205,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         }
 
         let pkg_manager = unsafe { &mut *pkg_manager };
-        if let Some(mut node) = pkg_manager.scripts_node {
+        if let Some(node) = pkg_manager.scripts_node_mut() {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -213,10 +213,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             let pending_lifecycle_scripts = pkg_manager.pending_lifecycle_script_tasks.load(Ordering::Relaxed);
             // `+ 1` because the root task needs to wait for everything
             if pending_lifecycle_scripts > 0 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1 {
-                // SAFETY: scripts_node points at a stack-local Progress::Node
-                // owned by the calling install loop; alive for the duration
-                // of `Wait::is_done`.
-                unsafe { node.as_mut() }.activate();
+                node.activate();
                 pkg_manager.progress.refresh();
             }
         }

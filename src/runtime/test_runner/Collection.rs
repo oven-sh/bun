@@ -77,6 +77,27 @@ impl Collection {
     // filter_buffer. All of that is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
     // No explicit `impl Drop for Collection` needed.
 
+    /// Immutable view of the currently-active describe scope.
+    ///
+    /// SAFETY: `active_scope` is initialized to `root_scope` in `init()` and is only ever
+    /// reassigned to nodes inside `root_scope`'s tree (via `append_describe` children or
+    /// restored from a `RefDataValue::Collection` snapshot). The tree is owned by
+    /// `self.root_scope: Box<_>` and nodes are never freed for the lifetime of `Collection`,
+    /// so the pointer is always valid while `self` is.
+    #[inline]
+    pub fn active_scope(&self) -> &DescribeScope {
+        unsafe { self.active_scope.as_ref() }
+    }
+
+    /// Mutable view of the currently-active describe scope.
+    ///
+    /// SAFETY: see `active_scope()`. The returned `&mut` reborrows from `&mut self`, so
+    /// borrowck prevents simultaneous access to `self.root_scope` while it is live.
+    #[inline]
+    pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
+        unsafe { self.active_scope.as_mut() }
+    }
+
     fn bun_test(&mut self) -> &mut BunTest {
         // SAFETY: self points to BunTest.collection (Collection is only ever embedded there).
         unsafe {
@@ -101,17 +122,16 @@ impl Collection {
             group::log(format_args!(
                 "enqueueDescribeCallback / {} / in scope: {}",
                 bstr::BStr::new(new_scope.base.name.as_deref().unwrap_or(b"(unnamed)")),
-                // SAFETY: active_scope is always a valid cursor into root_scope's tree.
-                bstr::BStr::new(unsafe { self.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)")),
+                bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
             ));
 
-            // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-            let active_scope: &DescribeScope = unsafe { self.active_scope.as_ref() };
+            // TODO(port): lifetime — see note on Collection field; transmuting borrow to 'static here.
+            // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
+            // stored in self; 'static is a Phase-A placeholder (see TODO above).
+            let active_scope: &'static DescribeScope =
+                unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(self.active_scope()) };
             self.current_scope_callback_queue.push(QueuedDescribe {
-                // TODO(port): lifetime — see note on Collection field; transmuting borrow to 'static here.
-                // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
-                // stored in self; 'static is a Phase-A placeholder (see TODO above).
-                active_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(active_scope) },
+                active_scope,
                 callback: DeprecatedStrong::init(cb),
                 // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
                 // stored in self; 'static is a Phase-A placeholder (see TODO above).
@@ -141,14 +161,12 @@ impl Collection {
 
         group::log(format_args!(
             "collection:runOneCompleted reset scope back from {}",
-            // SAFETY: active_scope is always valid while Collection lives.
-            bstr::BStr::new(unsafe { self.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
         self.active_scope = prev_scope;
         group::log(format_args!(
             "collection:runOneCompleted reset scope back to {}",
-            // SAFETY: active_scope is always valid while Collection lives.
-            bstr::BStr::new(unsafe { self.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
         ));
         Ok(())
     }
@@ -198,14 +216,12 @@ impl Collection {
 
             group::log(format_args!(
                 "collection:runOne set scope from {}",
-                // SAFETY: active_scope is always valid while Collection lives.
-                bstr::BStr::new(unsafe { this.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"undefined")),
+                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
             ));
             this.active_scope = NonNull::from(new_scope);
             group::log(format_args!(
                 "collection:runOne set scope to {}",
-                // SAFETY: active_scope is always valid while Collection lives.
-                bstr::BStr::new(unsafe { this.active_scope.as_ref() }.base.name.as_deref().unwrap_or(b"undefined")),
+                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
@@ -232,8 +248,7 @@ impl Collection {
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
-        // SAFETY: active_scope is always a valid cursor into root_scope's tree.
-        unsafe { self.active_scope.as_mut() }.failed = true;
+        self.active_scope_mut().failed = true;
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1
     }

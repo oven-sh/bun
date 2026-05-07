@@ -722,6 +722,26 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
+    /// Reborrow the active scripts progress node, if any.
+    ///
+    /// Unlike [`downloads_node_mut`], this returns `Option` — `scripts_node` is
+    /// `None` until the install pass (hoisted/isolated) populates it with a
+    /// pointer to a stack-local `ProgressNode` that outlives the pass. Lifetime
+    /// is decoupled from `&self` for the same reason as [`downloads_node_mut`]:
+    /// callers interleave node updates with disjoint `&mut self.X` writes, and
+    /// the pointee lives on the *caller's* stack, not inside the manager.
+    /// Single-threaded by construction (main install loop only — see
+    /// `lifecycle_script_runner` "monotonic is okay" comments).
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
+        let p = self.scripts_node?;
+        // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
+        // stack-local `ProgressNode` that outlives the install pass; access is
+        // single-threaded (main install loop only).
+        Some(unsafe { &mut *p.as_ptr() })
+    }
+
     /// Port of Zig `pub fn get() *PackageManager` (PackageManager.zig:442) —
     /// the global singleton accessor. Associated-fn spelling that forwards to
     /// the free [`get`] so callers can write `PackageManager::get()` (the Zig

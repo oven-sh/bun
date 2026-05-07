@@ -516,8 +516,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
             Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
-        } else if let Some(scripts_node) = (*manager).scripts_node {
-            let scripts_node = scripts_node.as_ptr();
+        } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
             (*manager).set_node_name::<true>(
                 scripts_node,
                 &(*this).package_name,
@@ -526,7 +525,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // .monotonic is okay because because this value is only used by hoisted installs, which
             // only use this type on the main thread.
             if (*manager).finished_installing.load(Ordering::Relaxed) {
-                (*scripts_node).activate();
+                scripts_node.activate();
                 (*manager).progress.refresh();
             }
         }
@@ -824,11 +823,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Global::exit(exit.code as u32);
                 }
 
-                if !self.foreground && self.manager().scripts_node.is_some() {
-                    // SAFETY: `scripts_node` is `Some(NonNull)`; the underlying
-                    // `Progress.Node` lives on the caller's stack for the
-                    // duration of the install loop (Zig: `?*Progress.Node`).
-                    let scripts_node = unsafe { self.manager().scripts_node.unwrap().as_mut() };
+                if !self.foreground
+                    && let Some(scripts_node) = self.manager().scripts_node_mut()
+                {
                     // .monotonic is okay because because this value is only used by hoisted
                     // installs, which only use this type on the main thread.
                     if self.manager().finished_installing.load(Ordering::Relaxed) {

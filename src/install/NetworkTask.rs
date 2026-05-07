@@ -199,7 +199,13 @@ impl NetworkTask {
                         // the extract Task that `TarballStream.finish()`
                         // publishes to `resolve_tasks`.
                         this.streaming_committed = true;
-                        stream.on_chunk(chunk, false, None);
+                        // SAFETY: `stream` is the live heap-allocated
+                        // `TarballStream` owned by this task. `on_chunk`
+                        // takes `*mut Self` (Zig: freely-aliasing
+                        // `*TarballStream`) because a worker may be inside
+                        // `drain()` concurrently; coercing the `&mut` to a
+                        // raw pointer here matches that contract.
+                        unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
                         // Hand the buffer back to the HTTP client empty so
                         // the next chunk starts at offset 0.
                         this.response_buffer.reset();
@@ -214,7 +220,10 @@ impl NetworkTask {
                 // `response_buffer` intact so the buffered extractor
                 // handles it.
                 if committed {
-                    stream.on_chunk(chunk, true, result.fail);
+                    // SAFETY: see the `on_chunk` call above — `stream` is
+                    // live and `on_chunk` takes `*mut Self` to match Zig's
+                    // freely-aliasing `*TarballStream` contract.
+                    unsafe { TarballStream::on_chunk(stream, chunk, true, result.fail) };
                     // Do NOT touch `this` — or anything it owns — after
                     // this point: `on_chunk(…, true, …)` sets `closed` and
                     // schedules a drain that may reach `finish()` on a

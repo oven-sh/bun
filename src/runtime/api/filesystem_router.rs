@@ -19,7 +19,7 @@ pub mod kind_enum {
     }
 }
 
-use core::cell::RefCell;
+use core::cell::{RefCell, UnsafeCell};
 use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
@@ -38,7 +38,7 @@ use bun_str::strings;
 use bun_http_types::URLPath;
 use bun_resolver::fs as Fs;
 use bun_resolver::Resolver;
-use bun_router::{self as Router, Match as RouterMatch, RouteConfig, RouteLoaderLog};
+use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
 use bun_url::{route_param, CombinedScanner, QueryStringMap, URL};
 
 use crate::webcore::{Request, Response};
@@ -302,15 +302,10 @@ impl FileSystemRouter {
         .expect("unreachable");
 
         {
-            // PORT NOTE: `load_routes` currently takes the crate-local
-            // `RouteLoaderLog` stub (no-op) until `bun_router` wires
-            // `bun_logger`. Resolver-side errors still land in `log` via the
-            // swap above; route-name validation errors are dropped for now.
-            let mut route_log = RouteLoaderLog;
             let config_dir = router.config.dir.clone();
             if router
                 .load_routes(
-                    &mut route_log,
+                    &mut log,
                     dir_info_ref(root_dir_info),
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
@@ -506,11 +501,10 @@ impl FileSystemRouter {
         )
         .expect("unreachable");
         {
-            let mut route_log = RouteLoaderLog;
             let config_dir = router.config.dir.clone();
             if router
                 .load_routes(
-                    &mut route_log,
+                    &mut log,
                     dir_info_ref(root_dir_info),
                     &mut RouterResolver(&mut vm.transpiler.resolver),
                     &config_dir,
@@ -520,6 +514,11 @@ impl FileSystemRouter {
                 let err_value = log.to_js(global_this, "loading routes");
                 return Err(global_this.throw_value(err_value?));
             }
+        }
+
+        if log.errors + log.warnings > 0 {
+            let err_value = log.to_js(global_this, "loading routes");
+            return Err(global_this.throw_value(err_value?));
         }
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.

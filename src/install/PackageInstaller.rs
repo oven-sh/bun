@@ -653,12 +653,14 @@ impl<'a> PackageInstaller<'a> {
         let mut i: usize = self.pending_lifecycle_scripts.len();
         while i > 0 {
             i -= 1;
-            let entry = &self.pending_lifecycle_scripts[i];
-            let name = entry.list.package_name;
-            let tree_id = entry.tree_id;
-            let optional = entry.optional;
+            let tree_id = self.pending_lifecycle_scripts[i].tree_id;
+            let optional = self.pending_lifecycle_scripts[i].optional;
             if self.can_run_scripts(tree_id) {
                 let entry = self.pending_lifecycle_scripts.swap_remove(i);
+                // PORT NOTE: reshaped for borrowck — `package_name` is `Box<[u8]>`;
+                // borrow it as a raw slice across the `spawn` call (which moves
+                // `entry.list` but does not free it on the error path until drop).
+                let name: *const [u8] = &*entry.list.package_name;
                 let output_in_foreground = false;
 
                 if let Err(err) = self.manager.spawn_package_lifecycle_scripts(

@@ -1315,7 +1315,7 @@ pub fn migrate_npm_lockfile<'a>(
         if r.tag == resolution::Tag::Uninitialized {
             Output::warn(format_args!(
                 "Could not resolve package '{}' in lockfile during migration",
-                bstr::BStr::new(this.packages.name[i].slice(&this.buffers.string_bytes)),
+                bstr::BStr::new(this.packages.items_name()[i].slice(&this.buffers.string_bytes)),
             ));
             is_missing_resolutions = true;
         } else {
@@ -1325,7 +1325,7 @@ pub fn migrate_npm_lockfile<'a>(
                 // but after we write all the data, there is no excuse for this to fail.
                 //
                 // If this is hit, it means getOrPutID was not called on this package id. Look for where 'resolution[i]' is set
-                debug_assert!(this.get_package_id(this.packages.name_hash[i], None, r).is_some());
+                debug_assert!(this.get_package_id(this.packages.items_name_hash()[i], None, r).is_some());
             }
         }
     }

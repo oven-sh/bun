@@ -23,6 +23,10 @@ use bun_jsc::AbortSignalRef;
 use super::response::HeadersRef;
 use bun_str::{strings, String as BunString, ZigString};
 use bun_uws as uws;
+use bun_jsc::StringJsc as _;
+use bun_http_jsc::method_jsc::MethodJsc as _;
+use bun_http_jsc::fetch_enums_jsc::{fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js};
+use crate::webcore::blob::ZigStringBlobExt as _;
 
 // TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
 // keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.

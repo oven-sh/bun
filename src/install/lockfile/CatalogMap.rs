@@ -102,9 +102,9 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             if let ExprData::EObject(obj) = &default_catalog.data {
                 for item in obj.properties.slice() {
-                    let dep_name = item.key.unwrap().as_utf8_string_literal().unwrap();
-                    builder.count(dep_name);
-                    if let ExprData::EString(version_str) = &item.value.unwrap().data {
+                    let key = item.key.as_ref().unwrap();
+                    builder.count(key.as_utf8_string_literal().unwrap());
+                    if let ExprData::EString(version_str) = &item.value.as_ref().unwrap().data {
                         builder.count(version_str.data);
                     }
                 }
@@ -114,13 +114,15 @@ impl CatalogMap {
         if let Some(catalogs) = expr.get(b"catalogs") {
             if let ExprData::EObject(catalog_names) = &catalogs.data {
                 for catalog in catalog_names.properties.slice() {
-                    let catalog_name = catalog.key.unwrap().as_utf8_string_literal().unwrap();
-                    builder.count(catalog_name);
-                    if let ExprData::EObject(obj) = &catalog.value.unwrap().data {
+                    let catalog_key = catalog.key.as_ref().unwrap();
+                    builder.count(catalog_key.as_utf8_string_literal().unwrap());
+                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
                         for item in obj.properties.slice() {
-                            let dep_name = item.key.unwrap().as_utf8_string_literal().unwrap();
-                            builder.count(dep_name);
-                            if let ExprData::EString(version_str) = &item.value.unwrap().data {
+                            let key = item.key.as_ref().unwrap();
+                            builder.count(key.as_utf8_string_literal().unwrap());
+                            if let ExprData::EString(version_str) =
+                                &item.value.as_ref().unwrap().data
+                            {
                                 builder.count(version_str.data);
                             }
                         }

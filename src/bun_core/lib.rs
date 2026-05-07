@@ -680,6 +680,17 @@ pub extern "C" fn __wrap_gettid() -> libc::pid_t {
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
 
+/// `bun.getTotalMemorySize()` (bun.zig:3498) — process-wide RAM budget,
+/// cgroup/jetsam-aware. Backed by the linked C++ `Bun__ramSize()`
+/// (src/jsc/bindings/c-bindings.cpp). Lives in `bun_core` so both
+/// `bun_runtime` (node:fs preallocation guard) and the binary root can
+/// call it without re-declaring the C ABI.
+pub fn get_total_memory_size() -> usize {
+    unsafe extern "C" { fn Bun__ramSize() -> usize; }
+    // SAFETY: pure FFI into Bun's C++ bindings; no invariants required.
+    unsafe { Bun__ramSize() }
+}
+
 /// PHASE-C: stack capture for `Global::StoredTrace` / `bun_crash_handler`.
 /// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
 #[unsafe(no_mangle)]

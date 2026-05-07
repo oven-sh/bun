@@ -14,50 +14,11 @@ use crate::ffi::FFI;
 // Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
 use super::ffi_body::GlobalObjectFfiExt as _;
 
-// ── Local JSValue extension shims (upstream `bun_jsc::JSValue` has not yet ──
-// ported `asPtrAddress` / `toUInt64NoTruncate` / `fromUInt64NoTruncate`).
-// TODO(port): move to <area>_sys / drop once bun_jsc grows these.
-#[allow(non_snake_case, deprecated)]
-unsafe extern "C" {
-    fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
-    fn JSC__JSValue__fromUInt64NoTruncate(global: *mut JSGlobalObject, i: u64) -> JSValue;
-    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
-        global: *const JSGlobalObject,
-        ptr: *mut u8,
-        len: usize,
-        ctx: *mut c_void,
-        deallocator: jsc::c::JSTypedArrayBytesDeallocator,
-    ) -> JSValue;
-}
-
-trait JSValueFFIExt: Copy {
-    fn as_ptr_address(self) -> usize;
-    fn to_uint64_no_truncate(self) -> u64;
-}
-impl JSValueFFIExt for JSValue {
-    /// Spec (JSValue.zig:2097): `@intFromFloat(this.asNumber())`.
-    #[inline]
-    fn as_ptr_address(self) -> usize {
-        self.as_number() as usize
-    }
-    #[inline]
-    fn to_uint64_no_truncate(self) -> u64 {
-        // SAFETY: FFI — `self` is a valid encoded JSValue.
-        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
-    }
-}
-
-#[inline]
-fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
-    // SAFETY: FFI — `global` is live for the call.
-    unsafe { JSC__JSValue__fromUInt64NoTruncate(global as *const _ as *mut _, i) }
-}
-
-/// Local port of Zig `JSValue.createBuffer(global, slice, ctx, callback)` —
-/// upstream `JSValue::create_buffer` hard-codes `MarkedArrayBuffer_deallocator`,
-/// which would free FFI-owned memory. This variant passes the caller's
-/// (possibly null) deallocator through.
-#[allow(deprecated)]
+/// Port of Zig `JSValue.createBufferWithCtx(global, slice, ctx, callback)` —
+/// unlike `JSValue::create_buffer` (which hard-codes `MarkedArrayBuffer_deallocator`),
+/// this variant passes the caller's (possibly null) deallocator through, so FFI-owned
+/// memory is only freed by the user-supplied callback.
+#[allow(deprecated, non_snake_case)]
 #[inline]
 fn create_buffer_with_ctx(
     global: &JSGlobalObject,
@@ -65,6 +26,15 @@ fn create_buffer_with_ctx(
     ctx: *mut c_void,
     callback: jsc::c::JSTypedArrayBytesDeallocator,
 ) -> JSValue {
+    unsafe extern "C" {
+        fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
+            global: *const JSGlobalObject,
+            ptr: *mut u8,
+            len: usize,
+            ctx: *mut c_void,
+            deallocator: jsc::c::JSTypedArrayBytesDeallocator,
+        ) -> JSValue;
+    }
     // SAFETY: `global` is live; slice describes FFI-owned memory whose
     // ownership transfers to JSC (freed via `callback`, or never if None).
     unsafe {

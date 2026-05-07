@@ -439,7 +439,7 @@ impl ShellCpTask {
     /// can drain `verbose_output` / surface the error.
     pub fn cp_on_finish(&mut self, result: bun_sys::Maybe<()>) {
         if let Err(e) = result {
-            self.err = Some(ShellErr::from_sys(e));
+            self.err = Some(ShellErr::new_sys(e));
         }
         self.task.on_finish();
     }

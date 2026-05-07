@@ -155,18 +155,18 @@ pub struct TarballStream {
     package_manager: *mut PackageManager,
 }
 
-/// Minimum Content-Length for which the streaming path is used. Below
-/// this the whole body is buffered as before; the resumable libarchive
-/// state machine is only worth its per-chunk overhead for tarballs that
-/// would otherwise consume a noticeable amount of memory.
-pub fn min_size() -> usize {
-    // env_var.get() returns Option<u64> in the Rust port even when a default
-    // is configured (Zig collapses it at comptime); the var has a 2 MiB
-    // default so unwrap is infallible here.
-    usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).unwrap()
-}
-
 impl TarballStream {
+    /// Minimum Content-Length for which the streaming path is used. Below
+    /// this the whole body is buffered as before; the resumable libarchive
+    /// state machine is only worth its per-chunk overhead for tarballs that
+    /// would otherwise consume a noticeable amount of memory.
+    pub fn min_size() -> usize {
+        // env_var.get() returns Option<u64> in the Rust port even when a default
+        // is configured (Zig collapses it at comptime); the var has a 2 MiB
+        // default so unwrap is infallible here.
+        usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).unwrap()
+    }
+
     pub fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,

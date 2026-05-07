@@ -2384,9 +2384,9 @@ mod tests {
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
-            let mut route_log = logger::Log;
+            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
             router.load_routes(
-                &mut route_log,
+                unsafe { &mut *(&mut log as *mut bun_logger::Log) },
                 dir_info_ref(root_dir),
                 &mut resolver,
                 top_level_dir,

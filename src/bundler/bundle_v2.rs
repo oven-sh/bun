@@ -4702,7 +4702,10 @@ impl<'a> BundleV2<'a> {
             if plugins.has_any_matches(&temp_path, false) {
                 bun_core::scoped_log!(Bundle, "Entry point '{}' plugin match", bstr::BStr::new(entry_point));
 
-                let resolve = Box::leak(Box::new(jsc_api::JSBundler::Resolve::default()));
+                // Arena-owned (Zig: `allocator.create(Resolve)`).
+                // SAFETY: arena outlives the bundle pass.
+                let resolve: &mut jsc_api::JSBundler::Resolve =
+                    unsafe { &mut *self.arena_create(jsc_api::JSBundler::Resolve::default()) };
                 self.increment_scan_counter();
 
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
@@ -4767,7 +4770,11 @@ impl<'a> BundleV2<'a> {
                 bun_core::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
                     bstr::BStr::new(&parse.path.namespace),
                     bstr::BStr::new(&parse.path.text));
-                let load = Box::leak(Box::new(jsc_api::JSBundler::Load::init(self, parse)));
+                // Arena-owned (Zig: `allocator.create(Load)`); the dispatch
+                // chain holds the raw `*mut Load` until the JS thread calls back.
+                let load_val = jsc_api::JSBundler::Load::init(self, parse);
+                // SAFETY: arena outlives the bundle pass.
+                let load: &mut jsc_api::JSBundler::Load = unsafe { &mut *self.arena_create(load_val) };
                 load.dispatch();
                 return true;
             }

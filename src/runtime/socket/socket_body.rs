@@ -500,10 +500,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub fn do_connect(
-        &mut self,
-        connection: &super::listener::UnixOrHost,
-    ) -> Result<(), bun_core::Error> {
+    /// Connect to `self.connection` (must be `Some`). Reads the field directly
+    /// rather than taking it by-ref so the single caller in `connect_finish`
+    /// doesn't need a disjoint `&mut self` + `&self.connection` borrow (which
+    /// the Zig original satisfied via an aliased pointer read).
+    pub fn do_connect(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.ref_();
         // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`.
@@ -544,8 +545,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         use super::listener::UnixOrHost;
-        match connection {
-            UnixOrHost::Host { host, port } => {
+        match &self.connection {
+            Some(UnixOrHost::Host { host, port }) => {
                 // PERF(port): was stack-fallback alloc — profile in Phase B.
                 // getaddrinfo doesn't accept bracketed IPv6.
                 let raw: &[u8] = host;
@@ -555,6 +556,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                     raw
                 };
                 let hostz = bun_core::ZBox::from_bytes(clean);
+                let port = *port;
+                // `host` borrow ends here; `self.connection` no longer borrowed.
                 // SAFETY: `ZBox` guarantees a trailing NUL and contains no
                 // interior NUL (host bytes were `[` stripped slice).
                 let host_c = unsafe {
@@ -565,7 +568,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     kind,
                     ssl_ctx,
                     host_c,
-                    c_int::from(*port),
+                    c_int::from(port),
                     flags,
                     core::mem::size_of::<*mut c_void>() as c_int,
                 ) {
@@ -574,17 +577,17 @@ impl<const SSL: bool> NewSocket<SSL> {
                     }
                     uws::ConnectResult::Socket(s) => {
                         // SAFETY: ext slot is sized for `*mut Self`.
-                        unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
+                        unsafe { *(*s).ext::<*mut Self>() = self_ptr };
                         SocketHandler::<SSL>::from(s)
                     }
                     uws::ConnectResult::Connecting(c) => {
                         // SAFETY: ext slot is sized for `*mut Self`.
-                        unsafe { *(*c).ext::<*mut Self>() = self as *mut Self };
+                        unsafe { *(*c).ext::<*mut Self>() = self_ptr };
                         SocketHandler::<SSL>::from_connecting(c)
                     }
                 };
             }
-            UnixOrHost::Unix(u) => {
+            Some(UnixOrHost::Unix(u)) => {
                 // PERF(port): was stack-fallback alloc — profile in Phase B.
                 let s = group.connect_unix(
                     kind,
@@ -597,10 +600,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return Err(bun_core::err!("FailedToOpenSocket"));
                 }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
+                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
                 self.socket = SocketHandler::<SSL>::from(s);
             }
-            UnixOrHost::Fd(f) => {
+            Some(UnixOrHost::Fd(f)) => {
                 let s = group.from_fd(
                     kind,
                     ssl_ctx,
@@ -612,10 +615,11 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return Err(bun_core::err!("ConnectionFailed"));
                 }
                 // SAFETY: ext slot is sized for `*mut Self`.
-                unsafe { *(*s).ext::<*mut Self>() = self as *mut Self };
+                unsafe { *(*s).ext::<*mut Self>() = self_ptr };
                 self.socket = SocketHandler::<SSL>::from(s);
                 self.on_open(self.socket);
             }
+            None => unreachable!("do_connect requires self.connection to be set"),
         }
         Ok(())
     }

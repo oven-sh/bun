@@ -1196,19 +1196,26 @@ impl<'a> PackageInstall<'a> {
                 // here would double-close (see posix branch above for full rationale).
                 return InstallResult::fail(err, Step::CopyingFiles, None);
             }
-            let cache_path = &state.buf2[..cache_path_length];
+            // PORT NOTE: borrowck — Zig held `cache_path = buf2[0..len]` while mutating
+            // buf2; index by `cache_path_length` directly so no shared borrow is live.
             let to_copy_buf2: *mut [u16];
-            if state.buf2[cache_path.len() - 1] != u16::from(b'\\') {
-                state.buf2[cache_path.len()] = u16::from(b'\\');
-                to_copy_buf2 = core::ptr::slice_from_raw_parts_mut(
-                    state.buf2.as_mut_ptr().add(cache_path.len() + 1),
-                    state.buf2.len() - cache_path.len() - 1,
-                );
+            if state.buf2[cache_path_length - 1] != u16::from(b'\\') {
+                state.buf2[cache_path_length] = u16::from(b'\\');
+                // SAFETY: `cache_path_length + 1 <= state.buf2.len()` (checked above).
+                to_copy_buf2 = unsafe {
+                    core::ptr::slice_from_raw_parts_mut(
+                        state.buf2.as_mut_ptr().add(cache_path_length + 1),
+                        state.buf2.len() - cache_path_length - 1,
+                    )
+                };
             } else {
-                to_copy_buf2 = core::ptr::slice_from_raw_parts_mut(
-                    state.buf2.as_mut_ptr().add(cache_path.len()),
-                    state.buf2.len() - cache_path.len(),
-                );
+                // SAFETY: `cache_path_length <= state.buf2.len()` (checked above).
+                to_copy_buf2 = unsafe {
+                    core::ptr::slice_from_raw_parts_mut(
+                        state.buf2.as_mut_ptr().add(cache_path_length),
+                        state.buf2.len() - cache_path_length,
+                    )
+                };
             }
 
             state.to_copy_buf2 = to_copy_buf2;
@@ -1943,7 +1950,7 @@ impl<'a> PackageInstall<'a> {
     pub fn is_dangling_windows_bin_link(node_mod_fd: Fd, path: &[u16], temp_buffer: &mut [u8]) -> bool {
         use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
         let bin_path = 'bin_path: {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY).unwrap() else {
+            let Ok(fd) = sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0) else {
                 return true;
             };
             let _close = scopeguard::guard(fd, |f| f.close());
@@ -1958,7 +1965,7 @@ impl<'a> PackageInstall<'a> {
         };
 
         {
-            let Ok(fd) = sys::openat_windows(node_mod_fd, bin_path, sys::O::RDONLY).unwrap() else {
+            let Ok(fd) = sys::openat_windows(node_mod_fd, bin_path, sys::O::RDONLY, 0) else {
                 return true;
             };
             fd.close();

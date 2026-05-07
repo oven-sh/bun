@@ -146,21 +146,6 @@ pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, st
     }
 }
 
-/// `bun_uws::SocketContext::BunSocketContextOptions` and
-/// `bun_uws_sys::BunSocketContextOptions` are field-identical `#[repr(C)]`
-/// duplicates (the former is a higher-level re-declaration). `SSLConfig::
-/// as_usockets()` produces the `bun_uws` flavour while the `bun_uws_sys`
-/// constructors consume the `_sys` flavour — bridge by bit-copy until the
-/// upstream crates unify on a single definition.
-#[inline]
-fn to_sys_socket_options(
-    opts: uws::SocketContext::BunSocketContextOptions,
-) -> uws_sys::BunSocketContextOptions {
-    // SAFETY: both are `#[repr(C)]`, `Copy`, and have an identical field
-    // layout (see uws/lib.rs:1452 vs uws_sys/SocketContext.rs:22).
-    unsafe { core::mem::transmute(opts) }
-}
-
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 // PORT NOTE (§Pointers): Zig variants are `bun.ptr.RefCount` payloads. All
 // three concrete route types carry an intrusive `ref_count: Cell<u32>` and are
@@ -1292,7 +1277,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 return JSValue::ZERO;
             };
 
-            app = match uws_sys::NewApp::<SSL>::create(to_sys_socket_options(ssl_options)) {
+            app = match uws_sys::NewApp::<SSL>::create(ssl_options) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -1307,7 +1292,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && unsafe { &*this }.config.h3 {
                 let idle_timeout = unsafe { &*this }.config.idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(to_sys_socket_options(ssl_options), idle_timeout) {
+                let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -1338,7 +1323,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // `config.ssl_config.server_name` CString; valid + NUL-terminated.
                 let server_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
                 // SAFETY: app is the live handle just stored in self.app.
-                if unsafe { (*app).add_server_name_with_options(server_name, to_sys_socket_options(ssl_options)) }.is_err() {
+                if unsafe { (*app).add_server_name_with_options(server_name, ssl_options) }.is_err() {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!(
                             "Failed to add serverName: {}",
@@ -1386,7 +1371,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (
                         sni_name.as_ptr(),
                         sni_name.to_bytes().len(),
-                        to_sys_socket_options(sni_ssl_config.as_usockets()),
+                        sni_ssl_config.as_usockets(),
                     )
                 };
                 // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
@@ -2083,6 +2068,125 @@ impl AnyServer {
         // TODO(port): narrow error set — full body in server_body.rs:1764
         // (rebuilds the uws router from `config.static_routes`).
         any_server_dispatch!(self, |s| Ok(!s.flags.contains(ServerFlags::TERMINATED)))
+    }
+
+    pub fn get_url_as_string(&self) -> Result<bun_str::String, bun_alloc::AllocError> {
+        any_server_dispatch!(self, |s| s.get_url_as_string())
+    }
+}
+
+// ─── http_server_agent ───────────────────────────────────────────────────────
+/// `jsc.Debugger.HTTPServerAgent.{notifyServerStarted, notifyServerStopped,
+/// notifyServerRoutesUpdated}` — the FFI plumbing lives in
+/// `bun_jsc::http_server_agent`; the bodies live here because they reach into
+/// `AnyServer`/`ServerConfig` (forward dep from `bun_jsc`'s point of view).
+pub mod http_server_agent {
+    use super::{any_server_dispatch, AnyRoute, AnyServer, AnyServerTag};
+    use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+    use bun_jsc::debugger::DebuggerId;
+    use bun_jsc::http_server_agent::{
+        HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType,
+    };
+    use bun_str::String as BunString;
+
+    /// `HTTPServerAgent.zig:notifyServerStarted`.
+    pub fn notify_server_started(this: &mut HTTPServerAgent, mut instance: AnyServer) {
+        let Some(agent) = this.agent else { return };
+        this.next_server_id = DebuggerId::new(this.next_server_id.get() + 1);
+        instance.set_inspector_server_id(this.next_server_id);
+        let url = bun_core::handle_oom(instance.get_url_as_string());
+
+        // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
+        // (set via `Bun__HTTPServerAgent__setEnabled`); `vm()` is the live
+        // process VM backref.
+        unsafe {
+            InspectorHTTPServerAgent::notify_server_started(
+                agent.as_ptr(),
+                this.next_server_id,
+                (*instance.vm()).hot_reload_counter as i32,
+                &url,
+                bun_core::Timespec::now_allow_mocked_time().ms() as f64,
+                instance.ptr.cast(),
+            );
+        }
+        // PORT NOTE: `BunString` derefs in `Drop`.
+    }
+
+    /// `HTTPServerAgent.zig:notifyServerStopped`.
+    pub fn notify_server_stopped(this: &HTTPServerAgent, server: AnyServer) {
+        let Some(agent) = this.agent else { return };
+        // SAFETY: `agent` is a live C++ handle (see above).
+        unsafe {
+            InspectorHTTPServerAgent::notify_server_stopped(
+                agent.as_ptr(),
+                server.inspector_server_id(),
+                bun_core::time::milli_timestamp() as f64,
+            );
+        }
+    }
+
+    /// `HTTPServerAgent.zig:notifyServerRoutesUpdated`.
+    pub fn notify_server_routes_updated(
+        this: &HTTPServerAgent,
+        server: AnyServer,
+    ) -> Result<(), bun_alloc::AllocError> {
+        let Some(agent) = this.agent else { return Ok(()) };
+        let config = server.config();
+        let mut routes: Vec<Route> = Vec::new();
+        let mut max_id: u32 = 0;
+
+        // PORT NOTE: Zig's `inline switch (server.userRoutes()) { inline else => |list| ... }`
+        // monomorphized over the four `*UserRoute<SSL,DEBUG>` slice types.
+        // Dispatch through the same macro the rest of `AnyServer` uses.
+        any_server_dispatch!(&server, |s| {
+            routes
+                .try_reserve(s.user_routes.len())
+                .map_err(|_| bun_alloc::AllocError)?;
+            for user_route in &s.user_routes {
+                max_id = max_id.max(user_route.id);
+                routes.push(Route {
+                    route_id: user_route.id as i32,
+                    path: BunString::init(user_route.route.path.to_bytes()),
+                    r#type: RouteType::Api,
+                    ..Default::default()
+                });
+            }
+        });
+
+        for entry in &config.static_routes {
+            max_id += 1;
+            routes.push(Route {
+                route_id: max_id as i32,
+                path: BunString::init(&*entry.path),
+                r#type: match &entry.route {
+                    AnyRoute::Html(_) => RouteType::Html,
+                    AnyRoute::Static(_) => RouteType::Static,
+                    _ => RouteType::Default,
+                },
+                file_path: match &entry.route {
+                    // SAFETY: RefPtr.data is a live NonNull while held in the
+                    // route table; `.bundle` (IntrusiveRc) derefs to the live
+                    // HTMLBundle whose `path` outlives this borrow.
+                    AnyRoute::Html(r) => {
+                        BunString::init(&*unsafe { r.data.as_ref() }.bundle.path)
+                    }
+                    _ => BunString::EMPTY,
+                },
+                ..Default::default()
+            });
+        }
+
+        // SAFETY: `agent` is a live C++ handle; `vm()` is the live process VM.
+        unsafe {
+            InspectorHTTPServerAgent::notify_server_routes_updated(
+                agent.as_ptr(),
+                server.inspector_server_id(),
+                (*server.vm()).hot_reload_counter as i32,
+                &mut routes,
+            );
+        }
+        // `Vec<Route>` drops → each `Route` drops (derefs path/file_path/etc.).
+        Ok(())
     }
 }
 

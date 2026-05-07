@@ -329,7 +329,7 @@ impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
     }
     #[inline]
     fn string_bytes(&self) -> &[u8] {
-        self.lockfile.buffers.string_bytes.as_slice()
+        self.string_bytes.as_slice()
     }
 }
 

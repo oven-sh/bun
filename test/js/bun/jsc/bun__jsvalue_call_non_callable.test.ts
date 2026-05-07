@@ -51,11 +51,7 @@ test("Bun__JSValue__call on non-callable value does not abort", async () => {
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // With the fix: clean exit, "OK" printed.
   // Without the fix: the subprocess aborts (SIGABRT / non-zero exit),

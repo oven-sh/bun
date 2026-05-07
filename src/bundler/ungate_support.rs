@@ -364,6 +364,20 @@ impl CompileResult {
         }
     }
 
+    /// Consume `self` and yield the owned code buffer. Used when the
+    /// `StringJoiner` must outlive the `CompileResult` local that produced it
+    /// (Zig `j.push(code, allocator)` ownership-transfer semantics).
+    pub fn into_code(self) -> Box<[u8]> {
+        match self {
+            CompileResult::Javascript { result, .. } => match result {
+                bun_js_printer::PrintResult::Result(r) => r.code,
+                bun_js_printer::PrintResult::Err(_) => Box::default(),
+            },
+            CompileResult::Css { result, .. } => result.unwrap_or_default(),
+            CompileResult::Html { code, .. } => code,
+        }
+    }
+
     /// bundle_v2.zig:4232-4241.
     pub fn source_map_chunk(&self) -> Option<&bun_sourcemap::Chunk> {
         match self {

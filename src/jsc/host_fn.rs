@@ -279,10 +279,11 @@ pub fn to_js_host_call(
 #[track_caller]
 pub fn from_js_host_call(
     global_this: &JSGlobalObject,
-    src: &'static Location<'static>,
     f: impl FnOnce() -> JSValue,
 ) -> Result<JSValue, JsError> {
-    let scope = jsc::ExceptionValidationScope::new(global_this, src);
+    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
+    // caller's `Location` into `ExceptionValidationScope::init` automatically.
+    let mut scope = jsc::ExceptionValidationScope::init(global_this);
 
     let value = f();
     // Zig: `if (@TypeOf(value) != JSValue) @compileError(...)` — enforced by the
@@ -296,10 +297,11 @@ pub fn from_js_host_call(
 #[track_caller]
 pub fn from_js_host_call_generic<R>(
     global_this: &JSGlobalObject,
-    src: &'static Location<'static>,
     f: impl FnOnce() -> R,
 ) -> Result<R, JsError> {
-    let scope = jsc::TopExceptionScope::new(global_this, src);
+    // PORT NOTE: Zig passed `@src()` explicitly; `#[track_caller]` propagates the
+    // caller's `Location` into `TopExceptionScope::init` automatically.
+    let mut scope = jsc::TopExceptionScope::init(global_this);
 
     let result = f();
     // supporting JSValue would make it too easy to mix up this function with from_js_host_call

@@ -831,38 +831,45 @@ pub fn VisitExpr(
                 const is_call_target = @as(Expr.Tag, p.call_target) == .e_dot and expr.data.e_dot == p.call_target.e_dot;
 
                 if (p.define.dots.get(e_.name)) |parts| {
+                    // An expression like `globalThis.Math.PI` can match both the built-in
+                    // valueless `["Math","PI"]` and a user `--define:globalThis.Math.PI`.
+                    // Stopping on the first would shadow the user's value, and stopping on
+                    // the first *valued* hit would make the result depend on hash iteration
+                    // order when two valued defines both match (e.g. `--define:X.Y=a` and
+                    // `--define:globalThis.X.Y=b` for a `globalThis.X.Y` expression). Scan
+                    // all matches, accumulate side-effect flags, and prefer the longest
+                    // (most specific) valued match.
+                    var best_value: ?*const DefineData = null;
+                    var best_len: usize = 0;
                     for (parts) |*define| {
-                        if (p.isDotDefineMatch(expr, define.parts)) {
-                            if (in.assign_target == .none) {
-                                // Substitute user-specified defines
-                                if (!define.data.valueless()) {
-                                    return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
-                                }
+                        if (!p.isDotDefineMatch(expr, define.parts)) continue;
 
-                                if (define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
-                                    p.method_call_must_be_replaced_with_undefined = true;
-                                }
-                            }
-
-                            // Copy the side-effect flags over in case this expression is unused.
-                            // Skip this for optional chain expressions — `a?.b` has observable
-                            // short-circuit semantics (checks whether `a` is nullish), so we
-                            // can't treat `Symbol?.for(...)` as unconditionally pure.
-                            if (e_.optional_chain == null) {
-                                if (define.data.can_be_removed_if_unused()) {
-                                    e_.can_be_removed_if_unused = true;
-                                }
-
-                                if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
-                                    e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
-                                }
-                            }
-
-                            // Keep scanning on valueless matches — an expression like
-                            // `globalThis.Math.PI` can match both the built-in valueless
-                            // `["Math","PI"]` and a user `--define:globalThis.Math.PI=3`;
-                            // stopping on the first would shadow the user's value.
+                        if (in.assign_target == .none and !define.data.valueless() and define.parts.len >= best_len) {
+                            best_value = &define.data;
+                            best_len = define.parts.len;
                         }
+
+                        if (in.assign_target == .none and define.data.method_call_must_be_replaced_with_undefined() and in.property_access_for_method_call_maybe_should_replace_with_undefined) {
+                            p.method_call_must_be_replaced_with_undefined = true;
+                        }
+
+                        // Copy the side-effect flags over in case this expression is unused.
+                        // Skip this for optional chain expressions — `a?.b` has observable
+                        // short-circuit semantics (checks whether `a` is nullish), so we
+                        // can't treat `Symbol?.for(...)` as unconditionally pure.
+                        if (e_.optional_chain == null) {
+                            if (define.data.can_be_removed_if_unused()) {
+                                e_.can_be_removed_if_unused = true;
+                            }
+
+                            if (define.data.call_can_be_unwrapped_if_unused() != .never and !p.options.ignore_dce_annotations) {
+                                e_.call_can_be_unwrapped_if_unused = define.data.call_can_be_unwrapped_if_unused();
+                            }
+                        }
+                    }
+
+                    if (best_value) |data| {
+                        return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, data);
                     }
                 }
 
@@ -1786,6 +1793,8 @@ const Symbol = js_ast.Symbol;
 
 const G = js_ast.G;
 const Property = G.Property;
+
+const DefineData = @import("../../bundler/defines.zig").DefineData;
 
 const js_parser = bun.js_parser;
 const ExprIn = js_parser.ExprIn;

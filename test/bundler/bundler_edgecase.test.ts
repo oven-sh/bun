@@ -226,6 +226,23 @@ describe("bundler", () => {
     define: { "globalThis.Math.PI": "3" },
     capture: ["3"],
   });
+  // When both `X.Y` and `globalThis.X.Y` are defined, a `globalThis.X.Y` expression
+  // must resolve to the more specific `globalThis.X.Y` value regardless of the
+  // hash-map iteration order of the two user defines.
+  itBundled("edgecase/NodeEnvMoreSpecificGlobalThisDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(globalThis.FOO.BAR);
+        capture(FOO.BAR);
+      `,
+    },
+    target: "browser",
+    define: {
+      "FOO.BAR": '"bare"',
+      "globalThis.FOO.BAR": '"via_globalThis"',
+    },
+    capture: ['"via_globalThis"', '"bare"'],
+  });
 
   itBundled("edgecase/StarExternal", {
     files: {

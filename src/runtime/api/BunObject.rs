@@ -286,10 +286,9 @@ pub mod bun_object {
                 ) -> JSValue {
                     // SAFETY: JSC always passes valid pointers here.
                     let (g, o) = unsafe { (&*this, &*object) };
-                    bun_jsc::to_js_host_call(
-                        g,
-                        IntoLazyPropResult::into_lazy_prop_result($target(g, o)),
-                    )
+                    bun_jsc::to_js_host_call(g, || {
+                        IntoLazyPropResult::into_lazy_prop_result($target(g, o))
+                    })
                 }
             )*
         };

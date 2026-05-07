@@ -27,7 +27,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
-use bun_string::{strings, ZStr};
+use bun_string::strings;
 // CYCLEBREAK: SslWrapper was MOVE_DOWN'd from bun_runtime::socket → bun_uws::ssl_wrapper.
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{us_bun_verify_error_t, NewSocketHandler};

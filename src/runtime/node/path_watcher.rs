@@ -688,14 +688,14 @@ impl Linux {
         for o in owners.iter_mut() {
             if core::ptr::eq(o.watcher, watcher) {
                 if !strings::eql(o.subpath.as_bytes(), subpath) {
-                    o.subpath = ZStr::from_bytes(subpath);
+                    o.subpath = ZStr::boxed(subpath);
                 }
                 return Ok(());
             }
         }
         owners.push(WdOwner {
             watcher: watcher as *mut PathWatcher,
-            subpath: ZStr::from_bytes(subpath),
+            subpath: ZStr::boxed(subpath),
         });
         watcher.platform.wds.push(wd);
         log!(
@@ -741,7 +741,8 @@ impl Linux {
             }
             if owners.is_empty() {
                 wd_map.remove(&wd);
-                let _ = sys::syscall::inotify_rm_watch(fd.native(), wd);
+                // SAFETY: FFI; fd is the inotify fd, wd was returned by inotify_add_watch.
+                unsafe { sys::linux::inotify_rm_watch(fd.native(), wd) };
             }
         }
         watcher.platform.wds.clear();

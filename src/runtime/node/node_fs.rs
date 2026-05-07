@@ -4985,7 +4985,7 @@ impl NodeFS {
             // directly — no lstatat fallback (NTFS never returns DT_UNKNOWN).
             T::append_entry_w(
                 entries, utf16_name, &dirent_path, current.kind, args.encoding,
-                re_encoding_buffer.as_deref_mut().map(|b| &mut b[..]),
+                re_encoding_buffer.as_deref_mut(),
             );
         }
 

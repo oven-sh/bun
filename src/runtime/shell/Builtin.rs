@@ -151,7 +151,9 @@ pub enum IoKind { Stdin, Stdout, Stderr }
 // JS objects (`> ${buf}`) and accumulate into a per-builtin `.buf` when the
 // Cmd's IO is `.pipe`. The `.buf` arm is reshaped in the NodeId port: instead
 // of a local Vec flushed in `done()`, `write_no_io` appends straight to the
-// shell env's captured buffer (same observable bytes, one less copy).
+// shell env's captured buffer (one less copy). The variant carries its flush
+// target so `2>&1` (which makes `stderr` a shallow copy of `stdout`) routes
+// stderr writes to `buffered_stdout`, matching the Zig aliasing semantics.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// One output stream of a builtin (stdout or stderr). Spec: Builtin.zig
@@ -162,7 +164,10 @@ pub enum BuiltinIO {
     /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
     /// PORT NOTE: Zig kept a local `ArrayList(u8)` here and flushed it in
     /// `done()`; the NodeId port writes through immediately (see module doc).
-    Buf,
+    /// The payload names which shell-env bytelist to append to — set at
+    /// `from_out_kind` and copied verbatim by `dup_ref` so `2>&1` keeps
+    /// stderr aimed at stdout's buffer.
+    Buf(IoKind),
     ArrayBuf { buf: crate::jsc::array_buffer::ArrayBufferStrong, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,

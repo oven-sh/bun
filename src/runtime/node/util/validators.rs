@@ -405,7 +405,7 @@ pub fn validate_array(
         ));
     }
     if let Some(min_length) = min_length {
-        // TODO(port): Zig compared `usize < ?i32` (peer-type widened); cast to match.
+        // PORT NOTE: Zig compared `usize < ?i32` (peer-type widened); cast to i64 to match.
         if (value.get_length(global_this)? as i64) < i64::from(min_length) {
             return Err(throw_err_invalid_arg_value(
                 global_this,
@@ -514,7 +514,7 @@ pub fn validate_string_enum<T: StringEnum>(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/util/validators.zig (301 lines)
-//   confidence: medium
-//   todos:      5
-//   notes:      comptime fmt-string concat reshaped to fmt::Arguments; ERR()/throwRangeError JSGlobalObject method shapes guessed; validateStringEnum needs StringEnum trait impls per enum
+//   confidence: high
+//   todos:      0
+//   notes:      comptime fmt-string concat reshaped to fmt::Arguments; ERR() builder wired to JSGlobalObject::err; validateStringEnum requires StringEnum trait impl per enum (no comptime reflection in Rust)
 // ──────────────────────────────────────────────────────────────────────────

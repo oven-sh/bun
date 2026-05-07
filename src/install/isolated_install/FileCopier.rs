@@ -13,9 +13,9 @@ type AbsPathAutoOs = bun_paths::AbsPath;
 type PathAutoOs = bun_paths::Path;
 
 pub struct FileCopier {
-    src_path: AbsPathAutoOs,
-    dest_subpath: PathAutoOs,
-    walker: Walker,
+    pub src_path: AbsPathAutoOs,
+    pub dest_subpath: PathAutoOs,
+    pub walker: Walker,
 }
 
 impl FileCopier {

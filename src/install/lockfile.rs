@@ -945,10 +945,10 @@ impl Lockfile {
     }
 
     /// Is this a direct dependency of the workspace the install is taking place in?
-    pub fn is_root_dependency(&self, manager: &PackageManager, id: DependencyID) -> bool {
-        self.packages.items_dependencies()
-            [manager.root_package_id.get(self, manager.workspace_name_hash) as usize]
-            .contains(id)
+    pub fn is_root_dependency(&self, manager: &mut PackageManager, id: DependencyID) -> bool {
+        // Zig: `manager: *PackageManager` — `RootPackageId::get` caches into `manager`.
+        let root_id = manager.root_package_id.get(self, manager.workspace_name_hash);
+        self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
     /// Is this a direct dependency of any workspace (including workspace root)?

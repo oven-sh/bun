@@ -809,7 +809,8 @@ impl Task {
                     let pkg_cache_dir_subpath_init = match pkg_res.tag {
                         ResolutionTag::Folder | ResolutionTag::Root => {
                             let path: &[u8] = match pkg_res.tag {
-                                ResolutionTag::Folder => pkg_res.value.folder.slice(string_buf),
+                                // SAFETY: `tag == Folder` discriminates the active variant.
+                                ResolutionTag::Folder => unsafe { pkg_res.value.folder }.slice(string_buf),
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };
@@ -829,7 +830,8 @@ impl Task {
                                     InstallMethod::Hardlink => {
                                         let mut src =
                                             OsAutoAbsPath::init_top_level_dir_long_path();
-                                        src.append_join(pkg_res.value.folder.slice(string_buf));
+                                        // SAFETY: outer match guarantees `tag == Folder` here.
+                                        src.append_join(unsafe { pkg_res.value.folder }.slice(string_buf));
 
                                         let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);

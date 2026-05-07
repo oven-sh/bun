@@ -1445,7 +1445,7 @@ impl<'a> Linker<'a> {
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = self.resolve_bin_target(package_dir, target, unscoped_package_name);
+                        let r = Self::resolve_bin_target(is_redirect, package_dir, target, unscoped_package_name);
                         // SAFETY: `resolve_bin_target` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER` (via `join_abs_string_z`); the
                         // returned slice does not actually borrow `self` or
@@ -1476,7 +1476,7 @@ impl<'a> Linker<'a> {
                     // for normalizing `target`
                     let abs_target: &ZStr = {
                         let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = self.resolve_bin_target(package_dir, target, normalized_name);
+                        let r = Self::resolve_bin_target(is_redirect, package_dir, target, normalized_name);
                         // SAFETY: thread-local buffer; see Tag::File above.
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
@@ -1510,7 +1510,7 @@ impl<'a> Linker<'a> {
 
                         let abs_target: &ZStr = {
                             let package_dir = &self.abs_target_buf[0..package_dir_len];
-                            let r = self.resolve_bin_target(package_dir, bin_target, normalized_bin_dest);
+                            let r = Self::resolve_bin_target(is_redirect, package_dir, bin_target, normalized_bin_dest);
                             // SAFETY: thread-local buffer; see Tag::File above.
                             ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                         };

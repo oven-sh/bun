@@ -38,6 +38,7 @@ use crate::resolution_real::{self as resolution, Resolution};
 use crate::config_version::ConfigVersion;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache};
+use crate::string_builder;
 use crate::package_install::Summary as PackageInstallSummary;
 use crate::update_request::UpdateRequest;
 use crate::migration;
@@ -536,7 +537,7 @@ impl Lockfile {
             match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0) {
                 Ok(f) => break 'file f,
                 Err(text_open_err) => {
-                    if text_open_err.errno != sys::SystemErrno::ENOENT {
+                    if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                         return LoadResult::Err(LoadResultErr {
                             step: LoadStep::OpenFile,
                             value: BunError::from(text_open_err),
@@ -550,7 +551,7 @@ impl Lockfile {
                     match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0) {
                         Ok(f) => break 'file f,
                         Err(binary_open_err) => {
-                            if binary_open_err.errno != sys::SystemErrno::ENOENT {
+                            if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                                 return LoadResult::Err(LoadResultErr {
                                     step: LoadStep::OpenFile,
                                     value: BunError::from(binary_open_err),
@@ -1401,13 +1402,17 @@ impl Lockfile {
     ) -> Result<(), tree::SubtreeError> {
         let slice = self.packages.slice();
 
+        // PORT NOTE: `tree::Builder` stores `lockfile: *const Lockfile` so the
+        // `&mut buffers.resolutions` split-borrow below can coexist with the
+        // read-only lockfile view inside the builder (see Tree.rs SAFETY note).
+        let lockfile_ptr: *const Lockfile = &*self;
         let mut builder = tree::Builder::<METHOD> {
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
             dependencies: self.buffers.dependencies.as_slice(),
             log,
-            lockfile: self,
+            lockfile: lockfile_ptr,
             manager,
             install_root_dependencies,
             workspace_filters,

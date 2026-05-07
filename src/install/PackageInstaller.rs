@@ -1532,8 +1532,7 @@ impl<'a> PackageInstaller<'a> {
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    // SAFETY: `task` was `Box::into_raw`'d above; reconstitute for the queue.
-                    package_manager::enqueue_patch_task(self.manager, unsafe { Box::from_raw(task) });
+                    package_manager::enqueue_patch_task(self.manager, task);
                     return;
                 }
             }

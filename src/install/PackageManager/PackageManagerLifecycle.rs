@@ -6,7 +6,7 @@ use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{fmt as bun_fmt, handle_oom, Output, ZBox};
 use bun_core::fmt::PathSep;
-use bun_paths::{self as Path, AbsPath, EnvPath};
+use bun_paths::{self as Path, AutoAbsPath, EnvPath};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_str::{strings, ZStr};
@@ -372,10 +372,8 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        // Zig: `bun.AbsPath(.{ .sep = .auto })`. PORT NOTE: `Scripts::create_list`
-        // currently takes `&mut AbsPath` (default `SEP = ANY`) — match it here
-        // for now (see TODO(port) in PackageInstaller.rs:955 / Scripts.rs:215).
-        let mut top_level_dir = AbsPath::<u8>::init_top_level_dir();
+        // Zig: `bun.AbsPath(.{ .sep = .auto })` — `AutoAbsPath` is the SEP=auto alias.
+        let mut top_level_dir = AutoAbsPath::init_top_level_dir();
         // `defer top_level_dir.deinit()` — handled by Drop
 
         if root_package.scripts.has_any() {

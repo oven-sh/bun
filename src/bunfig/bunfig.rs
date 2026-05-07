@@ -10,8 +10,9 @@
 
 use core::sync::atomic::Ordering;
 
+use std::io::Write as _;
+
 use bun_alloc::Arena as Bump;
-use bun_collections::ArrayHashMap;
 use bun_core::err;
 use bun_interchange::json as json_parser;
 use bun_interchange::toml::TOML;
@@ -27,6 +28,7 @@ use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
 
 use bun_options_types::CommandTag::Tag as CommandTag;
 use bun_options_types::Context::ContextData;
+use bun_url::URL;
 
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::OfflineMode::OfflineMode;
@@ -855,6 +857,8 @@ impl<'a> Parser<'a> {
                 if let Some(expr) = expr_get(&install_obj, b"logLevel") {
                     self.load_log_level(&expr)?;
                 }
+
+                self.parse_install(&install_obj)?;
             }
 
             if let Some(run_expr) = expr_get(&json, b"run") {
@@ -925,6 +929,12 @@ impl<'a> Parser<'a> {
                         self.add_error(depth.loc, b"Expected number")?;
                     }
                 }
+            }
+        }
+
+        if let Some(serve_obj2) = expr_get_object(&json, b"serve") {
+            if let Some(serve_obj) = expr_get_object(&serve_obj2, b"static") {
+                self.parse_serve_static(&serve_obj)?;
             }
         }
 
@@ -1229,18 +1239,12 @@ impl Bunfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase-A draft — install / serve.static / registry bodies preserved verbatim
-// until `api::BunInstall` / `api::TransformOptions` peechy fields land. These
-// reference fields that do not yet exist on the opaque schema structs.
+// `[install]` / `[install.scopes]` registry parsing and `[serve.static]`.
+// Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-mod install_registry_serve {
-    use super::*;
-    use bun_url::URL;
-    use std::io::Write as _;
-
-    impl<'a> Parser<'a> {
-        fn parse_registry_url_string(
+impl<'a> Parser<'a> {
+    fn parse_registry_url_string(
             &mut self,
             str: &E::EString,
         ) -> Result<api::NpmRegistry, bun_core::Error> {
@@ -1321,7 +1325,7 @@ mod install_registry_serve {
             }
         }
 
-        pub(super) fn phase_a_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
+        fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
             // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
             // The helper methods (`expect*`, `add_error`, `parse_registry`) take
             // `&mut self`, which under Stacked Borrows would invalidate any
@@ -1329,12 +1333,12 @@ mod install_registry_serve {
             // out so the install borrow is provably disjoint from `self`, then
             // restore it on every exit path.
             let mut install = self.ctx.install.take().expect("install slot primed");
-            let result = self.phase_a_install_inner(&mut install, install_obj);
+            let result = self.parse_install_inner(&mut install, install_obj);
             self.ctx.install = Some(install);
             result
         }
 
-        fn phase_a_install_inner(
+        fn parse_install_inner(
             &mut self,
             install: &mut api::BunInstall,
             install_obj: &Expr,
@@ -1604,7 +1608,7 @@ mod install_registry_serve {
             Ok(())
         }
 
-        pub(super) fn phase_a_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
+        fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
             if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
                 let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                     if let ExprData::EArray(arr) = &config_plugins.data {

@@ -379,6 +379,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         js_printer::PrintJsonOptions {
             indent: current_package_json_indent,
             mangled_props: None,
+            ..Default::default()
         },
     ) {
         Ok(n) => n,
@@ -492,6 +493,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                 js_printer::PrintJsonOptions {
                     indent: root_package_json.indentation,
                     mangled_props: None,
+                    ..Default::default()
                 },
             ) {
                 Ok(n) => n,
@@ -548,14 +550,13 @@ fn update_package_json_and_install_with_manager_with_updates(
             Err(err) => {
                 Output::pretty_errorln(format_args!(
                     "package.json failed to parse due to error {}",
-                    e.name(),
+                    err.name(),
                 ));
                 Global::crash();
             }
         };
 
         if updates.is_empty() {
-            let exact_versions = manager.options.enable.exact_versions();
             PackageJSONEditor::edit_update_no_args(
                 manager,
                 &mut new_package_json,
@@ -595,6 +596,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             js_printer::PrintJsonOptions {
                 indent: current_package_json_indent,
                 mangled_props: None,
+                ..Default::default()
             },
         ) {
             Ok(n) => n,
@@ -617,7 +619,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
-                    let log = unsafe { &mut *manager.log };
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
                         .get_with_path(
@@ -629,7 +630,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         .unwrap()
                     {
                         Ok(e) => e,
-                        Err(e) => {
+                        Err(err) => {
                             Output::err(
                                 err,
                                 "failed to read/parse package.json at '{s}'",
@@ -690,14 +691,14 @@ fn update_package_json_and_install_with_manager_with_updates(
                     let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
                     offset_buf[..request.name.len()].copy_from_slice(request.name);
                     let _ = cwd.delete_tree(
-                        &node_modules_buf[..PREFIX.len() + request.name.len()],
+                        &node_modules_buf[..b"node_modules/".len() + request.name.len()],
                     );
                 }
             }
 
             // This is where we clean dangling symlinks
             // This could be slow if there are a lot of symlinks
-            match bun_sys::open_dir_for_iteration(cwd, manager.options.bin_path.as_bytes()) {
+            match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
                 Ok(node_modules_bin) => {
                     // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
                     let mut iter = bun_sys::iterate_dir(node_modules_bin);

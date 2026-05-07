@@ -826,7 +826,7 @@ impl Value {
                     return ReadableStream::empty(global_this);
                 }
 
-                let mut reader = webcore::readable_stream::NewSource::<ByteStream>::new(
+                let reader = webcore::readable_stream::NewSource::<ByteStream>::new(
                     webcore::readable_stream::NewSource {
                         // Zig: `.context = undefined` then `reader.context.setup()`; Rust
                         // default-constructs (ByteStream::default == post-setup state).
@@ -835,6 +835,10 @@ impl Value {
                         ..Default::default()
                     },
                 );
+                // SAFETY: `NewSource::new()` heap-allocates via `Box::into_raw`; ownership
+                // transfers to the JS wrapper's `m_ctx` in `to_readable_stream()` below
+                // (freed by the GC finalizer). Not a leak — FFI ownership hand-off.
+                let reader = unsafe { &mut *reader };
 
                 if let Some(on_cancelled) = locked.on_stream_cancelled {
                     if let Some(task) = locked.task {
@@ -857,14 +861,6 @@ impl Value {
                     _ => {}
                 }
 
-                // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; `to_readable_stream`
-                // transfers ownership of the heap allocation to the JS wrapper's `m_ctx`
-                // (freed by the GC finalizer). Release the Box via `into_raw` — this is
-                // an FFI ownership hand-off, not a leak.
-                let reader: *mut webcore::readable_stream::NewSource<ByteStream> =
-                    Box::into_raw(reader);
-                // SAFETY: freshly allocated; JS wrapper takes ownership below.
-                let reader = unsafe { &mut *reader };
                 let context_ptr: *mut ByteStream = &mut reader.context;
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {

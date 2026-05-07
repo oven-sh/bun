@@ -1277,7 +1277,10 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
         }
 
-        super::pm_view_command::view(pm, package_name, property_path, json_output)
+        // SAFETY: `PackageManager::init` returns a heap singleton (`*mut`) that
+        // outlives this command; reborrow as `&mut` to match the rest of the
+        // CLI command surface (see `publish_command`, `unlink_command`, etc.).
+        super::pm_view_command::view(unsafe { &mut *pm }, package_name, property_path, json_output)
     }
 
     /// Per-tag clap param table. Runtime dispatch (was const-generic in Zig;

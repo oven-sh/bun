@@ -892,25 +892,11 @@ pub enum CountdownOverflowBehavior {
     Clamp,
 }
 
-// LAYERING: `Kind` moved DOWN to `bun_event_loop` so `TimerFlags` (also moved
-// down) can name it without a `bun_runtime` dep — needed by
-// `bun_jsc::abort_signal::Timeout.flags`.
-pub use bun_event_loop::EventLoopTimer::Kind;
-
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum KindBig {
-    SetTimeout = 0,
-    SetInterval = 1,
-    SetImmediate = 2,
-}
-impl From<Kind> for KindBig {
-    #[inline]
-    fn from(k: Kind) -> Self {
-        // SAFETY: shared discriminant values 0..=2
-        unsafe { core::mem::transmute::<u32, KindBig>(k as u32) }
-    }
-}
+// LAYERING: `Kind`/`KindBig` moved DOWN to `bun_event_loop` so `TimerFlags`
+// (also moved down) can name them without a `bun_runtime` dep — needed by
+// `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
+// type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
+pub use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 
 /// Sized to be the same as one pointer.
 #[repr(C)]

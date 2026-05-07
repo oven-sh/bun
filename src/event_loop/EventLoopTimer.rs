@@ -268,6 +268,33 @@ pub enum Kind {
     SetImmediate = 2,
 }
 
+impl Kind {
+    /// Widen to the `u32`-repr [`KindBig`] used in [`ID`](Timer::ID) so the
+    /// `{i32, u32}` pair `bitcast`s to a `u64` async-id. Zig: `Kind.big()`.
+    #[inline]
+    pub fn big(self) -> KindBig {
+        // SAFETY: shared discriminant values 0..=2
+        unsafe { core::mem::transmute::<u32, KindBig>(self as u32) }
+    }
+}
+
+/// Same variants as [`Kind`] but `#[repr(u32)]` so `ID { i32, KindBig }`
+/// is exactly one pointer / `u64`. Zig: `Kind.Big = enum(u32)`.
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum KindBig {
+    SetTimeout = 0,
+    SetInterval = 1,
+    SetImmediate = 2,
+}
+
+impl From<Kind> for KindBig {
+    #[inline]
+    fn from(k: Kind) -> Self {
+        k.big()
+    }
+}
+
 /// Packed per-JS-timer state. Zig: `packed struct(u32)`. Layout (LSB→MSB):
 ///   epoch:u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
 ///   has_accessed_primitive:1, has_js_ref:1, in_callback:1

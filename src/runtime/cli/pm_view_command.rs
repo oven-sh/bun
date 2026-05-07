@@ -79,14 +79,13 @@ pub fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // SAFETY: `root_dir` is set once by `PackageManager::init()` and
-                // points into the resolver's directory cache for the process
-                // lifetime; mirrors Zig's non-optional `*DirEntry`.
-                let root_dir = unsafe { manager.root_dir.unwrap().as_ref() };
-                if !root_dir.has_comptime_query(b"package.json") {
+                // `root_dir` is set once by `PackageManager::init()` and points
+                // into the resolver's directory cache for the process lifetime;
+                // mirrors Zig's non-optional `*DirEntry` field.
+                if !manager.root_dir.has_comptime_query(b"package.json") {
                     break 'from_package_json;
                 }
-                let fd = root_dir.fd();
+                let fd = manager.root_dir.fd;
                 if !fd.is_valid() {
                     break 'from_package_json;
                 }

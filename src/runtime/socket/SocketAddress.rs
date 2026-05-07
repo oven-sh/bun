@@ -607,10 +607,7 @@ impl SocketAddress {
     }
 
     pub fn estimated_size(&self) -> usize {
-        // PORT NOTE: `bun_str::String::estimated_size` not yet ported (Zig
-        // `bun.String.estimatedSize`); approximate via byte length until
-        // landed upstream.
-        mem::size_of::<SocketAddress>() + self._presentation.byte_slice().len()
+        mem::size_of::<SocketAddress>() + self._presentation.estimated_size()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -730,8 +727,8 @@ impl AF {
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if value.is_string() {
-            let fam_str = BunString::from_js(value, global)?;
-            // `defer fam_str.deref()` → drops at scope exit
+            // `defer fam_str.deref()` → OwnedString releases the +1 from BunString::from_js
+            let fam_str = OwnedString::new(BunString::from_js(value, global)?);
             if fam_str.length() != 4 {
                 return Err(global.throw_invalid_argument_property_value(b"options.family", Some("'ipv4' or 'ipv6'"), value));
             }

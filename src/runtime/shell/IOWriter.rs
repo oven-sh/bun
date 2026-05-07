@@ -299,11 +299,18 @@ impl IOWriter {
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void`; the shell shim is
-    /// a `usize`. Route through a cast — the FilePoll vtable owns the layout.
+    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that
+    /// the io-layer `FilePollVTable` round-trips back to the runtime. We pass
+    /// the address of the stored `bun_event_loop::EventLoopHandle` so the
+    /// (runtime-registered) vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        bun_io::EventLoopHandle(self.state().evtloop.0 as *mut c_void)
+        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+        // type-erasure; vtable consumers treat the pointee as read-only
+        // (`*const bun_event_loop::EventLoopHandle`) and never write through
+        // it. The pointee lives inside `Arc<IOWriter>` and outlives every
+        // FilePoll callback.
+        bun_io::EventLoopHandle(&self.state().evtloop as *const _ as *mut c_void)
     }
 
     // ── start ────────────────────────────────────────────────────────────

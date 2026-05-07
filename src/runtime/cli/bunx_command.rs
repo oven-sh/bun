@@ -1149,7 +1149,10 @@ impl BunxCommand {
 
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {
-                if let Some(sig) = spawn_result.status.signal_code() {
+                // Zig: `if (exit.signal.valid())` — non-exhaustive `enum(u8)`, any
+                // non-zero byte (incl. RT signals >31) is "valid". `signal_code()`
+                // would drop RT signals, so check the raw byte directly.
+                if exited.signal != 0 {
                     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                         .get()
                         .unwrap_or(false)
@@ -1157,7 +1160,7 @@ impl BunxCommand {
                         bun_crash_handler::suppress_reporting();
                     }
 
-                    Global::raise_ignoring_panic_handler(sig);
+                    Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(exited.signal));
                 }
 
                 if exited.code != 0 {

@@ -734,9 +734,13 @@ pub const Enable = packed struct(u16) {
     /// `install.globalStore = true` in bunfig to enable.
     global_virtual_store: bool = false,
 
-    /// Reject transitive dependencies resolved to non-registry sources
+    /// Reject transitive dependencies specified with a non-registry source
     /// (git, github, tarball URLs, local folders, symlinks, workspaces).
-    /// Root-level dependencies are not affected.
+    /// The check inspects each nested package.json's literal specifier, so
+    /// a registry package whose semver dep happens to get redirected to a
+    /// local workspace via `linkWorkspacePackages` is not affected. Root-
+    /// level dependencies are not affected either. Root-defined
+    /// `overrides`/`resolutions` take priority over the transitive literal.
     /// https://pnpm.io/11.x/supply-chain-security#prevent-exotic-transitive-dependencies
     block_exotic_subdeps: bool = false,
 

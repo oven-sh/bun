@@ -20,6 +20,12 @@
 //! "parent asked for `workspace:`". The `literal` string never changes, so
 //! re-inferring the tag from it reproduces the specifier the remote package
 //! actually published — which is what this policy needs to judge.
+//!
+//! When the root user has an `overrides`/`resolutions` entry for a given
+//! dependency name, the override's literal takes priority: overrides are the
+//! canonical way to remediate a violation (enable → identify the offender →
+//! add an override pointing it at a registry version), and the override is
+//! root-user-defined so it's not attacker-controlled.
 
 /// Walks the fully-resolved lockfile and emits an error for every transitive
 /// dependency whose literal specifier is a non-registry source. Returns the
@@ -63,10 +69,20 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             if (dep_pkg_id == invalid_package_id) continue;
             if (dep_pkg_id >= pkgs.len) continue;
 
-            // Re-infer the tag from the literal string the parent's
-            // package.json actually wrote. See module comment for why
-            // neither the parser-level tag nor the resolution tag works.
-            const literal = dependencies[dep_id].version.literal.slice(string_buf);
+            // If the root user has an `overrides` / `resolutions` entry for
+            // this name, the effective specifier is whatever the root chose,
+            // not whatever the transitive parent wrote. Overrides are the
+            // standard remediation for this flag (enable → see violation →
+            // override the offender to a registry version) so we must honor
+            // them instead of the now-stale transitive literal. Same
+            // rationale as `.catalog` — root-user-defined indirection isn't
+            // attacker-controlled.
+            const dep = dependencies[dep_id];
+            const overridden = manager.lockfile.overrides.get(dep.name_hash);
+            const literal = if (overridden) |ovr|
+                ovr.literal.slice(string_buf)
+            else
+                dep.version.literal.slice(string_buf);
             const literal_tag = Dependency.Version.Tag.infer(literal);
             if (!isExoticSpecifier(literal_tag)) continue;
 
@@ -83,7 +99,7 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
             }
 
             const parent_name = pkg_names[parent_id].slice(string_buf);
-            const dep_name = dependencies[dep_id].name.slice(string_buf);
+            const dep_name = dep.name.slice(string_buf);
             Output.prettyErrorln(
                 "  <b>{s}<r><d>@{f}<r> depends on <b>{s}<r><d>@{s}<r> via <yellow>{s}<r> source",
                 .{
@@ -100,7 +116,8 @@ pub fn enforceBlockExoticSubdeps(manager: *PackageManager) bun.OOM!usize {
 
     if (count > 0) {
         Output.prettyErrorln(
-            "\n<d>To allow these, unset <b>install.blockExoticSubdeps<r><d> in bunfig.toml.<r>",
+            "\n<d>To allow these, disable <b>install.blockExoticSubdeps<r><d> in bunfig.toml or set <b>block-exotic-subdeps=false<r><d> in .npmrc;" ++
+                " to allow a single exotic transitive, add an <b>overrides<r><d> entry in package.json that points the offender at a registry version.<r>",
             .{},
         );
         Output.flush();

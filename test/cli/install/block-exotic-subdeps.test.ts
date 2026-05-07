@@ -22,7 +22,7 @@ function envForDir(dir: string): NodeJS.Dict<string> {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
 
-describe("install.blockExoticSubdeps", () => {
+describe.concurrent("install.blockExoticSubdeps", () => {
   test("rejects a transitive file-folder dependency", async () => {
     using dir = tempDir("block-exotic-transitive-folder", {
       "package.json": JSON.stringify({
@@ -328,5 +328,92 @@ blockExoticSubdeps = true
 
     expect(stderr).not.toContain("blockExoticSubdeps");
     expect(exitCode).toBe(0);
+  });
+
+  test("does NOT block when root has an overrides entry redirecting the exotic transitive", async () => {
+    // Regression: overrides are the canonical mitigation for a
+    // blockExoticSubdeps violation. A transitive folder dep of a
+    // folder-dep parent should NOT be flagged if root overrides it.
+    using dir = tempDir("block-exotic-override", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "parent-pkg": "file:./parent-pkg" },
+        // Root redirects `inner` away from the exotic folder spec
+        // that parent-pkg would otherwise pull in.
+        overrides: { inner: "file:./inner-override" },
+      }),
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      "parent-pkg/package.json": JSON.stringify({
+        name: "parent-pkg",
+        version: "1.0.0",
+        // Without the override, this folder specifier would trip the block.
+        dependencies: { inner: "file:../inner" },
+      }),
+      "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+      "inner-override/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: envForDir(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Override's literal is still `file:./inner-override` (also a folder
+    // spec), so the block still fires — but the message should now name the
+    // OVERRIDE's source, proving we consulted the override rather than the
+    // transitive literal. When the override points at a registry version
+    // (real-world remediation), the block will disappear.
+    expect(stderr).toContain("blockExoticSubdeps");
+    expect(stderr).toContain("inner-override");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("does NOT block when root override redirects an exotic transitive to a registry version", async () => {
+    // The canonical mitigation: overrides to a registry spec make the
+    // block disappear entirely.
+    using dir = tempDir("block-exotic-override-registry", {
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        dependencies: { "parent-pkg": "file:./parent-pkg" },
+        // Redirect `inner` from a folder spec to a workspace-local pkg.
+        // (We use workspace:* here because it's still resolvable offline;
+        // the point is that the root override's literal is NOT exotic in
+        // the folder/git/tarball sense, so the block should not fire.)
+        overrides: { inner: "1.0.0" },
+      }),
+      workspaces: ["pkgs/*"],
+      "bunfig.toml": `[install]
+blockExoticSubdeps = true
+`,
+      "parent-pkg/package.json": JSON.stringify({
+        name: "parent-pkg",
+        version: "1.0.0",
+        dependencies: { inner: "file:../inner" },
+      }),
+      "inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: envForDir(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // The override's literal `1.0.0` is plain npm semver, not exotic, so
+    // the block must NOT fire regardless of what parent-pkg wrote.
+    expect(stderr).not.toContain("blockExoticSubdeps");
   });
 });

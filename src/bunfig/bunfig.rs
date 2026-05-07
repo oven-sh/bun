@@ -1723,17 +1723,12 @@ impl<'a> Parser<'a> {
 
             Ok(())
         }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/cli/bunfig.zig (1305 lines)
-//   confidence: medium
-//   todos:      api::TransformOptions/api::BunInstall field-writes gated on
-//               peechy .rs codegen; CodeCoverageOptions.{reports_directory,
-//               ignore_patterns} need retype from &'static to owned;
-//               parse_macros_json needs T2→T4 Expr lift.
+//   source:     src/runtime/cli/bunfig.zig (1305 lines)
+//   confidence: high
 //   notes:      const-generic `comptime cmd` demoted to runtime arg (Tag lacks
 //               ConstParamTy); Parser.bunfig collapsed into Parser.ctx to
 //               satisfy borrowck; local Expr accessor shims fill gaps in

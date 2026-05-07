@@ -573,8 +573,8 @@ pub mod registry {
                 package_manifest::Serializer::save_async(
                     &package,
                     scope,
-                    package_manager.get_temporary_directory().handle,
-                    package_manager.get_cache_directory(),
+                    package_manager.get_temporary_directory().handle.fd,
+                    package_manager.get_cache_directory().fd,
                 );
             }
 

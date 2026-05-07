@@ -469,7 +469,5 @@ impl FlagParser for Opts {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/cat.zig (357 lines)
-//   confidence: medium (NodeId style; full state machine; openat/IOReader stubbed)
-//   blocked_on: ShellSyscall::openat, IOReader::{init,add_reader,start},
-//               IOWriter::{enqueue,cancel_chunks}, Builtin::read_stdin_no_io
+//   confidence: high (NodeId style; full state machine; openat/IOReader wired)
 // ──────────────────────────────────────────────────────────────────────────

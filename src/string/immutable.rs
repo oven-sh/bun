@@ -466,17 +466,9 @@ pub fn contains_t<T: Eq>(self_: &[T], str: &[T]) -> bool {
     index_of_t(self_, str).is_some()
 }
 
-#[inline]
-pub fn contains_case_insensitive_ascii(self_: &[u8], str: &[u8]) -> bool {
-    let mut start: usize = 0;
-    while start + str.len() <= self_.len() {
-        if eql_case_insensitive_ascii_ignore_length(&self_[start..start + str.len()], str) {
-            return true;
-        }
-        start += 1;
-    }
-    false
-}
+// Canonical impl lives in tier-0 `bun_core::strings` (which `bun_paths` etc.
+// reach without depending on this crate); re-export to avoid a second copy.
+pub use bun_core::strings::contains_case_insensitive_ascii;
 
 /// Zig: `std.meta.Int(.unsigned, @bitSizeOf(usize) - 1)` — fits in 63/31 bits so
 /// `?OptionalUsize` is word-sized via niche. Rust `Option<u32>` already niches; keep

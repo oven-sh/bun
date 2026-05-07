@@ -332,8 +332,11 @@ macro_rules! impl_get_errno_libc {
         impl GetErrno for $t {
             #[inline]
             fn get_errno(self) -> E {
-                // `as i64` bit-reinterprets same-width unsigned MAX → -1.
-                if self as i64 == -1 {
+                // Zig bitcasts unsigned → SAME-width signed before `== -1`.
+                // `as i64` would zero-extend u32, never matching -1. Compare
+                // against the type's own all-ones value instead (== -1 for
+                // signed, == MAX for unsigned — both are libc's failure rc).
+                if self == !(0 as $t) {
                     // CYCLEBREAK: bun_sys::c::_errno MOVE_DOWN → crate::posix (landed)
                     return E::from_raw(crate::posix::errno() as u16);
                 }

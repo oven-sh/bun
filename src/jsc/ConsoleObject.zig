@@ -3602,6 +3602,36 @@ fn writeGroupIndentToError(indent: u16) void {
     }
 }
 
+/// Reentrant scoped lock for stdout/stderr console output. Mirrors the
+/// inline pattern in `messageWithTypeAndLevel_` so `count`, `timeEnd`,
+/// and `timeLog` — which write a single logical line via multiple write()
+/// calls — can serialize the whole line against concurrent console.*
+/// calls from other threads.
+const ConsoleLock = struct {
+    is_error: bool,
+
+    fn acquire(comptime is_error: bool) ConsoleLock {
+        if (is_error) {
+            if (stderr_lock_count == 0) stderr_mutex.lock();
+            stderr_lock_count += 1;
+        } else {
+            if (stdout_lock_count == 0) stdout_mutex.lock();
+            stdout_lock_count += 1;
+        }
+        return .{ .is_error = is_error };
+    }
+
+    fn release(this: ConsoleLock) void {
+        if (this.is_error) {
+            stderr_lock_count -= 1;
+            if (stderr_lock_count == 0) stderr_mutex.unlock();
+        } else {
+            stdout_lock_count -= 1;
+            if (stdout_lock_count == 0) stdout_mutex.unlock();
+        }
+    }
+};
+
 pub fn count(
     // console
     _: *ConsoleObject,
@@ -3619,6 +3649,11 @@ pub fn count(
     const counter = this.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
     const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
     counter.value_ptr.* = current;
+
+    // Serialize indent + body so concurrent threads can't interleave a
+    // partial line.
+    const lock = ConsoleLock.acquire(false);
+    defer lock.release();
 
     const writer = this.writer;
     writeGroupIndentTo(this.default_indent, writer);
@@ -3685,6 +3720,12 @@ pub fn timeEnd(
     const id = bun.hash(chars[0..len]);
     const result = (pending_time_logs.fetchPut(id, null) catch null) orelse return;
     var value: std.time.Timer = result.value orelse return;
+
+    // Serialize indent + elapsed + label so concurrent threads can't
+    // interleave a partial line.
+    const lock = ConsoleLock.acquire(true);
+    defer lock.release();
+
     // get the duration in microseconds
     // then display it in milliseconds
     writeGroupIndentToError(global.bunVM().console.default_indent);
@@ -3716,6 +3757,12 @@ pub fn timeLog(
 
     const id = bun.hash(chars[0..len]);
     var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
+
+    // Serialize indent + elapsed + label + args so concurrent threads
+    // can't interleave a partial line.
+    const lock = ConsoleLock.acquire(true);
+    defer lock.release();
+
     // get the duration in microseconds
     // then display it in milliseconds
     writeGroupIndentToError(global.bunVM().console.default_indent);

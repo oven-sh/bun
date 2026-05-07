@@ -23,7 +23,7 @@ it("should log to console correctly", async () => {
 // https://github.com/oven-sh/bun/issues/30017
 // `console.timeEnd()` (and `console.timeLog()` / `console.count()`) must apply
 // the indentation produced by `console.group()`, per the WHATWG Console spec.
-test("console.timeEnd applies console.group indent (#30017)", async () => {
+test.concurrent("console.timeEnd applies console.group indent (#30017)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -44,7 +44,7 @@ test("console.timeEnd applies console.group indent (#30017)", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("console.timeEnd indents per nested console.group (#30017)", async () => {
+test.concurrent("console.timeEnd indents per nested console.group (#30017)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -64,7 +64,7 @@ test("console.timeEnd indents per nested console.group (#30017)", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("console.timeLog and console.count also indent per console.group (#30017)", async () => {
+test.concurrent("console.timeLog and console.count also indent per console.group (#30017)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -84,7 +84,7 @@ test("console.timeLog and console.count also indent per console.group (#30017)",
   expect(exitCode).toBe(0);
 });
 
-test("console.timeEnd without an active group has no indent (#30017)", async () => {
+test.concurrent("console.timeEnd without an active group has no indent (#30017)", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.time('t'); console.timeEnd('t');"],
     env: bunEnv,

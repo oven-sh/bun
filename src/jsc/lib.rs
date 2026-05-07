@@ -490,6 +490,23 @@ impl From<bun_core::Error> for JsError {
     }
 }
 
+impl From<JsError> for bun_core::Error {
+    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
+    /// the exact Zig tag (`@errorName`) so call sites that round-trip through
+    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
+    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+    #[inline]
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
+            // `Terminated` is a Rust-port addition (worker shutdown); it has no
+            // distinct Zig `error.` tag, so collapse into `JSError` like every
+            // other thrown JS exception.
+            JsError::Thrown | JsError::Terminated => bun_core::err!("JSError"),
+        }
+    }
+}
+
 /// Adapter for Zig-style `(comptime fmt, args)` throw helpers ported to Rust.
 /// During the port, callers use a mix of `&str`, `format_args!(..)`, `()`, and
 /// `&[..]` for the trailing "args" tuple — this trait normalizes them so a

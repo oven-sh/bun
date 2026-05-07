@@ -3787,6 +3787,16 @@ pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::E
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
     open_dir_absolute(path)
 }
+/// bun.zig:887 `openDirNoRenamingOrDeletingWindows` — open `path` relative to
+/// `dir` for iteration only (no `DELETE` access). Windows-only; callers gate.
+#[cfg(windows)]
+pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<Fd> {
+    open_dir_at_windows_a(
+        dir,
+        path,
+        WindowsOpenDirOptions { iterable: true, can_rename_or_delete: false, read_only: true, ..Default::default() },
+    )
+}
 /// `openFileReadOnly` — `open(path, O_RDONLY|O_CLOEXEC)`.
 pub fn open_file_read_only(path: &[u8]) -> Maybe<Fd> {
     open_a(path, O::RDONLY | O::CLOEXEC, 0)

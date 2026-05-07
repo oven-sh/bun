@@ -4034,7 +4034,7 @@ impl<'a> BundleV2<'a> {
                             side_effects: _resolver::SideEffects::HasSideEffects,
                             ..Default::default()
                         }).expect("unreachable");
-                        let task = Box::new(ParseTask {
+                        let task_val = ParseTask {
                             ctx: (this as *mut BundleV2).cast::<BundleV2<'static>>(),
                             path,
                             // unknown at this point:
@@ -4050,8 +4050,10 @@ impl<'a> BundleV2<'a> {
                             tree_shaking: this.linker.options.tree_shaking,
                             known_target: resolve.import_record.original_target,
                             ..Default::default()
-                        });
-                        let task = Box::leak(task); // TODO(port): owned by pool; freed via destroy()
+                        };
+                        // Arena-owned (Zig: `allocator.create(ParseTask)`).
+                        // SAFETY: arena outlives the bundle pass.
+                        let task: &mut ParseTask = unsafe { &mut *this.arena_create(task_val) };
                         task.task.node.next = core::ptr::null_mut();
                         task.io_task.node.next = core::ptr::null_mut();
                         this.increment_scan_counter();
@@ -4617,7 +4619,14 @@ impl<'a> BundleV2<'a> {
                 ..Chunk::default()
             });
         }
-        let chunks: &mut [Chunk] = Box::leak(chunks.into_boxed_slice());
+        // Arena-owned (Zig allocates `chunks` from `this.allocator()`); the
+        // `DevServerOutput` lifetime is documented as "tied to the bundler's
+        // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
+        let chunks: *mut [Chunk] = self
+            .allocator()
+            .alloc_slice_fill_iter(chunks.into_iter()) as *mut [Chunk];
+        // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
+        let chunks: &mut [Chunk] = unsafe { &mut *chunks };
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -4651,13 +4660,17 @@ impl<'a> BundleV2<'a> {
             let match_path = Fs::Path::init_with_namespace(import_record.path.text, import_record.path.namespace);
             if plugins.has_any_matches(&match_path, false) {
                 // This is where onResolve plugins are enqueued
-                let resolve = Box::new(jsc_api::JSBundler::Resolve::default());
                 bun_core::scoped_log!(Bundle, "enqueue onResolve: {}:{}",
                     bstr::BStr::new(&import_record.path.namespace),
                     bstr::BStr::new(&import_record.path.text));
                 self.increment_scan_counter();
 
-                let resolve = Box::leak(resolve); // TODO(port): owned by dispatch chain
+                // Arena-owned (Zig: `allocator.create(Resolve)`); the dispatch
+                // chain holds the raw `*mut Resolve` until the JS thread calls
+                // back, at which point the bundle pass is still alive.
+                // SAFETY: arena outlives the bundle pass.
+                let resolve: &mut jsc_api::JSBundler::Resolve =
+                    unsafe { &mut *self.arena_create(jsc_api::JSBundler::Resolve::default()) };
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: import_record.kind,
                     source_file: source_file.into(),

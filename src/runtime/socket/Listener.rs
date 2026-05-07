@@ -35,19 +35,6 @@ macro_rules! log {
     ($($arg:tt)*) => { scoped_log!(Listener, $($arg)*) };
 }
 
-// ── Local shim (Phase D) ────────────────────────────────────────────────
-// upstream in bun_jsc; bridge it here over `throw_invalid_arguments`.
-trait JSGlobalObjectListenerExt {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError;
-}
-impl JSGlobalObjectListenerExt for JSGlobalObject {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
-
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
 /// `KeepAlive::ref_/unref`.
 #[inline]
@@ -237,8 +224,12 @@ impl Listener {
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
+                // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out
+                // of `socket_config` so the `mem::forget` below doesn't leak it.
                 let connection = UnixOrHost::Unix(
-                    socket_config.hostname_or_unix.slice().to_vec().into_boxed_slice(),
+                    core::mem::take(&mut socket_config.hostname_or_unix)
+                        .into_vec()
+                        .into_boxed_slice(),
                 );
 
                 // SAFETY: event_loop() returns a non-null *mut EventLoop owned by the VM.
@@ -329,7 +320,11 @@ impl Listener {
         let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
-        let hostname_owned: Box<[u8]> = socket_config.hostname_or_unix.slice().to_vec().into_boxed_slice();
+        // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+        // `socket_config` so the `mem::forget` below doesn't leak it.
+        let hostname_owned: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
+            .into_vec()
+            .into_boxed_slice();
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
         // Prevent double-drop of `handlers` (moved out above).
@@ -949,7 +944,11 @@ impl Listener {
                     break 'blk UnixOrHost::Fd(fd);
                 }
             }
-            let host: Box<[u8]> = socket_config.hostname_or_unix.slice().to_vec().into_boxed_slice();
+            // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+            // `socket_config` so the later `mem::forget` doesn't leak it.
+            let host: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
+                .into_vec()
+                .into_boxed_slice();
             if let Some(port_) = port {
                 UnixOrHost::Host { host, port: port_ }
             } else {
@@ -1405,13 +1404,10 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
     socket_ref.flags.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
-    // PORT NOTE: reshaped for borrowck — Zig stored `connection` in the socket field and passed
-    // the same value to doConnect (single allocation, aliased read). We moved it into the field
-    // above and re-borrow from there.
-    // TODO(port): do_connect borrows `&self.connection` while taking `&mut self` — requires
-    // disjoint borrow or clone. Clone for now; revisit in Phase B.
-    let conn_clone = socket_ref.connection.as_ref().unwrap().clone();
-    if socket_ref.do_connect(&conn_clone).is_err() {
+    // PORT NOTE: Zig stored `connection` in the socket field and passed the same
+    // value to doConnect (single allocation, aliased read). `do_connect` now
+    // reads `self.connection` directly so no second borrow is needed here.
+    if socket_ref.do_connect().is_err() {
         let _ = socket_ref.handle_connect_error(if port.is_none() {
             bun_sys::SystemErrno::ENOENT as c_int
         } else {

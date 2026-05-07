@@ -275,7 +275,7 @@ impl Pipeline {
             PipelineState::WaitingWriteErr
         ));
         if let Some(e) = err {
-            interp.throw(&ShellErr::from_system(&e));
+            interp.throw(&ShellErr::from_system(e));
             return Yield::failed();
         }
         let parent = interp.as_pipeline(this).base.parent;

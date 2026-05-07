@@ -312,14 +312,12 @@ impl Scripts {
                 && self.install.is_empty()
                 && self.preinstall.is_empty()
             {
-                let save = folder_path.save();
-                // `defer save.restore()` — AbsPath::save() returns RAII guard that restores on Drop.
-                // TODO(port): verify AbsPath::save() guard semantics in bun_paths
-                folder_path.append(b"binding.gyp");
+                // `defer save.restore()` — `save()` returns an RAII guard that
+                // restores the path length on Drop and derefs to the path.
+                let mut save = folder_path.save();
+                save.append(b"binding.gyp");
 
-                let r = bun_sys::exists(folder_path.slice());
-                drop(save);
-                r
+                bun_sys::exists(save.slice())
             } else {
                 false
             };
@@ -357,18 +355,18 @@ impl Scripts {
         // immediately into the string builder.
         let bump = bun_alloc::Arena::new();
         let json: Expr = {
-            let save = folder_path.save();
-            folder_path.append(b"package.json");
+            // `defer save.restore()` — `save()` returns an RAII guard that
+            // restores the path length on Drop and derefs to the path.
+            let mut save = folder_path.save();
+            save.append(b"package.json");
 
             let json_src = {
-                let buf = bun_sys::File::read_from(Fd::cwd(), folder_path.slice_z())?;
-                logger::Source::init_path_string(folder_path.slice(), buf)
+                let buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
+                logger::Source::init_path_string(save.slice(), buf)
             };
 
             initialize_store();
-            let r = bun_json::parse_package_json_utf8(&json_src, log, &bump)?;
-            drop(save);
-            r.into()
+            bun_json::parse_package_json_utf8(&json_src, log, &bump)?.into()
         };
 
         Scripts::parse_count(string_builder, &json);
@@ -394,12 +392,12 @@ impl Scripts {
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 
         let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            let save = folder_path.save();
-            folder_path.append(b"binding.gyp");
+            // `defer save.restore()` — `save()` returns an RAII guard that
+            // restores the path length on Drop and derefs to the path.
+            let mut save = folder_path.save();
+            save.append(b"binding.gyp");
 
-            let r = bun_sys::exists(folder_path.slice());
-            drop(save);
-            r
+            bun_sys::exists(save.slice())
         } else {
             false
         };

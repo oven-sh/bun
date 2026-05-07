@@ -1103,9 +1103,11 @@ fn pkg_info_for_name_and_version(
         }
         let pkg = lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
-            let mut cursor: &mut [u8] = &mut buf[..];
-            write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("Resolution name too long");
-            let written = buf.len() - cursor.len();
+            let written = {
+                let mut cursor: &mut [u8] = &mut buf[..];
+                write!(&mut cursor, "{}", pkg.resolution.fmt(strbuf, PathSep::Posix)).expect("Resolution name too long");
+                buf.len() - cursor.len()
+            };
             let label = &buf[..written];
             if label == v {
                 pairs.push((dep_id as DependencyID, pkg_id));

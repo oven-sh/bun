@@ -959,15 +959,6 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
-impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
-        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live; the
-        // writer is a field of `Self`, so reborrow via raw pointer to avoid
-        // aliasing `&mut self.json_writer`.
-        unsafe { (*this).on_close_io(kind) }
-    }
-}
-
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
         if let Some(p) = &self.process {
@@ -1233,30 +1224,51 @@ impl<'a> SecurityScanSubprocess<'a> {
         // PORT NOTE: `to_process` consumes `SpawnResult` by value in the
         // bun_spawn shape; reconstruct from the pid since the only field we
         // need has already been read above (`extra_pipes`).
-        let process = std::mem::take(spawned).to_process(
-            EventLoopHandle::from_any(&mut self.manager.event_loop),
-            false,
-        );
+        let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
+        let process = std::mem::take(spawned).to_process(event_loop, false);
+
+        // Derive the raw backref once and use it for all subsequent field
+        // access. `start()`/`watch_or_reap()` below may re-enter
+        // `on_close_io`/`on_process_exit` via this pointer while we are still
+        // inside this frame, so from here on we touch `*self` only through
+        // `parent` to keep a single provenance path (no overlapping `&mut`).
         let parent: *mut Self = self;
         process.set_exit_handler(parent);
-        self.process = Some(process);
+        // SAFETY: `parent` was just derived from `&mut self`; sole access path.
+        unsafe { (*parent).process = Some(process) };
 
+        // Zig: `this.json_writer = StaticPipeWriter.create(...)` — assign the
+        // field BEFORE `start()`. `start()` may complete the write synchronously
+        // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
+        // `on_close_io` via the `parent` backref; that callback must observe
+        // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
+        // `is_done()` never returns true and `sleep_until` hangs.
         let writer = StaticPipeWriter::create(
-            EventLoopHandle::from_any(&mut self.manager.event_loop),
+            event_loop,
             parent.cast(),
             json_stdio_result,
             json_source,
         );
-        // errdefer { writer.source.detach(); writer.deref(); self.json_writer = null; }
-        // PORT NOTE: reshaped for borrowck — guard owns the writer value directly
-        // instead of `&mut self.json_writer`, and the field is assigned only after
-        // all fallible calls succeed (equivalent: errdefer would have nulled it).
-        let writer = scopeguard::guard(writer, |w| {
-            w.source.detach();
-            // Rc::drop handles deref()
+        // Keep an `Rc` clone locally so no borrow on `(*parent).json_writer` is
+        // held across `start()` — `on_close_io` may `.take()` the field.
+        let writer_local = writer.clone();
+        // SAFETY: see `parent` note above.
+        unsafe { (*parent).json_writer = Some(writer) };
+
+        // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
+        // PORT NOTE: guard mirrors the Zig errdefer over the FIELD (not a local),
+        // including its `if (this.json_writer)` check — `start()` may already
+        // have re-entered and nulled it.
+        let guard = scopeguard::guard((), move |()| {
+            // SAFETY: `parent` points at the live `self` of `finish_spawn`; the
+            // guard only fires on early return inside this fn.
+            if let Some(w) = unsafe { (*parent).json_writer.take() } {
+                w.source.detach();
+                // Rc drop → `StaticPipeWriter::drop` → runtime `deref()`
+            }
         });
 
-        match writer.start() {
+        match writer_local.start() {
             Err(e) => {
                 Output::err_generic(
                     "Failed to start security scanner JSON pipe writer: {}",
@@ -1266,13 +1278,16 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
             Ok(()) => {}
         }
+        drop(writer_local);
 
-        match self.process.as_ref().unwrap().watch_or_reap() {
+        // SAFETY: `process` was set just above; reached via `parent` per the
+        // single-provenance note.
+        match unsafe { (*parent).process.as_ref() }.unwrap().watch_or_reap() {
             Err(_) => return Err(err!("ProcessWatchFailed")),
             Ok(_) => {}
         }
 
-        self.json_writer = Some(scopeguard::ScopeGuard::into_inner(writer));
+        scopeguard::ScopeGuard::into_inner(guard);
         Ok(())
     }
 

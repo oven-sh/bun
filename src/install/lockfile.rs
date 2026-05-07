@@ -2232,7 +2232,8 @@ impl Lockfile {
             cap: 0,
             off: 0,
             ptr: None,
-            lockfile: self,
+            string_bytes: &mut self.buffers.string_bytes,
+            string_pool: &mut self.string_pool,
         }
     }
 
@@ -2278,12 +2279,37 @@ impl Default for Scratch {
 // StringBuilder
 // ────────────────────────────────────────────────────────────────────────────
 
+/// PORT NOTE: Zig stored `lockfile: *Lockfile` and reached `.buffers.string_bytes`
+/// / `.string_pool` through it. In Rust that coarse `&mut Lockfile` borrow
+/// blocks every caller from touching disjoint fields (`packages`, `buffers
+/// .dependencies`, …) while a builder is alive. Hold the two fields the
+/// builder actually mutates so callers can split-borrow at the field level.
 pub struct StringBuilder<'a> {
     pub len: usize,
     pub cap: usize,
     pub off: usize,
     pub ptr: Option<*mut u8>,
-    pub lockfile: &'a mut Lockfile,
+    pub string_bytes: &'a mut Vec<u8>,
+    pub string_pool: &'a mut StringPool,
+}
+
+/// Construct a `StringBuilder` with a *field-level* split borrow of `$lockfile`
+/// (`buffers.string_bytes` + `string_pool`). Use this — not the
+/// `Lockfile::string_builder()` method — at sites that also need to read other
+/// `$lockfile` fields while the builder is live; the method form borrows the
+/// whole struct.
+#[macro_export]
+macro_rules! string_builder {
+    ($lockfile:expr) => {
+        $crate::lockfile_real::StringBuilder {
+            len: 0,
+            cap: 0,
+            off: 0,
+            ptr: None,
+            string_bytes: &mut $lockfile.buffers.string_bytes,
+            string_pool: &mut $lockfile.string_pool,
+        }
+    };
 }
 
 /// Trait implemented by `String` and `ExternalString` to support generic `append*`.
@@ -2347,7 +2373,7 @@ impl<'a> StringBuilder<'a> {
     fn _count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        if !self.lockfile.string_pool.contains(&hash) {
+        if !self.string_pool.contains(&hash) {
             self.cap += slice.len();
         }
     }
@@ -2365,21 +2391,19 @@ impl<'a> StringBuilder<'a> {
         if cfg!(debug_assertions) {
             debug_assert!(self.cap >= self.len);
             // assert that no other builder was allocated while this builder was being used
-            debug_assert!(
-                self.lockfile.buffers.string_bytes.len() == self.off + self.cap
-            );
+            debug_assert!(self.string_bytes.len() == self.off + self.cap);
         }
 
         let excess = self.cap - self.len;
 
         if excess > 0 {
-            let new_len = self.lockfile.buffers.string_bytes.len() - excess;
-            self.lockfile.buffers.string_bytes.truncate(new_len);
+            let new_len = self.string_bytes.len() - excess;
+            self.string_bytes.truncate(new_len);
         }
     }
 
     pub fn allocate(&mut self) -> Result<(), AllocError> {
-        let string_bytes = &mut self.lockfile.buffers.string_bytes;
+        let string_bytes = &mut *self.string_bytes;
         string_bytes.reserve(self.cap);
         // PERF(port): was ensureUnusedCapacity
         let prev_len = string_bytes.len();
@@ -2399,7 +2423,7 @@ impl<'a> StringBuilder<'a> {
     /// SlicedString is not supported due to inline strings.
     pub fn append_without_pool<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
         if SemverString::can_inline(slice) {
-            return T::from_init(self.lockfile.buffers.string_bytes.as_slice(), slice, hash);
+            return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
         if cfg!(debug_assertions) {
             debug_assert!(self.len <= self.cap); // didn't count everything
@@ -2419,16 +2443,12 @@ impl<'a> StringBuilder<'a> {
             debug_assert!(self.len <= self.cap);
         }
 
-        T::from_init(
-            self.lockfile.buffers.string_bytes.as_slice(),
-            final_slice,
-            hash,
-        )
+        T::from_init(self.string_bytes.as_slice(), final_slice, hash)
     }
 
     pub fn append_with_hash<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
         if SemverString::can_inline(slice) {
-            return T::from_init(self.lockfile.buffers.string_bytes.as_slice(), slice, hash);
+            return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
 
         if cfg!(debug_assertions) {
@@ -2436,11 +2456,7 @@ impl<'a> StringBuilder<'a> {
             debug_assert!(self.ptr.is_some()); // must call allocate first
         }
 
-        let string_entry = self
-            .lockfile
-            .string_pool
-            .get_or_put(hash)
-            .expect("unreachable");
+        let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if !string_entry.found_existing {
             // SAFETY: see append_without_pool.
             let final_slice = unsafe {
@@ -2451,7 +2467,7 @@ impl<'a> StringBuilder<'a> {
             self.len += slice.len();
 
             *string_entry.value_ptr =
-                SemverString::init(self.lockfile.buffers.string_bytes.as_slice(), final_slice);
+                SemverString::init(self.string_bytes.as_slice(), final_slice);
         }
 
         if cfg!(debug_assertions) {

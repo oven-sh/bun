@@ -295,7 +295,9 @@ impl Stringifier {
                         writer,
                         indent,
                         u32::try_from(workspace_pkg_id).unwrap(),
-                        res.value.workspace,
+                        // SAFETY: `workspace_sort_buf` only contains pkgs whose
+                        // resolution `tag == Workspace`.
+                        unsafe { res.value.workspace },
                         pkg_names,
                         pkg_name_hashes,
                         pkg_bins,
@@ -643,7 +645,8 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@file:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.folder.fmt_json(buf, JsonOpts { quote: false }),
+                                // SAFETY: `tag == Folder` in this match arm.
+                                unsafe { res.value.folder }.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -668,7 +671,8 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.local_tarball.fmt_json(buf, JsonOpts { quote: false }),
+                                // SAFETY: `tag == LocalTarball` in this match arm.
+                                unsafe { res.value.local_tarball }.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -697,7 +701,8 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.remote_tarball.fmt_json(buf, JsonOpts { quote: false }),
+                                // SAFETY: `tag == RemoteTarball` in this match arm.
+                                unsafe { res.value.remote_tarball }.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -726,7 +731,8 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@link:{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.symlink.fmt_json(buf, JsonOpts { quote: false }),
+                                // SAFETY: `tag == Symlink` in this match arm.
+                                unsafe { res.value.symlink }.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
 
                             Self::write_package_info_object(
@@ -751,11 +757,13 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.npm.version.fmt(buf),
+                                // SAFETY: `tag == Npm` in this match arm.
+                                unsafe { res.value.npm.version }.fmt(buf),
                             )?;
 
                             // only write the registry if it's not the default. empty string means default registry
-                            let url_slice = res.value.npm.url.slice(buf);
+                            // SAFETY: `tag == Npm` in this match arm.
+                            let url_slice = unsafe { res.value.npm.url }.slice(buf);
                             write!(
                                 writer,
                                 "\"{}\", ",
@@ -791,15 +799,20 @@ impl Stringifier {
                                 writer,
                                 "[\"{}@workspace:{}\"]",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                res.value.workspace.fmt_json(buf, JsonOpts { quote: false }),
+                                // SAFETY: `tag == Workspace` in this match arm.
+                                unsafe { res.value.workspace }.fmt_json(buf, JsonOpts { quote: false }),
                             )?;
                         }
                         tag @ (ResolutionTag::Git | ResolutionTag::Github) => {
                             // inline .git, .github
-                            let repo: &Repository = if tag == ResolutionTag::Git {
-                                &res.value.git
-                            } else {
-                                &res.value.github
+                            // SAFETY: `tag` is `Git` or `Github`; the matching
+                            // union arm is read.
+                            let repo: &Repository = unsafe {
+                                if tag == ResolutionTag::Git {
+                                    &res.value.git
+                                } else {
+                                    &res.value.github
+                                }
                             };
                             let prefix: &str = if tag == ResolutionTag::Git { "git+" } else { "github:" };
                             write!(
@@ -2013,13 +2026,16 @@ pub fn parse_into_binary_lockfile(
                     let url = ExtractTarball::build_url(
                         registry_url,
                         &strings::StringOrTinyString::init(name.slice(lockfile.buffers.string_bytes.as_slice())),
-                        res.value.npm.version,
+                        // SAFETY: `tag == Npm` was checked just above.
+                        unsafe { res.value.npm.version },
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
-                    res.value.npm.url = sbuf!(lockfile).append(&url)?;
+                    // SAFETY: `tag == Npm`.
+                    unsafe { res.value.npm.url = sbuf!(lockfile).append(&url)?; }
                 } else {
-                    res.value.npm.url = sbuf!(lockfile).append(registry_str)?;
+                    // SAFETY: `tag == Npm`.
+                    unsafe { res.value.npm.url = sbuf!(lockfile).append(registry_str)?; }
                 }
             }
 
@@ -2073,7 +2089,8 @@ pub fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         res_info.loc,
-                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(res.value.workspace.slice(lockfile.buffers.string_bytes.as_slice()))),
+                        // SAFETY: `tag == Workspace` was checked above.
+                        format_args!("Unknown workspace: '{}'", bstr::BStr::new(unsafe { res.value.workspace }.slice(lockfile.buffers.string_bytes.as_slice()))),
                     )?;
                     return Err(ParseError::InvalidPackageInfo);
                 }
@@ -2206,9 +2223,11 @@ pub fn parse_into_binary_lockfile(
 
                     let resolved = sbuf!(lockfile).append(bun_tag_str)?;
                     if tag == ResolutionTag::Git {
-                        res.value.git.resolved = resolved;
+                        // SAFETY: `tag == Git` in this branch.
+                        unsafe { res.value.git.resolved = resolved; }
                     } else {
-                        res.value.github.resolved = resolved;
+                        // SAFETY: `tag == Github` in this branch.
+                        unsafe { res.value.github.resolved = resolved; }
                     }
 
                     // Optional integrity hash (added to pin tarball content)

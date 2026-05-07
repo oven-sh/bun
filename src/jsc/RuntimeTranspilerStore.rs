@@ -87,18 +87,18 @@ pub fn dump_source_string_failiable(
     // SAFETY: every access to BUN_DEBUG_HOLDER is guarded by BUN_DEBUG_HOLDER_LOCK.
     let holder = unsafe { &mut *ptr::addr_of_mut!(BUN_DEBUG_HOLDER) };
 
+    let mut path_buf = bun_paths::PathBuffer::default();
+
     let dir = match holder.dir {
         Some(d) => d,
         None => {
             let base_name: &[u8] = if cfg!(windows) {
                 // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
                 let temp = Fs::RealFS::platform_temp_dir();
-                // PORT NOTE: Zig built into a stack PathBuffer; we leak the
-                // joined path once (debug-only, single-shot under the lock).
-                let mut buf = Vec::with_capacity(temp.len() + b"\\bun-debug-src".len());
-                buf.extend_from_slice(temp);
-                buf.extend_from_slice(b"\\bun-debug-src");
-                &*Box::leak(buf.into_boxed_slice())
+                let suffix = b"\\bun-debug-src";
+                path_buf.0[..temp.len()].copy_from_slice(temp);
+                path_buf.0[temp.len()..temp.len() + suffix.len()].copy_from_slice(suffix);
+                &path_buf.0[..temp.len() + suffix.len()]
             } else if bun_core::env::IS_ANDROID {
                 b"/data/local/tmp/bun-debug-src/"
             } else {
@@ -109,8 +109,6 @@ pub fn dump_source_string_failiable(
             d
         }
     };
-
-    let mut path_buf = bun_paths::PathBuffer::default();
 
     if let Some(dir_path) = bun_paths::dirname(specifier) {
         let root_len = if cfg!(windows) {
@@ -552,14 +550,19 @@ impl TranspilerJob {
             unsafe { (*this_ptr).dispatch_to_main_thread() };
         });
 
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
-        let vm = unsafe { &mut *self.vm };
+        // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
+        // PORT NOTE: kept as a raw pointer — never form `&mut VirtualMachine`
+        // here. (a) the JS thread is concurrently live on the same VM, so a
+        // `&mut` would be a data race; (b) `self` is stored *inside*
+        // `(*vm).transpiler_store.store` (HiveArray inline slot), so a
+        // `&mut VirtualMachine` would retag `self`'s memory and every
+        // subsequent `self.* = …` write would be Stacked-Borrows UB. All
+        // accesses below dereference per-field via `(*vm).field` (place
+        // expressions / leaf-field borrows) only.
+        let vm: *mut VirtualMachine = self.vm;
 
         if self.generation_number
-            != vm
-                .transpiler_store
-                .generation_number
-                .load(Ordering::Relaxed)
+            != unsafe { (*vm).transpiler_store.generation_number.load(Ordering::Relaxed) }
         {
             self.parse_error = Some(bun_core::err!("TranspilerJobGenerationMismatch"));
             return;
@@ -575,8 +578,11 @@ impl TranspilerJob {
         });
         // SAFETY: thread-local owns the leaked Box; only this thread touches it.
         let ast_memory_store = unsafe { &mut *ast_store_ptr.as_ptr() };
+        // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
         // PORT NOTE: Zig passed `allocator` to `enter()`; Rust signature folds the arena
-        // into `ASTMemoryAllocator::new`. The `Scope` exits (restores previous) on Drop.
+        // into `ASTMemoryAllocator::new`. `Scope` restores the previous
+        // `Expr/Stmt.Data.Store.memory_allocator` on Drop (see ASTMemoryAllocator.rs
+        // `impl Drop for Scope`).
         let _ast_scope = ast_memory_store.enter();
 
         let path = self.path.clone();

@@ -54,12 +54,12 @@ impl OverrideMap {
 
     pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
         for dep in self.map.values() {
-            dep.count(string_buf, builder);
+            dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
         }
     }
 
     /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
-    /// `builder.lockfile` is `new`. Dropped to avoid the alias.
+    /// the new-side buffer lives inside `new_builder`. Dropped to avoid the alias.
     pub fn clone(
         &self,
         pm: &mut PackageManager,
@@ -71,8 +71,10 @@ impl OverrideMap {
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile in Phase B
-            new.map
-                .put_assume_capacity(*k, v.clone_in(pm, old_string_buf, new_builder)?);
+            new.map.put_assume_capacity(
+                *k,
+                v.clone_in(pm, old_lockfile.buffers.string_bytes.as_slice(), new_builder)?,
+            );
         }
 
         Ok(new)

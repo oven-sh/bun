@@ -299,7 +299,7 @@ impl Cmd {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(err) = e {
-            interp.throw(&crate::shell::ShellErr::from_system(&err));
+            interp.throw(&crate::shell::ShellErr::from_system(err));
             return Yield::failed();
         }
         debug_assert!(matches!(

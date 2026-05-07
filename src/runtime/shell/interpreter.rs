@@ -369,26 +369,6 @@ impl ShellArgs {
 /// Only used by the construction path (`Interpreter::init`).
 pub type ShellResult<T> = Result<T, ShellErr>;
 
-impl ShellErr {
-    /// Spec: shell.zig `ShellErr.throwMini` — print to stderr and exit(1).
-    /// Used on the `MiniEventLoop` (no-JSC) path where there is no global
-    /// object to throw into.
-    #[cold]
-    pub fn throw_mini(self) -> ! {
-        // PORT NOTE: Zig's `ShellErr` is a 4-variant tagged union (sys / custom
-        // / invalid_arguments / todo) whose `throwMini` formats each arm. The
-        // Rust port currently only carries the `.sys` payload (see `mod.rs`),
-        // so this is the `.sys` arm: `bunsh: {message}: {path}`.
-        let e = &self.0;
-        bun_core::pretty_errorln!(
-            "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
-            e,
-            bstr::BStr::new(&e.path[..]),
-        );
-        bun_core::Global::exit(1);
-    }
-}
-
 impl Interpreter {
     /// Spec: interpreter.zig `ThisInterpreter.parse` — lex `src` (ASCII or
     /// Unicode), build a `Parser`, and return the root `ast::Script`. Tokens

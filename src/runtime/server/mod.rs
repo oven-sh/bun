@@ -36,35 +36,6 @@ pub(crate) fn server_js_create(
     }
 }
 
-/// `jsc.Debugger.HTTPServerAgent.{notifyServerStarted, notifyServerRoutesUpdated}`
-/// — the agent body lives in the (still-gated) inspector module; these free
-/// fns take the `bun_jsc::debugger::HTTPServerAgent` opaque handle and the
-/// runtime-tier `AnyServer` so callers in this crate don't need a vtable hop.
-pub mod http_server_agent {
-    use super::AnyServer;
-    use bun_jsc::debugger::HTTPServerAgent;
-
-    pub fn notify_server_started(agent: &mut HTTPServerAgent, server: AnyServer) {
-        if !agent.is_enabled() {
-            return;
-        }
-        // TODO(port): emit `Network.serverStarted` over the inspector socket
-        // once `InspectorBunFrontendDevServerAgent` is wired (server.zig:notifyServerStarted).
-        let _ = server;
-    }
-
-    pub fn notify_server_routes_updated(
-        agent: &mut HTTPServerAgent,
-        server: AnyServer,
-    ) -> Result<(), bun_alloc::AllocError> {
-        if !agent.is_enabled() {
-            return Ok(());
-        }
-        // TODO(port): emit `Network.serverRoutesUpdated` (see above).
-        let _ = server;
-        Ok(())
-    }
-}
 use std::rc::Rc;
 
 use bun_aio::KeepAlive;

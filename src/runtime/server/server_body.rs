@@ -4,7 +4,6 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
-use std::rc::Rc;
 
 use bun_aio::{KeepAlive, Loop as AsyncLoop};
 use bun_alloc::AllocError;
@@ -1263,7 +1262,12 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub flags: ServerFlags,
 
-    pub plugins: Option<Rc<ServePlugins>>,
+    /// Intrusively-refcounted plugin state. Stored as a raw pointer (not
+    /// `Rc`) because (a) the same `*mut ServePlugins` is smuggled through
+    /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
+    /// through any owner (Zig spec uses `*ServePlugins` everywhere). The
+    /// counted ref held here is released in `Drop for NewServer`.
+    pub plugins: Option<NonNull<ServePlugins>>,
 
     pub dev_server: Option<Box<DevServer>>,
 
@@ -1425,9 +1429,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {
-        match &self.plugins {
+        match self.plugins {
             None => PluginsResult::Found(None),
-            Some(p) => match &p.state {
+            // SAFETY: `plugins` holds a counted ref; live while `self` is.
+            Some(p) => match unsafe { &(*p.as_ptr()).state } {
                 ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => PluginsResult::Pending,
                 ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin.as_ref())),
                 ServePluginsState::Err => PluginsResult::Err,
@@ -1457,13 +1462,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub fn get_or_load_plugins(&mut self, callback: ServePluginsCallback<'_>) -> GetOrStartLoadResult<'_> {
-        if let Some(p) = &mut self.plugins {
+        if let Some(p) = self.plugins {
             // SAFETY: globalThis outlives the server
             let global = unsafe { &*self.global_this };
-            return match Rc::get_mut(p)
-                .expect("TODO(port): IntrusiveRc")
-                .get_or_start_load(global, callback)
-            {
+            // SAFETY: `plugins` holds a counted ref produced by
+            // `ServePlugins::init` (Box::into_raw); intrusive refcount permits
+            // mutation through any owner. No other `&mut ServePlugins` is live
+            // on this (single-threaded) JS thread for the call's duration.
+            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(global, callback) {
                 Ok(r) => r,
                 Err(JsError::Thrown) | Err(JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
@@ -3675,7 +3681,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
             RespLike::on_timeout_warn(
                 resp,
-                Self::did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
+                did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
             );
         }
 
@@ -3701,7 +3707,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
         // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
-        unsafe { vm_report_extra_memory(self.vm.jsc_vm, mem::size_of::<Ctx>()) };
+        // SAFETY: `jsc_vm` is the live JSC VM owned by the per-thread VirtualMachine.
+        unsafe { &*self.vm.jsc_vm }.deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — type-erased through the
         // RuntimeHooks vtable. The returned ptr is the `.value` field of a
@@ -4123,8 +4130,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // the websocket handler later calls mutating uWS methods through it, so we must
             // preserve write provenance instead of routing through the `&` borrow.
             websocket.handler.app = Some(app_ptr as *mut c_void);
-            // TODO(port): HandlerFlags.ssl — field absent on Rust side
-            let _ = SSL;
+            websocket.handler.flags.set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
         }
 
         // --- 3. Register compiled user routes (this.user_routes) & Track "/*" Coverage ---
@@ -4294,9 +4300,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if needs_plugins && self.plugins.is_none() {
             if let Some(serve_plugins_config) = &self.vm.transpiler.options.serve_plugins {
                 if !serve_plugins_config.is_empty() {
-                    // TODO(port): ServePlugins.init returns *mut; wrap as IntrusiveRc
+                    // SAFETY: `ServePlugins::init` Box-allocates and returns the
+                    // sole owning ref (count = 1); never null.
                     self.plugins = Some(unsafe {
-                        Rc::from_raw(ServePlugins::init(serve_plugins_config.clone()))
+                        NonNull::new_unchecked(ServePlugins::init(serve_plugins_config.clone()))
                     });
                 }
             }
@@ -4966,7 +4973,8 @@ impl AnyServer {
 
     pub fn plugins(&self) -> Option<&ServePlugins> {
         // TODO(port): returns Option<Rc<ServePlugins>> deref
-        any_server_dispatch!(self, |s| s.plugins.as_deref())
+        // SAFETY: `plugins` holds a counted ref; live while the server is.
+        any_server_dispatch!(self, |s| s.plugins.map(|p| unsafe { &*p.as_ptr() }))
     }
 
     pub fn get_plugins(&self) -> PluginsResult<'_> {

@@ -264,8 +264,11 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer extract_destination.close()` → handled by Drop on Dir
-            // TODO(port): confirm bun_sys::Dir implements Drop::close
+            // `defer extract_destination.close()` — bun_sys::Dir is Copy with NO Drop impl
+            // (see src/sys/lib.rs: "close on Drop is NOT done"), so close explicitly via
+            // scopeguard. `Dir` is Copy, so `extract_destination` remains usable below.
+            let _close_extract_destination =
+                scopeguard::guard(extract_destination, |d| d.close());
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
@@ -426,8 +429,11 @@ impl ExtractTarball {
                             ) else {
                                 break 'insert_tag;
                             };
-                            // `defer gh_tag.close()` → Drop
-                            if gh_tag.write_all(resolved).is_err() {
+                            // `defer gh_tag.close()` — bun_sys::File is Copy with NO Drop;
+                            // close explicitly on both success and failure paths.
+                            let write_result = gh_tag.write_all(resolved);
+                            gh_tag.close();
+                            if write_result.is_err() {
                                 // SAFETY: literal is NUL-terminated.
                                 let bun_tag_z =
                                     unsafe { ZStr::from_raw(b".bun-tag\0".as_ptr(), 8) };
@@ -702,7 +708,9 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer final_dir.close()` → Drop on Dir
+            // `defer final_dir.close()` — bun_sys::Dir is Copy with NO Drop impl; close
+            // explicitly via scopeguard so all subsequent early returns release the fd.
+            let _close_final_dir = scopeguard::guard(final_dir, |d| d.close());
             // and get the fd path
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
@@ -887,6 +895,6 @@ impl ExtractTarball {
 // PORT STATUS
 //   source:     src/install/extract_tarball.zig (613 lines)
 //   confidence: medium
-//   todos:      6
-//   notes:      ThreadlocalBuffers reshaped to thread_local! closure; Archiver/BodyPool/Dir APIs are stubs; LIFETIMES.tsv said `&'a mut &'a str` for outdirname but used `&'a mut &'a [u8]` (bytes, not str).
+//   todos:      5
+//   notes:      ThreadlocalBuffers reshaped to thread_local! closure; LIFETIMES.tsv said `&'a mut &'a str` for outdirname but used `&'a mut &'a [u8]` (bytes, not str). bun_sys::Dir/File are Copy w/ no Drop — all `defer .close()` ported as scopeguard or explicit close().
 // ──────────────────────────────────────────────────────────────────────────

@@ -432,7 +432,7 @@ impl HardLinkWindowsInstallTask {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask { callback: Self::run_from_thread_pool },
+            task: WorkPoolTask { callback: Self::run_from_thread_pool, node: ThreadPoolNode::default() },
             err: None,
         }))
     }
@@ -931,8 +931,7 @@ impl<'a> PackageInstall<'a> {
             Ok(w) => w,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
-        // TODO(port): `resolve_unknown_entry_types` is private on `Walker`; Zig sets it
-        // post-construction. Expose a setter on bun_sys::walker_skippable in Phase B.
+        walker_.resolve_unknown_entry_types = true;
         // walker_ dropped at scope exit
 
         fn copy(destination_dir_: Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
@@ -1059,13 +1058,12 @@ impl<'a> PackageInstall<'a> {
             #[cfg(windows)]
             {
                 if method == Method::Symlink {
-                    bun_sys::open_dir_absolute_not_for_deleting_or_renaming(
+                    bun_sys::open_dir_no_renaming_or_deleting_windows(
+                        self.cache_dir.fd(),
                         self.cache_dir_subpath.as_bytes(),
                     )
                     .map(Dir::from_fd)
                     .map_err(Into::into)
-                    // TODO(port): Zig used `openDirNoRenamingOrDeletingWindows(cache_dir, subpath)`
-                    // (relative); bun_sys currently only exposes the absolute variant.
                 } else {
                     open_dir(self.cache_dir, self.cache_dir_subpath)
                 }
@@ -1105,8 +1103,7 @@ impl<'a> PackageInstall<'a> {
             )
             .expect("oom"), // bun.handleOom
         );
-        // TODO(port): `resolve_unknown_entry_types` is private on `Walker`; Zig sets it
-        // post-construction. Expose a setter on bun_sys::walker_skippable in Phase B.
+        state.walker.as_mut().unwrap().resolve_unknown_entry_types = true;
 
         #[cfg(not(windows))]
         {
@@ -1168,10 +1165,13 @@ impl<'a> PackageInstall<'a> {
             let fullpath = unsafe { bun_str::WStr::from_raw(state.buf.as_ptr(), i) };
 
             let _ = mkdir_recursive_os_path(fullpath);
-            state.to_copy_buf = core::ptr::slice_from_raw_parts_mut(
-                state.buf.as_mut_ptr().add(fullpath.len()),
-                state.buf.len() - fullpath.len(),
-            );
+            // SAFETY: `fullpath.len() <= state.buf.len()` (it's a prefix slice of buf).
+            state.to_copy_buf = unsafe {
+                core::ptr::slice_from_raw_parts_mut(
+                    state.buf.as_mut_ptr().add(fullpath.len()),
+                    state.buf.len() - fullpath.len(),
+                )
+            };
 
             // SAFETY: FFI — cached_package_dir.fd() is an open handle (opened above);
             // state.buf2 is a valid writable WPathBuffer of the passed length.

@@ -5168,7 +5168,7 @@ impl NodeFS {
         // startup (`VirtualMachine` init); reads after that point are race-free.
         if adjusted_size > unsafe { bun_jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT }
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
-            || (cfg!(target_os = "linux") && size as u64 >= get_total_memory_size())
+            || (cfg!(target_os = "linux") && size as u64 >= bun_core::get_total_memory_size() as u64)
         {
             return Some(sys::Error::from_code(E::ENOMEM, syscall));
         }
@@ -5785,7 +5785,7 @@ impl NodeFS {
     pub fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
         if let Some(graph) = standalone_module_graph_get() {
-            if let Some(result) = graph.stat(path) {
+            if let Some(result) = graph.stat(path.as_bytes()) {
                 return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }

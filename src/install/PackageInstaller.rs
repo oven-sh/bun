@@ -1580,9 +1580,9 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(d) => d,
                             Err(err) => {
-                                break 'result PackageInstall::Result::fail(
+                                break 'result package_install::InstallResult::fail(
                                     err,
-                                    PackageInstall::Step::OpeningCacheDir,
+                                    package_install::Step::OpeningCacheDir,
                                     // TODO(port): @errorReturnTrace()
                                     None,
                                 );

@@ -219,6 +219,16 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     }
 }
 
+/// Shallow struct copy (Zig copies `G.Property` by value freely; the Rust
+/// `G::Property` lacks `Clone` because of its `BabyList`/`NonNull` fields).
+fn shallow_clone_prop(p: &G::Property) -> G::Property {
+    G::Property {
+        key: p.key,
+        value: p.value,
+        ..Default::default()
+    }
+}
+
 pub fn migrate_pnpm_lockfile<'a>(
     lockfile: &'a mut Lockfile,
     manager: &mut PackageManager,

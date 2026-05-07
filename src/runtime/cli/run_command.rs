@@ -2602,13 +2602,25 @@ impl RunCommand {
         // Build a NUL-terminated path to open (mirrors the Zig branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
         let open_len: usize = if paths::is_absolute(target) {
-            // TODO(port): `PosixToWinNormalizer.resolveCWD` + Windows
-            // `normalizeString` — Phase B once those land at this tier.
-            if target.len() >= MAX_PATH_BYTES {
+            // Zig: `PosixToWinNormalizer.resolveCWD` (prepends the cwd drive
+            // letter on Windows for `/abs` paths) then, on Windows only,
+            // `resolve_path.normalizeString(.., .windows)` to canonicalize
+            // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
+            // input slice untouched).
+            let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
+            let resolved = win_resolver
+                .resolve_cwd(target)
+                .unwrap_or_else(|_| panic!("Could not resolve path"));
+            #[cfg(windows)]
+            let resolved: &[u8] = paths::resolve_path::normalize_string::<
+                false,
+                paths::platform::Windows,
+            >(resolved);
+            if resolved.len() >= MAX_PATH_BYTES {
                 return false;
             }
-            script_name_buf[..target.len()].copy_from_slice(target);
-            target.len()
+            script_name_buf[..resolved.len()].copy_from_slice(resolved);
+            resolved.len()
         } else if !target.starts_with(b"..") && target[0] != b'~' {
             // open relative to cwd as-is
             if target.len() >= MAX_PATH_BYTES {

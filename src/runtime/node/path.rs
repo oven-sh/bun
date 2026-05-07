@@ -143,14 +143,11 @@ impl PathChar for u16 {
             }
             b"" => &[],
             _ => {
-                // Cold path: unknown literal. Widen ASCII byte-by-byte and leak to obtain
-                // `&'static` (one allocation per distinct literal, same as Zig's static).
-                debug_assert!(
-                    s.iter().all(|b| *b < 0x80),
-                    "PathChar<u16>::lit expects ASCII"
-                );
-                let widened: Vec<u16> = s.iter().map(|&b| b as u16).collect();
-                Box::leak(widened.into_boxed_slice())
+                // The literal set is closed (every `l::<T>()` call site is one of the
+                // arms above). Zig's `bun.strings.literal(T, "...")` is comptime-static;
+                // there is no runtime widening to emulate. Reaching this arm is a bug.
+                debug_assert!(false, "PathChar<u16>::lit: unknown literal {:?}", s);
+                &[]
             }
         }
     }

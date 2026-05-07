@@ -521,9 +521,9 @@ pub fn view(
     if let Some(time_obj) = json.get_object(b"time") {
         // TODO: use a relative time formatter
         if let Some(published_time) = time_obj.get_string_cloned(&bump, pkg_version).ok().flatten() {
-            Output::prettyln(format_args!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time)));
+            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
         } else if let Some(modified_time) = time_obj.get_string_cloned(&bump, b"modified").ok().flatten() {
-            Output::prettyln(format_args!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time)));
+            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
         }
     }
 

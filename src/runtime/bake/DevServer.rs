@@ -1600,7 +1600,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             Err(e) => bun_core::handle_oom(Err(e)),
         };
         let response = StaticRoute::init_from_any_blob(
-            &crate::webcore::blob::Any::from_array_list(json_bytes),
+            crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
                 mime_type: Some(&MimeType::JSON),
@@ -2556,7 +2556,7 @@ impl DevServer {
                     .expect("oom");
 
                 let route_ptr = StaticRoute::init_from_any_blob(
-                    &crate::webcore::AnyBlob::from_owned_slice(payload),
+                    crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
                         server: unsafe { &*self_ptr }.server,

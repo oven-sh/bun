@@ -39,31 +39,22 @@ pub fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []const u8 {
+fn fmtStatusTextLine(status: bun_test.Execution.Result, comptime emoji_or_color: bool) []const u8 {
     // emoji and color might be split into two different options in the future
     // some terminals support color, but not emoji.
     // For now, they are the same.
-    return switch (emoji_or_color) {
-        true => switch (status.basicResult()) {
-            .pending => Output.prettyFmt("<r><d>…<r>", emoji_or_color),
-            .pass => Output.prettyFmt("<r><green>✓<r>", emoji_or_color),
-            .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
-            .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
-            .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
-        },
-        else => switch (status.basicResult()) {
-            .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
-            .pass => Output.prettyFmt("<r><green>(pass)<r>", emoji_or_color),
-            .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
-            .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
-            .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
-        },
+    return switch (status.basicResult()) {
+        .pending => comptime Output.prettyFmt(if (emoji_or_color) "<r><d>…<r>" else "<r><d>(pending)<r>", emoji_or_color),
+        .pass => comptime Output.prettyFmt(if (emoji_or_color) "<r><green>✓<r>" else "<r><green>(pass)<r>", emoji_or_color),
+        .fail => comptime Output.prettyFmt(if (emoji_or_color) "<r><red>✗<r>" else "<r><red>(fail)<r>", emoji_or_color),
+        .skip => comptime Output.prettyFmt(if (emoji_or_color) "<r><yellow>»<d>" else "<r><yellow>(skip)<d>", emoji_or_color),
+        .todo => comptime Output.prettyFmt(if (emoji_or_color) "<r><magenta>✎<r>" else "<r><magenta>(todo)<r>", emoji_or_color),
     };
 }
 
-pub fn writeTestStatusLine(comptime status: bun_test.Execution.Result, writer: anytype) void {
+pub fn writeTestStatusLine(status: bun_test.Execution.Result, writer: anytype) void {
     switch (Output.enable_ansi_colors_stderr) {
-        inline else => |enable_ansi_colors_stderr| writer.print(comptime fmtStatusTextLine(status, enable_ansi_colors_stderr), .{}) catch unreachable,
+        inline else => |enable_ansi_colors_stderr| writer.writeAll(fmtStatusTextLine(status, enable_ansi_colors_stderr)) catch unreachable,
     }
 }
 
@@ -603,7 +594,7 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
     fn printTestLine(
-        comptime status: bun_test.Execution.Result,
+        status: bun_test.Execution.Result,
         sequence: *bun_test.Execution.ExecutionSequence,
         test_entry: *bun_test.ExecutionEntry,
         elapsed_ns: u64,
@@ -632,29 +623,27 @@ pub const CommandLineReporter = struct {
                 false => .{ "", "<r><b>" },
             };
 
-            switch (Output.enable_ansi_colors_stderr) {
-                inline else => |_| switch (status) {
-                    .fail_because_expected_assertion_count => {
-                        // not sent to writer so it doesn't get printed twice
-                        const expected_count = if (sequence.expect_assertions == .exact) sequence.expect_assertions.exact else 12345;
-                        Output.err(error.AssertionError, "expected <green>{d} assertion{s}<r>, but test ended with <red>{d} assertion{s}<r>\n", .{
-                            expected_count,
-                            if (expected_count == 1) "" else "s",
-                            sequence.expect_call_count,
-                            if (sequence.expect_call_count == 1) "" else "s",
-                        });
-                        Output.flush();
-                    },
-                    .fail_because_expected_has_assertions => {
-                        Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
-                        Output.flush();
-                    },
-                    .fail_because_timeout, .fail_because_hook_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout_with_done_callback => if (Output.is_github_action) {
-                        Output.printError("::error title=error: Test \"{s}\" timed out after {d}ms::\n", .{ display_label, test_entry.timeout });
-                        Output.flush();
-                    },
-                    else => {},
+            switch (status) {
+                .fail_because_expected_assertion_count => {
+                    // not sent to writer so it doesn't get printed twice
+                    const expected_count = if (sequence.expect_assertions == .exact) sequence.expect_assertions.exact else 12345;
+                    Output.err(error.AssertionError, "expected <green>{d} assertion{s}<r>, but test ended with <red>{d} assertion{s}<r>\n", .{
+                        expected_count,
+                        if (expected_count == 1) "" else "s",
+                        sequence.expect_call_count,
+                        if (sequence.expect_call_count == 1) "" else "s",
+                    });
+                    Output.flush();
                 },
+                .fail_because_expected_has_assertions => {
+                    Output.err(error.AssertionError, "received <red>0 assertions<r>, but expected <green>at least one assertion<r> to be called\n", .{});
+                    Output.flush();
+                },
+                .fail_because_timeout, .fail_because_hook_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout_with_done_callback => if (Output.is_github_action) {
+                    Output.printError("::error title=error: Test \"{s}\" timed out after {d}ms::\n", .{ display_label, test_entry.timeout });
+                    Output.flush();
+                },
+                else => {},
             }
 
             if (Output.enable_ansi_colors_stderr) {
@@ -725,7 +714,7 @@ pub const CommandLineReporter = struct {
     }
 
     fn maybePrintJunitLine(
-        comptime status: bun_test.Execution.Result,
+        status: bun_test.Execution.Result,
         buntest: *bun_test.BunTest,
         sequence: *bun_test.Execution.ExecutionSequence,
         test_entry: *bun_test.ExecutionEntry,
@@ -881,43 +870,40 @@ pub const CommandLineReporter = struct {
         const base_writer = output_buf.writer(buntest.gpa);
         var writer = base_writer;
 
-        switch (sequence.result) {
-            inline else => |result| {
-                if (result != .skipped_because_label) {
-                    if (buntest.reporter != null and buntest.reporter.?.reporters.dots and (comptime switch (result.basicResult()) {
-                        .pass, .skip, .todo, .pending => true,
-                        .fail => false,
-                    })) {
-                        switch (Output.enable_ansi_colors_stderr) {
-                            inline else => |enable_ansi_colors_stderr| switch (comptime result.basicResult()) {
-                                .pass => writer.print(comptime Output.prettyFmt("<r><green>.<r>", enable_ansi_colors_stderr), .{}) catch {},
-                                .skip => writer.print(comptime Output.prettyFmt("<r><yellow>.<d>", enable_ansi_colors_stderr), .{}) catch {},
-                                .todo => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
-                                .pending => writer.print(comptime Output.prettyFmt("<r><d>.<r>", enable_ansi_colors_stderr), .{}) catch {},
-                                .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
-                            },
-                        }
-                        buntest.reporter.?.last_printed_dot = true;
-                    } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
-                        // when using --only-failures, only print failures
-                    } else {
-                        buntest.bun_test_root.onBeforePrint();
-
-                        writeTestStatusLine(result, &writer);
-                        const dim = switch (comptime result.basicResult()) {
-                            .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
-                            .skip, .pending => true,
-                            .pass, .fail => false,
-                        };
-                        switch (dim) {
-                            inline else => |dim_comptime| printTestLine(result, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
-                        }
-                    }
+        const result = sequence.result;
+        if (result != .skipped_because_label) {
+            if (buntest.reporter != null and buntest.reporter.?.reporters.dots and switch (result.basicResult()) {
+                .pass, .skip, .todo, .pending => true,
+                .fail => false,
+            }) {
+                switch (Output.enable_ansi_colors_stderr) {
+                    inline else => |enable_ansi_colors_stderr| switch (result.basicResult()) {
+                        .pass => writer.print(comptime Output.prettyFmt("<r><green>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                        .skip => writer.print(comptime Output.prettyFmt("<r><yellow>.<d>", enable_ansi_colors_stderr), .{}) catch {},
+                        .todo => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                        .pending => writer.print(comptime Output.prettyFmt("<r><d>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                        .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                    },
                 }
-                // always print junit if needed
-                maybePrintJunitLine(result, buntest, sequence, test_entry, elapsed_ns);
-            },
+                buntest.reporter.?.last_printed_dot = true;
+            } else if (result.basicResult() != .fail and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
+                // when using --only-failures, only print failures
+            } else {
+                buntest.bun_test_root.onBeforePrint();
+
+                writeTestStatusLine(result, &writer);
+                const dim = switch (result.basicResult()) {
+                    .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
+                    .skip, .pending => true,
+                    .pass, .fail => false,
+                };
+                switch (dim) {
+                    inline else => |dim_comptime| printTestLine(result, sequence, test_entry, elapsed_ns, &writer, dim_comptime),
+                }
+            }
         }
+        // always print junit if needed
+        maybePrintJunitLine(result, buntest, sequence, test_entry, elapsed_ns);
 
         const formatted_line = output_buf.items[initial_length..];
         if (buntest.reporter != null and buntest.reporter.?.worker_ipc_file_idx != null) {

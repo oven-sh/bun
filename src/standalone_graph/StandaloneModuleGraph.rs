@@ -179,6 +179,17 @@ impl StandaloneModuleGraph {
     }
 }
 
+// SAFETY: the graph is the process-global INSTANCE singleton (set once at
+// startup, never freed). The raw-pointer / `Cell` fields it carries are
+// `bun_runtime`-owned caches (`cached_blob`, `wtf_string`, source-map state)
+// that are only ever touched from the JS main thread under the API lock; the
+// resolver-facing read path below touches none of them. Zig stored this as a
+// plain `*StandaloneModuleGraph` shared across worker threads with no
+// synchronization; mirror that here so the `Send + Sync` supertrait on
+// `bun_resolver::StandaloneModuleGraph` is satisfied.
+unsafe impl Send for StandaloneModuleGraph {}
+unsafe impl Sync for StandaloneModuleGraph {}
+
 /// Resolver-facing trait object impl. The resolver and VM hold the graph as
 /// `&'static dyn bun_resolver::StandaloneModuleGraph` so they stay below
 /// `bun_standalone_graph` in the dep graph; this is the sole implementor.

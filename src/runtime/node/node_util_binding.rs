@@ -34,7 +34,7 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if err_int == -3013 { return BunString::static_("EAI_BADHINTS").to_js(global); }
     if err_int == -3014 { return BunString::static_("EAI_PROTOCOL").to_js(global); }
 
-    // TODO(port): Zig `@"2BIG"` — Rust identifiers cannot start with a digit; assuming `UV_E::_2BIG`
+    // PORT NOTE: Zig `@"2BIG"` — Rust identifiers cannot start with a digit; `_2BIG`.
     if err_int == -UV_E::_2BIG { return BunString::static_("E2BIG").to_js(global); }
     if err_int == -UV_E::ACCES { return BunString::static_("EACCES").to_js(global); }
     if err_int == -UV_E::ADDRINUSE { return BunString::static_("EADDRINUSE").to_js(global); }

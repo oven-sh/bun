@@ -2592,8 +2592,37 @@ impl Element {
         self.content_handler(lolhtml::Element::set_inner_content, call_frame.this(), global_object, content, content_options)
     }
 
-    // TODO(port): host_fn.wrapInstanceMethod — before/after/prepend/append/
-    // replace/setInnerContent wrap the `_` variants above.
+    // ── host_fn.wrapInstanceMethod hand-expansions (content ops) ─────────
+
+    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.before_(call_frame, global, content, opts))
+    }
+
+    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.after_(call_frame, global, content, opts))
+    }
+
+    pub fn prepend(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.prepend_(call_frame, global, content, opts))
+    }
+
+    pub fn append(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.append_(call_frame, global, content, opts))
+    }
+
+    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.replace_(call_frame, global, content, opts))
+    }
+
+    pub fn set_inner_content(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.set_inner_content_(call_frame, global, content, opts))
+    }
 
     /// Removes the element with all its content.
     #[bun_jsc::host_fn(method)]

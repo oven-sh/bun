@@ -1874,9 +1874,98 @@ where
         Ok(JSValue::TRUE)
     }
 
-    // `on_reload_from_zig` lives in the unconstrained impl block in
-    // `mod.rs` (alongside `set_routes`/`js_gc_route_list_set`); the duplicate
-    // copy that was here caused E0034 at `Bun.serve` call sites.
+    /// `server.zig:onReloadFromZig`. Swaps the live server's mutable
+    /// configuration (handlers, websocket, routes) with `new_config` and
+    /// re-registers routes on the uws app(s). Ownership of moved-in fields
+    /// transfers to `self.config`; the caller's `new_config` is left in a
+    /// valid-but-emptied state (`ServerConfig`'s `Drop` then frees whatever
+    /// was *not* taken — e.g. a websocket block we declined to adopt).
+    pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
+        httplog!("onReload");
+
+        // SAFETY: `on_reload` is only reachable while the server is running
+        // (`self.app` set in `listen()`).
+        unsafe { &mut *self.app.unwrap() }.clear_routes();
+        if Self::HAS_H3 {
+            if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
+        }
+
+        // Only reload these handlers when the new config actually specifies
+        // one. `Option<Strong>` drops the old handle (= JSValue.unprotect()).
+        if new_config
+            .on_request
+            .as_ref()
+            .is_some_and(|s| !s.get().is_undefined())
+        {
+            self.config.on_request = new_config.on_request.take();
+        }
+        if new_config.on_node_http_request.is_some() {
+            self.config.on_node_http_request = new_config.on_node_http_request.take();
+        }
+        if new_config
+            .on_error
+            .as_ref()
+            .is_some_and(|s| !s.get().is_undefined())
+        {
+            self.config.on_error = new_config.on_error.take();
+        }
+
+        if let Some(mut ws) = new_config.websocket.take() {
+            ws.handler.flags.set(
+                super::web_socket_server_context::HandlerFlags::SSL,
+                SSL,
+            );
+            if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
+                if let Some(old_ws) = self.config.websocket.as_ref() {
+                    old_ws.unprotect();
+                }
+                ws.global_object = global;
+                self.config.websocket = Some(ws);
+            } else {
+                // Not adopting it: release the protections taken in
+                // `WebSocketServerContext::on_create` so the handlers don't leak.
+                ws.unprotect();
+            }
+        }
+
+        // These get re-applied when we set the static routes again.
+        if let Some(dev_server) = self.dev_server.as_deref_mut() {
+            // Prevent a use-after-free in the hash table keys.
+            dev_server.html_router.clear();
+            dev_server.html_router.fallback = None;
+        }
+
+        // PORT NOTE: Zig drains+frees `this.config.static_routes` then assigns
+        // `new_config.static_routes`. `Vec<StaticRouteEntry>` impls `Drop`, so
+        // a move-assign performs the same free.
+        self.config.static_routes = core::mem::take(&mut new_config.static_routes);
+        self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+
+        if new_config.had_routes_object {
+            self.config.user_routes_to_build =
+                core::mem::take(&mut new_config.user_routes_to_build);
+            // `UserRoute`'s owned `RouteDeclaration` drops via `Vec::clear`.
+            self.user_routes.clear();
+        }
+
+        let route_list_value = self.set_routes();
+        if new_config.had_routes_object {
+            if let Some(server_js_value) = self.js_value.try_get() {
+                if !server_js_value.is_empty() {
+                    Self::js_gc_route_list_set(server_js_value, global, route_list_value);
+                }
+            }
+        }
+
+        if self.inspector_server_id.get() != 0 {
+            if let Some(debugger) = self.vm_mut().debugger.as_deref_mut() {
+                bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
+                    &mut debugger.http_server_agent,
+                    self.as_any_server(),
+                ));
+            }
+        }
+    }
 
     pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set

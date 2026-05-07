@@ -993,7 +993,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .expect("routeList cached value missing");
         let response_value = bun_jsc::host_fn::from_js_host_call(
             global,
-            core::panic::Location::caller(),
             || {
                 // SAFETY: FFI — `Bun__ServerRouteList__callRoute` is the
                 // generated C++ dispatcher; all pointer args are live for this

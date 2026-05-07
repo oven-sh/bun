@@ -234,16 +234,13 @@ impl Address {
         &self,
         client: *mut ValkeyClient,
         group: &mut SocketGroup,
-        ssl_ctx: Option<&mut SslCtx>,
+        ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, bun_core::Error> {
         // TODO(port): narrow error set
         // PORT NOTE: Zig used `switch (is_tls) { inline else => |tls| ... }` to comptime-dispatch
         // SocketTLS vs SocketTCP. Expanded to runtime if/else.
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        // SAFETY: `group` is the per-VM `SocketGroup` from `RareData`, alive
-        // for the connection lifetime; caller obtains it just before this call.
-        let group = unsafe { &mut *group };
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {

@@ -6275,13 +6275,14 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
+        let route_bundle_index = self.route_bundle_index;
         match bundle_field {
             BundleQueueType::CurrentBundle => {
                 let cb = self.dev_mut().current_bundle.as_mut().unwrap();
                 if cb.promise.strong.has_value() {
                     cb.promise
                         .route_bundle_indices
-                        .put(self.route_bundle_index, ())
+                        .put(route_bundle_index, ())
                         .expect("oom");
                     // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
                     self.p = Some(unsafe { cb.promise.strong.get() });
@@ -6291,7 +6292,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                 let cb = self.dev_mut().current_bundle.as_mut().unwrap();
                 cb.promise
                     .route_bundle_indices
-                    .put(self.route_bundle_index, ())
+                    .put(route_bundle_index, ())
                     .expect("oom");
                 cb.promise.strong = strong_promise;
                 Ok(())
@@ -6302,7 +6303,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .next_bundle
                         .promise
                         .route_bundle_indices
-                        .put(self.route_bundle_index, ())
+                        .put(route_bundle_index, ())
                         .expect("oom");
                     // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
                     self.p = Some(unsafe { self.dev_mut().next_bundle.promise.strong.get() });
@@ -6313,7 +6314,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     .next_bundle
                     .promise
                     .route_bundle_indices
-                    .put(self.route_bundle_index, ())
+                    .put(route_bundle_index, ())
                     .expect("oom");
                 self.dev_mut().next_bundle.promise.strong = strong_promise;
                 Ok(())
@@ -6338,9 +6339,10 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
 
         // PORT NOTE: split the route-bundle borrow off via raw pointer so the
         // failure slice doesn't conflict with the `&mut DevServer` below.
+        let route_bundle_index = self.route_bundle_index;
         let failure = self
             .dev_mut()
-            .route_bundle_ptr(self.route_bundle_index)
+            .route_bundle_ptr(route_bundle_index)
             .data
             .framework()
             .evaluate_failure

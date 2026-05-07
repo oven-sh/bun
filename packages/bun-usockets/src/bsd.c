@@ -1271,10 +1271,15 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
-        // bsd_create_unix_socket_address sets errno (or WSASetLastError on
-        // Windows) on its early-return paths but doesn't populate *error;
-        // propagate here so callers can distinguish ENAMETOOLONG/ENOENT/etc.
-        *error = LIBUS_ERR;
+        // bsd_create_unix_socket_address signals failure via `errno` on POSIX
+        // and via `SetLastError` (Win32 channel, NOT Winsock) on Windows.
+        // LIBUS_ERR on Windows maps to WSAGetLastError, which is the wrong
+        // channel for these paths, so read GetLastError directly there.
+        #if defined(_WIN32)
+            *error = (int)GetLastError();
+        #else
+            *error = LIBUS_ERR;
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

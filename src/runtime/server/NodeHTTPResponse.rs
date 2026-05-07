@@ -280,10 +280,38 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
     AnyServer { tag, ptr: repr.get::<()>() }
 }
 
-// Codegen: JSNodeHTTPResponse wrapper (toJS/fromJS/fromJSDirect + cached property accessors).
-#[allow(non_snake_case)]
+/// `jsc.Codegen.JSNodeHTTPResponse` cached-property accessors. Thin wrappers
+/// over the inherent `Self::on{Data,Aborted,Writable}_{get,set}_cached` fns
+/// that `generate-classes.ts` adds to this struct in
+/// `crate::generated_classes`, named to match the Zig spelling so the
+/// `.zig` ↔ `.rs` diff lines up.
 pub mod js {
-    pub use super::generated::JSNodeHTTPResponse::*;
+    use super::{JSGlobalObject, JSValue, NodeHTTPResponse};
+
+    #[inline]
+    pub fn on_data_get_cached(this_value: JSValue) -> Option<JSValue> {
+        NodeHTTPResponse::onData_get_cached(this_value)
+    }
+    #[inline]
+    pub fn on_data_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        NodeHTTPResponse::onData_set_cached(this_value, global, value)
+    }
+    #[inline]
+    pub fn on_aborted_get_cached(this_value: JSValue) -> Option<JSValue> {
+        NodeHTTPResponse::onAborted_get_cached(this_value)
+    }
+    #[inline]
+    pub fn on_aborted_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        NodeHTTPResponse::onAborted_set_cached(this_value, global, value)
+    }
+    #[inline]
+    pub fn on_writable_get_cached(this_value: JSValue) -> Option<JSValue> {
+        NodeHTTPResponse::onWritable_get_cached(this_value)
+    }
+    #[inline]
+    pub fn on_writable_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+        NodeHTTPResponse::onWritable_set_cached(this_value, global, value)
+    }
 }
 
 impl NodeHTTPResponse {
@@ -475,9 +503,9 @@ impl NodeHTTPResponse {
     pub fn dump_request_body(
         &mut self,
         global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        _callframe: &CallFrame,
+        this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
         if self.buffered_request_body_data_during_pause.cap > 0 {
             self.buffered_request_body_data_during_pause.clear_and_free();
         }

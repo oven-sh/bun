@@ -557,7 +557,9 @@ pub fn do_patch_commit(
     }
 
     let mut patch_key = Vec::new();
-    write!(&mut patch_key, "{}", bstr::BStr::new(resolution_label)).unwrap();
+    // PORT NOTE: re-slice instead of reusing `resolution_label` so its borrow ends
+    // before the `.patch` suffix write above; the prefix bytes are unchanged.
+    write!(&mut patch_key, "{}", bstr::BStr::new(&resolution_buf[..resolution_label_len])).unwrap();
     let patch_key: Box<[u8]> = patch_key.into_boxed_slice();
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[changes_dir, b".bun-patch-tag"]));

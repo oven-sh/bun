@@ -5093,6 +5093,29 @@ impl Dir {
     }
 }
 
+/// RAII owner for a `Dir` — closes the fd on `Drop`. Use when a directory is
+/// opened for a bounded scope and must be closed on every exit path (Zig:
+/// `defer dir.close()`). `Dir` itself stays `Copy` and never closes implicitly.
+pub struct OwnedDir(Dir);
+impl OwnedDir {
+    #[inline] pub fn new(dir: Dir) -> Self { Self(dir) }
+    #[inline] pub fn dir(&self) -> Dir { self.0 }
+    #[inline] pub fn fd(&self) -> Fd { self.0.fd }
+    /// Take the inner `Dir` without closing it.
+    #[inline] pub fn into_inner(self) -> Dir {
+        let d = self.0;
+        core::mem::forget(self);
+        d
+    }
+}
+impl Drop for OwnedDir {
+    #[inline] fn drop(&mut self) { let _ = close(self.0.fd); }
+}
+impl core::ops::Deref for OwnedDir {
+    type Target = Dir;
+    #[inline] fn deref(&self) -> &Dir { &self.0 }
+}
+
 /// `std.fs.File.CreateFlags` — subset used by `Dir::createFileZ` callers
 /// (e.g. `repository.zig:649`, `PackageManagerDirectories.zig`).
 #[derive(Clone, Copy, Default)]

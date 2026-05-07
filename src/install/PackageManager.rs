@@ -1497,7 +1497,7 @@ pub fn init(
                         // Zig: `Output.err(err, "could not open \"{s}\"", .{path})` —
                         // `bun.Output.err` accepts an error value directly.
                         Output::err(
-                            e,
+                            &e,
                             "could not open \"{s}\"",
                             &[&bstr::BStr::new(package_json_path.as_bytes())],
                         );

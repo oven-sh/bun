@@ -101,7 +101,10 @@ pub mod flex;
 // EnumProperty derive land.
 pub mod font;
 gated_prop!(grid);
-gated_prop!(list);
+// `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
+// live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
+// ListStyle / MarkerSide are uninhabited (Zig source is `@compileError`).
+pub mod list;
 pub mod margin_padding;
 pub mod masking;
 pub mod outline;

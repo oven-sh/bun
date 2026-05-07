@@ -4126,6 +4126,24 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_string::String]>,
 }
 
+/// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
+/// `Resolver::log` pointer on drop — port of the Zig
+/// `defer resolver.log = orig_log` save/restore pattern.
+pub struct ResolverLogScope {
+    slot: *mut *mut logger::Log,
+    prev: *mut logger::Log,
+}
+
+impl Drop for ResolverLogScope {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `slot` was derived via `addr_of_mut!` from the raw resolver
+        // pointer in `scoped_log` (SharedReadWrite provenance); caller contract
+        // guarantees the resolver outlives this guard.
+        unsafe { *self.slot = self.prev };
+    }
+}
+
 impl<'a> Resolver<'a> {
     /// Port of Zig `r.fs` deref.
     ///

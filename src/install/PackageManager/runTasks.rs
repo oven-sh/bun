@@ -974,8 +974,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // `&'a mut NetworkTask` field can't be moved out through
                 // `ManuallyDrop`'s immutable `Deref` inside the defer body.
                 // SAFETY: `task.tag == PackageManifest` — active union arm.
-                let net_ptr: *mut NetworkTask =
-                    unsafe { &mut *(*task_ptr).request.package_manifest }.network as *mut _;
+                let net_ptr: *mut NetworkTask = {
+                    let req = unsafe { &mut *task.request.package_manifest };
+                    &mut *req.network
+                };
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task

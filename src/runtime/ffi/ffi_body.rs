@@ -1671,8 +1671,7 @@ impl FFI {
             size = 0;
         }
         let obj = JSValue::create_empty_object(global, size);
-        obj.protect();
-        let _obj_guard = scopeguard::guard((), |_| obj.unprotect());
+        let _obj_guard = obj.protected();
 
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 

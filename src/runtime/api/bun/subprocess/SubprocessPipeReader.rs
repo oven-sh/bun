@@ -165,27 +165,23 @@ impl PipeReader {
             // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
             // just took above. Hold one more ref so `this` survives long enough to
             // check state after start() returns.
-            self.r#ref();
-            let this_ptr: *mut PipeReader = self;
-            let guard = scopeguard::guard((), move |_| {
-                // SAFETY: the extra ref taken above keeps `*this_ptr` alive until this
-                // guard fires; deref may free it, but no borrow of `self` outlives the guard.
-                unsafe { PipeReader::deref(this_ptr) };
-            });
+            //
+            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
+            // outlives the guard's drop on return.
+            let _keepalive = unsafe { ScopedRef::new(self as *mut PipeReader) };
 
             // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
             match self.reader.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => {
-                    drop(guard);
                     return bun_sys::Result::Err(err);
                 }
                 bun_sys::Result::Ok(()) => {
                     #[cfg(unix)]
                     {
                         if matches!(self.state, State::Err(_)) {
-                            // onReaderError already ran; the guard deref on return
+                            // onReaderError already ran; `_keepalive`'s Drop on return
                             // will drop the last ref and deinit() closes the handle.
-                            drop(guard);
                             return bun_sys::Result::Ok(());
                         }
                         // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
@@ -201,7 +197,6 @@ impl PipeReader {
                         );
                     }
 
-                    drop(guard);
                     return bun_sys::Result::Ok(());
                 }
             }

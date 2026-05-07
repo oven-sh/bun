@@ -51,9 +51,9 @@ pub fn main() {
     }
 
     Output::source::Stdio::init();
-    // PORT NOTE: `defer Output.flush()` — Global::exit is noreturn, so this only fires on
-    // unwind; kept for structural parity.
-    scopeguard::defer! { Output::flush(); }
+    // PORT NOTE: `defer Output.flush()` — Global::exit is noreturn, so this guard only fires
+    // on unwind; kept for structural parity.
+    let _flush = Output::flush_guard();
     bun_core::StackCheck::configure_thread();
     let exit_code = run_tests();
     Global::exit(exit_code);

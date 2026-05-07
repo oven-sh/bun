@@ -698,9 +698,7 @@ pub fn build_with_vm(
 
     // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
     let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
-    let _root_dir_guard = scopeguard::guard((), |_| {
-        let _ = root_dir.close();
-    });
+    let _root_dir_close = bun_sys::CloseOnDrop::dir(root_dir);
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 

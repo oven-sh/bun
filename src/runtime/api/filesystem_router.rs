@@ -237,16 +237,18 @@ impl FileSystemRouter {
             asset_prefix_slice = ZigStringSlice::from_utf8_never_free(leaked);
         }
         let mut log = Log::Log::new();
-        // `defer vm.transpiler.resolver.log = orig_log` — restore on every exit
-        // path. The guard re-derives `vm` from the raw pointer so it doesn't
-        // hold a long-lived `&mut` that would conflict with uses below.
-        let orig_log: *mut Log::Log = vm.transpiler.resolver.log;
-        vm.transpiler.resolver.log = &mut log;
-        let _restore_log = scopeguard::guard((), move |_| {
-            // SAFETY: `vm_ptr` is the live VM for this global; runs on scope exit
-            // (before `log` drops — declared after it).
-            unsafe { (*vm_ptr).transpiler.resolver.log = orig_log };
-        });
+        // `defer vm.transpiler.resolver.log = orig_log` — RAII guard restores on
+        // every exit path. Derived from `vm_ptr` (raw) via `addr_of_mut!` so the
+        // stored slot pointer stays valid under Stacked Borrows across the
+        // `&mut vm.transpiler.resolver` reborrows below.
+        // SAFETY: `vm_ptr` is the live VM for this global; resolver outlives this
+        // scope. Guard is declared after `log` so it drops (and restores) first.
+        let _restore_log = unsafe {
+            Resolver::scoped_log(
+                core::ptr::addr_of_mut!((*vm_ptr).transpiler.resolver),
+                &mut log,
+            )
+        };
 
         // `cloneWithTrailingSlash` → `strings.cloneNormalizingSeparators`: collapse duplicate
         // separators and append the PLATFORM-NATIVE separator (`\` on Windows).

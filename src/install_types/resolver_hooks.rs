@@ -118,26 +118,299 @@ pub enum DependencyVersionTag {
     Catalog = 9,
 }
 
-/// Resolver-visible projection of `install::dependency::Version`. The resolver
-/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
-/// methods; the parsed `Version.Value` union is install-internal and is stored
-/// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
-#[derive(Default, Clone)]
+// ─── Repository (data) ────────────────────────────────────────────────────
+// MOVE_DOWN from `bun_install::repository` — the on-disk lockfile shape
+// (`extern struct` of five `Semver.String` handles). All fields are
+// arena-backed `(off,len)` handles into the lockfile string buffer, so the
+// struct is plain `Copy`. Install-tier behaviour (git CLI exec, tarball
+// download/checkout, store-path formatting) stays in `bun_install::repository`
+// as an extension trait — only the data + buffer-relative comparisons live
+// here so [`ResolutionValue`] / [`DependencyVersionValue`] can name a real
+// type instead of an opaque blob.
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Repository {
+    pub owner: SemverString,
+    pub repo: SemverString,
+    pub committish: SemverString,
+    pub resolved: SemverString,
+    pub package_name: SemverString,
+}
+
+impl Repository {
+    pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        if owner_order != Ordering::Equal {
+            return owner_order;
+        }
+        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        if repo_order != Ordering::Equal {
+            return repo_order;
+        }
+        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+    }
+
+    pub fn count<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+        builder.count(self.owner.slice(buf));
+        builder.count(self.repo.slice(buf));
+        builder.count(self.committish.slice(buf));
+        builder.count(self.resolved.slice(buf));
+        builder.count(self.package_name.slice(buf));
+    }
+
+    pub fn clone<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
+        Repository {
+            owner: builder.append::<SemverString>(self.owner.slice(buf)),
+            repo: builder.append::<SemverString>(self.repo.slice(buf)),
+            committish: builder.append::<SemverString>(self.committish.slice(buf)),
+            resolved: builder.append::<SemverString>(self.resolved.slice(buf)),
+            package_name: builder.append::<SemverString>(self.package_name.slice(buf)),
+        }
+    }
+
+    pub fn eql(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+            return false;
+        }
+        if self.resolved.is_empty() || rhs.resolved.is_empty() {
+            return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+        }
+        self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
+    }
+}
+
+// ─── VersionedURL (data) ──────────────────────────────────────────────────
+// MOVE_DOWN from `bun_install::versioned_url` — `{ url, version }` pair
+// carried in [`ResolutionValue::npm`]. Generic over the semver int width so
+// `Resolution` and `OldV2Resolution` share one definition.
+
+pub type VersionedURL = VersionedURLType<u64>;
+pub type OldV2VersionedURL = VersionedURLType<u32>;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct VersionedURLType<I: VersionInt> {
+    pub url: SemverString,
+    pub version: semver::VersionType<I>,
+}
+
+impl<I: VersionInt> VersionedURLType<I> {
+    pub fn eql(&self, other: &Self) -> bool {
+        self.version.eql(other.version)
+    }
+
+    pub fn order(&self, other: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        self.version.order(other.version, lhs_buf, rhs_buf)
+    }
+
+    pub fn count<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+        self.version.count(buf, builder);
+        builder.count(self.url.slice(buf));
+    }
+
+    pub fn clone<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
+        Self {
+            version: self.version.append(buf, builder),
+            url: builder.append::<SemverString>(self.url.slice(buf)),
+        }
+    }
+}
+
+impl VersionedURLType<u32> {
+    // Zig: `if (comptime SemverIntType != u32) @compileError("unexpected SemverIntType")`
+    pub fn migrate(&self) -> VersionedURLType<u64> {
+        VersionedURLType { url: self.url, version: self.version.migrate() }
+    }
+}
+
+// ─── Dependency.Version.Value payload types ───────────────────────────────
+// MOVE_DOWN from `bun_install::dependency` — every variant is either a
+// `Semver.String` handle, a `Repository`, or a `Semver.Query.Group` (all
+// lower-tier `bun_semver` data), so the full union is spellable here. Putting
+// the real union in this crate lets the resolver inspect
+// `value.npm.version.is_exact()` directly (Zig: `package_json.zig:926`) and
+// round-trip the parsed value through [`AutoInstaller`] without type erasure.
+
+#[derive(Clone, Copy)]
+pub enum URI {
+    Local(SemverString),
+    Remote(SemverString),
+}
+
+impl URI {
+    pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+        match (lhs, rhs) {
+            (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
+                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
+            }
+            _ => false,
+        }
+    }
+}
+
+pub struct NpmInfo {
+    pub name: SemverString,
+    pub version: semver::query::Group,
+    pub is_alias: bool,
+}
+
+impl NpmInfo {
+    pub fn eql(&self, that: &NpmInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
+        self.name.eql(that.name, this_buf, that_buf) && self.version.eql(&that.version)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TagInfo {
+    pub name: SemverString,
+    pub tag: SemverString,
+}
+
+impl TagInfo {
+    pub fn eql(&self, that: &TagInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
+        self.name.eql(that.name, this_buf, that_buf) && self.tag.eql(that.tag, this_buf, that_buf)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TarballInfo {
+    pub uri: URI,
+    pub package_name: SemverString,
+}
+
+impl Default for TarballInfo {
+    fn default() -> Self {
+        TarballInfo { uri: URI::Local(SemverString::default()), package_name: SemverString::default() }
+    }
+}
+
+impl TarballInfo {
+    pub fn eql(&self, that: &TarballInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
+        URI::eql(self.uri, that.uri, this_buf, that_buf)
+    }
+}
+
+/// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
+/// lives in [`DependencyVersion::tag`]. `npm`/`git`/`github` are
+/// `ManuallyDrop` because [`NpmInfo`] embeds a `Semver.Query.Group` (owned
+/// linked list); cleanup is the constructing crate's responsibility (Zig has
+/// no destructors here either — arena-freed).
+#[repr(C)]
+pub union DependencyVersionValue {
+    pub uninitialized: (),
+
+    pub npm: ManuallyDrop<NpmInfo>,
+    pub dist_tag: TagInfo,
+    pub tarball: TarballInfo,
+    pub folder: SemverString,
+
+    /// Equivalent to npm link
+    pub symlink: SemverString,
+
+    pub workspace: SemverString,
+    pub git: ManuallyDrop<Repository>,
+    pub github: ManuallyDrop<Repository>,
+
+    /// dep version without 'catalog:' protocol — empty string == default catalog
+    pub catalog: SemverString,
+}
+
+impl Default for DependencyVersionValue {
+    #[inline]
+    fn default() -> Self {
+        DependencyVersionValue { uninitialized: () }
+    }
+}
+
+impl Clone for DependencyVersionValue {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: `repr(C)` union of POD-ish payloads with no `Drop` glue;
+        // every active variant is either `Copy` or `ManuallyDrop<_>` over
+        // arena-backed data. Zig copies these by value; replicate with a
+        // bitwise read.
+        unsafe { core::ptr::read(self) }
+    }
+}
+
+/// Port of `install/dependency.zig` `Version`. The resolver reads `.tag` and
+/// `.value.npm.version.is_exact()`; `bun_install` constructs and consumes the
+/// full union via [`AutoInstaller`].
 pub struct DependencyVersion {
     pub tag: DependencyVersionTag,
     pub literal: SemverString,
-    /// Opaque inline storage for `bun_install::dependency::Version.Value`
-    /// (largest variant is 5×u64). The install impl transmutes into/out of
-    /// this; the resolver never inspects it.
-    pub value: [u64; 5],
+    pub value: DependencyVersionValue,
 }
 
-#[derive(Default, Clone)]
+impl Default for DependencyVersion {
+    fn default() -> Self {
+        DependencyVersion {
+            tag: DependencyVersionTag::Uninitialized,
+            literal: SemverString::default(),
+            value: DependencyVersionValue { uninitialized: () },
+        }
+    }
+}
+
+impl Clone for DependencyVersion {
+    #[inline]
+    fn clone(&self) -> Self {
+        DependencyVersion { tag: self.tag, literal: self.literal, value: self.value.clone() }
+    }
+}
+
+impl DependencyVersion {
+    /// Zig: `version.value.npm` guarded by `version.tag == .npm`.
+    #[inline]
+    pub fn npm(&self) -> Option<&NpmInfo> {
+        if self.tag == DependencyVersionTag::Npm {
+            // SAFETY: tag-guarded union read.
+            Some(unsafe { &*self.value.npm })
+        } else {
+            None
+        }
+    }
+
+    /// Port of `dependency_version.value.npm.version.isExact()`
+    /// (resolver/package_json.zig:926). Returns false for non-npm tags.
+    #[inline]
+    pub fn is_exact_npm(&self) -> bool {
+        self.npm().is_some_and(|n| n.version.is_exact())
+    }
+}
+
 pub struct Dependency {
-    pub name: SemverString,
     pub name_hash: u64,
-    pub behavior: Behavior,
+    pub name: SemverString,
     pub version: DependencyVersion,
+    pub behavior: Behavior,
+}
+
+impl Default for Dependency {
+    fn default() -> Self {
+        Dependency {
+            name_hash: 0,
+            name: SemverString::default(),
+            version: DependencyVersion::default(),
+            behavior: Behavior::default(),
+        }
+    }
+}
+
+impl Clone for Dependency {
+    #[inline]
+    fn clone(&self) -> Self {
+        Dependency {
+            name_hash: self.name_hash,
+            name: self.name,
+            version: self.version.clone(),
+            behavior: self.behavior,
+        }
+    }
 }
 
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────

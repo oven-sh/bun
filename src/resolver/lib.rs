@@ -4056,7 +4056,7 @@ pub struct Resolver<'a> {
     pub env_loader: Option<NonNull<DotEnv::Loader<'a>>>,
     pub store_fd: bool,
 
-    pub standalone_module_graph: Option<&'a bun_core::StandaloneModuleGraph>,
+    pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -4395,13 +4395,13 @@ impl<'a> Resolver<'a> {
         // and outlives the returned Result. Zig used raw `[]const u8` here.
         // TODO(port): thread an explicit lifetime through Result instead.
         let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
-        let _tracer = bun_core::perf::trace("ModuleResolver.resolve");
+        let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
         // TODO(port): bun.crash_handler.current_action save/restore (Environment.show_crash_trace gated)
         #[cfg(debug_assertions)]
-        let _crash_guard = bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
+        let _crash_guard = ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
 
         #[cfg(debug_assertions)]
         // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core
@@ -4589,7 +4589,7 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
-                if bun_core::StandaloneModuleGraph::is_bun_standalone_file_path(import_path) {
+                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
                     if graph.find_assume_standalone_path(import_path).is_some() {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
@@ -4603,7 +4603,7 @@ impl<'a> Resolver<'a> {
 
                     self.extension_order = original_order;
                     return ResultUnion::NotFound;
-                } else if bun_core::StandaloneModuleGraph::is_bun_standalone_file_path(source_dir) {
+                } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir) {
                     if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
                         let buf = bufs!(import_path_for_standalone_module_graph);
                         let joined = bun_paths::join_abs_string_buf(source_dir, buf, &[import_path], bun_paths::Platform::Loose);
@@ -6977,7 +6977,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        bun_core::assertf!(
+        ::bun_core::assertf!(
             bun_paths::is_absolute(input_path),
             "cannot resolve DirInfo for non-absolute path: {}",
             bstr::BStr::new(input_path)
@@ -7534,7 +7534,7 @@ impl<'a> Resolver<'a> {
                     if matched_text_with_suffix_len > matched_text_with_suffix.len() {
                         continue;
                     }
-                    bun_core::concat(matched_text_with_suffix, &[matched_text, suffix]);
+                    ::bun_core::concat(matched_text_with_suffix, &[matched_text, suffix]);
                 }
 
                 // 1. Normalize the base path
@@ -8495,7 +8495,7 @@ impl<'a> Resolver<'a> {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
             // point into a reused threadlocal scratch buffer, or a later resolution will
             // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
-            bun_core::assertf!(
+            ::bun_core::assertf!(
                 !allocators::is_slice_in_buffer(path, &bufs!(path_in_global_disk_cache)[..]),
                 "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{}\")",
                 bstr::BStr::new(path)

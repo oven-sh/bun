@@ -1251,21 +1251,33 @@ impl Expect {
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
-    pub fn get_static_not(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
+    pub fn get_static_not(
+        global_this: &JSGlobalObject,
+        _: JSValue,
+        _: crate::generated_classes::PropertyName,
+    ) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_not(true);
         ExpectStatic::create(global_this, f)
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
-    pub fn get_static_resolves_to(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
+    pub fn get_static_resolves_to(
+        global_this: &JSGlobalObject,
+        _: JSValue,
+        _: crate::generated_classes::PropertyName,
+    ) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Resolves);
         ExpectStatic::create(global_this, f)
     }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
-    pub fn get_static_rejects_to(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
+    pub fn get_static_rejects_to(
+        global_this: &JSGlobalObject,
+        _: JSValue,
+        _: crate::generated_classes::PropertyName,
+    ) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Rejects);
         ExpectStatic::create(global_this, f)
@@ -1609,7 +1621,12 @@ impl Expect {
         Ok(this_value)
     }
 
-    pub const ADD_SNAPSHOT_SERIALIZER: fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> = Self::not_implemented_static_fn;
+    // Zig: `pub const addSnapshotSerializer = notImplementedStaticFn;` — Rust has no associated
+    // const-fn aliases that satisfy `Expect::add_snapshot_serializer(..)` UFCS, so forward.
+    #[inline]
+    pub fn add_snapshot_serializer(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::not_implemented_static_fn(global_this, call_frame)
+    }
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {

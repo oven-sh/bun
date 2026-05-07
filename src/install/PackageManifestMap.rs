@@ -243,7 +243,7 @@ impl PackageManifestMap {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/PackageManifestMap.zig (124 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      getOrPut reshaped to Entry API; needs IdentityContext hasher; &mut self may alias pm (PackageManifestMap is likely a PackageManager field)
+//   confidence: high
+//   notes:      getOrPut reshaped to Entry API; callers split `&mut pm` /
+//               `&mut pm.manifests` through a raw root (disjoint fields).
 // ──────────────────────────────────────────────────────────────────────────

@@ -3108,13 +3108,10 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        let mut body_init = BodyValue::Null;
-        let body_hive: *mut crate::webcore::body::HiveRef = self
-            .vm_mut()
-            .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
-            .cast();
-        // SAFETY: hook returns a freshly-initialized hive slot; never null.
-        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive).value) };
+        let body_hive = crate::webcore::body::hive_alloc(self.vm_mut(), BodyValue::Null);
+        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
+        // its refcount drops to zero.
+        let body_ptr: *mut BodyValue = unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         ctx.request_body = NonNull::new(body_ptr);
 
         let signal = AbortSignal::new(unsafe { &*self.global_this });
@@ -3128,13 +3125,18 @@ where
         // adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        let _ = body_hive; // see PORT NOTE in `prepare_js_request_context_for`
+        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
+        // same hive slot as `ctx.request_body`. Paired unref in
+        // `Request::finalize`.
+        // SAFETY: `body_hive` is live (ref_count >= 1).
+        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
+            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(ctx as *const _),
             SSL,
             Some(signal_for_req),
-            Box::new(BodyValue::Null),
+            body_for_req,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
         let request_object: &mut Request =

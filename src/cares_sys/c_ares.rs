@@ -4,13 +4,16 @@ use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(not(windows))]
 use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+#[cfg(windows)]
+use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
 
 pub type ares_socklen_t = socklen_t;
 pub type ares_ssize_t = isize;
 
 #[cfg(windows)]
-pub type ares_socket_t = bun_sys::windows::SOCKET;
+pub type ares_socket_t = *mut c_void; // Windows `SOCKET` (`UINT_PTR`).
 #[cfg(not(windows))]
 pub type ares_socket_t = c_int;
 
@@ -29,8 +32,10 @@ pub struct struct_apattern {
 /// (no dependency on `bun_sys`).
 pub mod AF {
     use core::ffi::c_int;
-    pub const INET: c_int = libc::AF_INET;
-    pub const INET6: c_int = libc::AF_INET6;
+    // `libc` does not expose AF_* on Windows MSVC; the values are
+    // platform-invariant (ws2def.h matches POSIX here).
+    pub const INET: c_int = 2;
+    pub const INET6: c_int = if cfg!(windows) { 23 } else { 10 };
 }
 
 /// Mirror of `std.posix.system.EAI` in Zig. The `libc` crate is missing
@@ -1674,7 +1679,25 @@ impl Error {
     pub fn init_eai(rc: i32) -> Option<Error> {
         #[cfg(windows)]
         {
-            use bun_sys::windows::libuv;
+            // `UV_EAI_*` constants — inlined (this `*_sys` crate is leaf and
+            // may not depend on `bun_libuv_sys`). Values are platform-stable
+            // (uv-errno.h, defined identically on all targets).
+            mod libuv {
+                pub const UV_EAI_ADDRFAMILY: i32 = -3000;
+                pub const UV_EAI_AGAIN: i32 = -3001;
+                pub const UV_EAI_BADFLAGS: i32 = -3002;
+                pub const UV_EAI_CANCELED: i32 = -3003;
+                pub const UV_EAI_FAIL: i32 = -3004;
+                pub const UV_EAI_FAMILY: i32 = -3005;
+                pub const UV_EAI_MEMORY: i32 = -3006;
+                pub const UV_EAI_NODATA: i32 = -3007;
+                pub const UV_EAI_NONAME: i32 = -3008;
+                pub const UV_EAI_OVERFLOW: i32 = -3009;
+                pub const UV_EAI_SERVICE: i32 = -3010;
+                pub const UV_EAI_SOCKTYPE: i32 = -3011;
+                pub const UV_EAI_BADHINTS: i32 = -3013;
+                pub const UV_EAI_PROTOCOL: i32 = -3014;
+            }
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
             if rc == libuv::UV_EAI_NODATA || rc == libuv::UV_EAI_NONAME {
                 return Some(Error::ENOTFOUND);
@@ -1908,7 +1931,7 @@ pub const ARES_LIB_INIT_WIN32: c_int = 1 << 0;
 pub const ARES_LIB_INIT_ALL: c_int = ARES_LIB_INIT_WIN32;
 
 #[cfg(windows)]
-pub const ARES_SOCKET_BAD: ares_socket_t = bun_sys::windows::INVALID_SOCKET;
+pub const ARES_SOCKET_BAD: ares_socket_t = usize::MAX as ares_socket_t; // INVALID_SOCKET
 #[cfg(not(windows))]
 pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 

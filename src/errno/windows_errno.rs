@@ -2,9 +2,13 @@
 
 use core::ffi::c_int;
 
-// CYCLEBREAK: bun_sys::windows MOVE_DOWN → windows_sys (T0)
-use windows_sys::libuv as uv;
-use windows_sys::{self as windows, Win32Error, NTSTATUS};
+// CYCLEBREAK: `bun_sys::windows` types moved DOWN to leaf crates so `bun_errno`
+// stays cycle-free. `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
+// `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
+// module (their only external use was via `bun_sys::SystemErrno::init`, which
+// is defined right here).
+use bun_libuv_sys as uv;
+pub use self::windows::{Win32Error, NTSTATUS};
 
 // ──────────────────────────────────────────────────────────────────────────
 // E
@@ -928,9 +932,9 @@ impl SystemErrno {
 
     fn init_numeric(code: u16) -> Option<SystemErrno> {
         // Win32Error and WSA Error codes
-        if code <= Win32Error::IO_REISSUE_AS_CACHED as u16
-            || (code >= Win32Error::WSAEINTR as u16
-                && code <= Win32Error::WSA_QOS_RESERVED_PETYPE as u16)
+        if code <= Win32Error::IO_REISSUE_AS_CACHED.0
+            || (code >= Win32Error::WSAEINTR.0
+                && code <= Win32Error::WSA_QOS_RESERVED_PETYPE.0)
         {
             return Self::init_win32_error(Win32Error::from_raw(code));
         }
@@ -1366,3 +1370,210 @@ pub mod uv_e {
 //   todos:      4
 //   notes:      anytype dispatch in getErrno/init split into typed overloads; uv_code_to_system_errno hand-expanded from comptime reflection; UV_* enum discriminants depend on uv:: consts being const i32
 // ──────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────
+// `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from
+// `bun_sys::windows` (cycle-break per PORTING.md §Dep-cycle fixes). Only the
+// subset referenced by `SystemErrno::init` / `get_errno` is mirrored; the full
+// 1100-variant table stays in `bun_sys::windows` and re-exports this newtype.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod windows {
+    use super::{E, SystemErrno};
+
+    /// `enum(u16) Win32Error` — newtype over `GetLastError()`'s low word.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+    pub struct Win32Error(pub u16);
+
+    /// `NTSTATUS` — `enum(u32) { …, _ }`. Field-accurate constants live in
+    /// `bun_windows_sys::NTSTATUS`; only the values matched by
+    /// [`translate_ntstatus_to_errno`] are mirrored here.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+    pub struct NTSTATUS(pub u32);
+
+    unsafe extern "system" {
+        fn GetLastError() -> u32;
+        fn WSAGetLastError() -> i32;
+    }
+
+    impl Win32Error {
+        #[inline]
+        pub fn get() -> Win32Error {
+            // SAFETY: GetLastError has no preconditions.
+            // Zig truncates the DWORD to u16 (`@truncate`); never panic on >0xFFFF.
+            Win32Error(unsafe { GetLastError() } as u16)
+        }
+        #[inline] pub const fn from_raw(n: u16) -> Win32Error { Win32Error(n) }
+        #[inline] pub const fn int(self) -> u16 { self.0 }
+        #[inline]
+        pub fn to_system_errno(self) -> Option<SystemErrno> {
+            SystemErrno::init_win32_error(self)
+        }
+
+        pub const SUCCESS: Win32Error = Win32Error(0);
+        pub const ACCESS_DENIED: Win32Error = Win32Error(5);
+        pub const ADDRESS_ALREADY_ASSOCIATED: Win32Error = Win32Error(1227);
+        pub const ALREADY_EXISTS: Win32Error = Win32Error(183);
+        pub const BAD_PATHNAME: Win32Error = Win32Error(161);
+        pub const BAD_PIPE: Win32Error = Win32Error(230);
+        pub const BEGINNING_OF_MEDIA: Win32Error = Win32Error(1102);
+        pub const BROKEN_PIPE: Win32Error = Win32Error(109);
+        pub const BUFFER_OVERFLOW: Win32Error = Win32Error(111);
+        pub const BUS_RESET: Win32Error = Win32Error(1111);
+        pub const CANNOT_MAKE: Win32Error = Win32Error(82);
+        pub const CANT_ACCESS_FILE: Win32Error = Win32Error(1920);
+        pub const CANT_RESOLVE_FILENAME: Win32Error = Win32Error(1921);
+        pub const CONNECTION_ABORTED: Win32Error = Win32Error(1236);
+        pub const CONNECTION_REFUSED: Win32Error = Win32Error(1225);
+        pub const CRC: Win32Error = Win32Error(23);
+        pub const DELETE_PENDING: Win32Error = Win32Error(303);
+        pub const DEVICE_DOOR_OPEN: Win32Error = Win32Error(1166);
+        pub const DEVICE_REQUIRES_CLEANING: Win32Error = Win32Error(1165);
+        pub const DIRECTORY: Win32Error = Win32Error(267);
+        pub const DIR_NOT_EMPTY: Win32Error = Win32Error(145);
+        pub const DISK_CORRUPT: Win32Error = Win32Error(1393);
+        pub const DISK_FULL: Win32Error = Win32Error(112);
+        pub const EA_TABLE_FULL: Win32Error = Win32Error(277);
+        pub const ELEVATION_REQUIRED: Win32Error = Win32Error(740);
+        pub const END_OF_MEDIA: Win32Error = Win32Error(1100);
+        pub const ENVVAR_NOT_FOUND: Win32Error = Win32Error(203);
+        pub const EOM_OVERFLOW: Win32Error = Win32Error(1129);
+        pub const FILEMARK_DETECTED: Win32Error = Win32Error(1101);
+        pub const FILENAME_EXCED_RANGE: Win32Error = Win32Error(206);
+        pub const FILE_EXISTS: Win32Error = Win32Error(80);
+        pub const FILE_NOT_FOUND: Win32Error = Win32Error(2);
+        pub const GEN_FAILURE: Win32Error = Win32Error(31);
+        pub const HANDLE_DISK_FULL: Win32Error = Win32Error(39);
+        pub const HOST_UNREACHABLE: Win32Error = Win32Error(1232);
+        pub const INSUFFICIENT_BUFFER: Win32Error = Win32Error(122);
+        pub const INVALID_BLOCK_LENGTH: Win32Error = Win32Error(1106);
+        pub const INVALID_DATA: Win32Error = Win32Error(13);
+        pub const INVALID_DRIVE: Win32Error = Win32Error(15);
+        pub const INVALID_FLAGS: Win32Error = Win32Error(1004);
+        pub const INVALID_FUNCTION: Win32Error = Win32Error(1);
+        pub const INVALID_HANDLE: Win32Error = Win32Error(6);
+        pub const INVALID_NAME: Win32Error = Win32Error(123);
+        pub const INVALID_PARAMETER: Win32Error = Win32Error(87);
+        pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(3492);
+        pub const IO_DEVICE: Win32Error = Win32Error(1117);
+        pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
+        pub const LOCK_VIOLATION: Win32Error = Win32Error(33);
+        pub const META_EXPANSION_TOO_LONG: Win32Error = Win32Error(208);
+        pub const MOD_NOT_FOUND: Win32Error = Win32Error(126);
+        pub const NETNAME_DELETED: Win32Error = Win32Error(64);
+        pub const NETWORK_UNREACHABLE: Win32Error = Win32Error(1231);
+        pub const NOACCESS: Win32Error = Win32Error(998);
+        pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
+        pub const NOT_ENOUGH_MEMORY: Win32Error = Win32Error(8);
+        pub const NOT_SAME_DEVICE: Win32Error = Win32Error(17);
+        pub const NOT_SUPPORTED: Win32Error = Win32Error(50);
+        pub const NO_DATA: Win32Error = Win32Error(232);
+        pub const NO_DATA_DETECTED: Win32Error = Win32Error(1104);
+        pub const NO_SIGNAL_SENT: Win32Error = Win32Error(205);
+        pub const NO_UNICODE_TRANSLATION: Win32Error = Win32Error(1113);
+        pub const OPEN_FAILED: Win32Error = Win32Error(110);
+        pub const OPERATION_ABORTED: Win32Error = Win32Error(995);
+        pub const OUTOFMEMORY: Win32Error = Win32Error(14);
+        pub const PATH_NOT_FOUND: Win32Error = Win32Error(3);
+        pub const PIPE_BUSY: Win32Error = Win32Error(231);
+        pub const PIPE_NOT_CONNECTED: Win32Error = Win32Error(233);
+        pub const PRIVILEGE_NOT_HELD: Win32Error = Win32Error(1314);
+        pub const SEM_TIMEOUT: Win32Error = Win32Error(121);
+        pub const SETMARK_DETECTED: Win32Error = Win32Error(1103);
+        pub const SHARING_VIOLATION: Win32Error = Win32Error(32);
+        pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
+        pub const SYMLINK_NOT_SUPPORTED: Win32Error = Win32Error(1464);
+        pub const TOO_MANY_OPEN_FILES: Win32Error = Win32Error(4);
+        pub const WRITE_PROTECT: Win32Error = Win32Error(19);
+        pub const WSAEACCES: Win32Error = Win32Error(10013);
+        pub const WSAEADDRINUSE: Win32Error = Win32Error(10048);
+        pub const WSAEADDRNOTAVAIL: Win32Error = Win32Error(10049);
+        pub const WSAEAFNOSUPPORT: Win32Error = Win32Error(10047);
+        pub const WSAEALREADY: Win32Error = Win32Error(10037);
+        pub const WSAECONNABORTED: Win32Error = Win32Error(10053);
+        pub const WSAECONNREFUSED: Win32Error = Win32Error(10061);
+        pub const WSAECONNRESET: Win32Error = Win32Error(10054);
+        pub const WSAEFAULT: Win32Error = Win32Error(10014);
+        pub const WSAEHOSTUNREACH: Win32Error = Win32Error(10065);
+        pub const WSAEINTR: Win32Error = Win32Error(10004);
+        pub const WSAEINVAL: Win32Error = Win32Error(10022);
+        pub const WSAEISCONN: Win32Error = Win32Error(10056);
+        pub const WSAEMFILE: Win32Error = Win32Error(10024);
+        pub const WSAEMSGSIZE: Win32Error = Win32Error(10040);
+        pub const WSAENETUNREACH: Win32Error = Win32Error(10051);
+        pub const WSAENOBUFS: Win32Error = Win32Error(10055);
+        pub const WSAENOTCONN: Win32Error = Win32Error(10057);
+        pub const WSAENOTSOCK: Win32Error = Win32Error(10038);
+        pub const WSAEOPNOTSUPP: Win32Error = Win32Error(10045);
+        pub const WSAEPFNOSUPPORT: Win32Error = Win32Error(10046);
+        pub const WSAEPROTONOSUPPORT: Win32Error = Win32Error(10043);
+        pub const WSAESHUTDOWN: Win32Error = Win32Error(10058);
+        pub const WSAESOCKTNOSUPPORT: Win32Error = Win32Error(10044);
+        pub const WSAETIMEDOUT: Win32Error = Win32Error(10060);
+        pub const WSAEWOULDBLOCK: Win32Error = Win32Error(10035);
+        pub const WSAHOST_NOT_FOUND: Win32Error = Win32Error(11001);
+        pub const WSANO_DATA: Win32Error = Win32Error(11004);
+        pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
+    }
+
+    /// `bun.windows.WSAGetLastError()` wrapped to `Option<Win32Error>` —
+    /// `None` when no error pending (`0`).
+    #[inline]
+    pub fn wsa_get_last_error() -> Option<Win32Error> {
+        // SAFETY: WSAGetLastError has no preconditions.
+        let e = unsafe { WSAGetLastError() };
+        if e == 0 { None } else { Some(Win32Error(e as u16)) }
+    }
+
+    impl NTSTATUS {
+        pub const SUCCESS: NTSTATUS = NTSTATUS(0x0000_0000);
+        pub const ACCESS_DENIED: NTSTATUS = NTSTATUS(0xC000_0022);
+        pub const INVALID_HANDLE: NTSTATUS = NTSTATUS(0xC000_0008);
+        pub const INVALID_PARAMETER: NTSTATUS = NTSTATUS(0xC000_000D);
+        pub const OBJECT_NAME_COLLISION: NTSTATUS = NTSTATUS(0xC000_0035);
+        pub const FILE_IS_A_DIRECTORY: NTSTATUS = NTSTATUS(0xC000_00BA);
+        pub const OBJECT_PATH_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_003A);
+        pub const OBJECT_NAME_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_0034);
+        pub const OBJECT_NAME_INVALID: NTSTATUS = NTSTATUS(0xC000_0033);
+        pub const NOT_A_DIRECTORY: NTSTATUS = NTSTATUS(0xC000_0103);
+        pub const RETRY: NTSTATUS = NTSTATUS(0xC000_022D);
+        pub const DIRECTORY_NOT_EMPTY: NTSTATUS = NTSTATUS(0xC000_0101);
+        pub const FILE_TOO_LARGE: NTSTATUS = NTSTATUS(0xC000_0904);
+        pub const NOT_SAME_DEVICE: NTSTATUS = NTSTATUS(0xC000_00D4);
+        pub const DELETE_PENDING: NTSTATUS = NTSTATUS(0xC000_0056);
+        pub const SHARING_VIOLATION: NTSTATUS = NTSTATUS(0xC000_0043);
+    }
+
+    /// `bun.windows.translateNTStatusToErrno` (windows.zig) — moved DOWN so
+    /// `bun_errno` owns the only NTSTATUS→`E` mapping (cycle-break).
+    pub fn translate_ntstatus_to_errno(err: NTSTATUS) -> E {
+        match err {
+            NTSTATUS::SUCCESS => E::SUCCESS,
+            NTSTATUS::ACCESS_DENIED => E::PERM,
+            NTSTATUS::INVALID_HANDLE => E::BADF,
+            NTSTATUS::INVALID_PARAMETER => E::INVAL,
+            NTSTATUS::OBJECT_NAME_COLLISION => E::EXIST,
+            NTSTATUS::FILE_IS_A_DIRECTORY => E::ISDIR,
+            NTSTATUS::OBJECT_PATH_NOT_FOUND | NTSTATUS::OBJECT_NAME_NOT_FOUND => E::NOENT,
+            NTSTATUS::NOT_A_DIRECTORY => E::NOTDIR,
+            NTSTATUS::RETRY => E::AGAIN,
+            NTSTATUS::DIRECTORY_NOT_EMPTY => E::NOTEMPTY,
+            NTSTATUS::FILE_TOO_LARGE => E::_2BIG,
+            NTSTATUS::NOT_SAME_DEVICE => E::XDEV,
+            NTSTATUS::DELETE_PENDING => E::BUSY,
+            NTSTATUS::SHARING_VIOLATION => E::BUSY,
+            NTSTATUS::OBJECT_NAME_INVALID => E::INVAL,
+            _ => E::UNKNOWN,
+        }
+    }
+}
+
+// Helper: `Win32Error` → `E` via `SystemErrno`. Used by `wsa_get_last_error`
+// callers in `get_errno`.
+impl windows::Win32Error {
+    #[inline]
+    pub fn to_e(self) -> E {
+        self.to_system_errno().map(SystemErrno::to_e).unwrap_or(E::UNKNOWN)
+    }
+}

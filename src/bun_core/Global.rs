@@ -430,12 +430,12 @@ pub fn get_start_time() -> i128 {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-// MOVE_DOWN: bun_sys::windows → windows_sys (T0).
+// MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
 unsafe extern "system" {
     fn SetThreadDescription(
-        thread: windows_sys::HANDLE,
+        thread: crate::windows_sys::HANDLE,
         name: *const u16,
-    ) -> windows_sys::HRESULT;
+    ) -> crate::windows_sys::HRESULT;
 }
 
 pub fn set_thread_name(name: &ZStr) {
@@ -549,7 +549,7 @@ pub fn exit(code: u32) -> ! {
     {
         Bun__onExit();
         // SAFETY: ExitProcess never returns.
-        unsafe { windows_sys::kernel32::ExitProcess(code) }
+        unsafe { crate::windows_sys::kernel32::ExitProcess(code) }
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {

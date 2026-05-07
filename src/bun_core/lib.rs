@@ -9,6 +9,8 @@ pub mod Global;
 
 pub mod env;
 pub mod wtf;
+#[cfg(windows)]
+pub mod windows_sys;
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;
@@ -232,6 +234,36 @@ pub mod strings {
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len && a.len() != b.len() { return false; }
         a.iter().zip(b).all(|(x, y)| x.eq_ignore_ascii_case(y))
+    }
+    /// `bun.strings.containsCaseInsensitiveASCII` — case-folded substring
+    /// search. PERF(port): the bun_str version is highway-SIMD; this O(n·m)
+    /// fallback is sufficient for the only T0/T1 caller (`resolve_path` cwd
+    /// containment check on Windows, where `n` is a single absolute path).
+    pub fn contains_case_insensitive_ascii(h: &[u8], n: &[u8]) -> bool {
+        if n.is_empty() { return true; }
+        if h.len() < n.len() { return false; }
+        (0..=h.len() - n.len()).any(|i| eql_case_insensitive_ascii(&h[i..i + n.len()], n, false))
+    }
+    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter` (immutable.zig)
+    /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
+    /// `\\server\` prefix and therefore need the cwd's drive prepended.
+    /// Generic over `u8`/`u16` to mirror the Zig comptime `T: type` param.
+    pub fn is_windows_absolute_path_missing_drive_letter<T>(chars: &[T]) -> bool
+    where T: Copy + PartialEq + From<u8> {
+        // Intentionally lenient: accepts a path missing a drive letter even if
+        // it starts with a forward slash (matches Zig).
+        if chars.is_empty() { return false; }
+        let sep = |c: T| c == T::from(b'/') || c == T::from(b'\\');
+        if !sep(chars[0]) { return false; }
+        // `\` alone — yes, missing.
+        if chars.len() == 1 { return true; }
+        // `\\` (UNC, `\\?\`, `\\.\`) — already rooted.
+        if sep(chars[1]) { return false; }
+        // `\C:` style? Second-char alpha + third-char colon → already rooted.
+        if chars.len() >= 3 && chars[2] == T::from(b':') {
+            return false;
+        }
+        true
     }
     /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
     /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig

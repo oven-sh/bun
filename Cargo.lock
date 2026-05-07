@@ -682,6 +682,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_core",
+ "bun_libuv_sys",
  "const_format",
  "enum-map",
  "enumset",

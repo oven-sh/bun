@@ -674,8 +674,10 @@ impl Archive {
     }
 
     pub fn write_open_fd(&self, fd: Fd) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
-        unsafe { archive_write_open_fd(p(self), fd.native()) }
+        // SAFETY: FFI call on valid opaque libarchive handle. libarchive's
+        // `archive_write_open_fd` takes a CRT `int` fd on every platform; on
+        // Windows that is the libuv/CRT fd (`Fd::uv()`), not the `HANDLE`.
+        unsafe { archive_write_open_fd(p(self), fd.uv()) }
     }
 
     pub fn write_open_memory(&self, buf: *mut c_void, buf_size: usize, used: &mut usize) -> ArchiveResult {

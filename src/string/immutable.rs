@@ -1532,7 +1532,16 @@ pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
     debug_assert!(!a.is_empty());
 
     // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+    #[cfg(not(windows))]
     unsafe { libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0 }
+    // Windows MSVC libc has no `strncasecmp`; `_strnicmp` is the equivalent.
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "C" {
+            fn _strnicmp(a: *const core::ffi::c_char, b: *const core::ffi::c_char, n: usize) -> core::ffi::c_int;
+        }
+        _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
+    }
 }
 
 pub fn eql_case_insensitive_t<T: Copy + Into<u32>>(a: &[T], b: &[u8]) -> bool {

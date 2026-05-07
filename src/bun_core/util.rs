@@ -987,14 +987,15 @@ pub mod fd {
     }
     #[cfg(windows)]
     pub unsafe fn windows_process_parameters() -> &'static ProcessParametersStdio {
-        // TODO(b2-windows): PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}
-        // via bun_windows_sys::peb(). Until that crate is real, return cached values.
-        static FALLBACK: ProcessParametersStdio = ProcessParametersStdio {
-            hStdInput: core::ptr::null_mut(),
-            hStdOutput: core::ptr::null_mut(),
-            hStdError: core::ptr::null_mut(),
-        };
-        &FALLBACK
+        // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. The
+        // `crate::windows_sys::ProcessParameters` layout places the three
+        // handles at the same consecutive offsets as this view, so a pointer
+        // cast is sound.
+        // SAFETY: PEB is process-lifetime; handle fields are at fixed offsets.
+        unsafe {
+            let pp = crate::windows_sys::peb().ProcessParameters;
+            &*(core::ptr::addr_of!(pp.hStdInput) as *const ProcessParametersStdio)
+        }
     }
     #[cfg(windows)]
     pub unsafe fn windows_current_directory_handle() -> *mut c_void {
@@ -1187,9 +1188,17 @@ fn thread_id() -> u64 {
     // TODO(port): std::thread::current().id() is not u64-convertible on stable.
     // Use the OS tid via libc; matches Zig `Thread.getCurrentId()` semantics.
     #[cfg(target_os = "linux")]
+    // SAFETY: `gettid` has no preconditions.
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
-    #[cfg(not(target_os = "linux"))]
-    { std::thread::current().id().as_u64().into() } // PERF(port): unstable; Phase B
+    #[cfg(windows)]
+    // SAFETY: `GetCurrentThreadId` has no preconditions.
+    unsafe {
+        unsafe extern "system" { fn GetCurrentThreadId() -> u32; }
+        GetCurrentThreadId() as u64
+    }
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
+    // SAFETY: `pthread_self` has no preconditions; value is opaque-but-stable.
+    unsafe { libc::pthread_self() as u64 }
 }
 
 // ─── StackCheck (from bun.zig) ───────────────────────────────────────────
@@ -2455,10 +2464,7 @@ pub fn exit_thread() -> ! {
     // SAFETY: `ExitThread` is the documented Windows API for terminating the
     // calling thread; it never returns.
     unsafe {
-        extern "system" {
-            fn ExitThread(code: u32) -> !;
-        }
-        ExitThread(0);
+        crate::windows_sys::kernel32::ExitThread(0);
     }
     #[allow(unreachable_code)]
     loop {
@@ -2501,7 +2507,7 @@ pub fn maybe_handle_panic_during_process_reload() {
         #[cfg(unix)]
         unsafe { libc::pthread_exit(core::ptr::null_mut()); }
         #[cfg(windows)]
-        unsafe { extern "system" { fn ExitThread(code: u32) -> !; } ExitThread(0); }
+        unsafe { crate::windows_sys::kernel32::ExitThread(0); }
     }
     // Spin if pthread_exit was a no-op (pathological).
     while is_process_reload_in_progress_on_another_thread() {
@@ -2531,7 +2537,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     #[cfg(windows)]
     {
         // Signal the watcher-manager parent via magic exit code.
-        extern "system" {
+        unsafe extern "system" {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
             fn GetCurrentProcess() -> *mut core::ffi::c_void;
             fn GetLastError() -> u32;

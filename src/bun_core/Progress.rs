@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use crate::Mutex;
 #[cfg(windows)]
-use windows_sys as windows;
+use crate::windows_sys as windows;
 
 // Progress's terminal handle is the canonical `output::File` (vtable-backed
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`

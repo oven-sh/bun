@@ -18,12 +18,18 @@ impl CAllocator {
         // libc malloc guarantees alignment to `max_align_t`; for larger
         // alignments use the aligned variant (Zig's `CAllocator` does the same).
         let align = alignment.to_byte_units();
+        // `max_align_t` alignment — the `libc` crate doesn't expose this on
+        // Windows MSVC; both x86_64 and aarch64 ABIs guarantee 16 here.
+        const MALLOC_ALIGN: usize = 2 * core::mem::size_of::<usize>();
         // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
         let ptr = unsafe {
-            if align <= core::mem::align_of::<libc::max_align_t>() {
+            if align <= MALLOC_ALIGN {
                 libc::malloc(len)
             } else {
-                libc::aligned_alloc(align, len)
+                #[cfg(windows)]
+                { libc::aligned_malloc(len, align) }
+                #[cfg(not(windows))]
+                { libc::aligned_alloc(align, len) }
             }
         };
         if ptr.is_null() { None } else { Some(ptr.cast()) }

@@ -104,8 +104,8 @@ impl PostinstallOptimizer {
     ) -> Option<PackageID> {
         // Windows needs file extensions.
         // Zig: `@enumFromInt(Npm.OperatingSystem.win32)` — wrap the raw bit in the
-        // newtype since the macro emits `win32` as the underlying repr, not `Self`.
-        if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::win32)) {
+        // newtype since `WIN32` is exported as the underlying `u16` repr, not `Self`.
+        if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::WIN32)) {
             return None;
         }
 

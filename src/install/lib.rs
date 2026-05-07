@@ -202,6 +202,7 @@ pub mod postinstall_optimizer;
 pub mod external_slice;
 pub mod integrity;
 pub mod dependency;
+pub mod auto_installer;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod hosted_git_info;

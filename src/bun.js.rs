@@ -49,8 +49,8 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 
     let writer = Output::error_writer_buffered();
-    // `defer Output.flush()` — RAII via scopeguard since this is a side effect
-    let _flush = scopeguard::guard((), |_| Output::flush());
+    // `defer Output.flush()` — RAII guard flushes buffered stderr on every exit path.
+    let _flush = Output::flush_guard();
 
     // SAFETY: `vm.log` is set in `init`.
     if let Some(mut p) = vm.log {

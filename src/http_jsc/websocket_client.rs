@@ -1872,7 +1872,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
-                ws: outgoing,
+                // We need to ref the outgoing websocket so that it doesn't get
+                // finalized before the initial data handler is called.
+                // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
+                // it outlives the handler — `handle_without_deinit` drops the
+                // ref before C++ can finalize.
+                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
 
             // Use a higher-priority callback for the initial onData handler
@@ -1882,11 +1887,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 initial_data.cast::<c_void>(),
                 InitialDataHandler::<SSL>::handle,
             );
-
-            // We need to ref the outgoing websocket so that it doesn't get finalized
-            // before the initial data handler is called
-            // SAFETY: outgoing is a valid CppWebSocket*
-            unsafe { (*outgoing).r#ref() };
         }
 
         // And lastly, ref the new websocket since C++ has a reference to it
@@ -1985,7 +1985,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             let initial_data = Box::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
-                ws: outgoing,
+                // SAFETY: outgoing is a valid CppWebSocket* (extern-C contract);
+                // it outlives the handler — `handle_without_deinit` drops the
+                // ref before C++ can finalize.
+                ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
             // PORT NOTE: `queue_microtask_callback` takes an erased
             // `(*mut c_void, unsafe extern "C" fn(*mut c_void))`; cast both.
@@ -1993,8 +1996,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 initial_data.cast::<c_void>(),
                 InitialDataHandler::<SSL>::handle,
             );
-            // SAFETY: outgoing is a valid CppWebSocket*
-            unsafe { (*outgoing).r#ref() };
         }
 
         ws_ref.r#ref();

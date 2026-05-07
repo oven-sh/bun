@@ -1075,7 +1075,7 @@ impl Run {
             vm.tick();
         }
 
-        bun_standalone_graph::StandaloneModuleGraph::hint_source_pages_dont_need();
+        bun_standalone_graph::Graph::hint_source_pages_dont_need();
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {

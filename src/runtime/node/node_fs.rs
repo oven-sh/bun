@@ -889,6 +889,10 @@ impl FsArgument for args::WriteFile {
 pub trait FsReturn {
     fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
+impl FsReturn for JSValue {
+    #[inline]
+    fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(*self) }
+}
 impl FsReturn for () {
     #[inline]
     fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::UNDEFINED) }

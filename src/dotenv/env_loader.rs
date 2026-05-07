@@ -743,13 +743,14 @@ impl<'a> Loader<'a> {
     // mostly for tests
     pub fn load_from_string<const OVERWRITE: bool, const EXPAND: bool>(
         &mut self,
-        str: &'static [u8],
+        str: &[u8],
     ) -> Result<(), AllocError> {
-        let source = logger::Source::init_path_string(b"test", str);
+        // PORT NOTE: Zig built a `logger.Source` here; the only field `Parser`
+        // reads is `.contents`, so go straight to `parse_bytes` and avoid the
+        // `Source.contents: &'static [u8]` lifetime constraint (callers like
+        // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse::<OVERWRITE, false, EXPAND>(&source, self.map, &mut value_buffer)?;
-        core::hint::black_box(&source);
-        Ok(())
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(

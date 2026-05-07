@@ -795,6 +795,14 @@ impl<C: SourceContext> NewSource<C> {
         self.context.on_start()
     }
 
+    pub fn on_pull_from_js(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result {
+        self.context.on_pull(buf, view)
+    }
+
+    pub fn on_start_from_js(&mut self) -> streams::Start {
+        self.context.on_start()
+    }
+
     pub fn cancel(&mut self) {
         if self.cancelled {
             return;

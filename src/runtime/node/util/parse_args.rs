@@ -378,15 +378,11 @@ fn parse_option_definitions(
 ) -> JsResult<()> {
     validators::validate_object(global, options_obj, "options", Default::default())?;
 
-    // TODO(port): JSPropertyIterator comptime config (.skip_empty_name=false, .include_value=true)
     let mut iter = bun_jsc::JSPropertyIterator::init(
         global,
         // SAFETY: validateObject ensures it's an object
         options_obj.get_object().unwrap(),
-        bun_jsc::JSPropertyIteratorOptions {
-            skip_empty_name: false,
-            include_value: true,
-        },
+        bun_jsc::JSPropertyIteratorOptions::new(false, true),
     )?;
     // `defer iter.deinit()` — Drop handles cleanup
 
@@ -396,7 +392,7 @@ fn parse_option_definitions(
             ..Default::default()
         };
 
-        let obj: JSValue = iter.value();
+        let obj: JSValue = iter.value;
         validators::validate_object(
             global,
             obj,
@@ -405,14 +401,16 @@ fn parse_option_definitions(
         )?;
 
         // type field is required
-        let option_type: JSValue = obj.get_own(global, "type")?.unwrap_or(JSValue::UNDEFINED);
+        let option_type: JSValue = obj
+            .get_own(global, &String::static_("type"))?
+            .unwrap_or(JSValue::UNDEFINED);
         option.r#type = validators::validate_string_enum::<OptionValueType>(
             global,
             option_type,
             format_args!("options.{}.type", option.long_name),
         )?;
 
-        if let Some(short_option) = obj.get_own(global, "short")? {
+        if let Some(short_option) = obj.get_own(global, &String::static_("short"))? {
             validators::validate_string(
                 global,
                 short_option,
@@ -429,7 +427,7 @@ fn parse_option_definitions(
             option.short_name = short_option_str;
         }
 
-        if let Some(multiple_value) = obj.get_own(global, "multiple")? {
+        if let Some(multiple_value) = obj.get_own(global, &String::static_("multiple"))? {
             if !multiple_value.is_undefined() {
                 option.multiple = validators::validate_boolean(
                     global,
@@ -439,7 +437,7 @@ fn parse_option_definitions(
             }
         }
 
-        if let Some(default_value) = obj.get_own(global, "default")? {
+        if let Some(default_value) = obj.get_own(global, &String::static_("default"))? {
             if !default_value.is_undefined() {
                 match option.r#type {
                     OptionValueType::String => {
@@ -479,13 +477,12 @@ fn parse_option_definitions(
 
         bun_output::scoped_log!(
             parseArgs,
-            "[OptionDef] \"{}\" (type={}, short={}, multiple={}, default={:?})",
+            "[OptionDef] \"{}\" (type={}, short={}, multiple={}, default={})",
             String::init(long_option),
             <&'static str>::from(option.r#type),
             if !option.short_name.is_empty() { option.short_name } else { String::static_("none") },
             option.multiple as u8,
-            // TODO(port): bun.tagName(JSValue, dv) — debug-only tag name
-            option.default_value.map(|dv| dv.tag_name()),
+            if option.default_value.is_some() { "set" } else { "none" },
         );
 
         option_definitions.push(option);
@@ -509,7 +506,7 @@ fn tokenize_args(
         let arg_ref = ValueRef::Jsvalue(args.get(global, index)?);
         let arg = arg_ref.as_bun_string(global);
 
-        let token_rawtype = classify_token(arg, options);
+        let token_rawtype = classify_token(&arg, options);
         bun_output::scoped_log!(
             parseArgs,
             " [Arg #{}] {} ({})",
@@ -518,11 +515,10 @@ fn tokenize_args(
             arg
         );
 
-        use super::parse_args_utils::TokenRawType::*;
         match token_rawtype {
             // Check if `arg` is an options terminator.
             // Guideline 10 in https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
-            OptionTerminator => {
+            TokenSubtype::OptionTerminator => {
                 // Everything after a bare '--' is considered a positional argument.
                 ctx.handle_token(Token::OptionTerminator { index })?;
                 index += 1;

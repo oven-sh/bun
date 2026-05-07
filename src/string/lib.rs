@@ -455,6 +455,39 @@ impl String {
         }
     }
 
+    /// `bun.String.inMapCaseInsensitive` (string.zig) — case-insensitive ASCII
+    /// lookup against a phf map. The Zig version dispatches through
+    /// `ComptimeStringMap.getWithEqlList`; here we lowercase into a stack
+    /// buffer and probe the phf map directly. Keys longer than 64 bytes or
+    /// containing non-ASCII code units never match (all callers' maps have
+    /// short ASCII keys).
+    pub fn in_map_case_insensitive<V: Copy>(
+        &self,
+        map: &'static phf::Map<&'static [u8], V>,
+    ) -> Option<V> {
+        let len = self.length();
+        if len == 0 || len > 64 {
+            return None;
+        }
+        let mut buf = [0u8; 64];
+        if self.is_utf16() {
+            for (i, &c) in self.utf16().iter().enumerate() {
+                if c >= 0x80 {
+                    return None;
+                }
+                buf[i] = (c as u8).to_ascii_lowercase();
+            }
+        } else {
+            for (i, &b) in self.byte_slice().iter().enumerate() {
+                if b >= 0x80 {
+                    return None;
+                }
+                buf[i] = b.to_ascii_lowercase();
+            }
+        }
+        map.get(&buf[..len]).copied()
+    }
+
     /// `bun.String.trunc` (string.zig:317) — clamp to `len` code units. The
     /// returned `String` borrows the same storage; for `WTFStringImpl` this
     /// downgrades to a `ZigString` view (no ref taken), so the original must

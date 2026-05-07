@@ -990,10 +990,10 @@ impl WebWorker {
             self.shutdown();
         }
 
-        // SAFETY: `path` borrows resolver arena / `self.unresolved_specifier`,
-        // both of which live until `shutdown()`. The `'static` is the same
-        // logger lifetime lie as above.
-        let path: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path) };
+        // `path` borrows the resolver's process-lifetime string store, the
+        // standalone module graph, or `self.unresolved_specifier` — all of
+        // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
+        // (see `VirtualMachine::set_main`); no lifetime extension needed.
         let promise = match unsafe { (*vm).load_entry_point_for_web_worker(path) } {
             Ok(p) => p,
             Err(_) => {
@@ -1267,18 +1267,21 @@ impl WebWorker {
             Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
         };
         // RAII: Zig's `defer str.deref()` — released on scope exit.
-        let _str_guard = scopeguard::guard((), |()| str.deref());
+        scopeguard::defer! { str.deref(); }
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // SAFETY: `global`/`cpp_worker` valid; `str` reffed for the call.
             unsafe { WebWorker__dispatchError(global, self.cpp_worker, str, err) }
         });
         if let Err(e) = dispatch {
-            let exc = global.take_exception(e);
-            // SAFETY: `global.vm_ptr()` returns the live JSC `*mut VM`.
-            if let Some(exc) = exc.as_exception(global.vm().as_mut_ptr()) {
-                // SAFETY: `exc` is a live JSC `Exception` cell.
-                let _ = jsc::js_global_object::report_uncaught_exception(global, unsafe { &mut *exc });
-            }
+            // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
+            // on a `JsError` always returns an Exception cell; None is
+            // unreachable. Do not silently drop the error.
+            let exc = global
+                .take_exception(e)
+                .as_exception(global.vm().as_mut_ptr())
+                .expect("takeException returned non-Exception");
+            // SAFETY: `exc` is a live JSC `Exception` cell.
+            let _ = jsc::js_global_object::report_uncaught_exception(global, unsafe { &mut *exc });
         }
     }
 }

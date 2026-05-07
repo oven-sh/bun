@@ -241,8 +241,11 @@ macro_rules! mark_binding {
     };
     ($fn_name:expr) => {
         // Zig: `Output.scoped(.JSC, .hidden)` (jsc.zig:169) — opt-in via
-        // BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core.
-        if cfg!(feature = "debug_logs") && $crate::Global::JSC_SCOPE.is_visible() {
+        // BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
+        // `debug_assertions` (== `Environment::ENABLE_LOGS`) — never on a Cargo
+        // feature, since `cfg!(feature = ..)` is resolved against the *calling*
+        // crate and would warn (or silently no-op) in crates without it.
+        if cfg!(debug_assertions) && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(
                 ::core::format_args!("[JSC] {} ({}:{})\n", $fn_name, ::core::file!(), ::core::line!()),
             );

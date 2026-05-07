@@ -430,21 +430,29 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // builds a per-connection one that the connected WebSocket
         // inherits so it isn't rebuilt on adopt.
         //
-        // CYCLEBREAK(body-gate): `RareData::default_client_ssl_ctx` and
-        // `SSLContextCache::get_or_create_opts` are gated high-tier bodies in
-        // `bun_jsc::rare_data` (their real impls live in `bun_runtime`).
-        // Until the cycle-break vtable lands, build the per-connection CTX
-        // directly via the tier-neutral `BunSocketContextOptions::create_ssl_context`
-        // for the custom-CA path, and skip the shared default-ctx cache (the
-        // adopting `SocketGroup` already provisions a default `SSL_CTX`).
+        // §Dispatch (cycle-break): `RareData.defaultClientSslCtx()` and
+        // `RareData.sslCtxCache().getOrCreateOpts()` reach
+        // `RuntimeState.ssl_ctx_cache` (high-tier `bun_runtime`); routed
+        // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
+            let hooks = bun_jsc::virtual_machine::runtime_hooks()
+                .expect("RuntimeHooks not installed");
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {
                         let mut err = uws::create_bun_socket_error_t::none;
-                        let ctx = config
-                            .as_usockets_for_client_verification()
-                            .create_ssl_context(&mut err);
+                        // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
+                        // with the same CA shares one CTX with each other and with
+                        // any `Bun.connect`/Postgres/etc. that named it.
+                        // SAFETY: `vm_ptr` is the live per-thread VM (caller
+                        // contract); JS thread.
+                        let ctx = unsafe {
+                            (hooks.ssl_ctx_cache_get_or_create)(
+                                vm_ptr,
+                                config.as_usockets_for_client_verification(),
+                                &mut err,
+                            )
+                        };
                         let Some(ctx) = ctx else {
                             // Do NOT fall through to the default trust store — the
                             // user passed an explicit CA/cert and BoringSSL
@@ -452,8 +460,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!(
-                                "createSSLContext failed for WebSocket: {}",
-                                err as i32
+                                "createSSLContext failed for WebSocket: {:?}",
+                                err
                             );
                             client_ref.poll_ref.unref(vm_loop_ctx(vm_ptr));
                             // SAFETY: `client` from Box::into_raw above; sole owner.
@@ -466,9 +474,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         break 'brk client_ref.secure;
                     }
                 }
-                // TODO(port): high-tier — share the VM-wide default client
-                // `SSL_CTX` via `RareData::default_client_ssl_ctx` once un-gated.
-                None
+                // SAFETY: `vm_ptr` is the live per-thread VM; JS thread.
+                Some(unsafe { (hooks.default_client_ssl_ctx)(vm_ptr) })
             }
         } else {
             None

@@ -449,14 +449,27 @@ impl EventLoopSqlExt for EventLoop {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Timer heap / EventLoopTimer — opaque on this side (Timer::All lives in
-// bun_runtime::RuntimeState; reached via Bun__VM__timer / Bun__Timer__All__*
-// in bun_runtime/hw_exports.rs).
+// Timer heap / EventLoopTimer.
+//
+// The intrusive `EventLoopTimer` node + `Tag`/`State` enums are the canonical
+// `bun_event_loop` types (lower tier — also what `bun_runtime::dispatch::
+// fire_timer` reads via `container_of!`). The previous local `#[repr(C)]`
+// stub diverged on layout (`[usize;3]` heap, no `in_heap`) *and* discriminants
+// (Tag::PostgresSQLConnectionTimeout=1 vs canonical 8, State::FIRED/CANCELLED
+// swapped), so insertion into the real pairing-heap was UB and tag dispatch
+// mis-routed.
+//
+// `Timer::All` (the heap container) lives in `bun_runtime::RuntimeState`;
+// reached via [`SqlRuntimeHooks::timer_heap`] / `timer_insert` / `timer_remove`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// bun_runtime::timer::All — heap of EventLoopTimer. Opaque on this side;
-/// insert/remove forward to the bun_runtime impl via the C-ABI exports in
-/// src/runtime/hw_exports.rs (RuntimeState owns the heap).
+pub use bun_event_loop::EventLoopTimer::{
+    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+};
+
+/// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
+/// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
+/// [`SqlRuntimeHooks`] vtable.
 #[repr(C)]
 pub struct TimerHeap {
     _opaque: core::cell::UnsafeCell<[u8; 0]>,
@@ -464,46 +477,15 @@ pub struct TimerHeap {
 }
 impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: self is &runtime_state().timer; t is a live intrusive node.
-        unsafe { Bun__Timer__All__insert(self._opaque.get() as *mut TimerHeap, t) }
+        // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
+        // intrusive heap node owned by the caller.
+        unsafe { (hooks().timer_insert)(self._opaque.get() as *mut c_void, t) }
     }
     pub fn remove(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: self is &runtime_state().timer; t was previously inserted.
-        unsafe { Bun__Timer__All__remove(self._opaque.get() as *mut TimerHeap, t) }
+        // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
+        // inserted by the caller.
+        unsafe { (hooks().timer_remove)(self._opaque.get() as *mut c_void, t) }
     }
-}
-
-#[repr(C)]
-pub struct EventLoopTimer {
-    pub next: bun_core::Timespec,
-    pub state: EventLoopTimerState,
-    pub tag: EventLoopTimerTag,
-    pub heap: [usize; 3], // intrusive heap node placeholder
-}
-impl Default for EventLoopTimer {
-    fn default() -> Self {
-        Self { next: bun_core::Timespec::EPOCH, state: Default::default(), tag: Default::default(), heap: [0; 3] }
-    }
-}
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum EventLoopTimerState { #[default] Pending, ACTIVE, FIRED, CANCELLED }
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum EventLoopTimerTag {
-    #[default] Unset,
-    PostgresSQLConnectionTimeout,
-    PostgresSQLConnectionMaxLifetime,
-    MySQLConnectionTimeout,
-    MySQLConnectionMaxLifetime,
-}
-// Namespace shim so callers can write EventLoopTimer::State::ACTIVE /
-// EventLoopTimer::Tag::PostgresSQLConnectionTimeout (Zig nested-type style).
-impl EventLoopTimer {
-    #[allow(non_upper_case_globals)]
-    pub const State: PhantomData<EventLoopTimerState> = PhantomData;
-    #[allow(non_upper_case_globals)]
-    pub const Tag: PhantomData<EventLoopTimerTag> = PhantomData;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

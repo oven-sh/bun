@@ -10,7 +10,9 @@ use bun_sys::{Fd, FdExt};
 pub struct TestingAPIs;
 
 impl TestingAPIs {
-    // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet provided.
+    // PORT NOTE: `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
+    // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
+    // shim is emitted at module scope below (`__jsc_host_*`).
     pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
@@ -51,7 +53,6 @@ impl TestingAPIs {
         }
     }
 
-    // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet provided.
     pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = match Self::parse_apply_args(global, frame) {
             Err(e) => return Ok(e),
@@ -73,7 +74,6 @@ impl TestingAPIs {
     }
 
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    // TODO(b2-blocked): bun_jsc::host_fn — proc-macro attribute not yet provided.
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM

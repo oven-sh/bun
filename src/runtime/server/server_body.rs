@@ -2762,7 +2762,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // SAFETY: agent is a live C++ InspectorHTTPServerAgent while
                     // the debugger is attached.
                     unsafe {
-                        bun_jsc::http_server_agent::notify_server_stopped(
+                        InspectorHTTPServerAgent::notify_server_stopped(
                             agent.as_ptr(),
                             self.inspector_server_id,
                             bun_core::time::milli_timestamp() as f64,
@@ -2823,7 +2823,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `bake_options.arena` is moved into DevServer (transitively)
             // and outlives every borrow of `root`; lifetime erased to `'static`
             // per the same Phase-A convention used in `bake_body::UserOptions`.
-            let arena: &'static bake::Arena = unsafe { &*(&bake_options.arena as *const _) };
+            let arena: &'static bun_alloc::Arena = unsafe { &*(&bake_options.arena as *const _) };
             let root: &'static ZStr = bake_options.root;
             // SAFETY: bake_options is ManuallyDrop'd; these are the only reads.
             let framework = unsafe { core::ptr::read(&bake_options.framework) };
@@ -2831,7 +2831,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Some(dev_server_mod::init(dev_server_mod::Options {
                 arena,
                 root,
-                vm: unsafe { &*jsc::VirtualMachine::get() },
+                vm: unsafe { &*jsc::virtual_machine::VirtualMachine::get() },
                 framework,
                 bundler_options,
                 broadcast_console_log_from_browser_to_server: broadcast,
@@ -3263,11 +3263,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                             node_response.promise = mem::replace(&mut strong_promise, StrongOptional::empty());
                             // TODO: properly propagate exception upwards
+                            // PORT NOTE: `#[host_fn(export = "Bun__NodeHTTPRequest__onResolve")]`
+                            // emits its C-ABI shim under the Rust ident
+                            // `__jsc_host_<fn>`; the export name is link-only.
                             result.then2(
                                 global,
                                 strong_self,
-                                super::node_http_response::Bun__NodeHTTPRequest__onResolve,
-                                super::node_http_response::Bun__NodeHTTPRequest__onReject,
+                                super::node_http_response::__jsc_host_node_http_request_on_resolve,
+                                super::node_http_response::__jsc_host_node_http_request_on_reject,
                             );
                             is_async = true;
                         }

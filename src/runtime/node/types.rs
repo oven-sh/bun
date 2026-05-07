@@ -297,15 +297,15 @@ impl StringOrBuffer {
     ) -> JsResult<Vec<u8>> {
         if let Some(array_buffer) = value.as_array_buffer(global_object) {
             let bytes = array_buffer.byte_slice();
-            vm_report_extra_memory(global_object, array_buffer.len as usize);
+            global_object.vm().report_extra_memory(array_buffer.len as usize);
             return Ok(bytes.to_vec());
         }
 
         let str = bun_str::String::from_js(value, global_object)?;
-        // `str.deref()` happens on Drop.
+        scopeguard::defer! { str.deref(); }
 
         let result = str.to_owned_slice();
-        vm_report_extra_memory(global_object, result.len());
+        global_object.vm().report_extra_memory(result.len());
         Ok(result)
     }
 
@@ -377,22 +377,22 @@ impl StringOrBuffer {
                 if !allow_string_object && str_type != JSType::String {
                     return Ok(None);
                 }
-                let str = bun_str::String::from_js(value, global)?;
-                // str.deref() on Drop
-                // TODO(b2-blocked): `bun_str::String::to_thread_safe_slice` /
-                // `to_slice` (returning SliceWithUnderlyingString) are not yet
-                // implemented upstream. Fall back to an owned UTF-8 copy so
-                // both sync and async paths return correct (if slower) data.
-                let owned = str.to_owned_slice();
-                vm_report_extra_memory(global, owned.len());
-                let slice = ZigStringSlice::init_owned(owned);
+                let mut str = bun_str::String::from_js(value, global)?;
+                scopeguard::defer! { str.deref(); }
                 if is_async {
-                    return Ok(Some(Self::EncodedSlice(slice)));
+                    let mut possible_clone = str;
+                    let mut sliced = possible_clone.to_thread_safe_slice();
+                    sliced.report_extra_memory(global.vm());
+
+                    if sliced.underlying.is_empty() {
+                        // PORT NOTE: partial-move out of `SliceWithUnderlyingString` —
+                        // take `utf8` and leave the rest defaulted (no Drop on the type).
+                        return Ok(Some(Self::EncodedSlice(core::mem::take(&mut sliced.utf8))));
+                    }
+
+                    return Ok(Some(Self::ThreadsafeString(sliced)));
                 } else {
-                    return Ok(Some(Self::String(SliceWithUnderlyingString {
-                        utf8: slice,
-                        underlying: bun_str::String::default(),
-                    })));
+                    return Ok(Some(Self::String(str.to_slice())));
                 }
             }
 

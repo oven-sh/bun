@@ -263,7 +263,7 @@ impl Stats {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/Stat.zig (207 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      const-generic cannot select `Float` type → to_time_ms split into i64/f64 variants; fromJSHostCall wrapper + Timespec crate path need Phase-B confirmation
+//   confidence: high
+//   todos:      0
+//   notes:      const-generic cannot select `Float` type → to_time_ms split into i64/f64 variants
 // ──────────────────────────────────────────────────────────────────────────

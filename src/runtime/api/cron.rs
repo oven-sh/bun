@@ -1505,8 +1505,8 @@ impl CronJob {
         this_ref.event_loop_timer.state = EventLoopTimerState::FIRED;
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
-        this_ref.ref_();
-        let _guard = scopeguard::guard((), |_| Self::deref(this));
+        // SAFETY: timer heap holds the entry; `this` is live until the guard drops.
+        let _guard = unsafe { Self::ref_guard(this) };
 
         if this_ref.stopped {
             return;
@@ -1529,10 +1529,10 @@ impl CronJob {
             return;
         }
 
-        // SAFETY: per-thread VM; raw-ptr-per-field re-borrow keeps `&mut EventLoop`
-        // lifetimes disjoint between `enter()` and the deferred `exit()`.
-        unsafe { (*vm.event_loop()).enter() };
-        let _ev_guard = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
+        // SAFETY: per-thread VM; `event_loop()` returns the live VM-owned
+        // pointer. `enter_scope` calls `enter()` now and `exit()` on drop, and
+        // holds the raw pointer (not `&mut`) so re-entrant JS can re-borrow.
+        let _ev_guard = unsafe { EventLoop::enter_scope(vm.event_loop()) };
 
         this_ref.in_fire = true;
         let result = match cb.call(this_ref.global, js_this, &[]) {

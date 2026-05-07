@@ -1060,9 +1060,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
-    let _sync_loop_cleanup = scopeguard::guard((), move |_| {
+    scopeguard::defer! {
         if IS_SYNC {
-            // SAFETY: scopeguard runs while `jsc_vm` (the thread VM) is still live.
+            // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*jsc_vm_ptr).event_loop();
                 (*jsc_vm_ptr)
@@ -1071,7 +1071,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     .cleanup(jsc_vm_ptr.cast(), main_loop.cast());
             }
         }
-    });
+    }
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
@@ -1570,9 +1570,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    let _exit_notify_guard = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         if send_exit_notification {
-            // SAFETY: subprocess_ptr is live for the lifetime of this scopeguard.
+            // SAFETY: subprocess_ptr is live for the lifetime of this defer.
             let proc = unsafe { process_mut((*subprocess_ptr).process) };
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
@@ -1585,7 +1585,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 proc.wait(IS_SYNC);
             }
         }
-    });
+    }
 
     if let Writable::Buffer(buffer) = &mut subprocess.stdin {
         // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread

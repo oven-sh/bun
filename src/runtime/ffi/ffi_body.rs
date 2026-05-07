@@ -204,12 +204,12 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
         // SAFETY: aarch64 macOS only; toggles W^X for the current thread
         unsafe { pthread_jit_write_protect_np(false as c_int) };
     }
-    let _guard = scopeguard::guard((), |_| {
+    scopeguard::defer! {
         if HAS_PROTECTION {
             // SAFETY: re-enable JIT write protection on scope exit
             unsafe { pthread_jit_write_protect_np(true as c_int) };
         }
-    });
+    }
     // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
     func()
 }

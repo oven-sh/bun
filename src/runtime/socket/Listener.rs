@@ -508,8 +508,7 @@ impl Listener {
             }
         }
 
-        listener_allocated.set(false); // ownership now on `this`; deinit handles cleanup
-        scopeguard::ScopeGuard::into_inner(cleanup);
+        let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
         // SAFETY: `global` is live; ownership of `this` (Box::into_raw'd above)
         // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
         // `Listener::finalize` → `deinit`).
@@ -1584,10 +1583,10 @@ impl WindowsNamedPipeListeningContext {
 
         // errdefer: once the uv pipe handle is registered with the loop it must be closed via
         // uv_close; before that point we can free the struct directly. `deinit()` also
-        // frees the SSL context if one was created.
-        let pipe_initialized = core::cell::Cell::new(false);
-        let cleanup = scopeguard::guard((), |()| {
-            if pipe_initialized.get() {
+        // frees the SSL context if one was created. State `.1` flips once `uv_pipe_init`
+        // succeeds; disarmed via `into_inner` on success.
+        let mut cleanup = scopeguard::guard((this, false), |(this, pipe_initialized)| {
+            if pipe_initialized {
                 // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
                 unsafe { Self::close_pipe_and_deinit(this) };
             } else {
@@ -1614,7 +1613,7 @@ impl WindowsNamedPipeListeningContext {
         if init_result.errno().is_some() {
             return Err(bun_core::err!("FailedToInitPipe"));
         }
-        pipe_initialized.set(true);
+        cleanup.1 = true;
 
         let listen_rc = if path[path.len() - 1] == 0 {
             // is already null terminated
@@ -1646,7 +1645,7 @@ impl WindowsNamedPipeListeningContext {
         // return error.FailedChmodPipe;
         //}
 
-        scopeguard::ScopeGuard::into_inner(cleanup);
+        let (this, _) = scopeguard::ScopeGuard::into_inner(cleanup);
         Ok(this)
     }
 

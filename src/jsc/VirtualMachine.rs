@@ -3010,10 +3010,9 @@ impl VirtualMachine {
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        self.ref_strings_mutex.lock();
-        // PORT NOTE: Zig `defer unlock()` — model with a drop-guard so the
-        // early-return `Occupied` arm releases too.
-        let _unlock = scopeguard::guard(&self.ref_strings_mutex, |m| m.unlock());
+        // PORT NOTE: Zig `lock(); defer unlock()` — RAII guard releases on every
+        // exit (including the early-return `Occupied` arm).
+        let _unlock = self.ref_strings_mutex.lock_guard();
 
         match self.ref_strings.entry(hash) {
             Entry::Occupied(o) => {
@@ -3511,19 +3510,19 @@ impl VirtualMachine {
         jsc_vm.transpiler.resolver.log = &mut log;
         // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
         // — gated bundler fields.
-        // PORT NOTE: Zig `defer { restore old_log }` — scopeguard fires on every
-        // exit (including `?` from `ResolveMessage::create` below), so the VM's
+        // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
+        // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`.
         let jsc_vm_ptr = jsc_vm as *mut VirtualMachine;
-        let _restore = scopeguard::guard((), move |()| {
+        scopeguard::defer! {
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM (caller is on the
             // JS thread); `old_log` outlives the VM (Box::leak in `init`).
             let jsc_vm = unsafe { &mut *jsc_vm_ptr };
             jsc_vm.log = Some(old_log);
             jsc_vm.transpiler.resolver.log = unsafe { &mut *old_log.as_ptr() };
-        });
+        }
         // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
-        // borrow doesn't span the scopeguard's drop.
+        // borrow doesn't span the defer guard's drop.
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 

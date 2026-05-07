@@ -295,7 +295,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     // Zig: `list.*` — by-value copy of the List.
                     let list_val = unsafe { (*list).clone() };
-                    let command_ctx = installer.command_ctx;
+                    // PORT NOTE: reshaped for borrowck — `Command::Context<'a>`
+                    // is `&'a mut ContextData`; reborrow instead of moving the
+                    // field out of `*installer`.
+                    let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
                     // PORT NOTE: `installer.manager == manager` (same allocation,
                     // see fn-signature note); call via the body shadow which is a
                     // reborrow of `manager_ptr` — no extra unsafe alias needed.

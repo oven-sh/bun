@@ -1290,36 +1290,16 @@ impl UpdateInteractiveCommand {
             show_workspace: columns.show_workspace, // Show workspace if packages have workspaces
         };
 
-        // Set raw mode
+        // Set raw mode — RAII guard restores the original terminal mode on Drop.
         #[cfg(windows)]
-        let original_mode: Option<bun_sys::windows::DWORD> = bun_sys::windows::update_stdio_mode_flags(
-            bun_sys::windows::StdioHandle::StdIn,
-            bun_sys::windows::ModeFlags {
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
-            },
-        )
-        .ok();
+        let _restore = bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+            set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+            unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+        });
 
         #[cfg(unix)]
-        let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Raw);
-
-        let _restore = scopeguard::guard((), |_| {
-            #[cfg(windows)]
-            {
-                if let Some(mode) = original_mode {
-                    // SAFETY: stdin handle is valid for the process lifetime.
-                    let _ = unsafe {
-                        bun_sys::c::SetConsoleMode(bun_sys::Fd::stdin().native(), mode)
-                    };
-                }
-            }
-            #[cfg(unix)]
-            {
-                let _ = bun_core::tty::set_mode(0, bun_core::tty::Mode::Normal);
-            }
-        });
+        let _restore = bun_core::tty::RawModeGuard::new(0);
 
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
@@ -1438,13 +1418,13 @@ impl UpdateInteractiveCommand {
             Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
             Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
         }
-        let _restore_mouse = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             if colors {
                 Output::print(format_args!("\x1b[?25h")); // show cursor
                 Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
                 Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
             }
-        });
+        }
 
         let mut initial_draw = true;
         let mut reprint_menu = true;

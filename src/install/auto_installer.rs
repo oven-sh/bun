@@ -4,78 +4,45 @@
 //! (the higher tier) so the lower-tier trait crate carries no install
 //! dependencies.
 //!
-//! ### Layout overlays
+//! All the value types (`Dependency`, `DependencyVersion`, `Behavior`,
+//! `Features`, `ExternalSlice`, `OperatingSystem`, …) are MOVE_DOWN'd into
+//! `bun_install_types` and re-exported here, so `dependency::Version` and
+//! `hooks::DependencyVersion` name the SAME type — no transmute needed for
+//! the dependency-side surface.
 //!
-//! The trait surface speaks the resolver-side projection types
-//! (`hooks::Dependency` / `hooks::DependencyVersion` / `hooks::Resolution`)
-//! whose `value` fields are opaque `[u64; 5]` buffers. The install-side
-//! `dependency::{Dependency, Version, Value}` and
-//! `resolution::{Resolution, Value}` are `#[repr(C)]` with identical field
-//! order, so the projections are byte-identical overlays. The `const _`
-//! asserts below pin that contract; any drift fails to compile.
+//! `resolution::Resolution` is still the install-side `ResolutionType<u64>`
+//! (a `#[repr(C)]` struct whose `Value` union mirrors
+//! `hooks::ResolutionValue<u64>`); the static asserts below pin layout
+//! equality so the by-value reinterpretation in [`resolution_to_hooks`] /
+//! [`resolution_from_hooks`] is sound.
 
 use core::mem::{align_of, size_of};
 
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
-use crate::dependency;
+use crate::dependency::{self, DependencyExt as _, VersionExt as _};
 use crate::lockfile::{self, Package};
-use crate::package_manager::PackageManagerEnqueue as enqueue;
-use crate::package_manager::PackageManagerDirectories as directories;
-use crate::package_manager::PackageManagerResolution as pm_resolution;
+use crate::package_manager::package_manager_directories as directories;
+use crate::package_manager::package_manager_enqueue as enqueue;
+use crate::package_manager::package_manager_lifecycle as lifecycle;
+use crate::package_manager::package_manager_resolution as pm_resolution;
 use crate::resolution;
 use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 
-// ─── Static layout asserts ────────────────────────────────────────────────
-// These tie the opaque `[u64; 5]` projection buffers to the real install
-// unions. If `Repository`/`NpmInfo` ever grow past 40 B, or the field order
-// of `Dependency`/`Version`/`Resolution` diverges, this fails to compile.
+// ─── Static layout asserts (Resolution overlay) ───────────────────────────
+// `resolution::ResolutionType<u64>` and `hooks::Resolution` are distinct
+// `#[repr(C)]` structs with identical field order
+// (`tag: u8, _padding: [u8;7], value: 40 B`). Pin that contract.
 
-const _: () = assert!(size_of::<dependency::Value>() <= size_of::<[u64; 5]>());
-const _: () = assert!(align_of::<dependency::Value>() <= align_of::<[u64; 5]>());
-const _: () = assert!(size_of::<dependency::Version>() == size_of::<hooks::DependencyVersion>());
-const _: () = assert!(align_of::<dependency::Version>() == align_of::<hooks::DependencyVersion>());
-const _: () = assert!(size_of::<dependency::Dependency>() == size_of::<hooks::Dependency>());
-const _: () = assert!(align_of::<dependency::Dependency>() == align_of::<hooks::Dependency>());
-
-const _: () = assert!(size_of::<resolution::Value<u64>>() <= size_of::<[u64; 5]>());
-const _: () = assert!(align_of::<resolution::Value<u64>>() <= align_of::<[u64; 5]>());
+const _: () = assert!(size_of::<resolution::Value<u64>>() == size_of::<hooks::ResolutionValue<u64>>());
+const _: () = assert!(align_of::<resolution::Value<u64>>() == align_of::<hooks::ResolutionValue<u64>>());
 const _: () = assert!(size_of::<resolution::Resolution>() == size_of::<hooks::Resolution>());
 const _: () = assert!(align_of::<resolution::Resolution>() == align_of::<hooks::Resolution>());
 
-// ─── Overlay helpers ──────────────────────────────────────────────────────
-
-#[inline]
-fn version_from_hooks(v: &hooks::DependencyVersion) -> &dependency::Version {
-    // SAFETY: layout-identical per `const _` asserts above; both `#[repr(C)]`
-    // with field order `(tag: u8, literal: SemverString, value: 40B)`.
-    unsafe { &*(v as *const hooks::DependencyVersion as *const dependency::Version) }
-}
-
-#[inline]
-fn version_to_hooks(v: dependency::Version) -> hooks::DependencyVersion {
-    // SAFETY: layout-identical per `const _` asserts above.
-    unsafe { core::mem::transmute::<dependency::Version, hooks::DependencyVersion>(v) }
-}
-
-#[inline]
-fn dep_slice_to_hooks(s: &[dependency::Dependency]) -> &[hooks::Dependency] {
-    // SAFETY: layout-identical per `const _` asserts above.
-    unsafe {
-        core::slice::from_raw_parts(s.as_ptr() as *const hooks::Dependency, s.len())
-    }
-}
-
-#[inline]
-fn dep_from_hooks(d: &hooks::Dependency) -> &dependency::Dependency {
-    // SAFETY: layout-identical per `const _` asserts above.
-    unsafe { &*(d as *const hooks::Dependency as *const dependency::Dependency) }
-}
-
 #[inline]
 fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
-    // SAFETY: layout-identical per `const _` asserts above.
+    // SAFETY: layout-identical per `const _` asserts above; both `#[repr(C)]`.
     unsafe { core::mem::transmute::<resolution::Resolution, hooks::Resolution>(r) }
 }
 
@@ -86,16 +53,16 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> &resolution::Resolution {
 }
 
 #[inline]
-fn tag_to_hooks(t: dependency::Tag) -> hooks::DependencyVersionTag {
+fn tag_from_hooks(t: hooks::DependencyVersionTag) -> dependency::Tag {
     // SAFETY: both `#[repr(u8)]` with identical discriminants
     // (src/install/dependency.zig `Version.Tag`).
-    unsafe { core::mem::transmute::<dependency::Tag, hooks::DependencyVersionTag>(t) }
+    unsafe { core::mem::transmute::<hooks::DependencyVersionTag, dependency::Tag>(t) }
 }
 
 #[inline]
-fn tag_from_hooks(t: hooks::DependencyVersionTag) -> dependency::Tag {
-    // SAFETY: see `tag_to_hooks`.
-    unsafe { core::mem::transmute::<hooks::DependencyVersionTag, dependency::Tag>(t) }
+fn tag_to_hooks(t: dependency::Tag) -> hooks::DependencyVersionTag {
+    // SAFETY: see `tag_from_hooks`.
+    unsafe { core::mem::transmute::<dependency::Tag, hooks::DependencyVersionTag>(t) }
 }
 
 // ─── impl AutoInstaller ───────────────────────────────────────────────────
@@ -109,6 +76,9 @@ impl hooks::AutoInstaller for PackageManager {
 
     fn lockfile_package_dependencies(&self, id: PackageID) -> hooks::DependencySlice {
         let s = self.lockfile.packages.get(id as usize).dependencies;
+        // `lockfile::DependencySlice` and `hooks::DependencySlice` are both
+        // `ExternalSlice<Dependency>` (same `Dependency` after MOVE_DOWN), so
+        // this is a no-op; spelled via `new` for nominal-type clarity.
         hooks::DependencySlice::new(s.off, s.len)
     }
 
@@ -122,7 +92,8 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_dependencies_buf(&self) -> &[hooks::Dependency] {
-        dep_slice_to_hooks(self.lockfile.buffers.dependencies.as_slice())
+        // `dependency::Dependency` IS `hooks::Dependency` (re-export).
+        self.lockfile.buffers.dependencies.as_slice()
     }
 
     fn lockfile_resolutions_buf(&self) -> &[PackageID] {
@@ -138,27 +109,10 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
     ) -> Option<PackageID> {
-        // Zig: `lockfile.resolvePackageFromNameAndVersion` (resolver.zig:2028
-        // calls `manager.lockfile.resolve(name, version)`).
-        let name_hash = bun_semver::String::Builder::string_hash(name);
-        let entry = self.lockfile.package_index.get(&name_hash)?;
-        let v = version_from_hooks(version);
-        let buf = self.lockfile.buffers.string_bytes.as_slice();
-        match entry {
-            lockfile::PackageIndexEntry::Id(id) => {
-                let pkg = self.lockfile.packages.get(*id as usize);
-                if pkg.resolution.satisfies(v, buf, buf) { Some(*id) } else { None }
-            }
-            lockfile::PackageIndexEntry::Ids(ids) => {
-                for &id in ids.iter() {
-                    let pkg = self.lockfile.packages.get(id as usize);
-                    if pkg.resolution.satisfies(v, buf, buf) {
-                        return Some(id);
-                    }
-                }
-                None
-            }
-        }
+        // Zig: `manager.lockfile.resolve(name, dependency_version)`
+        // (resolver.zig:2028) → `Lockfile.resolvePackageFromNameAndVersion`.
+        self.lockfile
+            .resolve_package_from_name_and_version(name, Clone::clone(version))
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -184,8 +138,8 @@ impl hooks::AutoInstaller for PackageManager {
     ) -> Result<PackageID, bun_core::Error> {
         // Port of `Package.fromPackageJSON` + `lockfile.appendPackage`
         // (resolver.zig:2064-2073), driven entirely off the
-        // `PackageJsonView` interface so the install crate does not need to
-        // name `bun_resolver::PackageJSON` here.
+        // `PackageJsonView` interface so this impl does not need to name
+        // `bun_resolver::PackageJSON` directly.
 
         // PORT NOTE: reshaped for borrowck — `string_builder!` borrows
         // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
@@ -206,7 +160,7 @@ impl hooks::AutoInstaller for PackageManager {
         let source_buf = package_json.dependency_source_buf();
         for (_, dep) in package_json.dependency_iter() {
             if dep.behavior.is_enabled(features) {
-                dep_from_hooks(dep).count(source_buf, &mut string_builder);
+                dep.count(source_buf, &mut string_builder);
                 total_dependencies_count += 1;
             }
         }
@@ -244,8 +198,7 @@ impl hooks::AutoInstaller for PackageManager {
             // SAFETY: `pm` is the unique owner; `string_builder` borrows
             // disjoint lockfile fields.
             let pm_ref: &mut PackageManager = unsafe { &mut *pm };
-            dependencies[0] =
-                dep_from_hooks(dep).clone_in(pm_ref, source_buf, &mut string_builder)?;
+            dependencies[0] = dep.clone_in(pm_ref, source_buf, &mut string_builder)?;
             dependencies = &mut dependencies[1..];
             if dependencies.is_empty() {
                 break;
@@ -254,12 +207,16 @@ impl hooks::AutoInstaller for PackageManager {
 
         package.meta.arch = package_json.arch();
         package.meta.os = package_json.os();
-        package.meta.set_has_install_script(lockfile::HasInstallScript::Old);
+        package.meta.set_has_install_script(crate::lockfile::HasInstallScript::Old);
 
-        package.dependencies =
-            crate::lockfile::DependencySlice::new(dep_start as u32, total_dependencies_count - dependencies.len() as u32);
-        package.resolutions =
-            crate::lockfile::PackageIDSlice::new(package.dependencies.off, package.dependencies.len);
+        package.dependencies = crate::lockfile::DependencySlice::new(
+            dep_start as u32,
+            total_dependencies_count - dependencies.len() as u32,
+        );
+        package.resolutions = crate::lockfile::PackageIDSlice::new(
+            package.dependencies.off,
+            package.dependencies.len,
+        );
 
         let new_length = package.dependencies.len as usize + dep_start;
         // SAFETY: capacity reserved above; slots filled by `fill()` below.
@@ -296,18 +253,30 @@ impl hooks::AutoInstaller for PackageManager {
         resolution: &hooks::Resolution,
         buf: &'b mut [u8],
     ) -> Result<&'b [u8], bun_core::Error> {
+        // The resolver passes a `bun_paths::PathBuffer`-sized slice
+        // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
+        // signature's `&mut PathBuffer`.
+        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
+        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
+        // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
+        // (asserted above).
+        let path_buf: &mut bun_paths::PathBuffer =
+            unsafe { &mut *(buf.as_mut_ptr() as *mut bun_paths::PathBuffer) };
+        let r = *resolution_from_hooks(resolution);
         // SAFETY: `path_for_resolution` only mutates `self` to populate the
         // cache directory; the resolver call site holds no other borrow.
         let this: *const Self = self;
-        let path_buf = bun_paths::PathBuffer::from_mut_slice(buf);
-        let r = *resolution_from_hooks(resolution);
-        // SAFETY: see above.
-        let out = directories::path_for_resolution(unsafe { &mut *(this as *mut Self) }, package_id, r, path_buf)?;
+        let out = directories::path_for_resolution(
+            unsafe { &mut *(this as *mut Self) },
+            package_id,
+            r,
+            path_buf,
+        )?;
         Ok(&*out)
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        crate::package_manager::PackageManagerLifecycle::get_preinstall_state(self, package_id)
+        lifecycle::get_preinstall_state(self, package_id)
     }
 
     fn enqueue_package_for_download(
@@ -344,7 +313,7 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, Clone::clone(version_from_hooks(version)))
+        pm_resolution::resolve_from_disk_cache(self, name, Clone::clone(version))
     }
 
     fn enqueue_dependency_to_root(
@@ -354,13 +323,7 @@ impl hooks::AutoInstaller for PackageManager {
         version_buf: &[u8],
         behavior: hooks::Behavior,
     ) -> hooks::EnqueueResult {
-        match enqueue::enqueue_dependency_to_root(
-            self,
-            name,
-            version_from_hooks(version),
-            version_buf,
-            behavior,
-        ) {
+        match enqueue::enqueue_dependency_to_root(self, name, version, version_buf, behavior) {
             enqueue::DependencyToEnqueue::Resolution { package_id, resolution } => {
                 hooks::EnqueueResult::Resolution {
                     package_id,
@@ -386,7 +349,7 @@ impl hooks::AutoInstaller for PackageManager {
         // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
         // null is also accepted (Zig: `?*logger.Log`).
         let log = unsafe { log.as_mut() };
-        dependency::parse(name, name_hash, version, sliced, log, None).map(version_to_hooks)
+        dependency::parse(name, name_hash, version, sliced, log, None)
     }
 
     fn parse_dependency_with_tag(
@@ -409,7 +372,6 @@ impl hooks::AutoInstaller for PackageManager {
             log,
             None,
         )
-        .map(version_to_hooks)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
@@ -417,9 +379,6 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn dependency_version_is_exact_npm(&self, v: &hooks::DependencyVersion) -> bool {
-        version_from_hooks(v)
-            .npm()
-            .map(|n| n.version.is_exact())
-            .unwrap_or(false)
+        v.npm().map(|n| n.version.is_exact()).unwrap_or(false)
     }
 }

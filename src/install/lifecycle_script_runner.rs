@@ -776,7 +776,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
-        self.ensure_not_in_heap();
+        // SAFETY: `self` is live; the raw-ptr receiver touches only disjoint
+        // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
+        unsafe { Self::ensure_not_in_heap(self as *mut Self) };
 
         match status {
             Status::Exited(exit) => {
@@ -1196,7 +1198,9 @@ impl<'a> BufferedReaderParent for LifecycleScriptSubprocess<'a> {
 impl Drop for LifecycleScriptSubprocess<'_> {
     fn drop(&mut self) {
         self.reset_polls();
-        self.ensure_not_in_heap();
+        // SAFETY: `self` is live for the duration of `drop`; raw-ptr receiver
+        // touches only `heap`/`manager` (see `ensure_not_in_heap` doc).
+        unsafe { Self::ensure_not_in_heap(self as *mut Self) };
     }
 }
 

@@ -694,7 +694,7 @@ pub fn edit(
                                             let url = request
                                                 .version
                                                 .literal
-                                                .slice(request.version_buf);
+                                                .slice(request.version_buf());
                                             if let js_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
                                                     request.e_string = Some(
@@ -1041,7 +1041,7 @@ pub fn edit(
                         break 'uninitialized match request.version.tag {
                             dependency::Tag::Uninitialized => b"latest" as &'static [u8],
                             _ => leak_dup(
-                                request.version.literal.slice(request.version_buf),
+                                request.version.literal.slice(request.version_buf()),
                             ),
                         };
                     } else {
@@ -1168,7 +1168,7 @@ pub fn edit(
                             // SAFETY: `tag == Npm` checked above.
                             && unsafe { request.version.value.npm.is_alias }
                         {
-                            let dep_literal = request.version.literal.slice(request.version_buf);
+                            let dep_literal = request.version.literal.slice(request.version_buf());
                             if let Some(at_index) = strings::index_of_char(dep_literal, b'@') {
                                 let at_index = at_index as usize;
                                 let mut v = Vec::new();
@@ -1186,11 +1186,11 @@ pub fn edit(
                         break 'npm leak_str(new_version);
                     }
 
-                    leak_dup(request.version.literal.slice(request.version_buf))
+                    leak_dup(request.version.literal.slice(request.version_buf()))
                 }
 
                 resolution::Tag::Workspace => b"workspace:*",
-                _ => leak_dup(request.version.literal.slice(request.version_buf)),
+                _ => leak_dup(request.version.literal.slice(request.version_buf())),
             };
         }
     }

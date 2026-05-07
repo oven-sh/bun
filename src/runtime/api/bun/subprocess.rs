@@ -1214,13 +1214,9 @@ impl Subprocess<'_> {
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = Self::consume_exited_promise(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM.
-                    unsafe { (*event_loop).enter() };
-                    // defer loop.exit() — handled below
-                    let _exit_guard = scopeguard::guard((), |_| {
-                        // SAFETY: event_loop points into the live VM.
-                        unsafe { (*event_loop).exit() }
-                    });
+                    // SAFETY: event_loop points into the live VM and outlives this scope.
+                    let _exit_guard =
+                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();

@@ -420,9 +420,9 @@ impl CompileTarget {
                     };
                     let tmpdir = bun_sys::Dir::cwd()
                         .make_open_path(tempdir_name.as_bytes(), Default::default())?;
-                    let _cleanup = scopeguard::guard((), |_| {
+                    scopeguard::defer! {
                         let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
-                    });
+                    }
                     let extract_res = bun_libarchive::Archiver::extract_to_dir(
                         tarball_bytes.as_slice(),
                         tmpdir.fd(),

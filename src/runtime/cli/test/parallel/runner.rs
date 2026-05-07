@@ -46,23 +46,6 @@ macro_rules! format_bytes {
 /// module load alone can exceed the production 5ms threshold.
 pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
-/// Owns the coordinator's per-run worker temp directory (NUL-terminated path
-/// bytes); recursively removes it on drop so JUnit/coverage fragments left by
-/// workers are cleaned up on every exit path.
-struct WorkerTmpdir(Box<[u8]>);
-
-impl WorkerTmpdir {
-    fn path(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl Drop for WorkerTmpdir {
-    fn drop(&mut self) {
-        let _ = Fd::cwd().delete_tree(&self.0);
-    }
-}
-
 /// Owns the coordinator-side per-run worker temp directory path (NUL-terminated
 /// bytes); recursively removes it on drop. Mirrors the Zig
 /// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.

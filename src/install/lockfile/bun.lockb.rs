@@ -216,7 +216,10 @@ pub fn save(
     // see `split_stream!` doc.
     {
         let (s, w) = split_stream!(&mut stream);
-        package::serializer::save(&this.packages, s, w)?;
+        // PORT NOTE: turbofish — `this.packages` is `PackageList = List<u64>`, but
+        // inference through `MultiArrayList<Package<_>>` is brittle when sibling
+        // generic types in the crate have errors. Pin SemverIntType explicitly.
+        package::serializer::save::<u64, _, _>(&this.packages, s, w)?;
     }
     {
         let (s, w) = split_stream!(&mut stream);

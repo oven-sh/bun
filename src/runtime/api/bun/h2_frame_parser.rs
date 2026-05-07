@@ -2648,21 +2648,17 @@ impl H2FrameParser {
 
                     if result.is_boolean() && !result.to_boolean() {
                         self.has_nonnative_backpressure = true;
-                        self.deref();
                         return bytes_len;
                     }
                 }
 
-                let r = self.flush_stream_queue();
-                self.deref();
-                return r;
+                return self.flush_stream_queue();
             }
         };
         // if no backpressure flush data queue
         if !self.has_backpressure() {
             written += self.flush_stream_queue();
         }
-        self.deref();
         written
     }
 

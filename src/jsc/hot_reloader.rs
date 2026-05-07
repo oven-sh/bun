@@ -1202,9 +1202,8 @@ where
             }
         }
 
-        // `defer current_task.enqueue();`
-        current_task.enqueue();
-        // _flush guard handles `Output::flush()` then `ctx.flush_evictions()` on drop (LIFO).
+        // Drop order (LIFO, matches Zig defers): current_task guard → enqueue(),
+        // then _flush guard → Output::flush() + ctx.flush_evictions().
     }
 }
 

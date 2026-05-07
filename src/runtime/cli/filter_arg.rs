@@ -51,10 +51,7 @@ pub fn get_candidate_package_patterns<'a>(
     // TODO(port): narrow error set
     bun_js_parser::ast::expr::data::Store::create();
     bun_js_parser::ast::stmt::data::Store::create();
-    let _store_guard = scopeguard::guard((), |_| {
-        bun_js_parser::ast::expr::data::Store::reset();
-        bun_js_parser::ast::stmt::data::Store::reset();
-    });
+    let _store_guard = bun_js_parser::ast::StoreResetGuard::new();
 
     let mut workdir = workdir_;
 

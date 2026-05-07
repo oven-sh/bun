@@ -1069,17 +1069,24 @@ impl Diff {
     pub fn generate(
         pm: &mut PackageManager,
         log: &mut logger::Log,
-        from_lockfile: &mut Lockfile,
+        from_lockfile: &Lockfile,
         to_lockfile: &mut Lockfile,
-        from: &mut Package,
-        to: &mut Package,
+        from: &Package,
+        to: &Package,
         update_requests: Option<&[UpdateRequest]>,
-        id_mapping: Option<&mut [PackageID]>,
+        mut id_mapping: Option<&mut [PackageID]>,
     ) -> Result<DiffSummary, bun_core::Error> {
         // TODO(port): narrow error set
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        let mut to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
+        // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
+        // it after `parseWithJSON` (which may grow `to_lockfile.buffers
+        // .dependencies` and invalidate the old slice). Mirror that with a raw
+        // fat pointer so the `&mut to_lockfile` reborrows below don't conflict
+        // with this view; re-derive after each call that may reallocate.
+        let mut to_deps: *const [Dependency] =
+            to.dependencies.get(to_lockfile.buffers.dependencies.as_slice());
+        macro_rules! to_deps { () => { unsafe { &*to_deps } } }
         let from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.as_slice());
         let from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.as_slice());
         let mut to_i: usize = 0;

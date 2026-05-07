@@ -100,10 +100,10 @@ impl<'a> ProcessHandle<'a> {
             // Zig: `defer { ... env.map.put("PATH", original_path); }` — restores PATH
             // unconditionally at block exit (success OR error). Keep the guard armed for the
             // whole block so `?` early-returns also restore.
-            let _guard = scopeguard::guard((), move |_| {
+            scopeguard::defer! {
                 // SAFETY: env_ptr valid for the run loop lifetime (see above).
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            });
+            }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
             let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
             break 'brk spawn::spawn_process(

@@ -23,7 +23,7 @@ use bun_logger as logger;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::package_json::PackageJSON;
-use bun_string::{String as BunString, ZigString};
+use bun_string::{OwnedString, String as BunString, ZigString};
 use bun_sys::Fd;
 
 use crate::virtual_machine::VirtualMachine;
@@ -174,16 +174,15 @@ impl<'a> AsyncModule<'a> {
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {
-            // PORT NOTE: inner Zig defer block hoisted; runs at end of `if`
-            // arm via scopeguard.
-            let source_code = resolved_source.source_code;
-            let needs_deref = resolved_source.source_code_needs_deref;
-            resolved_source.source_code_needs_deref = false;
-            let _guard = scopeguard::guard((), move |_| {
-                if needs_deref {
-                    source_code.deref();
-                }
-            });
+            // PORT NOTE: inner Zig `defer { if (needs_deref) { needs_deref = false;
+            // source_code.deref(); } }` — `OwnedString` derefs on Drop at the end
+            // of this `if` arm; `None` is the no-op path.
+            let _source_code_guard = if resolved_source.source_code_needs_deref {
+                resolved_source.source_code_needs_deref = false;
+                Some(OwnedString::new(resolved_source.source_code))
+            } else {
+                None
+            };
 
             if e == bun_core::err!("JSError") {
                 errorable = ErrorableResolvedSource::err(

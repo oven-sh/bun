@@ -67,33 +67,6 @@ fn timer_all<'a>() -> &'a mut crate::timer::All {
     unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
 }
 
-/// Missing `JSValue` methods used by cron — local extension until upstreamed.
-trait JSValueCronExt {
-    fn as_promise_ptr<T>(self) -> *mut T;
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueCronExt for JSValue {
-    /// Inverse of [`JSValue::from_ptr_address`] — recover the `*mut T` smuggled
-    /// through `Promise.then`'s trailing context argument.
-    #[inline]
-    fn as_promise_ptr<T>(self) -> *mut T {
-        // SAFETY: caller contract — value was created via `from_ptr_address`.
-        self.as_number() as usize as *mut T
-    }
-    /// `AsyncContextFrame::withAsyncContextIfNeeded` — wraps a callback so it
-    /// restores the current AsyncLocalStorage context when invoked later.
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            fn AsyncContextFrame__withAsyncContextIfNeeded(
-                global: *const JSGlobalObject,
-                callback: JSValue,
-            ) -> JSValue;
-        }
-        // SAFETY: FFI into JSC; `global` is live for the call.
-        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
-    }
-}
-
 // ============================================================================
 // CronJobBase — shared base for CronRegisterJob and CronRemoveJob
 // ============================================================================

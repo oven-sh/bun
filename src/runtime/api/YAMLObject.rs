@@ -1178,7 +1178,7 @@ impl<'a> ParserCtx<'a> {
                     JSValue::create_empty_object(self.global, e_object.properties.len as usize);
 
                 args.append(obj);
-                self.seen_objects.insert(key, obj);
+                self.seen_objects.put(key, obj)?;
 
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.unwrap();

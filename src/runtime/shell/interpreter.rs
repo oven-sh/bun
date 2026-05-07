@@ -1020,6 +1020,31 @@ impl Interpreter {
         &self.root_io
     }
 
+    /// Spec: interpreter.zig `#computeEstimatedSizeForGC` (interpreter.zig:752).
+    pub fn compute_estimated_size_for_gc(&self) -> usize {
+        let mut size = core::mem::size_of::<Interpreter>();
+        size += self.args.memory_cost();
+        size += self.root_shell.memory_cost();
+        size += self.root_io.memory_cost();
+        // SAFETY: `jsobjs` is either an empty slice (init) or points into the
+        // args arena (set by `init`); valid for the life of the interpreter.
+        size += unsafe { (*self.jsobjs).len() } * core::mem::size_of::<crate::jsc::JSValue>();
+        // PORT NOTE: Zig also walks `vm_args_utf8` (cached argv slices for the
+        // builtin `$@` expansion). The Rust struct does not carry that field
+        // yet — added when builtin argv expansion lands.
+        size
+    }
+
+    /// Spec: interpreter.zig `memoryCost`.
+    pub fn memory_cost(&self) -> usize {
+        self.compute_estimated_size_for_gc()
+    }
+
+    /// Spec: interpreter.zig `estimatedSize`. Codegen-called accessor.
+    pub fn estimated_size(&self) -> usize {
+        self.estimated_size_for_gc
+    }
+
     /// Spec: interpreter.zig `throwShellErr(err, event_loop)` — `mini` prints
     /// and exits(1); `js` raises a JS exception. Dispatch on `global_this`
     /// (set only on the JS event-loop path by `create_shell_interpreter`).
@@ -2138,23 +2163,23 @@ pub fn create_shell_interpreter(
 
     let resolve = arguments
         .next_eat()
-        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+        .ok_or_else(|| global.throw(format_args!("shell: expected 3 arguments, got 0")))?;
     let reject = arguments
         .next_eat()
-        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+        .ok_or_else(|| global.throw(format_args!("shell: expected 3 arguments, got 0")))?;
     let parsed_shell_script_js = arguments
         .next_eat()
-        .ok_or_else(|| global.throw("shell: expected 3 arguments, got 0"))?;
+        .ok_or_else(|| global.throw(format_args!("shell: expected 3 arguments, got 0")))?;
 
     let parsed_shell_script = ParsedShellScript::from_js(parsed_shell_script_js)
-        .ok_or_else(|| global.throw("shell: expected a ParsedShellScript"))?;
+        .ok_or_else(|| global.throw(format_args!("shell: expected a ParsedShellScript")))?;
     // SAFETY: from_js returned a live wrapper-owned heap pointer.
     let parsed_shell_script = unsafe { &mut *parsed_shell_script };
 
     if parsed_shell_script.args.is_none() {
-        return Err(global.throw(
+        return Err(global.throw(format_args!(
             "shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.",
-        ));
+        )));
     }
 
     let (shargs, mut jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
@@ -2162,7 +2187,10 @@ pub fn create_shell_interpreter(
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let event_loop = EventLoopHandle::Js(unsafe { (*global.bun_vm()).event_loop });
+    // PORT NOTE: `EventLoopHandle` is still the opaque-usize shim (see line
+    // ~1480); store the raw `*mut EventLoop` so the JS-tag dispatch works once
+    // the real `bun_event_loop::EventLoopHandle` replaces the shim.
+    let event_loop = EventLoopHandle(unsafe { (*global.bun_vm()).event_loop() } as usize);
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),

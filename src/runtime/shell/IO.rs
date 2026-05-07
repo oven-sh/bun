@@ -82,7 +82,38 @@ impl fmt::Display for OutKind {
     }
 }
 
+impl InKind {
+    /// Spec: IO.zig `InKind.memoryCost`.
+    pub fn memory_cost(&self) -> usize {
+        match self {
+            InKind::Fd(r) => r.memory_cost(),
+            InKind::Ignore => 0,
+        }
+    }
+}
+
+impl OutFd {
+    /// Spec: IO.zig `OutKind.Fd.memoryCost`.
+    pub fn memory_cost(&self) -> usize {
+        let mut cost = self.writer.memory_cost();
+        if let Some(captured) = self.captured {
+            // SAFETY: `captured` points into a live `ShellExecEnv` buffer;
+            // the env outlives the IO that borrows it.
+            cost += unsafe { (*captured).memory_cost() };
+        }
+        cost
+    }
+}
+
 impl OutKind {
+    /// Spec: IO.zig `OutKind.memoryCost`.
+    pub fn memory_cost(&self) -> usize {
+        match self {
+            OutKind::Fd(fd) => fd.memory_cost(),
+            _ => 0,
+        }
+    }
+
     /// If this output requires async IO (i.e. it's an `Fd`), return the
     /// safeguard token; otherwise `None` and the caller can write
     /// synchronously to the captured buffer / drop.

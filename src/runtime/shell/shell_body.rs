@@ -112,9 +112,7 @@ impl ShellErr {
                     bstr::BStr::new(val)
                 ))
             }
-            ShellErr::Todo(todo) => {
-                global.throw_todo(&std::string::String::from_utf8_lossy(todo))
-            }
+            ShellErr::Todo(todo) => global.throw_todo(todo),
         };
         match self {
             ShellErr::Sys(_) => {}
@@ -1179,9 +1177,7 @@ pub mod testing_apis {
         }
     }
 
-    // TODO(port): jsc::MarkedArgumentBuffer::wrap — generates a host_fn shim that allocates a
-    // MarkedArgumentBuffer and forwards to the impl. Hand-write or proc-macro in Phase B.
-    pub const SHELL_LEX: jsc::JSHostFn = bun_jsc::marked_argument_buffer_wrap!(shell_lex_impl);
+    pub const SHELL_LEX: jsc::JSHostFnZig = bun_jsc::marked_argument_buffer_wrap!(shell_lex_impl);
 
     fn shell_lex_impl(
         global: &JSGlobalObject,
@@ -1250,7 +1246,7 @@ pub mod testing_apis {
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> =
@@ -1266,7 +1262,7 @@ pub mod testing_apis {
         bun_str.to_js(global)
     }
 
-    pub const SHELL_PARSE: jsc::JSHostFn = bun_jsc::marked_argument_buffer_wrap!(shell_parse_impl);
+    pub const SHELL_PARSE: jsc::JSHostFnZig = bun_jsc::marked_argument_buffer_wrap!(shell_parse_impl);
 
     fn shell_parse_impl(
         global: &JSGlobalObject,
@@ -1328,14 +1324,14 @@ pub mod testing_apis {
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
                     return Err(
-                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(str))),
+                        global.throw_pretty(format_args!("{}", bstr::BStr::new(str))),
                     );
                 }
 
                 if let Some(p) = out_parser.as_mut() {
                     let errstr = p.combine_errors();
                     return Err(
-                        global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(errstr))),
+                        global.throw_pretty(format_args!("{}", bstr::BStr::new(errstr))),
                     );
                 }
 
@@ -1344,6 +1340,14 @@ pub mod testing_apis {
         };
 
         // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(script_ast, .{})})`.
+        // `Interpreter::parse` returns the lifetime-erased local `ast::Script`
+        // (a layout-compatible mirror — see `shell/mod.rs` and the transmute
+        // in `Interpreter::parse`); transmute back for JSON formatting.
+        let script_ast: bun_shell_parser::ast::Script<'_> = unsafe {
+            core::mem::transmute::<super::ast::Script, bun_shell_parser::ast::Script<'_>>(
+                script_ast,
+            )
+        };
         let str = format!("{}", bun_shell_parser::json_fmt::script_json_fmt(&script_ast));
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }

@@ -4074,11 +4074,12 @@ impl NodeFS {
             // first; fall back to read/write on cross-device or unsupported
             // fd types. std.c declares it returning usize on FreeBSD, so
             // bitcast to isize before getErrno.
-            let mut off_in: i64 = 0;
-            let mut off_out: i64 = 0;
             'cfr: loop {
-                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                let rc: isize = unsafe { sys::freebsd::copy_file_range(src_fd.native(), &mut off_in, dest_fd.native(), &mut off_out, (i32::MAX - 1) as usize, 0) } as isize;
+                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI.
+                // Null offsets so the kernel advances the file's seek position — matches
+                // `std.c.copy_file_range(..., null, ..., null, ...)` and keeps the read/write
+                // fallback (which uses the seek position) coherent if we ever break mid-loop.
+                let rc: isize = unsafe { sys::freebsd::copy_file_range(src_fd.native(), core::ptr::null_mut(), dest_fd.native(), core::ptr::null_mut(), (i32::MAX - 1) as usize, 0) } as isize;
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
@@ -4239,7 +4240,7 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let dest_buf = paths::os_path_buffer_pool().get();
+            let mut dest_buf = paths::os_path_buffer_pool().get();
             let src = strings::to_kernel32_path(bun_core::reinterpret_slice::<u16>(&mut self.sync_error_buf), args.src.slice());
             let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
@@ -4573,7 +4574,7 @@ impl NodeFS {
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
                                     let stripped = without_nt_prefix((&parent[..]));
                                     let n = stripped.len();
-                                    let tmp = paths::os_path_buffer_pool().get();
+                                    let mut tmp = paths::os_path_buffer_pool().get();
                                     tmp[..n].copy_from_slice(stripped);
                                     // SAFETY: `working_mem`/`parent` are not used after this return.
                                     Self::os_path_into_buf(unsafe { &mut *sync_error_buf_ptr }, &tmp[..n])
@@ -4662,9 +4663,9 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            let mut req = uv::fs_t::UNINITIALIZED;
-            let _d = scopeguard::guard(&mut req, |r| r.deinit());
-            let rc = unsafe { uv::uv_fs_mkdtemp(bun_aio::Loop::get(), &mut req, prefix_buf.as_ptr().cast(), None) };
+            let mut _d = scopeguard::guard(uv::fs_t::UNINITIALIZED, |mut r| r.deinit());
+            let req = &mut *_d;
+            let rc = unsafe { uv::uv_fs_mkdtemp(bun_aio::Loop::get(), req, prefix_buf.as_ptr().cast(), None) };
             if let Some(errno) = rc.errno() {
                 return Maybe::Err(sys::Error { errno, syscall: sys::Tag::mkdtemp, path: prefix_buf[..len + 6].into(), ..Default::default() });
             }
@@ -5820,9 +5821,9 @@ impl NodeFS {
     pub fn realpath_inner(&mut self, args: &args::Realpath, variant: RealpathVariant) -> Maybe<ret::Realpath> {
         #[cfg(windows)]
         {
-            let mut req = uv::fs_t::UNINITIALIZED;
-            let _d = scopeguard::guard(&mut req, |r| r.deinit());
-            let rc = unsafe { uv::uv_fs_realpath(bun_aio::Loop::get(), &mut req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
+            let mut _d = scopeguard::guard(uv::fs_t::UNINITIALIZED, |mut r| r.deinit());
+            let req = &mut *_d;
+            let rc = unsafe { uv::uv_fs_realpath(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), None) };
             if let Some(errno) = rc.errno() {
                 return Maybe::Err(sys::Error { errno, syscall: sys::Tag::realpath, path: args.path.slice().into(), ..Default::default() });
             }
@@ -6201,9 +6202,9 @@ impl NodeFS {
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
-            let mut req = uv::fs_t::UNINITIALIZED;
-            let _d = scopeguard::guard(&mut req, |r| r.deinit());
-            let rc = unsafe { uv::uv_fs_utime(bun_aio::Loop::get(), &mut req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut _d = scopeguard::guard(uv::fs_t::UNINITIALIZED, |mut r| r.deinit());
+            let req = &mut *_d;
+            let rc = unsafe { uv::uv_fs_utime(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Maybe::Ok(()) };
@@ -6222,9 +6223,9 @@ impl NodeFS {
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
         {
-            let mut req = uv::fs_t::UNINITIALIZED;
-            let _d = scopeguard::guard(&mut req, |r| r.deinit());
-            let rc = unsafe { uv::uv_fs_lutime(bun_aio::Loop::get(), &mut req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
+            let mut _d = scopeguard::guard(uv::fs_t::UNINITIALIZED, |mut r| r.deinit());
+            let req = &mut *_d;
+            let rc = unsafe { uv::uv_fs_lutime(bun_aio::Loop::get(), req, args.path.slice_z(&mut self.sync_error_buf).as_ptr(), args.atime, args.mtime, None) };
             return if let Some(errno) = rc.errno() {
                 Maybe::Err(sys::Error { errno, syscall: sys::Tag::utime, path: args.path.slice().into(), ..Default::default() })
             } else { Maybe::Ok(()) };
@@ -6288,7 +6289,7 @@ impl NodeFS {
     pub fn os_path_into_sync_error_buf_overlap(&mut self, slice: &[OSPathChar]) -> &[u8] {
         #[cfg(windows)]
         {
-            let tmp = paths::os_path_buffer_pool().get();
+            let mut tmp = paths::os_path_buffer_pool().get();
             tmp[..slice.len()].copy_from_slice(slice);
             return strings::from_wpath(&mut self.sync_error_buf, &tmp[..slice.len()]);
         }
@@ -6922,7 +6923,7 @@ impl NodeFS {
                     Maybe::Ok(fd) => fd,
                 };
                 let _close = scopeguard::guard(handle, |fd| fd.close());
-                let wbuf = paths::os_path_buffer_pool().get();
+                let mut wbuf = paths::os_path_buffer_pool().get();
                 let len = unsafe { windows::GetFinalPathNameByHandleW(handle.cast(), wbuf.as_mut_ptr(), wbuf.len() as u32, 0) } as usize;
                 if len == 0 || len >= wbuf.len() {
                     let p = self.os_path_into_sync_error_buf(dest.as_slice());

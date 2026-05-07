@@ -1380,8 +1380,8 @@ pub struct PipeReader {
     pub captured_writer: CapturedWriter,
     pub buffered_output: BufferedOutput,
     /// Backref so async read/write callbacks can drive `Yield::run`. See
-    /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Null
-    /// until wired by the spawning Cmd.
+    /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
+    /// from `Cmd::interp` at `PipeReader::create` time.
     pub interp: *mut crate::shell::interpreter::Interpreter,
     // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
     // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
@@ -1659,9 +1659,9 @@ impl PipeReader {
     }
 
     /// Drive a `Yield` from inside an async I/O callback. Mirrors
-    /// `IOWriter::run_yield` / `IOReader::run_yield`: requires `interp` to
-    /// have been wired; if null, the continuation is dropped (debug-asserts
-    /// it was already terminal).
+    /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is wired at
+    /// `create` time from the spawning `Cmd`; the null guard is a defensive
+    /// debug-assert for tests that construct a PipeReader without a Cmd.
     pub(crate) fn run_yield(&self, y: Yield) {
         let interp = self.interp;
         if interp.is_null() {

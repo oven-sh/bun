@@ -1449,11 +1449,7 @@ impl Template {
         };
         // SAFETY: FileSystem::instance() returns the process-global singleton.
         let top_level_dir = unsafe { (*Fs::FileSystem::instance()).top_level_dir };
-        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are both
-        // `#[repr(transparent)]`-ish wrappers around `[u8; MAX_PATH_BYTES]`.
-        let pathbuf: &mut bun_core::PathBuffer =
-            unsafe { &mut *((&mut *pathbuffer) as *mut PathBuffer as *mut bun_core::PathBuffer) };
-        bun_core::which(pathbuf, path, top_level_dir, b"claude").is_some()
+        bun_core::which(&mut pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
     pub fn create_agent_rule() {

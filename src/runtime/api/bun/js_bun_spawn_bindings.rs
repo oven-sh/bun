@@ -376,8 +376,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         {
             // Since the event loop is recursively called, we need to check if it's safe to recurse.
             if !StackCheck::init().is_safe_to_recurse() {
-                // TODO(port): bun_jsc has no `throw_stack_overflow` yet.
-                return Err(global_this.throw("Maximum call stack size exceeded."));
+                return Err(global_this.throw_stack_overflow());
             }
         }
     }
@@ -556,8 +555,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     **abort_signal = Some(unsafe { (*signal).ref_() });
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
-                        "signal",
-                        "AbortSignal",
+                        b"signal",
+                        b"AbortSignal",
                         signal_val,
                     ));
                 }
@@ -776,19 +775,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 drop(term_options);
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
-                                        global_this.throw("Failed to open PTY")
+                                        global_this.throw(format_args!("Failed to open PTY"))
                                     }
                                     TerminalInitError::DupFailed => global_this
-                                        .throw("Failed to duplicate PTY file descriptor"),
-                                    TerminalInitError::NotSupported => {
-                                        global_this.throw("PTY not supported on this platform")
-                                    }
-                                    TerminalInitError::WriterStartFailed => {
-                                        global_this.throw("Failed to start terminal writer")
-                                    }
-                                    TerminalInitError::ReaderStartFailed => {
-                                        global_this.throw("Failed to start terminal reader")
-                                    }
+                                        .throw(format_args!("Failed to duplicate PTY file descriptor")),
+                                    TerminalInitError::NotSupported => global_this
+                                        .throw(format_args!("PTY not supported on this platform")),
+                                    TerminalInitError::WriterStartFailed => global_this
+                                        .throw(format_args!("Failed to start terminal writer")),
+                                    TerminalInitError::ReaderStartFailed => global_this
+                                        .throw(format_args!("Failed to start terminal reader")),
                                 });
                             }
                         }
@@ -1607,8 +1603,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if !IS_SYNC {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }
-                .on_subprocess_spawn(subprocess.process.cast::<core::ffi::c_void>());
+            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process);
         }
         return Ok(out);
     }
@@ -1652,8 +1647,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }
-            .on_subprocess_spawn(subprocess.process.cast::<core::ffi::c_void>());
+        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process);
     }
 
     let mut did_timeout = false;

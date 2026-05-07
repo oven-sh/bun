@@ -736,14 +736,14 @@ impl ServerConfig {
             let Some(static_obj) = static_.get_object() else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Bun.serve() expects 'routes' to be an object shaped like:\n\n\
-                     \x20 {\n\
-                     \x20   \"/path\": {\n\
+                     \x20 {{\n\
+                     \x20   \"/path\": {{\n\
                      \x20     GET: (req) => new Response(\"Hello\"),\n\
                      \x20     POST: (req) => new Response(\"Hello\"),\n\
-                     \x20   },\n\
+                     \x20   }},\n\
                      \x20   \"/path2/:param\": new Response(\"Hello\"),\n\
                      \x20   \"/path3/:param1/:param2\": (req) => new Response(\"Hello\")\n\
-                     \x20 }\n\n\
+                     \x20 }}\n\n\
                      Learn more at https://bun.com/docs/api/http",
                 )));
             };
@@ -890,29 +890,29 @@ impl ServerConfig {
                          To bundle frontend apps on-demand with Bun.serve(), import HTML files.\n\n\
                          Example:\n\n\
                          ```js\n\
-                         import { serve } from \"bun\";\n\
+                         import {{ serve }} from \"bun\";\n\
                          import app from \"./app.html\";\n\n\
-                         serve({\n\
-                         \x20 routes: {\n\
-                         \x20   \"/index.json\": Response.json({ message: \"Hello World\" }),\n\
+                         serve({{\n\
+                         \x20 routes: {{\n\
+                         \x20   \"/index.json\": Response.json({{ message: \"Hello World\" }}),\n\
                          \x20   \"/app\": app,\n\
-                         \x20   \"/path/:param\": (req) => {\n\
+                         \x20   \"/path/:param\": (req) => {{\n\
                          \x20     const param = req.params.param;\n\
-                         \x20     return Response.json({ message: `Hello ${param}` });\n\
-                         \x20   },\n\
-                         \x20   \"/path\": {\n\
-                         \x20     GET(req) {\n\
-                         \x20       return Response.json({ message: \"Hello World\" });\n\
-                         \x20     },\n\
-                         \x20     POST(req) {\n\
-                         \x20       return Response.json({ message: \"Hello World\" });\n\
-                         \x20     },\n\
-                         \x20   },\n\
-                         \x20 },\n\n\
-                         \x20 fetch(request) {\n\
+                         \x20     return Response.json({{ message: `Hello ${{param}}` }});\n\
+                         \x20   }},\n\
+                         \x20   \"/path\": {{\n\
+                         \x20     GET(req) {{\n\
+                         \x20       return Response.json({{ message: \"Hello World\" }});\n\
+                         \x20     }},\n\
+                         \x20     POST(req) {{\n\
+                         \x20       return Response.json({{ message: \"Hello World\" }});\n\
+                         \x20     }},\n\
+                         \x20   }},\n\
+                         \x20 }},\n\n\
+                         \x20 fetch(request) {{\n\
                          \x20   return new Response(\"fallback response\");\n\
-                         \x20 },\n\
-                         });\n\
+                         \x20 }},\n\
+                         }});\n\
                          ```\n\n\
                          See https://bun.com/docs/api/http for more information.",
                     )));

@@ -31,16 +31,10 @@ bun_output::declare_scope!(bunx, visible);
 
 pub struct BunxCommand;
 
-/// `bun_core::which` takes its own `PathBuffer` newtype; both wrap
-/// `[u8; MAX_PATH_BYTES]` so a pointer cast is layout-safe. Avoids retyping
-/// every `PathBuffer` use in this file.
+/// `bun_paths::PathBuffer` re-exports `bun_core::PathBuffer`; identity helper
+/// kept so existing call sites stay textually unchanged.
 #[inline]
-fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer {
-    // SAFETY: `bun_paths::PathBuffer` is `#[repr(transparent)]` over
-    // `[u8; MAX_PATH_BYTES]`; `bun_core::PathBuffer` is `#[repr(C)]` over the
-    // same array — identical layout.
-    unsafe { &mut *((buf as *mut PathBuffer).cast::<bun_core::PathBuffer>()) }
-}
+fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer { buf }
 
 /// Port of `Stat.mtime().sec` for `libc::stat` — `bun_sys::Stat` is a bare
 /// `libc::stat` alias with no `.mtime()` accessor, so shim the seconds field

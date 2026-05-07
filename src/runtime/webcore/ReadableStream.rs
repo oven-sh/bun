@@ -734,8 +734,9 @@ macro_rules! source_context_codegen {
 
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // SAFETY: `self` is a heap-allocated `NewSource<C>` (via `TrivialNew`/`Box::new`);
-        // ownership transfers to the JS wrapper as `m_ctx`. C++ side stores it as `void*`.
+        // SAFETY: `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
+        // (`Box::into_raw`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
+        // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
         unsafe { (C::JS_CREATE)(global_this, self as *mut Self as *mut c_void) }
     }
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {

@@ -1755,7 +1755,7 @@ impl LogJsc for bun_logger::Log {
                 for msg in &msgs[0..count] {
                     errors_stack.push(msg_to_js(msg, global)?);
                 }
-                let out = self::zig_string::ZigString::init(message.as_bytes());
+                let out = bun_string::ZigString::init(message.as_bytes());
                 global.create_aggregate_error(&errors_stack, &out)
             }
         }

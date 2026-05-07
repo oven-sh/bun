@@ -2035,7 +2035,7 @@ pub fn process_fetch_log(
             // `message_text` alive across the FFI call instead.
             let message_text =
                 format!("{} errors building \"{specifier}\"", errors.len()).into_bytes();
-            let message = crate::zig_string::ZigString::init(&message_text);
+            let message = crate::ZigString::init(&message_text);
             *ret = ErrorableResolvedSource::err(
                 err,
                 take(global_this.create_aggregate_error(&errors, &message)),

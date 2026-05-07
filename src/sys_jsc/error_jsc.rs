@@ -37,9 +37,14 @@ impl ErrorJsc for Error {
     }
 }
 
-pub struct TestingAPIs;
+// PORT NOTE: Zig `pub const TestingAPIs = struct { ... }` is a fieldless namespace
+// struct. Mapped to a module (not `struct + impl`) because `#[bun_jsc::host_fn]`'s
+// Free-kind shim emits `#fn_name(__g, __f)` without a `Self::` qualifier — the
+// wrapped fn must resolve unqualified at module scope (same constraint as
+// `install_jsc::install_binding::js_parse_lockfile`).
+pub mod TestingAPIs {
+    use super::*;
 
-impl TestingAPIs {
     /// Exercises Error.name() with from_libuv=true so tests can feed the
     /// negated-UV-code errno values that node_fs.zig stores and verify the
     /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
@@ -49,7 +54,7 @@ impl TestingAPIs {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = frame.arguments();
-        if arguments.len() < 1 || !arguments[0].is_number() {
+        if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global.throw(format_args!(
                 "sysErrorNameFromLibuv: expected 1 number argument"
             )));
@@ -79,7 +84,7 @@ impl TestingAPIs {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = frame.arguments();
-        if arguments.len() < 1 || !arguments[0].is_number() {
+        if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global.throw(format_args!(
                 "translateUVErrorToE: expected 1 number argument"
             )));

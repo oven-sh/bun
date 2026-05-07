@@ -388,7 +388,7 @@ impl INotifyWatcher {
 /// Repeatedly called by the main watcher until the watcher is terminated.
 pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
-    let _flush = scopeguard::guard((), |_| Output::flush());
+    scopeguard::defer! { Output::flush(); }
 
     let events = this.platform.read()?;
     if events.is_empty() {
@@ -537,8 +537,7 @@ fn process_inotify_event_batch(
     // fields below; we re-slice `this.watch_events` directly after the lock.
     let _ = watch_events;
 
-    this.mutex.lock();
-    let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
+    let _guard = this.mutex.lock_guard();
     if this.running {
         // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
         // PORT NOTE: reshaped for borrowck — split disjoint field borrows so we can

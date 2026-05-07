@@ -1385,21 +1385,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 1. user_routes_to_build → user_routes + RouteList JS object ---
         if !self.config.user_routes_to_build.is_empty() {
             let mut to_build = core::mem::take(&mut self.config.user_routes_to_build);
-            let _old = core::mem::replace(
-                &mut self.user_routes,
-                Vec::with_capacity(to_build.len()),
-            );
-            // TODO(b2-blocked): Bun__ServerRouteList__create(global, callbacks, paths, len)
-            // once the .classes.ts codegen extern is wired. Until then user routes
-            // still register on uws below; only the JS-side RouteList stays .zero.
+            let len = to_build.len();
+            let _old = core::mem::replace(&mut self.user_routes, Vec::with_capacity(len));
+            // Scratch arrays for the C++ factory. `ZigString` borrows the
+            // route-path heap bytes; those bytes move (by pointer) into
+            // `self.user_routes` below and stay live across the FFI call.
+            let mut paths: Vec<bun_string::ZigString> = Vec::with_capacity(len);
+            let mut callbacks: Vec<JSValue> = Vec::with_capacity(len);
             for (i, builder) in to_build.iter_mut().enumerate() {
+                paths.push(bun_string::ZigString::init(builder.route.path.as_bytes()));
+                callbacks.push(builder.callback.get());
                 self.user_routes.push(UserRoute {
                     id: i as u32,
                     server: self_ptr,
                     route: core::mem::take(&mut builder.route),
                 });
             }
-            let _ = route_list_value; // stays ZERO until codegen extern lands
+            // SAFETY: FFI — `global_this` is the live VM global; scratch slices
+            // are valid for `len` elements; C++ copies paths/callbacks into the
+            // returned JS object so the borrows end at return.
+            route_list_value = unsafe {
+                Bun__ServerRouteList__create(
+                    self.global_this,
+                    callbacks.as_mut_ptr(),
+                    paths.as_mut_ptr(),
+                    len,
+                )
+            };
+            // `to_build` (and its `Strong` callbacks) drops here — AFTER the
+            // C++ factory has re-rooted them inside the RouteList object,
+            // matching server.zig's `for (..) builder.deinit()` ordering.
+            drop(to_build);
         }
 
         // --- 2. WebSocket handler app reference ---

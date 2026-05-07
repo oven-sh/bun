@@ -2472,10 +2472,8 @@ impl BlobExt for Blob {
                 // finalizer (which calls back into the default allocator's `free`).
                 // `into_raw` is the explicit ownership-transfer-to-FFI API; the
                 // matching free lives on the C++ side.
-                let external = Box::into_raw(external.into_boxed_slice());
-                // SAFETY: `external` is a fresh non-null `*mut [u16]`; reborrow only
-                // to read ptr/len for the FFI call.
-                let (ptr, len) = unsafe { ((*external).as_ptr(), (*external).len()) };
+                let len = external.len();
+                let ptr = Box::into_raw(external.into_boxed_slice()) as *const u16;
                 return Ok(zig_string_to_external_u16(ptr, len, global));
             }
 

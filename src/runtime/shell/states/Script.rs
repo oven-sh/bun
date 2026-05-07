@@ -141,10 +141,9 @@ impl Script {
     #[inline]
     fn stmt_count_of(me: &Script) -> usize {
         // SAFETY: `me.node` points into the AST arena, which the interpreter
-        // holds for its entire lifetime (`ShellArgs::__arena`). Explicit
-        // `&raw const` projection then `<*const [_]>::len()` — avoids creating
-        // any reference (no implicit autoref on `*me.node`).
-        unsafe { (*core::ptr::addr_of!((*me.node).stmts)).len() }
+        // holds for its entire lifetime (`ShellArgs::__arena`). Explicit `&*`
+        // before field access to satisfy `dangerous_implicit_autorefs`.
+        unsafe { (&*me.node).stmts.len() }
     }
 
     #[inline]

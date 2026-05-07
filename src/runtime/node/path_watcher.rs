@@ -351,7 +351,7 @@ pub fn watch(
     // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
     // which would be distinct fn items with distinct addresses).
     debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
-    debug_assert!(update_end as usize == FSWatcher::on_update_end as usize);
+    debug_assert!(update_end as usize == (FSWatcher::on_update_end as UpdateEndCallback) as usize);
     let _ = vm;
 
     let manager = PathWatcherManager::get()?;

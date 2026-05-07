@@ -2575,8 +2575,12 @@ where
         self.pending_requests -= 1;
     }
 
-
-    pub fn on_node_http_request_with_upgrade_ctx(
+    // PORT NOTE: `on_node_http_request{,_with_upgrade_ctx}` live in `mod.rs`
+    // (with `*mut Self` receivers to avoid the long-lived `&mut Self` alias
+    // across JS re-entry); the `&mut self` drafts that used to be here were
+    // duplicates and have been removed.
+    #[cfg(any())]
+    fn _on_node_http_request_with_upgrade_ctx_removed_dup(
         &mut self,
         req: &mut uws::Request,
         resp: &mut uws_sys::NewAppResponse<SSL>,

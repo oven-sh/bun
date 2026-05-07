@@ -1060,12 +1060,24 @@ impl Lockfile {
         old.scratch.dependency_list_queue.discard(queued);
 
         {
-            let mut builder = new.string_builder();
-            old.overrides.count(old, &mut builder);
-            old.catalogs.count(old, &mut builder);
-            builder.allocate()?;
-            new.overrides = old.overrides.clone(manager, old, new, &mut builder)?;
-            new.catalogs = old.catalogs.clone(manager, old, new, &mut builder)?;
+            // PORT NOTE: reshaped for borrowck. Zig holds `&old.overrides` /
+            // `&old.catalogs` while also passing `*Lockfile old` and
+            // `*Lockfile new` (the latter aliased again inside `builder`).
+            // The Rust signatures take `&Lockfile` for `old` and read `new`
+            // through `builder.lockfile`, so the only conflict left is the
+            // field-assign on `new.*` while `builder` borrows `new` — store
+            // the results in temps and assign after `builder` drops.
+            let (overrides, catalogs) = {
+                let mut builder = new.string_builder();
+                old.overrides.count(&*old, &mut builder);
+                old.catalogs.count(&*old, &mut builder);
+                builder.allocate()?;
+                let ov = old.overrides.clone(manager, &*old, &mut builder)?;
+                let ca = old.catalogs.clone(manager, &*old, &mut builder)?;
+                (ov, ca)
+            };
+            new.overrides = overrides;
+            new.catalogs = catalogs;
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive

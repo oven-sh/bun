@@ -152,6 +152,17 @@ impl<'a> Scope<'a> {
     }
 }
 
+// Zig callers write `defer ast_scope.exit()` immediately after `enter()`;
+// porting that as RAII so `let _scope = alloc.enter();` restores the previous
+// `Expr/Stmt.Data.Store.memory_allocator` on every return path. `exit()` is
+// idempotent (just rewrites the thread-locals to `previous`), so an explicit
+// `.exit()` followed by Drop is harmless.
+impl<'a> Drop for Scope<'a> {
+    fn drop(&mut self) {
+        self.exit();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/js_parser/ast/ASTMemoryAllocator.zig (94 lines)

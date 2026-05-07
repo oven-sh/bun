@@ -51,17 +51,18 @@ impl OverrideMap {
         });
     }
 
-    pub fn count(&self, lockfile: &mut Lockfile, builder: &mut StringBuilder) {
+    pub fn count(&self, lockfile: &Lockfile, builder: &mut StringBuilder) {
         for dep in self.map.values() {
             dep.count(lockfile.buffers.string_bytes.as_slice(), builder);
         }
     }
 
+    /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
+    /// `builder.lockfile` is `new`. Dropped to avoid the alias.
     pub fn clone(
         &self,
         pm: &mut PackageManager,
-        old_lockfile: &mut Lockfile,
-        _new_lockfile: &mut Lockfile,
+        old_lockfile: &Lockfile,
         new_builder: &mut StringBuilder,
     ) -> Result<OverrideMap, Error> {
         let mut new = OverrideMap::default();

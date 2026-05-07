@@ -1283,6 +1283,28 @@ impl Interpreter {
             self.root_shell.deinit_embedded(false);
         }
 
+        // PORT NOTE: free the parse arena eagerly. Zig's `args.__arena` is a
+        // lightweight `std.heap.ArenaAllocator` (a few KB), so leaving it for
+        // the GC finalizer is fine there. The Rust port's `bun_alloc::Arena` is
+        // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
+        // several fresh 64 KiB pages, and with `MI_DEBUG=3` each page-init
+        // runs `mi_assert_expensive(mi_mem_is_zero(page, 64 KiB))`. Under the
+        // shell-load.test.ts fixture (30 000 back-to-back `$\`...\`` calls)
+        // those pages are held until JSC finalizes the wrapper, so RSS grows
+        // ~220 KiB per pending interpreter and >50 % of CPU is spent
+        // re-scanning freshly-mmap'd zero pages. Resetting here returns the
+        // pages to mimalloc's pool immediately so subsequent parses reuse them
+        // (`memid.initially_zero == false` → the expensive scan is skipped)
+        // and memory stays flat. The new heap created by `reset()` allocates
+        // no pages until first use, so the per-interpreter footprint left for
+        // the finalizer is just the bare `mi_heap_t`. `script_ast` is cleared
+        // first because every node it references lives in the arena being
+        // destroyed; nothing dereferences it after this point (the only
+        // remaining reader is `memory_cost()`, which queries
+        // `__arena.allocated_bytes()` and never touches the AST).
+        self.args.script_ast = ast::Script { stmts: &[] };
+        self.args.__arena.reset();
+
         self.this_jsvalue = crate::jsc::JSValue::ZERO;
         self.cleanup_state = CleanupState::RuntimeCleaned;
     }

@@ -256,8 +256,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // Bun__fetchPreconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn]
-#[unsafe(export_name = "Bun__fetchPreconnect")]
+#[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
 pub fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,

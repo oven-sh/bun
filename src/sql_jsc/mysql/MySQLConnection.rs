@@ -342,7 +342,12 @@ impl MySQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { core::ffi::CStr::from_ptr(server_name) })
         };
-        let ext_size = core::mem::size_of::<Option<*mut JSMySQLConnection>>() as i32;
+        // Zig: `@sizeOf(?*JSMySQLConnection)` — `?*T` is an 8-byte null-niche
+        // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
+        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
+        // and desync with the trampoline reader (uws_handlers.rs) which reads
+        // the slot as `Option<NonNull<_>>`.
+        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
 
         // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
         // live SocketGroup; adopt_tls may realloc and return a different ptr.
@@ -363,9 +368,12 @@ impl MySQLConnection {
 
         let js_connection = self.get_js_connection();
         let new_socket = new_socket.as_ptr();
-        // SAFETY: ext storage was sized for `Option<*mut JSMySQLConnection>` above
-        // and `new_socket` is a live us_socket_t.
-        unsafe { *(*new_socket).ext::<Option<*mut JSMySQLConnection>>() = Some(js_connection) };
+        // SAFETY: ext storage was sized for `Option<NonNull<JSMySQLConnection>>`
+        // above and `new_socket` is a live us_socket_t. Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
+        unsafe {
+            *(*new_socket).ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
+                core::ptr::NonNull::new(js_connection);
+        }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });

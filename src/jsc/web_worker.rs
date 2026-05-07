@@ -748,15 +748,25 @@ impl WebWorker {
 
         // SAFETY: start_vm published vm under vm_lock; non-null here.
         let global = unsafe { (*(*self.vm.get())).global };
-        // SAFETY: `ctx` is an opaque token — `hold_api_lock` (C++ JSLockHolder)
-        // never dereferences it, only passes it back to
-        // `opaque_spin_trampoline`, which casts it back to `*const WebWorker`
-        // and takes `&WebWorker`. The const→mut cast is signature-only; no
-        // write ever occurs through this pointer with mut provenance.
-        unsafe { &*global }.vm().hold_api_lock(
-            core::ptr::from_ref::<WebWorker>(self).cast_mut().cast::<c_void>(),
-            opaque_spin_trampoline,
-        );
+        // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
+        // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
+        // unwind cannot walk Zig frames (no unwind tables), so glibc falls
+        // back to a longjmp and the C++ `JSLockHolder` destructor never
+        // runs — `WebWorker__teardownJSCVM` (called from `shutdown()`)
+        // accounts for that abandoned ref by `deref`ing twice.
+        //
+        // In Rust we cannot use `pthread_exit` (its forced unwind aborts at
+        // the first `extern "C"` boundary — see `shutdown` PORT NOTE), so
+        // `spin()` returns. To preserve the Zig invariant that the API lock
+        // is simply abandoned along with the destroyed VM, take the lock
+        // manually and `forget` the guard so its `Drop` (`releaseAPILock`)
+        // never touches the now-freed `JSC::VM`. `WebWorker__teardownJSCVM`
+        // correspondingly `deref`s once, since there is no `JSLockHolder`
+        // ref to release on its behalf — see the matching note in
+        // `Worker.cpp`.
+        let api_lock = unsafe { &*global }.vm().get_api_lock();
+        self.spin();
+        core::mem::forget(api_lock);
     }
 
     /// Phase 1: build the worker's arena + VirtualMachine and publish `vm`.
@@ -1236,7 +1246,7 @@ impl WebWorker {
         // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
         // Rust we MUST NOT — glibc's `pthread_exit` throws a `__forced_unwind`
         // C++ exception to run destructors, and unwinding that out of the
-        // `extern "C"` `opaque_spin_trampoline` (a `nounwind` ABI boundary)
+        // `extern "C"` `holdAPILock` callback (a `nounwind` ABI boundary)
         // makes Rust abort the whole process. Instead return normally:
         // `shutdown()` → `spin()` → trampoline → C++ `holdAPILock` (releases
         // its `JSLockHolder` via normal return) → `thread_main` → the
@@ -1318,13 +1328,6 @@ impl WebWorker {
             let _ = jsc::js_global_object::report_uncaught_exception(global, unsafe { &mut *exc });
         }
     }
-}
-
-extern "C" fn opaque_spin_trampoline(ctx: *mut c_void) {
-    // SAFETY: ctx is `*const WebWorker` passed from thread_main via
-    // holdAPILock. `&WebWorker` (not `&mut`) — see worker-thread `&self` note.
-    let this = unsafe { &*ctx.cast::<WebWorker>() };
-    this.spin();
 }
 
 fn on_unhandled_rejection(

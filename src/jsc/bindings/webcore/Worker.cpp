@@ -557,7 +557,14 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 
-    vm.derefSuppressingSaferCPPChecking(); // NOLINT
+    // Drop the single ref taken by `Zig__GlobalObject__create`
+    // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
+    // to zero — `~VM` runs here while the API lock is still held by this
+    // thread, exactly as in the Zig build (where `pthread_exit` skipped the
+    // outer `JSLockHolder` destructor and a second `deref` here released its
+    // abandoned ref). The Rust port acquires the API lock manually with no
+    // extra VM ref (see `WebWorker::thread_main`), so a second `deref` would
+    // run `~VM` twice / dereference the freed VM.
     vm.derefSuppressingSaferCPPChecking(); // NOLINT
 }
 

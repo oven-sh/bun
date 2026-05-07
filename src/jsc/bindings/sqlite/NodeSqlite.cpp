@@ -3134,14 +3134,15 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     }
 
     // Reset + bind positional values. Named-parameter handling is not
-    // meaningful for a tagged template.
+    // meaningful for a tagged template. sqlite3_reset()'s return value
+    // is the *previous* step()'s error, not reset's own status — the
+    // reset itself always succeeds on a valid handle — so checking it
+    // here would spuriously re-throw a cached statement's stale error.
+    // StatementSync's run/get/all correctly ignore it for the same
+    // reason.
     sqlite3_stmt* stmt = stmtObj->statement();
-    int rr = sqlite3_reset(stmt);
+    sqlite3_reset(stmt);
     stmtObj->bumpResetGeneration();
-    if (rr != SQLITE_OK) {
-        throwSqliteError(globalObject, scope, db->connection());
-        return nullptr;
-    }
     sqlite3_clear_bindings(stmt);
     int paramCount = sqlite3_bind_parameter_count(stmt);
     for (int i = 0; i < static_cast<int>(nParams) && i < paramCount; ++i) {
@@ -3191,10 +3192,13 @@ JSC_DEFINE_HOST_FUNCTION(jsTagStoreRun, (JSGlobalObject * globalObject, CallFram
     int64_t lastId = sqlite3_last_insert_rowid(conn);
     sqlite3_reset(s);
     JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    result->putDirect(vm, Identifier::fromString(vm, "changes"_s),
-        stmt->useBigInts() ? JSValue(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, changes)) : jsNumber(static_cast<double>(changes)), 0);
-    result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s),
-        stmt->useBigInts() ? JSValue(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, lastId)) : jsNumber(static_cast<double>(lastId)), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue changesV = stmt->useBigInts() ? JSValue(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, changes)) : jsNumber(static_cast<double>(changes));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, Identifier::fromString(vm, "changes"_s), changesV, 0);
+    JSValue lastIdV = stmt->useBigInts() ? JSValue(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, lastId)) : jsNumber(static_cast<double>(lastId));
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), lastIdV, 0);
     return JSValue::encode(result);
 }
 

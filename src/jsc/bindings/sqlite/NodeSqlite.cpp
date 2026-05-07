@@ -1593,8 +1593,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     if (!buf) {
         return throwNodeArgType(globalObject, scope, "buffer"_s, "a Uint8Array"_s);
     }
-    auto span = buf->span();
-    if (span.size() == 0) {
+    if (buf->span().size() == 0) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
             "The \"buffer\" argument must not be empty."_s);
     }
@@ -1623,6 +1622,18 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     // sqlite3_malloc64. Copy the input in case JS later mutates or
     // detaches it; also required for the zombie-statement case where
     // the connection outlives this call.
+    //
+    // Capture the span only AFTER the opts.dbName [[Get]] above —
+    // a hostile getter can buf.buffer.transfer() + GC, freeing the
+    // backing store that an earlier span would still point into
+    // (same buffer-detach UAF class applyChangeset guards against
+    // by copying before its callbacks). A post-detach span() is
+    // {nullptr, 0}, which the emptiness re-check catches.
+    auto span = buf->span();
+    if (buf->isDetached() || span.size() == 0) {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+            "The \"buffer\" argument must not be empty."_s);
+    }
     unsigned char* owned = static_cast<unsigned char*>(sqlite3_malloc64(span.size()));
     if (!owned) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED,
@@ -1654,6 +1665,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
         static_cast<sqlite3_int64>(span.size()), static_cast<sqlite3_int64>(span.size()),
         SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE);
+    // sqlite3_deserialize internally runs `ATTACH x AS <schema>` via
+    // sqlite3_prepare_v2, which fires the authorizer callback with
+    // SQLITE_ATTACH. If that throws, surface the user's exception over
+    // SQLite's "not authorized" — same as exec()/prepare()/TagStore.
+    CHECK_UDF_EXCEPTION(scope, self);
     if (r != SQLITE_OK) {
         // SQLite already freed `owned` (or took ownership) on both
         // success and failure paths once FREEONCLOSE is set.

@@ -286,6 +286,34 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test("deserialize() rejects a buffer detached by the options getter", () => {
+    // The BusyScope added above blocks db.close() re-entry, but does
+    // nothing about the *input buffer*: if the span is captured
+    // before opts.dbName is read, a hostile getter can
+    //   buf.buffer.transfer(); Bun.gc(true);
+    // freeing the backing store, and the later memcpy() reads freed
+    // memory — the deserialize() analogue of the applyChangeset
+    // buffer-detach UAF. The span must be (re-)captured only after
+    // option parsing has run.
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t(x INTEGER)");
+    const buf = src.serialize();
+    src.close();
+
+    const db = new DatabaseSync(":memory:");
+    expect(() =>
+      db.deserialize(buf, {
+        get dbName() {
+          buf.buffer.transfer();
+          Bun.gc(true);
+          return "main";
+        },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(db.isOpen).toBe(true);
+    db.close();
+  });
+
   test("statements from a prior connection are finalized across close()/open()", () => {
     const db = new DatabaseSync(":memory:", { open: false });
     db.open();

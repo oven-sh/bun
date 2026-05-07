@@ -2956,12 +2956,21 @@ where
         let index = this.id;
 
         let mut should_deinit_context = false;
-        // SAFETY: server_ptr is live for the request's duration; re-borrowed
-        // disjointly below to avoid the &mut held inside `prepared`.
-        let Some(mut prepared) = (unsafe { &mut *server_ptr }).prepare_js_request_context(req, resp, Some(&mut should_deinit_context), CreateJsRequest::No, method) else { return };
-        prepared.ctx.upgrade_context = Some(upgrade_ctx); // set the upgrade context
+        let should_deinit_ptr: *mut bool = &mut should_deinit_context;
+        let Some(mut prepared) = Self::prepare_js_request_context(
+            server_ptr,
+            req,
+            resp,
+            Some(should_deinit_ptr),
+            CreateJsRequest::No,
+            method,
+        ) else { return };
+        // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
+        unsafe { (*prepared.ctx).upgrade_context = Some(upgrade_ctx) };
+        // SAFETY: server_ptr is live for the request's duration.
         let server_js = unsafe { &*server_ptr }.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
+        // SAFETY: global_this set in init() and outlives ThisServer.
         let global = unsafe { &*(*server_ptr).global_this };
         let response_value = match jsc::from_js_host_call(global, || unsafe {
             Bun__ServerRouteList__callRoute(
@@ -2978,7 +2987,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        unsafe { &mut *server_ptr }.handle_request(&mut should_deinit_context, prepared, req, response_value);
+        Self::handle_request(server_ptr, should_deinit_ptr, prepared, req, response_value);
     }
 
     pub fn on_web_socket_upgrade(

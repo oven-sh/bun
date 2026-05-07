@@ -765,7 +765,7 @@ impl<'a> TransformTask<'a> {
             },
             // SAFETY: `transpiler` is the live `m_ctx` payload; `init_ref` bumps the
             // count (Zig: `transpiler.ref()`).
-            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(transpiler) },
+            js_instance: unsafe { bun_ptr::IntrusiveRc::init_ref(js_instance_ptr) },
         });
 
         // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
@@ -1487,7 +1487,7 @@ impl JSTranspiler {
         };
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
-        let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0);
+        let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
         // SAFETY: `transpiler.log` was just set to `&mut log` above.
         let log_ref = unsafe { &mut *self.transpiler.log };
@@ -1495,7 +1495,7 @@ impl JSTranspiler {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
             }
-            return Err(global.throw("Failed to parse code"));
+            return Err(global.throw(format_args!("Failed to parse code")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {

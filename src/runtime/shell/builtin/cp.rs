@@ -229,12 +229,7 @@ impl Cp {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
         }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
+        if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
             // SAFETY: `task` was Box::into_raw'd in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
             return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };

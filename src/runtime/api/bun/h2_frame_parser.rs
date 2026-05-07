@@ -5845,7 +5845,10 @@ impl H2FrameParser {
         self.unregister_auto_flush();
         self.detach_native_socket();
 
-        self.read_buffer.reset();
+        // Zig: `this.readBuffer.deinit()` — frees the allocation. `reset()` would only
+        // clear `len`; detach() is reachable from JS without a following `deinit`, so the
+        // capacity must be released here. Drop-and-replace = free.
+        self.read_buffer = MutableString::default();
         self.write_buffer.clear_and_free();
         self.write_buffer_offset = 0;
 

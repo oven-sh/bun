@@ -1263,25 +1263,17 @@ impl Diff {
                     from_lockfile.trusted_dependencies.as_ref().unwrap();
                 let to_trusted_dependencies = to_lockfile.trusted_dependencies.as_ref().unwrap();
 
-                {
-                    // added
-                    let mut to_trusted_iter = to_trusted_dependencies.iterator();
-                    while let Some(entry) = to_trusted_iter.next() {
-                        let to_trusted = *entry.key_ptr;
-                        if !from_trusted_dependencies.contains(&to_trusted) {
-                            summary.added_trusted_dependencies.put(to_trusted, true)?;
-                        }
+                // added
+                for &to_trusted in to_trusted_dependencies.keys() {
+                    if !from_trusted_dependencies.contains(&to_trusted) {
+                        summary.added_trusted_dependencies.put(to_trusted, true)?;
                     }
                 }
 
-                {
-                    // removed
-                    let mut from_trusted_iter = from_trusted_dependencies.iterator();
-                    while let Some(entry) = from_trusted_iter.next() {
-                        let from_trusted = *entry.key_ptr;
-                        if !to_trusted_dependencies.contains(&from_trusted) {
-                            summary.removed_trusted_dependencies.put(from_trusted, ())?;
-                        }
+                // removed
+                for &from_trusted in from_trusted_dependencies.keys() {
+                    if !to_trusted_dependencies.contains(&from_trusted) {
+                        summary.removed_trusted_dependencies.put(from_trusted, ())?;
                     }
                 }
 
@@ -1295,31 +1287,25 @@ impl Diff {
                 let from_trusted_dependencies =
                     from_lockfile.trusted_dependencies.as_ref().unwrap();
 
-                {
-                    // added
-                    for entry in default_trusted_dependencies::entries() {
-                        if !from_trusted_dependencies
-                            .contains(&(entry.hash as TruncatedPackageNameHash))
-                        {
-                            // although this is a new trusted dependency, it is from the default
-                            // list so it shouldn't be added to the lockfile
-                            summary
-                                .added_trusted_dependencies
-                                .put(entry.hash as TruncatedPackageNameHash, false)?;
-                        }
+                // added
+                for entry in default_trusted_dependencies::entries() {
+                    if !from_trusted_dependencies
+                        .contains(&(entry.hash as TruncatedPackageNameHash))
+                    {
+                        // although this is a new trusted dependency, it is from the default
+                        // list so it shouldn't be added to the lockfile
+                        summary
+                            .added_trusted_dependencies
+                            .put(entry.hash as TruncatedPackageNameHash, false)?;
                     }
                 }
 
-                {
-                    // removed
-                    let mut from_trusted_iter = from_trusted_dependencies.iterator();
-                    while let Some(entry) = from_trusted_iter.next() {
-                        let from_trusted = *entry.key_ptr;
-                        if !default_trusted_dependencies::has_with_hash(
-                            u64::try_from(from_trusted).unwrap(),
-                        ) {
-                            summary.removed_trusted_dependencies.put(from_trusted, ())?;
-                        }
+                // removed
+                for &from_trusted in from_trusted_dependencies.keys() {
+                    if !default_trusted_dependencies::has_with_hash(
+                        u64::try_from(from_trusted).unwrap(),
+                    ) {
+                        summary.removed_trusted_dependencies.put(from_trusted, ())?;
                     }
                 }
 
@@ -1332,14 +1318,10 @@ impl Diff {
             {
                 let to_trusted_dependencies = to_lockfile.trusted_dependencies.as_ref().unwrap();
 
-                {
-                    // add all to trusted dependencies, even if they exist in default because they weren't in the
-                    // lockfile originally
-                    let mut to_trusted_iter = to_trusted_dependencies.iterator();
-                    while let Some(entry) = to_trusted_iter.next() {
-                        let to_trusted = *entry.key_ptr;
-                        summary.added_trusted_dependencies.put(to_trusted, true)?;
-                    }
+                // add all to trusted dependencies, even if they exist in default because they weren't in the
+                // lockfile originally
+                for &to_trusted in to_trusted_dependencies.keys() {
+                    summary.added_trusted_dependencies.put(to_trusted, true)?;
                 }
 
                 {

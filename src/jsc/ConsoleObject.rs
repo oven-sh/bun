@@ -1739,20 +1739,36 @@ pub mod formatter {
     /// For detecting circular references.
     pub mod visited {
         use super::*;
-        use bun_collections::pool::ObjectPool;
 
-        pub type Map = bun_collections::HashMap<JSValue, ()>;
-        // TODO(port): Zig parameterizes `ObjectPool` with an `init` fn,
-        // `threadsafe = true`, and `max_count = 16`. The Rust `ObjectPool`
-        // requires `T: ObjectPoolType` plus a per-monomorphization storage
-        // hook (see `object_pool!`); `Map` is a foreign type so we can't
-        // implement the trait here without a newtype. The only live user of
-        // the pool itself is the gated `print_as` body — keep `Pool` gated
-        // and name `PoolNode` directly so `Formatter::map_node` /
-        // `Drop` still type-check.
-        
-        pub type Pool = ObjectPool<Map, true, 16>;
-        #[allow(unused_imports)] use ObjectPool as _;
+        /// Newtype over `HashMap<JSValue, ()>` so we can implement
+        /// `ObjectPoolType` (orphan rules forbid impl on the foreign
+        /// `bun_collections::HashMap`). `Deref`/`DerefMut` keep all
+        /// `self.map.*` call sites unchanged.
+        #[derive(Default)]
+        #[repr(transparent)]
+        pub struct Map(bun_collections::HashMap<JSValue, ()>);
+
+        impl core::ops::Deref for Map {
+            type Target = bun_collections::HashMap<JSValue, ()>;
+            #[inline]
+            fn deref(&self) -> &Self::Target { &self.0 }
+        }
+        impl core::ops::DerefMut for Map {
+            #[inline]
+            fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+        }
+
+        impl bun_collections::pool::ObjectPoolType for Map {
+            // Zig: `ObjectPool(Map, Map.init, true, 16)` — fresh nodes start
+            // with an empty map so `clearRetainingCapacity()` on first use is
+            // well-defined.
+            const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
+                Some(|| Ok(Map::default()));
+        }
+
+        // Thread-local free list, capped at 16 nodes — matches Zig
+        // `threadsafe = true, max_count = 16`.
+        bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
     }
 

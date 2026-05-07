@@ -33,25 +33,17 @@ impl NpmAliasRegistry for PackageManager {
 // URI
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
-pub enum URI {
-    Local(String),
-    Remote(String),
-}
-
-impl URI {
-    pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
-        match (lhs, rhs) {
-            (URI::Local(l), URI::Local(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
-            }
-            (URI::Remote(l), URI::Remote(r)) => {
-                strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
-            }
-            _ => false,
-        }
-    }
-}
+// MOVE_DOWN: data structs (`URI`, `NpmInfo`, `TagInfo`, `TarballInfo`,
+// `Value`, `Version`, `Dependency`, `Behavior`) and their `Default`/`Clone`/
+// `eql` impls now live in `bun_install_types::resolver_hooks` so the resolver
+// and `bun_install` share ONE definition (no opaque round-trip blob).
+// Install-tier behaviour (parsing, builder-clone, comparators, JSON, ...) is
+// provided below as extension traits so existing `Type::method(...)` /
+// `value.method(...)` call sites resolve via UFCS once the trait is in scope.
+pub use bun_install_types::resolver_hooks::{
+    Behavior, Dependency, DependencyVersion as Version,
+    DependencyVersionValue as Value, NpmInfo, TagInfo, TarballInfo, URI,
+};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -617,6 +609,9 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 // Version
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `#[repr(C)]` so this overlays `bun_install_types::DependencyVersion` (same
+/// field order; `Value` is `#[repr(C)] union` ≤ 40 B, projected as `[u64; 5]`).
+#[repr(C)]
 pub struct Version {
     pub tag: Tag,
     pub literal: String,

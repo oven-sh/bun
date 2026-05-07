@@ -352,21 +352,15 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
-            // SAFETY: FFI call; tj3Init(TJINIT_DECOMPRESS) takes no pointers.
-            let handle = unsafe { jpeg::tj3Init(1) };
-            if handle.is_null() {
-                return Err(Error::OutOfMemory);
-            }
-            // SAFETY: handle is non-null (checked above); destroyed exactly once on scope exit.
-            let _guard = scopeguard::guard((), |_| unsafe { jpeg::tj3Destroy(handle) });
-            // SAFETY: handle is non-null; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle, bytes.as_ptr(), bytes.len()) } != 0 {
+            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
+            // SAFETY: handle is live; (ptr,len) come from a valid live slice.
+            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) } != 0 {
                 return Err(Error::DecodeFailed);
             }
-            // SAFETY: handle is non-null and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle, jpeg::TJPARAM_JPEGWIDTH) };
+            // SAFETY: handle is live and has had a header decoded into it above.
+            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
             // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle, jpeg::TJPARAM_JPEGHEIGHT) };
+            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
             if rw <= 0 || rh <= 0 {
                 return Err(Error::DecodeFailed);
             }

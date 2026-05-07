@@ -238,7 +238,9 @@ pub trait ConsoleFormatter {
     ) -> JsResult<()>;
 
     /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`].
+    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
+    /// calling this pair manually when the indented region contains `?` early
+    /// returns.
     fn indent_inc(&mut self);
     /// `formatter.indent -|= 1` — saturating decrement (Zig spelling).
     fn indent_dec(&mut self);

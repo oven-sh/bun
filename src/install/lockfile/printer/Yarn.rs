@@ -119,7 +119,10 @@ fn packages(
     }
 
     {
-        let alphabetizer = Alphabetizer {
+        // PORT NOTE: explicit `<u64>` — `Alphabetizer<SemverIntType>` stores
+        // raw `*const [Resolution<_>]`, and ref→raw-ptr coercion blocks
+        // inference of the generic from `resolved: &[Resolution /* = u64 */]`.
+        let alphabetizer = Alphabetizer::<u64> {
             names,
             buf: string_buf,
             resolutions: resolved,

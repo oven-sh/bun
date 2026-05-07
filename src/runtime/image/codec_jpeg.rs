@@ -37,6 +37,32 @@ unsafe extern "C" {
     fn tj3SetICCProfile(h: tjhandle, icc_buf: *const u8, icc_size: usize) -> c_int;
 }
 
+/// RAII owner for a TurboJPEG handle — `tj3Destroy` on drop.
+pub struct Handle(NonNull<c_void>);
+
+impl Handle {
+    /// `init_type`: `0` = compress, `1` = decompress.
+    #[inline]
+    pub fn init(init_type: c_int) -> Option<Self> {
+        // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
+        NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> tjhandle {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for Handle {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is the non-null tjhandle returned by tj3Init;
+        // tj3Destroy is the documented owner-release and is called exactly once.
+        unsafe { tj3Destroy(self.0.as_ptr()) };
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ScalingFactor {

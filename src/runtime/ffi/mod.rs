@@ -126,22 +126,39 @@ unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
 }
 
+/// RAII scope that disables `pthread_jit_write_protect_np` for the current
+/// thread on aarch64 macOS, re-enabling it on `Drop`. No-op elsewhere.
+struct JitWriteUnprotected(());
+
+impl JitWriteUnprotected {
+    const HAS_PROTECTION: bool = cfg!(all(target_arch = "aarch64", target_os = "macos"));
+
+    #[inline]
+    fn new() -> Self {
+        if Self::HAS_PROTECTION {
+            // SAFETY: aarch64 macOS only; toggles W^X for the current thread
+            unsafe { pthread_jit_write_protect_np(false as c_int) };
+        }
+        Self(())
+    }
+}
+
+impl Drop for JitWriteUnprotected {
+    #[inline]
+    fn drop(&mut self) {
+        if Self::HAS_PROTECTION {
+            // SAFETY: re-enable JIT write protection on scope exit
+            unsafe { pthread_jit_write_protect_np(true as c_int) };
+        }
+    }
+}
+
 /// Run a function that needs to write to JIT-protected memory.
 ///
 /// This is dangerous as it allows overwriting executable regions of memory.
 /// Do not pass in user-defined functions (including JSFunctions).
 pub(crate) fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
-    const HAS_PROTECTION: bool = cfg!(all(target_arch = "aarch64", target_os = "macos"));
-    if HAS_PROTECTION {
-        // SAFETY: aarch64 macOS only; toggles W^X for the current thread
-        unsafe { pthread_jit_write_protect_np(false as c_int) };
-    }
-    let _guard = scopeguard::guard((), |_| {
-        if HAS_PROTECTION {
-            // SAFETY: re-enable JIT write protection on scope exit
-            unsafe { pthread_jit_write_protect_np(true as c_int) };
-        }
-    });
+    let _guard = JitWriteUnprotected::new();
     // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
     func()
 }

@@ -1001,29 +1001,12 @@ impl PublishCommand {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         #[cfg(windows)]
-        let original_mode: Option<bun_sys::windows::DWORD> =
-            bun_sys::windows::update_stdio_mode_flags(
-                bun_sys::windows::StdHandle::StdIn,
-                bun_sys::windows::ModeFlagsUpdate {
-                    unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                    ..Default::default()
-                },
-            )
-            .ok();
-        #[cfg(not(windows))]
-        let original_mode: () = ();
-
-        #[cfg(windows)]
-        let _restore = scopeguard::guard((), |_| {
-            if let Some(mode) = original_mode {
-                // SAFETY: SetConsoleMode is safe to call with stdin handle
-                unsafe {
-                    let _ = bun_sys::c::SetConsoleMode(Fd::stdin().native(), mode);
-                }
-            }
-        });
-        #[cfg(not(windows))]
-        let _ = original_mode;
+        let _stdin_mode = bun_sys::windows::StdinModeGuard::set(
+            bun_sys::windows::UpdateStdioModeFlagsOpts {
+                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                ..Default::default()
+            },
+        );
 
         loop {
             // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded

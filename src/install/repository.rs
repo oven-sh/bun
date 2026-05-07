@@ -214,43 +214,55 @@ pub struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
 
+// PORT NOTE: Zig's `pub var shared_env` is a process-global anon-struct whose
+// `get()` lazily clones `other.map` once and returns the `DotEnv.Map` handle by
+// value (Zig struct copy — both copies alias the same backing storage). Rust's
+// `Map` owns its storage and is not `Copy`, so we hand out a `&'static Map` into
+// the global instead; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`)
+// store the reference. The map is written exactly once on first call from the
+// main install thread and never freed, matching Zig's lifetime.
+pub static mut SHARED_ENV: SharedEnv = SharedEnv { env: None };
+
 impl SharedEnv {
-    pub fn get(&mut self, other: &mut bun_dotenv::Loader) -> &bun_dotenv::Map {
-        if self.env.is_none() {
-            // Note: currently if the user sets this to some value that causes
-            // a prompt for a password, the stdout of the prompt will be masked
-            // by further output of the rest of the install process.
-            // A value can still be entered, but we need to find a workaround
-            // so the user can see what is being prompted. By default the settings
-            // below will cause no prompt and throw instead.
-            let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
+    pub fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
+        // SAFETY: `SHARED_ENV` is only initialised from the main install thread
+        // during enqueue (single-threaded at that point in Zig too). Once
+        // `env` is `Some` it is never reassigned, so the returned `&'static`
+        // remains valid for the program lifetime.
+        unsafe {
+            let this = &mut *core::ptr::addr_of_mut!(SHARED_ENV);
+            if this.env.is_none() {
+                // Note: currently if the user sets this to some value that causes
+                // a prompt for a password, the stdout of the prompt will be masked
+                // by further output of the rest of the install process.
+                // A value can still be entered, but we need to find a workaround
+                // so the user can see what is being prompted. By default the settings
+                // below will cause no prompt and throw instead.
+                let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
 
-            if cloned.get(b"GIT_ASKPASS").is_none() {
-                let config = SloppyGlobalGitConfig::get();
-                if !config.has_askpass {
-                    bun_core::handle_oom(cloned.put(b"GIT_ASKPASS", b"echo"));
+                if cloned.get(b"GIT_ASKPASS").is_none() {
+                    let config = SloppyGlobalGitConfig::get();
+                    if !config.has_askpass {
+                        bun_core::handle_oom(cloned.put(b"GIT_ASKPASS", b"echo"));
+                    }
                 }
-            }
 
-            if cloned.get(b"GIT_SSH_COMMAND").is_none() {
-                let config = SloppyGlobalGitConfig::get();
-                if !config.has_ssh_command {
-                    bun_core::handle_oom(cloned.put(
-                        b"GIT_SSH_COMMAND",
-                        b"ssh -oStrictHostKeyChecking=accept-new",
-                    ));
+                if cloned.get(b"GIT_SSH_COMMAND").is_none() {
+                    let config = SloppyGlobalGitConfig::get();
+                    if !config.has_ssh_command {
+                        bun_core::handle_oom(cloned.put(
+                            b"GIT_SSH_COMMAND",
+                            b"ssh -oStrictHostKeyChecking=accept-new",
+                        ));
+                    }
                 }
-            }
 
-            self.env = Some(cloned);
+                this.env = Some(cloned);
+            }
+            this.env.as_ref().unwrap()
         }
-        self.env.as_ref().unwrap()
     }
 }
-
-// TODO(port): `pub var shared_env` mutable static — wrap in OnceLock or thread-local
-// in Phase B; Zig mutates `.env` in place across calls.
-pub static mut SHARED_ENV: SharedEnv = SharedEnv { env: None };
 
 pub static HOSTS: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"bitbucket" => b".org",
@@ -717,8 +729,7 @@ impl Repository {
 
         let _ = repo_dir;
 
-        // SAFETY: see SHARED_ENV TODO above.
-        let shared = unsafe { SHARED_ENV.get(env) };
+        let shared = SharedEnv::get(env);
 
         let argv_with: [&[u8]; 7] =
             [b"git", b"-C", path, b"log", b"--format=%H", b"-1", committish];

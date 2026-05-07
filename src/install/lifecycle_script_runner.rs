@@ -599,7 +599,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 // MOVE_DOWN(b0): bun_jsc::EventLoopHandle → bun_event_loop::EventLoopHandle
-                loop_: bun_event_loop::EventLoopHandle::init(&mut (*manager).event_loop),
+                loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
+                ..Default::default()
             },
 
             stream: false,

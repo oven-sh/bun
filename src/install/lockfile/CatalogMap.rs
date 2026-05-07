@@ -313,9 +313,12 @@ impl CatalogMap {
         Ok(())
     }
 
-    pub fn sort(&mut self, lockfile: &Lockfile) {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-
+    // PORT NOTE: Zig took `lockfile: *const Lockfile` but only reads its
+    // string buffer. Narrow to `buf: &[u8]` so the call site can hold
+    // `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
+    // immutably (disjoint fields), instead of forcing a whole-`Lockfile`
+    // shared borrow that conflicts with the `&mut self` receiver.
+    pub fn sort(&mut self, buf: &[u8]) {
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
             deps[l].name.order(&deps[r].name, buf, buf) == Ordering::Less
         };

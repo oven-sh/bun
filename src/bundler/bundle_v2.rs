@@ -2467,7 +2467,10 @@ impl<'a> BundleV2<'a> {
             side_effects: result.primary_side_effects_data,
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(&result, source_index.into(), self)));
+        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        let task_val = ParseTask::init(&result, source_index.into(), self);
+        // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
+        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2543,7 +2546,10 @@ impl<'a> BundleV2<'a> {
             side_effects,
             ..Default::default()
         })?;
-        let task = Box::leak(Box::new(ParseTask::init(result, source_index.into(), self)));
+        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        let task_val = ParseTask::init(result, source_index.into(), self);
+        // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
+        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
         task.loader = Some(loader);
         task.task.node.next = core::ptr::null_mut();
         task.tree_shaking = self.linker.options.tree_shaking;
@@ -2695,20 +2701,24 @@ impl<'a> BundleV2<'a> {
 
         this.linker.dev_server = this.dev_server;
 
-        // TODO(port): allocator.create — Box-allocate the ThreadPool until the
-        // arena gains a `create<T>()` helper.
-        let pool = Box::leak(Box::new(ThreadPool::default()));
+        // Arena-owned (Zig: `allocator.create(ThreadPool)`). Coerce to `*mut`
+        // immediately so the `&this` borrow from `allocator()` ends before
+        // `ThreadPool::init` takes `&mut this`.
+        let pool: *mut ThreadPool = this.allocator().alloc(ThreadPool::default()) as *mut _;
         if cli_watch_flag {
             // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
             // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
             // and writes `bun_watcher` directly after `init()` returns.
         }
-        // errdefer pool.destroy();
-        // TODO(port): errdefer this.graph.heap.deinit() — Drop handles arena teardown
+        // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
 
-        *pool = ThreadPool::init(&mut *this, thread_pool)?;
-        this.graph.pool = NonNull::from(&mut *pool);
-        pool.start();
+        // SAFETY: arena slot is live for the bundle pass; the default value
+        // written above has no Drop, so overwriting via `*pool = ...` is fine.
+        unsafe { *pool = ThreadPool::init(&mut *this, thread_pool)?; }
+        // SAFETY: `pool` is a non-null arena allocation.
+        this.graph.pool = unsafe { NonNull::new_unchecked(pool) };
+        // SAFETY: arena slot is live; reborrow for `start()`.
+        unsafe { (*pool).start(); }
         Ok(this)
     }
 
@@ -3146,7 +3156,10 @@ impl<'a> BundleV2<'a> {
         })?;
         // PORT NOTE: `ParseTask::init` takes `bun_js_parser::Index`; both Index newtypes
         // are `repr(transparent)` u32 so reconstruct via `.get()`.
-        let task = Box::leak(Box::new(ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self)));
+        // Arena-owned (Zig: `allocator.create(ParseTask)`); freed on heap reset.
+        let task_val = ParseTask::init(resolve_result, js_ast::Index::init(source_index.get()), self);
+        // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
+        let task: &mut ParseTask = unsafe { &mut *self.arena_create(task_val) };
         task.loader = Some(loader);
         task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
         task.task.node.next = core::ptr::null_mut();
@@ -3780,17 +3793,21 @@ impl<'a> BundleV2<'a> {
                     this.graph.estimated_file_loader_count += 1;
                 }
                 this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] = code.loader;
-                // PERF(port): Zig aliased the same `source_code` slice three ways; Rust
-                // boxes are single-owner, so leak once to a `'static` slice and reuse.
-                let source_code: &'static [u8] = Box::leak(code.source_code);
+                // PERF(port): Zig aliased the same `source_code` slice three ways.
+                // Own the buffer in `free_list` (append-only until deinit) and
+                // hand out a stable borrow — `Box<[u8]>` heap address never moves.
+                this.free_list.push(code.source_code);
+                // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
+                // (after all ParseTasks complete); the boxed slice is heap-stable.
+                let source_code: &'static [u8] = unsafe {
+                    let last = this.free_list.last().unwrap();
+                    core::slice::from_raw_parts(last.as_ptr(), last.len())
+                };
                 this.graph.input_files.items_source_mut()[load.source_index.get() as usize].contents = std::borrow::Cow::Borrowed(source_code);
                 this.graph.input_files.items_flags_mut()[load.source_index.get() as usize].insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                 // SAFETY: `parse_task` was set in `Load::init` and is live for the load.
                 let parse_task = unsafe { &mut *load.parse_task };
                 parse_task.loader = Some(code.loader);
-                if !should_copy_for_bundling {
-                    this.free_list.push(Box::<[u8]>::from(source_code));
-                }
                 parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                 unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
 
@@ -6255,8 +6272,14 @@ impl JSMetaFlags {
     pub fn set_needs_synthetic_default_export(&mut self, v: bool) { if v { self.0 |= 1 << 5 } else { self.0 &= !(1 << 5) } }
 
     pub const fn wrap(self) -> WrapKind {
-        // SAFETY: bits 6-7 store a WrapKind discriminant in range [0, 2]
-        unsafe { core::mem::transmute((self.0 >> 6) & 0b11) }
+        // Bits 6-7 store a WrapKind discriminant. `set_wrap` only ever writes
+        // 0/1/2, but a raw `JSMetaFlags(u8)` constructed in-module could carry
+        // 3 — match defensively instead of `transmute` (UB on invalid tag).
+        match (self.0 >> 6) & 0b11 {
+            1 => WrapKind::Cjs,
+            2 => WrapKind::Esm,
+            _ => WrapKind::None,
+        }
     }
     pub fn set_wrap(&mut self, v: WrapKind) { self.0 = (self.0 & 0b0011_1111) | ((v as u8) << 6); }
 }

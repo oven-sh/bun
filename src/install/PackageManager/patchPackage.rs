@@ -17,7 +17,7 @@ use crate::{
 use crate::isolated_install::FileCopier;
 use crate::dependency::Dependency;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
-use crate::lockfile_real::package::Package;
+use crate::lockfile_real::package::{Package, PackageListExt as _};
 use crate::lockfile_real::tree;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};

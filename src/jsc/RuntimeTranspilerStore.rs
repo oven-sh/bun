@@ -47,18 +47,30 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn dump_source(vm: &mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
+// PORT NOTE: takes `*mut VirtualMachine` (not `&mut`) — these are called from
+// the transpiler worker thread while the JS thread is concurrently live on the
+// same VM, so a `&mut VirtualMachine` would be a data race AND would alias the
+// caller's `&mut TranspilerJob` (which is stored inside `vm.transpiler_store`).
+// Only the `source_mappings` leaf field is touched, under its own internal lock.
+pub fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
-pub fn dump_source_string(vm: &mut VirtualMachine, specifier: &[u8], written: &[u8]) {
+pub fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
         bun_core::output::debug_warn(&format_args!("Failed to dump source string: {}", e.name()));
     }
 }
 
+// Zig: local `struct { pub var dir; pub var lock; }` — module statics in Rust.
+struct BunDebugHolder {
+    dir: Option<Dir>,
+}
+static BUN_DEBUG_HOLDER_LOCK: Mutex = Mutex::new();
+static mut BUN_DEBUG_HOLDER: BunDebugHolder = BunDebugHolder { dir: None };
+
 pub fn dump_source_string_failiable(
-    vm: &mut VirtualMachine,
+    vm: *mut VirtualMachine,
     specifier: &[u8],
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
@@ -70,16 +82,96 @@ pub fn dump_source_string_failiable(
         return Ok(());
     }
 
-    // Zig: local `struct { pub var dir; pub var lock; }` — module statics in Rust.
-    // TODO(port): bun_sys::Dir handle type — using bun_sys::File-backed dir once
-    // bun_sys grows `make_open_path`/`write_file` directory wrappers; until then this
-    // helper is gated to debug builds and best-effort.
-    let _ = (vm, specifier, written);
-    // PORT NOTE: full Zig body uses std.fs.{Dir, makeOpenPath, writeFile, createFile,
-    // readFileAlloc} which are forbidden (`bun_sys` only). bun_sys does not yet expose
-    // a directory handle abstraction with makeOpenPath, so this debug-only dump is a
-    // no-op pending those wrappers. The body is intentionally NOT a panic stub — this
-    // is unreachable in release and exists solely for ad-hoc debugging.
+    BUN_DEBUG_HOLDER_LOCK.lock();
+    let _unlock = scopeguard::guard((), |_| BUN_DEBUG_HOLDER_LOCK.unlock());
+    // SAFETY: every access to BUN_DEBUG_HOLDER is guarded by BUN_DEBUG_HOLDER_LOCK.
+    let holder = unsafe { &mut *ptr::addr_of_mut!(BUN_DEBUG_HOLDER) };
+
+    let dir = match holder.dir {
+        Some(d) => d,
+        None => {
+            let base_name: &[u8] = if cfg!(windows) {
+                // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
+                let temp = Fs::RealFS::platform_temp_dir();
+                // PORT NOTE: Zig built into a stack PathBuffer; we leak the
+                // joined path once (debug-only, single-shot under the lock).
+                let mut buf = Vec::with_capacity(temp.len() + b"\\bun-debug-src".len());
+                buf.extend_from_slice(temp);
+                buf.extend_from_slice(b"\\bun-debug-src");
+                &*Box::leak(buf.into_boxed_slice())
+            } else if bun_core::env::IS_ANDROID {
+                b"/data/local/tmp/bun-debug-src/"
+            } else {
+                b"/tmp/bun-debug-src/"
+            };
+            let d = Dir::cwd().make_open_path(base_name, OpenDirOptions::default())?;
+            holder.dir = Some(d);
+            d
+        }
+    };
+
+    let mut path_buf = bun_paths::PathBuffer::default();
+
+    if let Some(dir_path) = bun_paths::dirname(specifier) {
+        let root_len = if cfg!(windows) {
+            bun_paths::resolve_path::windows_filesystem_root(dir_path).len()
+        } else {
+            b"/".len()
+        };
+        let parent = dir.make_open_path(&dir_path[root_len..], OpenDirOptions::default())?;
+        let _close_parent = scopeguard::guard(parent, |p| p.close());
+
+        let base = bun_paths::basename(specifier);
+        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
+        if let Err(e) = File::write_file(parent.fd, base_z, written) {
+            bun_core::output::debug_warn(&format_args!(
+                "Failed to dump source string: writeFile {}",
+                bun_core::Error::from(e).name()
+            ));
+            return Ok(());
+        }
+
+        // SAFETY: `vm` outlives this debug-only call (BACKREF — VM owns the
+        // transpiler store); only the `source_mappings` leaf field is borrowed,
+        // and `SavedSourceMap::get` takes its own internal mutex.
+        if let Some(mappings) = unsafe { (*vm).source_mappings.get(specifier) } {
+            // `defer mappings.deref()` → Arc::drop.
+            let mut map_path = Vec::with_capacity(base.len() + b".map".len());
+            map_path.extend_from_slice(base);
+            map_path.extend_from_slice(b".map");
+            let map_path_z = bun_paths::resolve_path::z(&map_path, &mut path_buf);
+            let file = parent.create_file_z(map_path_z, bun_sys::CreateFlags { truncate: true, read: false })?;
+            let _close_file = scopeguard::guard(file.handle, |fd| { let _ = bun_sys::close(fd); });
+
+            // `parent.readFileAlloc(allocator, specifier, maxInt) catch ""`
+            let source_file = File::read_from(parent.fd, specifier).unwrap_or_default();
+
+            use core::fmt::Write as _;
+            let mut out = std::string::String::new();
+            let json = |s: &[u8]| {
+                bun_core::fmt::format_json_string_utf8(s, bun_core::fmt::JSONFormatterUTF8Options::default())
+            };
+            // PORT NOTE: Zig used a 4 KiB buffered writer streaming to the fd;
+            // building the whole document in memory then `write_all` is
+            // observationally identical for this debug-only dump.
+            write!(
+                out,
+                "{{\n  \"version\": 3,\n  \"file\": {},\n  \"sourceRoot\": \"\",\n  \"sources\": [{}],\n  \"sourcesContent\": [{}],\n  \"names\": [],\n  \"mappings\": \"{}\"\n}}",
+                json(base),
+                json(specifier),
+                json(&source_file),
+                mappings.format_vlqs(),
+            )
+            .map_err(|_| bun_core::err!("WriteError"))?;
+            file.write_all(out.as_bytes())?;
+        }
+    } else {
+        let base = bun_paths::basename(specifier);
+        let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
+        // Zig: `dir.writeFile(...) catch return;`
+        let _ = File::write_file(dir.fd, base_z, written);
+    }
+
     Ok(())
 }
 

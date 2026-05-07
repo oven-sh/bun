@@ -8,7 +8,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 const ESC = "\x1b";
 
-describe("createErrorInstance message formatting", () => {
+describe.concurrent("createErrorInstance message formatting", () => {
   test("TypeError / RangeError / Error messages are formatted with args", async () => {
     const src = `
       const out = [];
@@ -35,7 +35,7 @@ describe("createErrorInstance message formatting", () => {
   });
 });
 
-describe("throwPretty color handling", () => {
+describe.concurrent("throwPretty color handling", () => {
   // `expect(1).toBe(2)` fails via `throwPretty` with a format string that
   // contains <d>/<r>/<green>/<red> markup.
   async function run(extraEnv: Record<string, string | undefined>) {

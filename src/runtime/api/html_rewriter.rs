@@ -55,14 +55,9 @@ fn html_string_to_bun_string(s: lolhtml::HTMLString) -> BunString {
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
 fn system_error(code: &'static str, message: &'static str) -> SystemError {
     SystemError {
-        errno: 0,
         code: BunString::static_(code),
         message: BunString::static_(message),
-        path: BunString::empty(),
-        syscall: BunString::empty(),
-        hostname: BunString::empty(),
-        fd: core::ffi::c_int::MIN,
-        dest: BunString::empty(),
+        ..Default::default()
     }
 }
 

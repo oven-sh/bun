@@ -479,6 +479,95 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED { 0 } else { 256 
 pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
 pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
 
+/// Owning handle to a [`Value`] that may live either on the heap (`Box`) or in
+/// the per-VM [`HiveAllocator`] pool.
+///
+/// Zig's `Request.body` is `*Body.Value.HiveRef` so the JS `Request` and the
+/// uWS `RequestContext` share one body slot; the Rust port previously held a
+/// `Box<Value>`, which made `request.body` and `ctx.request_body` diverge for
+/// every Bun.serve request (`await request.json()` saw `Null`). This enum
+/// unifies both ownership models behind `Deref<Target = Value>` so the
+/// existing `&*self.body` / `*self.body = …` accesses keep compiling.
+pub enum ValueRef {
+    /// Heap-owned (e.g. `new Request(...)` from JS, `request.clone()`).
+    Owned(Box<Value>),
+    /// +1 ref into the per-VM hive pool. Points at the slot's `.value` field;
+    /// `Drop` recovers the parent [`HiveRef`] via `offset_of!` and `unref()`s.
+    Hive(NonNull<Value>),
+}
+
+impl ValueRef {
+    /// `Body.Value{ .Null = {} }` boxed — the default for JS-constructed
+    /// requests.
+    #[inline]
+    pub fn null() -> Self {
+        ValueRef::Owned(Box::new(Value::Null))
+    }
+
+    #[inline]
+    pub fn owned(value: Value) -> Self {
+        ValueRef::Owned(Box::new(value))
+    }
+
+    /// Adopt a +1 ref to a hive-pooled `Value` (the `.value` field of a
+    /// [`HiveRef`] slot).
+    ///
+    /// # Safety
+    /// `value` must point at the `.value` field of a live `HiveRef` slot and
+    /// carry one owned reference (typically from [`Value::ref_`]) that this
+    /// handle releases on drop.
+    #[inline]
+    pub unsafe fn adopt_hive(value: NonNull<Value>) -> Self {
+        ValueRef::Hive(value)
+    }
+
+    /// Stable raw pointer to the payload (for identity checks across moves).
+    #[inline]
+    pub fn as_ptr(&self) -> *const Value {
+        match self {
+            ValueRef::Owned(b) => &**b,
+            ValueRef::Hive(p) => p.as_ptr(),
+        }
+    }
+}
+
+impl core::ops::Deref for ValueRef {
+    type Target = Value;
+    #[inline]
+    fn deref(&self) -> &Value {
+        match self {
+            ValueRef::Owned(b) => b,
+            // SAFETY: held +1 hive ref keeps the slot alive for `'_`.
+            ValueRef::Hive(p) => unsafe { p.as_ref() },
+        }
+    }
+}
+
+impl core::ops::DerefMut for ValueRef {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Value {
+        match self {
+            ValueRef::Owned(b) => b,
+            // SAFETY: held +1 hive ref keeps the slot alive; the other holder
+            // (`RequestContext.request_body`) is a `NonNull` poked only from
+            // the JS thread, so no aliased `&mut` is live concurrently.
+            ValueRef::Hive(p) => unsafe { p.as_mut() },
+        }
+    }
+}
+
+impl Drop for ValueRef {
+    #[inline]
+    fn drop(&mut self) {
+        if let ValueRef::Hive(p) = *self {
+            // SAFETY: `Hive` invariant — `p` is the `.value` of a live
+            // `HiveRef` slot we hold +1 on.
+            unsafe { (*p.as_ptr()).unref() };
+        }
+        // Owned: Box drops normally.
+    }
+}
+
 /// Typed front-end for `VirtualMachine::init_request_body_value` (the hook is
 /// type-erased to break the `bun_jsc` → `bun_runtime` dep edge). Spec
 /// `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a

@@ -332,7 +332,7 @@ impl Request {
             // through `self.body_value()` while holding `self.headers`. Snapshot the
             // pointer first; `Blob.content_type` is a raw `*const [u8]` that
             // stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match &*self.body {
+            let content_type: Option<*const [u8]> = match self.body_value() {
                 BodyValue::Blob(blob) => Some(blob.content_type),
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
                     Some(readable) => match readable.ptr {
@@ -426,7 +426,7 @@ impl Request {
             }
         }
 
-        if let BodyValue::Blob(blob) = &*self.body {
+        if let BodyValue::Blob(blob) = self.body_value() {
             // SAFETY: see ensure_fetch_headers note.
             let ct = unsafe { &*blob.content_type };
             if !ct.is_empty() {
@@ -443,7 +443,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.byte_slice().len()
-            + self.body.memory_cost()
+            + self.body_value().memory_cost()
     }
 }
 
@@ -583,7 +583,7 @@ impl Request {
     }
 
     pub fn calculate_estimated_byte_size(&mut self) {
-        self.reported_estimated_size = self.body.estimated_size()
+        self.reported_estimated_size = self.body_value().estimated_size()
             + self.size_of_url()
             + core::mem::size_of::<Request>();
     }
@@ -613,7 +613,7 @@ impl Request {
                 };
             }
         }
-        if let BodyValue::Locked(locked) = &*self.body {
+        if let BodyValue::Locked(locked) = self.body_value() {
             return locked.readable.get(global_object);
         }
         None
@@ -625,7 +625,7 @@ impl Request {
             // Zig `js.gc.stream.clear(...)` → `set(.zero)`.
             js_gen::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
-        if let BodyValue::Locked(locked) = &mut *self.body {
+        if let BodyValue::Locked(locked) = self.body_value_mut() {
             // `mem::take` swaps in `Default` and returns the old value, which
             // is then dropped — equivalent to Zig's `old.deinit(); ... = .{}`.
             let _ = core::mem::take(&mut locked.readable);
@@ -701,7 +701,7 @@ impl Request {
             writer,
             "{} ({}) {{\n",
             class_label,
-            bun_fmt::size(self.body.size() as usize, Default::default())
+            bun_fmt::size(self.body_value().size() as usize, Default::default())
         )?;
         {
             // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;` — RAII guard

@@ -35,7 +35,7 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
     pub event_loop: *const EventLoop,
-    // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc (non-AST crate)
+    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,

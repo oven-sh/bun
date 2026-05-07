@@ -1908,7 +1908,7 @@ fn transpile_source_code_inner(
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.
-            // PORT NOTE: Zig threaded `output_code_allocator = arena.arena()`,
+            // PORT NOTE: Zig threaded `output_code_allocator = arena.allocator()`,
             // `sourcemap_allocator = default_allocator`, `esm_record_allocator =
             // default_allocator`. The bundler-side `cache::RuntimeTranspilerCache`
             // dropped those fields per PORTING.md §Allocators (cache buffers use

@@ -197,7 +197,7 @@ pub struct HiveRef<T, const CAPACITY: usize> {
 pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
 
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    /// Zig: `pub fn init(value, pool) !*@This()`.
+    /// Zig: `pub fn init(value, allocator) !*@This()`.
     ///
     /// # Safety
     /// `pool` must be valid for the entire lifetime of the returned

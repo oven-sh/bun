@@ -87,7 +87,7 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
 /// methods). (Exception: methods like `clone` which explicitly accept any allocator should not call
 /// any methods on this type.)
 pub struct CheckedAllocator {
-    // Zig: `#arena: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
+    // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
     #[cfg(feature = "ci_assert")]
     allocator: NullableAllocator,
     // Zig: `#trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty`
@@ -214,7 +214,7 @@ impl CheckedAllocator {
 
 /// Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
 /// MimallocArena.Borrowed` via `anytype` + comptime switch and calls
-/// `.arena()` on the result. `MimallocArena` lives in `bun_runtime` (above
+/// `.allocator()` on the result. `MimallocArena` lives in `bun_runtime` (above
 /// this crate), so callers implement this trait there.
 pub trait AsMimallocArenaAllocator {
     fn allocator(&self) -> StdAllocator;

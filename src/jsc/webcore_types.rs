@@ -459,7 +459,7 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: AtomicU32,
         pub is_all_ascii: Option<bool>,
-        // PORT NOTE: `std.mem.Allocator param` field dropped — global
+        // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global
         // mimalloc everywhere (PORTING.md §Allocators).
     }
 

@@ -10,7 +10,7 @@ use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as 
 #[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: logger::Msg,
-    // PORT NOTE: Zig stored `std.mem.Allocator param` here; dropped — fields own their
+    // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
     // allocations and free on Drop / finalize.
     //
     // PORT NOTE: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;

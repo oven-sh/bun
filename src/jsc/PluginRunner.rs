@@ -18,7 +18,7 @@ use crate::JSGlobalObject;
 /// Spec PluginRunner.zig:7.
 pub struct PluginRunner {
     pub global_object: *mut JSGlobalObject,
-    // PORT NOTE: Zig stored `std.mem.Allocator param`; dropped per
+    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
     // PORTING.md (global mimalloc).
 }
 

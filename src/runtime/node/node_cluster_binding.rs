@@ -26,13 +26,15 @@ unsafe extern "C" {
 // JS thread. Phase B: wrap in a JS-thread-local cell or assert const-init of fields.
 // PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
-pub static mut CHILD_SINGLETON: Option<InternalMsgHolder> = None;
+// PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
+// fields (`Strong`). RacyCell — single-thread access is the contract.
+pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
+    bun_core::RacyCell::new(None);
 
 #[inline]
 fn child_singleton() -> &'static mut InternalMsgHolder {
     // SAFETY: only called on the single JS thread; mirrors Zig `pub var` access.
-    // TODO(port): static mut reference — replace with proper single-thread cell in Phase B.
-    unsafe { (*core::ptr::addr_of_mut!(CHILD_SINGLETON)).get_or_insert_with(Default::default) }
+    unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
 /// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the

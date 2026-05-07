@@ -705,7 +705,7 @@ impl UpdateInteractiveCommand {
 
                 // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
                 // `PackageManager::init` (single-threaded CLI startup).
-                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH };
+                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
                 // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
                 // the Rust port of `install_with_manager` takes the original cwd
                 // path slice instead. Snapshot before the `&mut manager` borrow.

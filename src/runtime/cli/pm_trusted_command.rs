@@ -554,7 +554,7 @@ impl TrustCommand {
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
         let package_json_source = logger::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH }.as_bytes(),
+            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
             package_json_contents.as_slice(),
         );
 

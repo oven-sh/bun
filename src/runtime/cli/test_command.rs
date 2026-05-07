@@ -134,9 +134,12 @@ mod bun_test {
 }
 
 // TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
-// process-wide mutable buffers. Use thread_local in Phase B if needed across threads.
-static mut PATH_BUF: PathBuffer = PathBuffer::ZEROED;
-static mut PATH_BUF2: PathBuffer = PathBuffer::ZEROED;
+// process-wide mutable buffers. PORTING.md §Global mutable state: single-thread
+// CLI scratch → RacyCell. Currently unused (Zig parity placeholders).
+#[allow(dead_code)]
+static PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
+#[allow(dead_code)]
+static PATH_BUF2: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
@@ -1876,8 +1879,8 @@ impl TestCommand {
         // until `exec()` exits the process, so `&mut reporter.jest` remains
         // valid for the process lifetime.
         unsafe {
-            jest::Jest::RUNNER =
-                Some(core::ptr::NonNull::from(&mut reporter.jest));
+            jest::Jest::RUNNER
+                .write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
         // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.

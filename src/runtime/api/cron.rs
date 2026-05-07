@@ -2101,13 +2101,14 @@ fn find_crontab() -> Option<*const c_char> {
     #[cfg(not(windows))]
     {
         // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
-        // TODO(port): static mut PathBuffer is unsound under aliasing; safe here
-        // because callers serialize on the JS thread.
-        static mut BUF: bun_core::PathBuffer =
-            bun_core::PathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
+        // PORTING.md §Global mutable state: single-thread (JS) scratch buffer →
+        // RacyCell. The returned `*const c_char` borrows from this buffer, so
+        // it must remain a static (not a stack local).
+        static BUF: bun_core::RacyCell<bun_core::PathBuffer> =
+            bun_core::RacyCell::new(bun_core::PathBuffer([0u8; bun_core::MAX_PATH_BYTES]));
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
         // SAFETY: single-threaded JS access.
-        let buf = unsafe { &mut *core::ptr::addr_of_mut!(BUF) };
+        let buf = unsafe { &mut *BUF.get() };
         let found = bun_core::which(buf, path_env, b"", b"crontab")?;
         Some(found.as_ptr().cast())
     }

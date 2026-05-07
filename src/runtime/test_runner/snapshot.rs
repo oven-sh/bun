@@ -240,7 +240,7 @@ impl<'a> Snapshots<'a> {
         // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
         // `.files` bytes, disjoint from `&mut self`.
         let test_file_source = unsafe {
-            let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
             &(*p).files.items_source()[file.id as usize]
         };
         let test_filename = test_file_source.path.name.filename;
@@ -418,7 +418,7 @@ impl<'a> Snapshots<'a> {
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
-                let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
             // TODO(port): arena.dupeZ — using owned Vec<u8> with trailing NUL.
@@ -860,7 +860,7 @@ impl<'a> Snapshots<'a> {
             // PORT NOTE: avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
-                let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
             let test_filename = test_file_source.path.name.filename;

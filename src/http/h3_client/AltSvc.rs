@@ -131,14 +131,13 @@ struct Record {
 // TODO(port): module-level mutable state. Zig used a plain `var`; safe because
 // every access is on the single HTTP thread (see module doc). Phase B may want
 // a `SyncUnsafeCell` / thread-local instead of `static mut`.
-#[allow(static_mut_refs)]
-static mut CACHE: Option<StringHashMap<Record>> = None;
+// PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
+static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 
-#[allow(static_mut_refs)]
 fn cache() -> &'static mut StringHashMap<Record> {
     // SAFETY: only ever accessed from the single HTTP thread (see module doc),
     // so no aliased `&mut` can exist concurrently.
-    unsafe { CACHE.get_or_insert_with(StringHashMap::default) }
+    unsafe { (*CACHE.get()).get_or_insert_with(StringHashMap::default) }
 }
 
 /// Hard cap on cached origins. When reached, `record()` first sweeps expired

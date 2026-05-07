@@ -308,12 +308,16 @@ pub type FileMap = ArrayHashMap<u32, u32>;
 pub mod Jest {
     use super::*;
 
-    // TODO(port): global mutable state; Zig `pub var runner: ?*TestRunner = null`.
-    pub static mut RUNNER: Option<NonNull<TestRunner<'static>>> = None;
+    // Zig `pub var runner: ?*TestRunner = null`.
+    // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
+    // over `Option<NonNull<_>>` so direct `.read()` projections in
+    // `snapshot.rs` etc. keep their shape.
+    pub static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
+        bun_core::RacyCell::new(None);
 
     pub fn runner() -> Option<&'static mut TestRunner<'static>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.map(|p| &mut *p.as_ptr()) }
+        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
     /// Raw-pointer accessor for callers that must not materialise
@@ -322,7 +326,7 @@ pub mod Jest {
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
         // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER }
+        unsafe { RUNNER.read() }
     }
 
     #[unsafe(no_mangle)]

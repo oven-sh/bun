@@ -868,16 +868,18 @@ impl RunCommand {
 /// `Box::leak`).
 fn install_runner_arena() -> &'static bun_alloc::Arena {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    static mut ARENA: ::core::mem::MaybeUninit<bun_alloc::Arena> =
-        ::core::mem::MaybeUninit::uninit();
+    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
+    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
+    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
+        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
     ONCE.call_once(|| {
         // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*(&raw mut ARENA)).write(bun_alloc::Arena::new()) };
+        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
     });
     // SAFETY: initialized exactly once above. `configure_env_for_run` is only
     // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
     // never observed concurrently.
-    unsafe { (*(&raw const ARENA)).assume_init_ref() }
+    unsafe { (*ARENA.get()).assume_init_ref() }
 }
 
 impl RunCommand {

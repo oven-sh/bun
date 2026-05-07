@@ -33,13 +33,14 @@ struct SslContextCacheEntry {
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.time.ns_per_min
 
-// SAFETY: only ever accessed from the single HTTP client thread after `on_start`.
-// TODO(port): wrap in a thread-affine cell once `bun_threading` provides one.
-static mut CUSTOM_SSL_CONTEXT_MAP: Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>> =
-    None;
+// PORTING.md §Global mutable state: only ever accessed from the single HTTP
+// client thread after `on_start`. RacyCell — thread affinity is the contract.
+static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
+    Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>>,
+> = bun_core::RacyCell::new(None);
 fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
     // SAFETY: HTTP-thread-only; initialized on first call.
-    unsafe { (*core::ptr::addr_of_mut!(CUSTOM_SSL_CONTEXT_MAP)).get_or_insert_with(ArrayHashMap::new) }
+    unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
 // TODO(b2-blocked): `bun_event_loop` is a higher-tier crate (not in bun_http

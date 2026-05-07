@@ -31,19 +31,21 @@ pub struct ClientContext {
 /// `quic.Context.createClient` (it lives on `loop->data.quic_head` and is
 /// driven by that loop's pre/post hooks), so a second loop would get its
 /// own engine; this var would just need to become per-loop storage.
-// SAFETY: only ever accessed from the single HTTP thread.
-static mut INSTANCE: Option<NonNull<ClientContext>> = None;
+// PORTING.md §Global mutable state: HTTP-thread-only singleton; RacyCell
+// because access is confined to the single HTTP client thread.
+static INSTANCE: bun_core::RacyCell<Option<NonNull<ClientContext>>> =
+    bun_core::RacyCell::new(None);
 static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 
 impl ClientContext {
     pub fn get() -> Option<&'static mut ClientContext> {
         // SAFETY: single-threaded access (HTTP thread only).
-        unsafe { INSTANCE.map(|p| &mut *p.as_ptr()) }
+        unsafe { (*INSTANCE.get()).map(|p| &mut *p.as_ptr()) }
     }
 
     pub fn get_or_create(loop_: *mut UwsLoop) -> Option<&'static mut ClientContext> {
         // SAFETY: single-threaded access (HTTP thread only).
-        if let Some(i) = unsafe { INSTANCE } {
+        if let Some(i) = unsafe { INSTANCE.read() } {
             // SAFETY: INSTANCE points to a leaked Box that lives for the process.
             return Some(unsafe { &mut *i.as_ptr() });
         }
@@ -68,7 +70,7 @@ impl ClientContext {
         }));
         // SAFETY: single-threaded access (HTTP thread only).
         unsafe {
-            INSTANCE = Some(NonNull::from(&mut *self_));
+            INSTANCE.write(Some(NonNull::from(&mut *self_)));
         }
         Some(self_)
     }

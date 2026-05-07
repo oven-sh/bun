@@ -28,7 +28,9 @@ bun_output::declare_scope!(fs_watch, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
-static mut DEFAULT_MANAGER: Option<*mut PathWatcherManager> = None;
+// PORTING.md §Global mutable state: JS-main-thread-only singleton ptr → RacyCell.
+static DEFAULT_MANAGER: bun_core::RacyCell<Option<*mut PathWatcherManager>> =
+    bun_core::RacyCell::new(None);
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
@@ -87,8 +89,8 @@ impl PathWatcherManager {
         // enable to create a new manager
         // SAFETY: single-threaded (JS main thread); see `watch()`.
         unsafe {
-            if DEFAULT_MANAGER == Some(this) {
-                DEFAULT_MANAGER = None;
+            if DEFAULT_MANAGER.read() == Some(this) {
+                DEFAULT_MANAGER.write(None);
             }
         }
 
@@ -443,11 +445,11 @@ pub fn watch(
 
     // SAFETY: single-threaded — only ever called from the JS main thread.
     let manager = unsafe {
-        match DEFAULT_MANAGER {
+        match DEFAULT_MANAGER.read() {
             Some(m) => m,
             None => {
                 let m = PathWatcherManager::init(vm);
-                DEFAULT_MANAGER = Some(m);
+                DEFAULT_MANAGER.write(Some(m));
                 m
             }
         }

@@ -290,8 +290,11 @@ type KQueueGenerationNumber = usize;
 #[cfg(not(all(target_os = "macos", debug_assertions)))]
 type KQueueGenerationNumber = u8; // PORT NOTE: Zig uses `u0`; smallest Rust int is u8. Gated by cfg below.
 
+// PORTING.md §Global mutable state: counter → Atomic. Debug-only diagnostic;
+// `Relaxed` matches Zig's `+%=` (no synchronization implied).
 #[cfg(all(target_os = "macos", debug_assertions))]
-static mut MAX_GENERATION_NUMBER: KQueueGenerationNumber = 0;
+static MAX_GENERATION_NUMBER: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
 /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
 /// generation number); FreeBSD only has the plain `struct kevent`.
@@ -657,11 +660,11 @@ impl FilePoll {
 
         #[cfg(all(target_os = "macos", debug_assertions))]
         {
-            // SAFETY: single-threaded event loop; matches Zig `max_generation_number +%= 1`.
-            unsafe {
-                MAX_GENERATION_NUMBER = MAX_GENERATION_NUMBER.wrapping_add(1);
-                poll.generation_number = MAX_GENERATION_NUMBER;
-            }
+            // Matches Zig `max_generation_number +%= 1`; single-threaded event
+            // loop so `Relaxed` ordering is sufficient.
+            poll.generation_number = MAX_GENERATION_NUMBER
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
         }
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
@@ -688,11 +691,9 @@ impl FilePoll {
 
         #[cfg(all(target_os = "macos", debug_assertions))]
         {
-            // SAFETY: single-threaded event loop.
-            unsafe {
-                MAX_GENERATION_NUMBER = MAX_GENERATION_NUMBER.wrapping_add(1);
-                poll_ref.generation_number = MAX_GENERATION_NUMBER;
-            }
+            poll_ref.generation_number = MAX_GENERATION_NUMBER
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
         }
 
         syslog!(

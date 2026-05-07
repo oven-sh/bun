@@ -38,10 +38,12 @@ pub struct ChromeProcess {
     process: NonNull<Process>,
 }
 
-// SAFETY: only accessed from the JS thread (exported fns are called from C++
-// on the mutator thread; on_process_exit runs on the event loop thread which
-// is the same thread).
-static mut INSTANCE: *mut ChromeProcess = ptr::null_mut();
+// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
+// Only accessed from the JS thread (exported fns are called from C++ on the
+// mutator thread; on_process_exit runs on the event loop thread which is the
+// same thread). Relaxed ordering matches the Zig non-atomic var.
+static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
 /// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
 /// renderer/gpu/utility children (the "process model" zygote tree) — tracked
@@ -53,7 +55,7 @@ static mut INSTANCE: *mut ChromeProcess = ptr::null_mut();
 pub extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
-        if let Some(i) = INSTANCE.as_mut() {
+        if let Some(i) = INSTANCE.load(core::sync::atomic::Ordering::Relaxed).as_mut() {
             // SAFETY: INSTANCE is set to a live Box::into_raw'd pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
             let _ = i.process.as_mut().kill(9);
@@ -90,8 +92,7 @@ pub extern "C" fn Bun__Chrome__ensure(
     }
     #[cfg(not(windows))]
     {
-        // SAFETY: JS-thread-only global.
-        if unsafe { !INSTANCE.is_null() } {
+        if !INSTANCE.load(core::sync::atomic::Ordering::Relaxed).is_null() {
             return -1; // C++ already holds the fd
         }
 
@@ -144,8 +145,8 @@ impl ChromeProcess {
         unsafe {
             (*(*this).process.as_ptr()).deref();
             drop(Box::from_raw(this));
-            INSTANCE = ptr::null_mut();
         }
+        INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -512,8 +513,7 @@ fn spawn(
                 return Err(bun_core::err!("WatchFailed"));
             }
         }
-        // SAFETY: JS-thread-only global.
-        unsafe { INSTANCE = self_ptr };
+        INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
         // fd returned to C++ which adopts it into usockets. Not stored here —
         // usockets owns it; we only own the process lifetime.
         Ok(fds[0])

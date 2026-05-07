@@ -34,18 +34,19 @@ use crate::cli::which_npm_client::NPMClient;
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub mod SourceFileProjectGenerator;
 
-// TODO(port): mutable global PathBuffer — wrap appropriately for thread-safety in Phase B
-static mut BUN_PATH_BUF: PathBuffer = PathBuffer::ZEROED;
+// PORTING.md §Global mutable state: single-thread CLI scratch buffer →
+// RacyCell. Touched on the main thread for `--open` *and* the spawned git
+// thread (sequenced — git thread writes after main is done with it).
+static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> =
+    bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 const TARGET_NEXTJS_VERSION: &[u8] = b"12.2.3";
-pub static mut INITIALIZED_STORE: bool = false;
+// PORTING.md §Global mutable state: bool flag → AtomicBool.
+pub static INITIALIZED_STORE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 pub fn initialize_store() {
-    // SAFETY: single-threaded CLI init
-    unsafe {
-        if INITIALIZED_STORE {
-            return;
-        }
-        INITIALIZED_STORE = true;
+    if INITIALIZED_STORE.swap(true, Ordering::Relaxed) {
+        return;
     }
     js_ast::expr::data::Store::create();
     js_ast::stmt::data::Store::create();
@@ -110,8 +111,11 @@ impl UnsupportedPackages {
     }
 }
 
-// TODO(port): mutable global — single-threaded CLI usage
-static mut BUN_PATH: Option<&'static bun_str::ZStr> = None;
+// PORTING.md §Global mutable state: single-threaded CLI usage; currently
+// write-once / never read (Zig parity placeholder). RacyCell.
+#[allow(dead_code)]
+static BUN_PATH: bun_core::RacyCell<Option<&'static bun_str::ZStr>> =
+    bun_core::RacyCell::new(None);
 
 fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
     let task = strings::trim(task_, b" \n\r\t");
@@ -293,8 +297,9 @@ impl CreateOptions {
 }
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
-// TODO(port): mutable global PathBuffer — single-threaded CLI usage
-static mut HOME_DIR_BUF: PathBuffer = PathBuffer::ZEROED;
+// PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
+static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> =
+    bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub struct CreateCommand;
 
@@ -1542,7 +1547,7 @@ impl CreateCommand {
 
         if create_options.open {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *(&raw mut BUN_PATH_BUF) };
+            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
@@ -1592,7 +1597,7 @@ impl CreateCommand {
 
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
-        let home_dir_buf = unsafe { &mut *(&raw mut HOME_DIR_BUF) };
+        let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
@@ -1983,15 +1988,19 @@ impl ExampleTag {
     }
 }
 
-// TODO(port): mutable static URL — single-threaded CLI usage
-static mut URL_: Option<URL<'static>> = None;
-static mut APP_NAME_BUF: [u8; 512] = [0u8; 512];
-static mut GITHUB_REPOSITORY_URL_BUF: [u8; 1024] = [0u8; 1024];
+// PORTING.md §Global mutable state: single-threaded CLI scratch state →
+// RacyCell. `URL_` borrows into the `*_BUF` statics so they must remain
+// process-lifetime, not stack locals.
+static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
+static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
+static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
+    bun_core::RacyCell::new([0u8; 1024]);
 // PORT NOTE: Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
-// hoisted to a `static mut` so the borrowed slice satisfies `URL<'static>` for
+// hoisted to a static so the borrowed slice satisfies `URL<'static>` for
 // `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
 // `GITHUB_REPOSITORY_URL_BUF`).
-static mut NPM_REGISTRY_URL_BUF: [u8; 1024] = [0u8; 1024];
+static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
+    bun_core::RacyCell::new([0u8; 1024]);
 
 impl Example {
     const EXAMPLES_URL: &'static [u8] = b"https://registry.npmjs.org/bun-examples-all/latest";
@@ -1999,7 +2008,7 @@ impl Example {
     pub fn print(examples: &[Example], default_app_name: Option<&[u8]>) {
         for example in examples {
             // SAFETY: single-threaded CLI access to static buffer
-            let app_name_buf = unsafe { &mut *(&raw mut APP_NAME_BUF) };
+            let app_name_buf = unsafe { &mut *APP_NAME_BUF.get() };
             let app_name: &[u8] = default_app_name.unwrap_or_else(|| {
                 let mut cursor: &mut [u8] = &mut app_name_buf[..];
                 let cap = cursor.len();
@@ -2044,7 +2053,7 @@ impl Example {
         let mut examples: Vec<Example> = remote_examples.into_vec();
         {
             // SAFETY: single-threaded CLI access to module-level static path buffer
-            let home_dir_buf = unsafe { &mut *(&raw mut HOME_DIR_BUF) };
+            let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
             let mut folders: [bun_sys::Dir; 3] = [
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
                 bun_sys::Dir::from_fd(bun_sys::Fd::invalid()),
@@ -2159,7 +2168,7 @@ impl Example {
         }
 
         // SAFETY: single-threaded CLI access to static buffer
-        let url_buf = unsafe { &mut *(&raw mut GITHUB_REPOSITORY_URL_BUF) };
+        let url_buf = unsafe { &mut *GITHUB_REPOSITORY_URL_BUF.get() };
         let api_url = URL::parse({
             let mut cursor: &mut [u8] = &mut url_buf[..];
             let cap = cursor.len();
@@ -2284,7 +2293,7 @@ impl Example {
         refresher.refresh();
 
         // SAFETY: single-threaded CLI access to static buffer.
-        let url_buf = unsafe { &mut *(&raw mut NPM_REGISTRY_URL_BUF) };
+        let url_buf = unsafe { &mut *NPM_REGISTRY_URL_BUF.get() };
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
         let api_url = URL::parse({
@@ -2303,21 +2312,21 @@ impl Example {
         // `AsyncHTTP::init_sync` (single-threaded CLI; same as
         // `fetch_from_github`).
         unsafe {
-            URL_ = Some(core::mem::transmute::<URL<'_>, URL<'static>>(api_url));
+            *URL_.get() = Some(core::mem::transmute::<URL<'_>, URL<'static>>(api_url));
         }
 
         // SAFETY: `http_proxy` borrows from `env_loader`'s leaked map (see
         // `DotEnv::Loader::init(Box::leak(map))` in `exec`); erase to `'static`
         // for `AsyncHTTP::init_sync` — same as `fetch_from_github` above.
         let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*(&raw const URL_)).as_ref().unwrap() })
+            .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
             .map(|u| unsafe { core::mem::transmute::<URL<'_>, URL<'static>>(u) });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             // SAFETY: single-threaded CLI access to static URL_ (set just above)
-            unsafe { (*(&raw const URL_)).clone() }.unwrap(),
+            unsafe { (*URL_.get()).clone() }.unwrap(),
             Default::default(),
             b"",
             mutable,
@@ -2655,7 +2664,10 @@ struct GitHandler;
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
 // Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-static mut THREAD: Option<std::thread::JoinHandle<()>> = None;
+// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
+// on the main CLI thread → RacyCell.
+static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
+    bun_core::RacyCell::new(None);
 
 impl GitHandler {
     pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
@@ -2677,7 +2689,7 @@ impl GitHandler {
             }
         };
         // SAFETY: single-threaded CLI; written once before wait()
-        unsafe { THREAD = Some(thread) };
+        unsafe { *THREAD.get() = Some(thread) };
     }
 
     fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
@@ -2700,7 +2712,7 @@ impl GitHandler {
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { (*(&raw mut THREAD)).take() }.unwrap().join();
+        let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
         outcome
     }
 
@@ -2732,7 +2744,7 @@ impl GitHandler {
         // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
         // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
         // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
-        let bun_path_buf = unsafe { &mut *(&raw mut BUN_PATH_BUF) };
+        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
             let git_commands: [&[&[u8]]; 3] = [

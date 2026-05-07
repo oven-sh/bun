@@ -4,14 +4,18 @@ use bun_alloc::AllocError;
 use bun_str::strings;
 
 /// After running `convert_env_to_wtf8`, the pointers in `std.os.environ` will point into this buffer.
-// SAFETY: written exactly once at program startup before any threads are spawned.
-pub static mut WTF8_ENV_BUF: Option<&'static [u8]> = None;
+// PORTING.md §Global mutable state: written exactly once at program startup
+// before any threads are spawned. RacyCell — startup-only.
+pub static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> =
+    bun_core::RacyCell::new(None);
 /// `convert_env_to_wtf8` will set this to the original value of `std.os.environ`.
 // SAFETY: written exactly once at program startup before any threads are spawned.
-pub static mut ORIG_ENVIRON: Option<&'static mut [*mut c_char]> = None;
+pub static ORIG_ENVIRON: bun_core::RacyCell<Option<&'static mut [*mut c_char]>> =
+    bun_core::RacyCell::new(None);
 
 #[cfg(feature = "ci_assert")]
-static mut ENV_CONVERTED: bool = false;
+static ENV_CONVERTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 // TODO(port): `Environment.ci_assert` mapped to cfg(feature = "ci_assert"); confirm feature name in Phase B.
 
 /// Converts all strings in `std.os.environ` to WTF-8.
@@ -23,21 +27,16 @@ static mut ENV_CONVERTED: bool = false;
 pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     #[cfg(feature = "ci_assert")]
     {
-        // SAFETY: single-threaded startup; see module-level note.
-        unsafe {
-            debug_assert!(!ENV_CONVERTED, "convertEnvToWTF8 may only be called once");
-            ENV_CONVERTED = true;
-        }
+        debug_assert!(
+            !ENV_CONVERTED.load(core::sync::atomic::Ordering::Relaxed),
+            "convertEnvToWTF8 may only be called once"
+        );
+        ENV_CONVERTED.store(true, core::sync::atomic::Ordering::Relaxed);
     }
     #[cfg(feature = "ci_assert")]
-    let env_guard = scopeguard::guard(
-        // SAFETY: single-threaded startup; taking a raw pointer to the flag we just set.
-        unsafe { core::ptr::addr_of_mut!(ENV_CONVERTED) },
-        |p| {
-            // SAFETY: single-threaded startup; `p` is `&raw mut ENV_CONVERTED`.
-            unsafe { *p = false };
-        },
-    );
+    let env_guard = scopeguard::guard((), |()| {
+        ENV_CONVERTED.store(false, core::sync::atomic::Ordering::Relaxed);
+    });
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
@@ -94,9 +93,9 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     let envp_nonnull_slice: &'static mut [*mut c_char] = &mut envp_slice[0..envp_nonnull_len];
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
-        WTF8_ENV_BUF = Some(Box::leak(wtf8_buf));
+        WTF8_ENV_BUF.write(Some(Box::leak(wtf8_buf)));
         // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
-        ORIG_ENVIRON = Some(bun_core::os::take_environ());
+        *ORIG_ENVIRON.get() = Some(bun_core::os::take_environ());
         bun_core::os::set_environ(envp_nonnull_slice);
     }
 

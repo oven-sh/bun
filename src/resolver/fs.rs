@@ -279,10 +279,15 @@ pub enum FileSystemError {
 
 static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-pub(crate) static mut MAX_FD: bun_sys::RawFd = 0;
-pub(crate) static mut INSTANCE_LOADED: bool = false;
+// PORTING.md §Global mutable state: highest-fd watermark, mutated only on the
+// resolver thread. `RacyCell` (not `AtomicI32`) because `RawFd` is a `*mut`
+// HANDLE on Windows; the Windows path early-returns before touching it.
+pub(crate) static MAX_FD: bun_core::RacyCell<bun_sys::RawFd> = bun_core::RacyCell::new(0);
+pub(crate) static INSTANCE_LOADED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 // TODO(port): lifetime — global mutable singleton; Zig used `var instance: FileSystem = undefined`
-pub(crate) static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
+pub(crate) static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
 impl FileSystem {
     pub(crate) fn top_level_dir_without_trailing_slash(&self) -> &[u8] {
@@ -351,7 +356,7 @@ impl FileSystem {
 
         // SAFETY: single-threaded mutation in resolver context (matches Zig global)
         unsafe {
-            MAX_FD = fd.max(MAX_FD);
+            *MAX_FD.get() = fd.max(*MAX_FD.get());
         }
     }
 
@@ -385,8 +390,8 @@ impl FileSystem {
 
         // SAFETY: matches Zig global singleton init pattern
         unsafe {
-            if !INSTANCE_LOADED || FORCE {
-                INSTANCE.write(FileSystem {
+            if !INSTANCE_LOADED.load(core::sync::atomic::Ordering::Acquire) || FORCE {
+                (*INSTANCE.get()).write(FileSystem {
                     top_level_dir,
                     top_level_dir_buf: PathBuffer::uninit(),
                     fs: Implementation::init(top_level_dir),
@@ -394,13 +399,13 @@ impl FileSystem {
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
                 });
-                INSTANCE_LOADED = true;
+                INSTANCE_LOADED.store(true, core::sync::atomic::Ordering::Release);
 
                 // Touch the EntryStore singleton so it's initialized.
                 let _ = entry_store_backing();
             }
 
-            Ok((*(&raw mut INSTANCE)).as_mut_ptr())
+            Ok((*INSTANCE.get()).as_mut_ptr())
         }
     }
 
@@ -410,9 +415,8 @@ impl FileSystem {
         // materialize a `&'static mut` here — concurrent callers (resolver runs on a
         // thread pool) would each hold a live `&'static mut` to the same object (UB).
         // Form the `&mut` only for the duration of a single operation at the call site.
-        // SAFETY: caller guarantees `init()` was called; `&raw mut` avoids the
-        // `static_mut_refs` edition-2024 deny lint.
-        unsafe { (*(&raw mut INSTANCE)).as_mut_ptr() }
+        // SAFETY: caller guarantees `init()` was called.
+        unsafe { (*INSTANCE.get()).as_mut_ptr() }
     }
 }
 
@@ -1022,13 +1026,17 @@ pub type Tmpfile = TmpfileWindows;
 pub(crate) type Tmpfile = TmpfilePosix;
 
 pub(crate) mod limit {
-    pub(crate) static mut HANDLES: usize = 0;
+    // PORTING.md §Global mutable state: written once at init in
+    // `adjust_ulimit`, read elsewhere — Atomic for the scalar, RacyCell for
+    // the POD struct (no Atomic<Rlimit>).
+    pub(crate) static HANDLES: core::sync::atomic::AtomicUsize =
+        core::sync::atomic::AtomicUsize::new(0);
     #[cfg(unix)]
-    pub(crate) static mut HANDLES_BEFORE: bun_sys::posix::Rlimit =
+    pub(crate) static HANDLES_BEFORE: bun_core::RacyCell<bun_sys::posix::Rlimit> =
         // SAFETY: all-zero is a valid Rlimit (POD)
-        unsafe { core::mem::zeroed() };
+        bun_core::RacyCell::new(unsafe { core::mem::zeroed() });
     #[cfg(not(unix))]
-    pub static mut HANDLES_BEFORE: () = ();
+    pub static HANDLES_BEFORE: () = ();
 }
 
 thread_local! {
@@ -1242,7 +1250,7 @@ impl RealFS {
         {
             // If we're not near the max amount of open files, don't worry about it.
             // SAFETY: MAX_FD is a global mutated only on the resolver thread
-            !(self.file_limit > 254 && self.file_limit > (unsafe { MAX_FD } as usize + 1) * 2)
+            !(self.file_limit > 254 && self.file_limit > (unsafe { MAX_FD.read() } as usize + 1) * 2)
         }
     }
 
@@ -1272,9 +1280,7 @@ impl RealFS {
             let resource = bun_sys::posix::RlimitResource::NOFILE;
             let mut lim = bun_sys::posix::getrlimit(resource)?;
             // SAFETY: single init-time write
-            unsafe {
-                limit::HANDLES_BEFORE = lim;
-            }
+            unsafe { limit::HANDLES_BEFORE.write(lim) };
 
             // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
             // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
@@ -1301,10 +1307,10 @@ impl RealFS {
                 }
             }
 
-            // SAFETY: single init-time write
-            unsafe {
-                limit::HANDLES = usize::try_from(lim.cur).expect("int cast");
-            }
+            limit::HANDLES.store(
+                usize::try_from(lim.cur).expect("int cast"),
+                core::sync::atomic::Ordering::Relaxed,
+            );
             Ok(usize::try_from(lim.cur).expect("int cast"))
         }
     }

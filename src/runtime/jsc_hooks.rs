@@ -1117,7 +1117,7 @@ unsafe fn ipc_child_singleton_deinit() {
     // `Drop`; taking the `Option` runs them — equivalent to Zig `deinit()`.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
     unsafe {
-        (*core::ptr::addr_of_mut!(crate::node::node_cluster_binding::CHILD_SINGLETON)).take();
+        (*crate::node::node_cluster_binding::CHILD_SINGLETON.get()).take();
     }
 }
 

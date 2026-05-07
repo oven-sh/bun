@@ -191,8 +191,12 @@ pub extern "C" fn cycleStart() {}
 #[unsafe(no_mangle)]
 pub extern "C" fn cycleEnd() {}
 
-// SAFETY: wasm32 is single-threaded; these module-level mutables mirror Zig `var` globals.
-// TODO(port): consider wrapping in a `struct WasmState` + `static STATE: UnsafeCell<...>` in Phase B.
+// PORTING.md §Global mutable state — exemption: wasm32 is single-threaded by
+// construction (no SharedArrayBuffer in this target), so `static mut` here is
+// equivalent to `RacyCell` without the wrapper churn. Every `extern "C"` entry
+// point below runs to completion before the next can be invoked, so no two
+// `&mut` to the same static are ever live. These mirror Zig `var` globals.
+// `#[allow(static_mut_refs)]` is set crate-wide for this file.
 static mut TRANSFORM_RESPONSE: MaybeUninit<api::TransformResponse> = MaybeUninit::uninit();
 static mut OUTPUT_FILES: [MaybeUninit<api::OutputFile>; 1] = [MaybeUninit::uninit()];
 static mut BUFFER_WRITER: MaybeUninit<js_printer::BufferWriter> = MaybeUninit::uninit();

@@ -93,7 +93,11 @@ impl Default for ThreadPool {
 mod io_thread_pool {
     use super::*;
 
-    static mut THREAD_POOL: MaybeUninit<ThreadPoolLib::ThreadPool> = MaybeUninit::uninit();
+    // PORTING.md §Global mutable state: init/drop guarded by `MUTEX` +
+    // `REF_COUNT`. RacyCell so accessors stay in raw-ptr land; the mutex
+    // provides synchronization.
+    static THREAD_POOL: bun_core::RacyCell<MaybeUninit<ThreadPoolLib::ThreadPool>> =
+        bun_core::RacyCell::new(MaybeUninit::uninit());
     /// Protects initialization and deinitialization of the IO thread pool.
     static MUTEX: Mutex = {
         // PORT NOTE: `Mutex` derives `Default` but `Default::default()` isn't
@@ -125,7 +129,7 @@ mod io_thread_pool {
                 Ok(_) => {
                     // SAFETY: REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
                     return unsafe {
-                        NonNull::new_unchecked((&raw mut THREAD_POOL).cast::<ThreadPoolLib::ThreadPool>())
+                        NonNull::new_unchecked(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
                     };
                 }
                 Err(actual) => count = actual,
@@ -138,9 +142,8 @@ mod io_thread_pool {
         // indicate the thread pool is initialized) is guarded by the mutex.
         if REF_COUNT.load(Ordering::Relaxed) == 0 {
             // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
-            // `&raw mut` avoids the edition-2024 `static_mut_refs` hard error.
             unsafe {
-                (*(&raw mut THREAD_POOL)).write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
                     max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
                     // Use a much smaller stack size for the IO thread pool
                     stack_size: 512 * 1024,
@@ -154,7 +157,7 @@ mod io_thread_pool {
             // (the racing acquirer's reference isn't counted). Mirrored.
         }
         // SAFETY: just initialized (or observed initialized) above.
-        unsafe { NonNull::new_unchecked((&raw mut THREAD_POOL).cast::<ThreadPoolLib::ThreadPool>()) }
+        unsafe { NonNull::new_unchecked(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>()) }
     }
 
     pub fn release() {
@@ -184,9 +187,8 @@ mod io_thread_pool {
             return false;
         }
         // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
-        // `&raw mut` avoids the edition-2024 `static_mut_refs` hard error.
         unsafe {
-            (*(&raw mut THREAD_POOL)).assume_init_drop();
+            (*THREAD_POOL.get()).assume_init_drop();
         }
         // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
         // (`thread_pool = undefined;` is the last statement). Assuming `true`.

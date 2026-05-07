@@ -297,8 +297,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     if tried_dot_tmp {
-        // SAFETY: single-threaded init via Once
-        unsafe { USING_FALLBACK_TEMP_DIR = true; }
+        USING_FALLBACK_TEMP_DIR.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     if manager.options.log_level != LogLevel::Silent {
@@ -1198,7 +1197,10 @@ impl fmt::Display for PatchHashFmt {
     }
 }
 
-static mut USING_FALLBACK_TEMP_DIR: bool = false;
+// PORTING.md §Global mutable state: bool flag → AtomicBool. Set once during
+// the (Once-guarded) temp-dir probe; never read today but kept for Zig parity.
+static USING_FALLBACK_TEMP_DIR: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 // ────────────────────────────── helpers ───────────────────────────────────────
 

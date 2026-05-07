@@ -2004,13 +2004,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     if let Some(log_level) = opts.log_level {
         // SAFETY: single-threaded startup; mirrors Zig `Log.default_log_level = …`
         unsafe {
-            logger::DEFAULT_LOG_LEVEL = match log_level {
+            logger::DEFAULT_LOG_LEVEL.write(match log_level {
                 api::MessageLevel::Debug => logger::Level::Debug,
                 api::MessageLevel::Err => logger::Level::Err,
                 api::MessageLevel::Warn => logger::Level::Warn,
                 _ => logger::Level::Err,
-            };
-            (*ctx.log).level = logger::DEFAULT_LOG_LEVEL;
+            });
+            (*ctx.log).level = logger::DEFAULT_LOG_LEVEL.read();
         }
     }
 

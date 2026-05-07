@@ -124,7 +124,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     // WIC frames come in whatever pixel format the codec emits; normalise to
     // straight-alpha RGBA8 in one hop.
     // SAFETY: read-only after FACTORY_ONCE has run (factory() returned Ok).
-    let convert_fn = unsafe { wicConvertBitmapSource }.ok_or(BackendUnavailable)?;
+    let convert_fn = unsafe { wicConvertBitmapSource.read() }.ok_or(BackendUnavailable)?;
     let mut conv: *mut IWICBitmapSource = ptr::null_mut();
     // SAFETY: convert_fn resolved from windowscodecs.dll; frame is non-null.
     if unsafe { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame, &mut conv) } < 0 || conv.is_null()
@@ -298,7 +298,7 @@ pub fn encode(
         }
         scopeguard::defer! { release(src); }
         // SAFETY: read-only after FACTORY_ONCE has run.
-        let convert_fn = unsafe { wicConvertBitmapSource }.ok_or(BackendUnavailable)?;
+        let convert_fn = unsafe { wicConvertBitmapSource.read() }.ok_or(BackendUnavailable)?;
         let mut conv: *mut IWICBitmapSource = ptr::null_mut();
         // SAFETY: convert_fn resolved; src is non-null; pf is the codec's chosen format.
         if unsafe { convert_fn(&pf, src, &mut conv) } < 0 || conv.is_null() {
@@ -685,8 +685,11 @@ type WICConvertBitmapSourceFn = unsafe extern "system" fn(
     src: *mut IWICBitmapSource,
     out: *mut *mut IWICBitmapSource,
 ) -> HRESULT;
-// SAFETY: written once under FACTORY_ONCE, read-only thereafter.
-static mut wicConvertBitmapSource: Option<WICConvertBitmapSourceFn> = None;
+// PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
+// read-only thereafter. RacyCell over the `Copy` fn-ptr option (no
+// `Atomic<Option<fn>>`).
+static wicConvertBitmapSource: bun_core::RacyCell<Option<WICConvertBitmapSourceFn>> =
+    bun_core::RacyCell::new(None);
 
 const COINIT_MULTITHREADED: u32 = 0;
 const CLSCTX_INPROC_SERVER: u32 = 1;
@@ -694,8 +697,10 @@ const CLSCTX_INPROC_SERVER: u32 = 1;
 thread_local! {
     static COM_INITIALISED: Cell<bool> = const { Cell::new(false) };
 }
-// SAFETY: written once under FACTORY_ONCE, read-only thereafter.
-static mut FACTORY_PTR: *mut IWICImagingFactory = ptr::null_mut();
+// PORTING.md §Global mutable state: written once under `FACTORY_ONCE`,
+// read-only thereafter → AtomicPtr (Once provides the happens-before).
+static FACTORY_PTR: core::sync::atomic::AtomicPtr<IWICImagingFactory> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 static FACTORY_ONCE: Once = Once::new();
 
 fn factory() -> Result<*mut IWICImagingFactory, BackendError> {
@@ -710,8 +715,8 @@ fn factory() -> Result<*mut IWICImagingFactory, BackendError> {
         COM_INITIALISED.set(true);
     }
     FACTORY_ONCE.call_once(load_factory);
-    // SAFETY: FACTORY_PTR is only written inside FACTORY_ONCE; happens-before via call_once.
-    let p = unsafe { FACTORY_PTR };
+    // FACTORY_PTR is only written inside FACTORY_ONCE; happens-before via call_once.
+    let p = FACTORY_PTR.load(core::sync::atomic::Ordering::Relaxed);
     if p.is_null() {
         Err(BackendUnavailable)
     } else {
@@ -733,7 +738,7 @@ fn load_factory() {
     };
     // SAFETY: write under FACTORY_ONCE; sym is the export of WICConvertBitmapSource.
     unsafe {
-        wicConvertBitmapSource = Some(core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym));
+        wicConvertBitmapSource.write(Some(core::mem::transmute::<_, WICConvertBitmapSourceFn>(sym)));
     }
 
     let mut out: *mut c_void = ptr::null_mut();
@@ -750,10 +755,7 @@ fn load_factory() {
     {
         return;
     }
-    // SAFETY: write under FACTORY_ONCE.
-    unsafe {
-        FACTORY_PTR = out as *mut IWICImagingFactory;
-    }
+    FACTORY_PTR.store(out as *mut IWICImagingFactory, core::sync::atomic::Ordering::Relaxed);
 }
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────

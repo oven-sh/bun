@@ -3837,15 +3837,18 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
 macro_rules! dlsym_with_handle {
     ($T:ty, $name:literal, $handle:expr) => {{
         static ONCE: ::std::sync::Once = ::std::sync::Once::new();
-        static mut PTR: *mut ::core::ffi::c_void = ::core::ptr::null_mut();
+        // PORTING.md §Global mutable state: init-once fn ptr → AtomicPtr.
+        // `Once` already provides happens-before; AtomicPtr just makes the
+        // slot `Sync` without `static mut`.
+        static PTR: ::core::sync::atomic::AtomicPtr<::core::ffi::c_void> =
+            ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
         ONCE.call_once(|| {
             if let Some(p) = $crate::dlsym_impl($handle, ::bun_core::zstr!($name)) {
-                // SAFETY: only mutated once under Once.
-                unsafe { PTR = p; }
+                PTR.store(p, ::core::sync::atomic::Ordering::Relaxed);
             }
         });
         // SAFETY: read-only after Once; caller asserts `$T` is fn-ptr-shaped.
-        let p = unsafe { PTR };
+        let p = PTR.load(::core::sync::atomic::Ordering::Relaxed);
         if p.is_null() { None } else {
             Some(unsafe { ::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(&p) })
         }

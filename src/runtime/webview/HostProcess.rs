@@ -32,8 +32,10 @@ pub struct HostProcess {
     process: NonNull<Process>,
 }
 
-// SAFETY: only ever accessed from the JS thread (macOS WebView host is single-VM).
-static mut INSTANCE: *mut HostProcess = ptr::null_mut();
+// PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
+// Only ever accessed from the JS thread (macOS WebView host is single-VM).
+static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
+    core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
 /// Called from WebView.closeAll() and dispatchOnExit. Socket EOF handles
 /// normal parent-death (including SIGKILL of Bun — kernel closes fds, child
@@ -45,7 +47,7 @@ static mut INSTANCE: *mut HostProcess = ptr::null_mut();
 pub extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
-        if let Some(i) = INSTANCE.as_mut() {
+        if let Some(i) = INSTANCE.load(core::sync::atomic::Ordering::Relaxed).as_mut() {
             // SAFETY: INSTANCE is set to a live Box::into_raw'd pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
             let _ = i.process.as_mut().kill(9);
@@ -73,8 +75,7 @@ pub extern "C" fn Bun__WebViewHost__ensure(
     }
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: single-threaded access (JS thread only).
-        if unsafe { !INSTANCE.is_null() } {
+        if !INSTANCE.load(core::sync::atomic::Ordering::Relaxed).is_null() {
             return -1; // C++ already holds the fd
         }
 
@@ -119,8 +120,8 @@ impl HostProcess {
         unsafe {
             (*(*this).process.as_ptr()).deref();
             drop(Box::from_raw(this));
-            INSTANCE = ptr::null_mut();
         }
+        INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -221,8 +222,7 @@ fn spawn(
                 return Err(bun_core::err!("WatchFailed"));
             }
         }
-        // SAFETY: single-threaded access (JS thread only).
-        unsafe { INSTANCE = self_ptr };
+        INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
         // fd handed to C++ which adopts it into usockets. Not stored here —
         // usockets owns the socket; Rust only owns process lifetime.
         let fd0 = scopeguard::ScopeGuard::into_inner(fd0_guard);

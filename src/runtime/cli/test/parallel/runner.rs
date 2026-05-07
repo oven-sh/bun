@@ -560,11 +560,11 @@ impl<'a> WorkerLoop<'a> {
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
-            WORKER_CMDS = Some(&mut self.cmds as *mut WorkerCommands);
+            WORKER_CMDS.write(Some(&mut self.cmds as *mut WorkerCommands));
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-        let wf = unsafe { &mut *core::ptr::addr_of_mut!(WORKER_FRAME) };
+        let wf = unsafe { &mut *WORKER_FRAME.get() };
         wf.begin(frame::Kind::Ready);
         self.cmds.send(wf.finish());
 
@@ -693,7 +693,7 @@ fn worker_flush_aggregates(
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-    let wf = unsafe { &mut *core::ptr::addr_of_mut!(WORKER_FRAME) };
+    let wf = unsafe { &mut *WORKER_FRAME.get() };
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());
@@ -751,13 +751,15 @@ fn worker_flush_aggregates(
 }
 
 /// Reused across all worker → coordinator emits.
-// SAFETY: only accessed from the single worker thread after run_as_worker begins.
-static mut WORKER_FRAME: Frame = Frame::DEFAULT;
+// PORTING.md §Global mutable state: only accessed from the single worker
+// thread after run_as_worker begins → RacyCell.
+static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::DEFAULT);
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
-// SAFETY: only accessed from the single worker thread.
-static mut WORKER_CMDS: Option<*mut WorkerCommands> = None;
+// PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
+static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> =
+    bun_core::RacyCell::new(None);
 // TODO(port): lifetime — stores a 'a-bound pointer as 'static; sound because
 // the pointee outlives all callers (process exits before it's dropped).
 
@@ -766,12 +768,12 @@ static mut WORKER_CMDS: Option<*mut WorkerCommands> = None;
 /// codes). The coordinator prints these bytes verbatim so output matches serial.
 pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
-    let Some(cmds_ptr) = (unsafe { WORKER_CMDS }) else { return };
+    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else { return };
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
-    let wf = unsafe { &mut *core::ptr::addr_of_mut!(WORKER_FRAME) };
+    let wf = unsafe { &mut *WORKER_FRAME.get() };
     wf.begin(frame::Kind::TestDone);
     wf.u32_(file_idx);
     wf.str(formatted_line);

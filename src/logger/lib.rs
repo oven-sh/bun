@@ -2026,9 +2026,10 @@ impl Level {
 }
 
 // Zig: `pub var default_log_level = Level.warn;`
-// TODO(port): mutable global — Zig mutates this at runtime (CLI flag). Phase B
-// should pick `AtomicI8` or thread it through config.
-pub static mut DEFAULT_LOG_LEVEL: Level = Level::Warn;
+// PORTING.md §Global mutable state: written once during single-threaded CLI
+// startup, read thereafter. RacyCell over the `Copy` enum (no `Atomic<Level>`).
+pub static DEFAULT_LOG_LEVEL: bun_core::RacyCell<Level> =
+    bun_core::RacyCell::new(Level::Warn);
 
 impl Log {
     pub fn memory_cost(&self) -> usize {
@@ -2070,8 +2071,8 @@ impl Log {
     }
 
     pub fn init() -> Log {
-        // SAFETY: single-threaded init-time read; see TODO on DEFAULT_LOG_LEVEL.
-        let level = unsafe { DEFAULT_LOG_LEVEL };
+        // SAFETY: single-threaded init-time read; see note on DEFAULT_LOG_LEVEL.
+        let level = unsafe { DEFAULT_LOG_LEVEL.read() };
         Log {
             msgs: Vec::new(),
             level,

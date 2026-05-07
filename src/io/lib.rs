@@ -168,13 +168,17 @@ pub struct Loop {
 // the IO thread mutates fields concurrently with `schedule()` callers (which only
 // touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
 // `Mutex` would be wrong. Matches Zig `var loop: Loop = undefined;` + `std.once(load)`.
-static mut LOOP: core::mem::MaybeUninit<Loop> = core::mem::MaybeUninit::uninit();
+// PORTING.md §Global mutable state: RacyCell — `ONCE` provides the
+// happens-before for init; afterwards only the IO thread mutates non-atomic
+// fields and other threads only touch the lock-free `pending` + `waker`.
+static LOOP: bun_core::RacyCell<core::mem::MaybeUninit<Loop>> =
+    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 impl Loop {
     fn load() {
         // SAFETY: called exactly once via `ONCE.get_or_init`; no other access until this returns.
-        let loop_ = unsafe { (*&raw mut LOOP).assume_init_mut() };
+        let loop_ = unsafe { (*LOOP.get()).assume_init_mut() };
         *loop_ = Loop {
             pending: RequestQueue::default(),
             waker: Waker::init().unwrap_or_else(|_| panic!("failed to initialize waker")),
@@ -278,12 +282,12 @@ impl Loop {
         // SAFETY: LOOP initialized by `load()` exactly once above; callers uphold the
         // Zig invariant that only the IO thread mutates non-atomic fields and other
         // threads only call `schedule()` (lock-free queue + waker).
-        unsafe { (*&raw mut LOOP).assume_init_mut() }
+        unsafe { (*LOOP.get()).assume_init_mut() }
     }
 
     pub fn on_spawn_io_thread() {
         // SAFETY: ONCE guarantees LOOP is initialized before this thread is spawned.
-        unsafe { (*&raw mut LOOP).assume_init_mut() }.tick();
+        unsafe { (*LOOP.get()).assume_init_mut() }.tick();
     }
 
     pub fn schedule(&mut self, request: &mut Request) {
@@ -412,7 +416,7 @@ impl Loop {
                 let pollable = Pollable::from(event.u64);
                 if pollable.tag() == PollableTag::Empty {
                     // SAFETY: LOOP is initialized (we are running inside it).
-                    if event.u64 == unsafe { (*&raw const LOOP).as_ptr() } as usize as u64 {
+                    if event.u64 == unsafe { (*LOOP.get()).as_ptr() } as usize as u64 {
                         // Edge-triggered: no need to read the eventfd counter
                         continue;
                     }
@@ -753,8 +757,11 @@ type GenerationNumberInt = u64;
 #[cfg(not(all(target_os = "macos", debug_assertions)))]
 type GenerationNumberInt = (); // Zig: u0
 
+// PORTING.md §Global mutable state: counter → Atomic. Only the IO thread
+// touches this, so `Relaxed` matches the Zig non-atomic `+= 1`.
 #[cfg(all(target_os = "macos", debug_assertions))]
-static mut GENERATION_NUMBER_MONOTONIC: GenerationNumberInt = 0;
+static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 
 pub struct Poll {
     pub flags: FlagsSet,
@@ -940,8 +947,7 @@ impl Poll {
             let gen_: u64 = if ACTION == ApplyAction::Cancel {
                 poll.generation_number
             } else {
-                // SAFETY: only the IO thread mutates this counter.
-                unsafe { GENERATION_NUMBER_MONOTONIC }
+                GENERATION_NUMBER_MONOTONIC.load(core::sync::atomic::Ordering::Relaxed)
             };
             #[cfg(not(debug_assertions))]
             let gen_: u64 = 0;
@@ -971,11 +977,11 @@ impl Poll {
         // which only exists on Darwin (GenerationNumberInt is u0 elsewhere).
         #[cfg(all(target_os = "macos", debug_assertions))]
         if ACTION != ApplyAction::Cancel {
-            // SAFETY: only the IO thread mutates this counter.
-            unsafe {
-                GENERATION_NUMBER_MONOTONIC += 1;
-                poll.generation_number = GENERATION_NUMBER_MONOTONIC;
-            }
+            // Only the IO thread mutates this counter; Relaxed matches Zig's
+            // non-atomic `+= 1`.
+            poll.generation_number = GENERATION_NUMBER_MONOTONIC
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+                + 1;
         }
     }
 

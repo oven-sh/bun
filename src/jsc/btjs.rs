@@ -657,7 +657,11 @@ mod zig_std_debug {
     }
 
     // ── std.debug.getSelfDebugInfo ───────────────────────────────────────
-    static mut SELF_DEBUG_INFO: Option<SelfInfo> = None;
+    // PORTING.md §Global mutable state: lazy debug-only singleton. RacyCell —
+    // btjs is only called from lldb on a stopped process, so no concurrent
+    // access; the `&'static mut` it hands out is exclusive for that frame.
+    static SELF_DEBUG_INFO: bun_core::RacyCell<Option<SelfInfo>> =
+        bun_core::RacyCell::new(None);
 
     /// Port of `std.debug.getSelfDebugInfo`. NOT thread-safe (the Zig original
     /// has the same `TODO multithreaded awareness` caveat); btjs is only called
@@ -666,7 +670,7 @@ mod zig_std_debug {
         // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
         // mutable global; this is debug-only and invoked from a stopped process.
         unsafe {
-            let slot = &mut *core::ptr::addr_of_mut!(SELF_DEBUG_INFO);
+            let slot = &mut *SELF_DEBUG_INFO.get();
             if let Some(info) = slot {
                 return Ok(info);
             }

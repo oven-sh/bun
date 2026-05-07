@@ -855,10 +855,9 @@ impl<'a> Repl<'a> {
     /// Temporarily enable SIGINT delivery during blocking promise waits
     fn enable_signals_during_wait(&mut self) {
         if let Some(vm) = self.vm {
-            // SAFETY: single-threaded; cleared in disable_signals_during_wait
-            unsafe {
-                SIGINT_VM = Some(vm.jsc_vm);
-            }
+            // Cleared in disable_signals_during_wait; Release pairs with the
+            // Acquire load in `sigint_handler`.
+            SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
         }
 
         #[cfg(unix)]
@@ -882,10 +881,7 @@ impl<'a> Repl<'a> {
 
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
-        // SAFETY: single-threaded
-        unsafe {
-            SIGINT_VM = None;
-        }
+        SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -2219,15 +2215,19 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// Global pointer for signal handler to access the VM
-static mut SIGINT_VM: Option<*mut jsc::VM> = None;
+/// Global pointer for signal handler to access the VM.
+// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
+// Atomics are async-signal-safe; the previous `static mut Option<*mut>` was
+// not. `null` encodes `None`.
+static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 extern "C" fn sigint_handler(_: c_int) {
-    // SAFETY: written/read on the JS thread; signal handler runs while main thread blocked in wait
-    unsafe {
-        if let Some(vm) = SIGINT_VM {
-            vm_set_execution_forbidden(vm, true);
-        }
+    let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
+    if !vm.is_null() {
+        // SAFETY: vm was a valid `*mut jsc::VM` when stored (JS thread is
+        // blocked in wait while the handler runs, so it stays valid).
+        unsafe { vm_set_execution_forbidden(vm, true) };
     }
 }
 

@@ -201,17 +201,20 @@ impl DirInfo {
 // the comptime-returned struct). Rust `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-static mut DIR_INFO_MAP: Option<NonNull<HashMap>> = None;
+// PORTING.md §Global mutable state: lazy singleton; RacyCell over the option
+// because resolver init runs single-threaded before any concurrent access.
+static DIR_INFO_MAP: bun_core::RacyCell<Option<NonNull<HashMap>>> =
+    bun_core::RacyCell::new(None);
 
 #[inline]
 pub fn hash_map_instance() -> &'static mut HashMap {
     // SAFETY: matches Zig's lazy global singleton; resolver init runs single-threaded
-    // before any concurrent access. `&raw mut` avoids the static_mut_refs lint.
+    // before any concurrent access.
     unsafe {
-        if (*(&raw const DIR_INFO_MAP)).is_none() {
-            *(&raw mut DIR_INFO_MAP) = Some(NonNull::from(HashMap::init()));
+        if (*DIR_INFO_MAP.get()).is_none() {
+            *DIR_INFO_MAP.get() = Some(NonNull::from(HashMap::init()));
         }
-        (*(&raw mut DIR_INFO_MAP)).unwrap().as_mut()
+        (*DIR_INFO_MAP.get()).unwrap().as_mut()
     }
 }
 

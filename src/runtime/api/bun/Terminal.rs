@@ -745,17 +745,18 @@ mod lib_util {
     use bun_core::ZStr;
 
     // PORT NOTE: Zig used non-atomic file-level vars (single-threaded init).
-    // Mutable statics mirror that exactly; only ever touched from the JS thread.
-    static mut HANDLE: Option<*mut c_void> = None;
-    static mut LOADED: bool = false;
+    // PORTING.md §Global mutable state: bool→AtomicBool; handle slot stays a
+    // RacyCell because `Option<*mut c_void>` has no `Atomic` form. JS-thread-only.
+    static HANDLE: bun_core::RacyCell<Option<*mut c_void>> = bun_core::RacyCell::new(None);
+    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
     pub fn get_handle() -> Option<*mut c_void> {
         // SAFETY: called only from the JS thread; matches Zig's unsynchronized globals.
         unsafe {
-            if LOADED {
-                return HANDLE;
+            if LOADED.load(core::sync::atomic::Ordering::Relaxed) {
+                return HANDLE.read();
             }
-            LOADED = true;
+            LOADED.store(true, core::sync::atomic::Ordering::Relaxed);
 
             // Try libutil.so first (most common), then libutil.so.1
             const LIB_NAMES: [&ZStr; 3] = [
@@ -766,7 +767,7 @@ mod lib_util {
             for lib_name in LIB_NAMES {
                 let h = sys::dlopen(lib_name, sys::RTLD::LAZY);
                 if h.is_some() {
-                    HANDLE = h;
+                    HANDLE.write(h);
                     return h;
                 }
             }

@@ -41,8 +41,12 @@ pub(crate) mod jsc {
     pub use crate::jsc::*;
     pub use bun_jsc::virtual_machine::VirtualMachine;
     pub use bun_jsc::debugger::DebuggerId;
-    /// `jsc.API.JSBundler.Plugin` — opaque FFI handle (JSBundlerPlugin__create).
-    pub type Plugin = core::ffi::c_void;
+    /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
+    /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
+    /// (T5) and is re-exported through `crate::api::js_bundler` so the
+    /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
+    /// nominal type.
+    pub use crate::api::js_bundler::Plugin;
 }
 
 /// export default { app: ... };

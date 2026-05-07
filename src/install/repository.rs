@@ -267,8 +267,8 @@ pub trait RepositoryExt: Sized {
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
-        lockfile: &mut Install::Lockfile,
-        dep_id: Install::DependencyID,
+        string_buf: &[u8],
+        dep: &Install::Dependency,
     ) -> Vec<u8>;
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8]) -> StorePathFormatter<'a>;
@@ -398,13 +398,15 @@ impl RepositoryExt for Repository {
 
     fn create_dependency_name_from_version_literal(
         repository: &Repository,
-        lockfile: &mut Install::Lockfile,
-        dep_id: Install::DependencyID,
+        string_buf: &[u8],
+        dep: &Install::Dependency,
     ) -> Vec<u8> {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        // PORT NOTE: Zig took `*Lockfile` and indexed `buffers.dependencies[dep_id]`
+        // / `string_bytes`. Callers (`parse_with_json`) hold a split `StringBuilder`
+        // borrow on `string_bytes`, so accept the two pieces directly.
+        let buf = string_buf;
         let repo_name = repository.repo;
-        let repo_name_str = lockfile.str(&repo_name);
+        let repo_name_str = repo_name.slice(buf);
 
         let name = 'brk: {
             let mut remain = repo_name_str;

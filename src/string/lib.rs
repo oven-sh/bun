@@ -808,6 +808,12 @@ impl From<String> for OwnedString {
         Self(s)
     }
 }
+impl core::fmt::Display for OwnedString {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
+    }
+}
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

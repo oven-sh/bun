@@ -1493,9 +1493,11 @@ pub(crate) fn contains_non_bmp_code_point_or_is_invalid_identifier(alias: &[u8])
 pub(crate) fn encode_wtf8_rune_t(tmp: &mut [u8; 4], c: u32) -> usize {
     bun_str::strings::encode_wtf8_rune(tmp, c) as usize
 }
-// TODO(b2-blocked): bun_js_parser::lexer::is_latin1_identifier (u16 overload)
+/// Zig `JSLexer.isLatin1Identifier(comptime []const u16, name)` — u16 overload
+/// of the identifier predicate. `pub` so `bun_jsc::ConsoleObject` can reuse the
+/// canonical impl instead of duplicating it.
 #[inline]
-pub(crate) fn is_latin1_identifier_u16(name: &[u16]) -> bool {
+pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
     // Zig generic walks code units; for u16 the fast path is "all units ≤ 0xFF
     // and the latin-1 byte sequence is an identifier". Fall back to that.
     if name.iter().any(|&c| c > 0xFF) { return false; }

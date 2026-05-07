@@ -2083,8 +2083,8 @@ impl Package<u64> {
                 resolver.set_new_name(
                     Repository::create_dependency_name_from_version_literal(
                         &repo,
-                        lockfile,
-                        resolver.dep_id(),
+                        string_builder.string_bytes.as_slice(),
+                        &lockfile.buffers.dependencies[resolver.dep_id() as usize],
                     ),
                 );
 

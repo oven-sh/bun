@@ -1806,8 +1806,9 @@ impl Lockfile {
                 ));
                 Global::crash();
             }
-            // Zig: `bun.assert(FileSystem.instance_loaded);` — see note in `load_from_dir`.
-            let _ = FileSystem::instance();
+            // Zig: `bun.assert(FileSystem.instance_loaded);`
+            // SAFETY: read of a process-global flag; matches Zig's bare global read.
+            debug_assert!(unsafe { Fs::INSTANCE_LOADED });
         }
 
         let bytes: Vec<u8> = 'bytes: {

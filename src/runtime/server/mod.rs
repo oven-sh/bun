@@ -185,23 +185,18 @@ fn to_sys_socket_options(
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 // PORT NOTE (§Pointers Rc/Arc default): Zig variants are `bun.ptr.RefCount`
-// payloads. Default to `Rc<T>`; `html_bundle::Route` keeps `RefPtr` because it
-// is recovered via raw `*mut` from uws callback userdata (FFI rule).
+// payloads. Default to `Rc<T>`; `html_bundle::Route` uses the intrusive
+// `RefPtr` because it is recovered via raw `*mut` from uws callback userdata
+// (FFI rule — the C side hands back a bare pointer).
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(Rc<StaticRoute>),
     /// Serve a file from disk
     File(Rc<FileRoute>),
-    /// Bundle an HTML import — `"/": html`
-    // TODO(port): *Route crosses FFI (uws userdata) → §Pointers says RefPtr.
-    // `impl RefCounted for Route` is gated with the route-handler bodies; raw
-    // ptr until that lands so the AnyRoute enum stays compilable.
-    Html(*const html_bundle::Route),
-    /// File-system routing.
-    // TODO(b2-blocked): payload is `bake::FrameworkRouter::TypeIndex` (u8
-    // newtype). bake::framework_router is stub-only; inline the index type
-    // here and reconcile when bake un-gates.
-    FrameworkRouter(u8),
+    /// Bundle an HTML import — `import html from "./index.html"; "/": html`
+    Html(bun_ptr::RefPtr<html_bundle::Route>),
+    /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
+    FrameworkRouter(crate::bake::framework_router::TypeIndex),
 }
 
 impl AnyRoute {
@@ -209,9 +204,8 @@ impl AnyRoute {
         match self {
             AnyRoute::Static(r) => r.memory_cost(),
             AnyRoute::File(r) => r.memory_cost(),
-            // SAFETY: Html ptr is a live RefCount-managed allocation while
-            // held in a route table.
-            AnyRoute::Html(r) => unsafe { (**r).memory_cost() },
+            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.memory_cost(),
             AnyRoute::FrameworkRouter(_) => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
@@ -222,47 +216,35 @@ impl AnyRoute {
             // the Rc — this entry point exists for API parity with the Zig
             // `inline switch` and is a no-op for them (clone/drop is the ref/deref).
             AnyRoute::Static(_) | AnyRoute::File(_) => {}
-            AnyRoute::Html(_p) => {
-                // TODO(port): bump intrusive refcount once
-                // `impl bun_ptr::RefCounted for html_bundle::Route` lands —
-                // `unsafe { bun_ptr::IntrusiveRc::<html_bundle::Route>::ref_raw(*_p) }`.
-                // Without this the HTMLBundle route may be freed while still
-                // registered with uws (use-after-free) or leak.
+            AnyRoute::Html(r) => {
+                // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.data.as_ptr()) };
             }
-            AnyRoute::FrameworkRouter(_) => {}
+            AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
     pub fn deref_(&self) {
+        // PORT NOTE: Rc<> handles Static/File via Drop; only the intrusive
+        // RefPtr<html_bundle::Route> needs an explicit decrement here.
         match self {
             AnyRoute::Static(_) | AnyRoute::File(_) => {}
-            AnyRoute::Html(_p) => {
-                // TODO(port): `unsafe { bun_ptr::IntrusiveRc::<html_bundle::Route>::deref_raw(*_p) }`
-                // once `impl RefCounted for html_bundle::Route` lands. See ref_().
-            }
-            AnyRoute::FrameworkRouter(_) => {}
+            AnyRoute::Html(r) => r.deref(),
+            AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
 
     pub fn set_server(&self, server: Option<AnyServer>) {
         match self {
             AnyRoute::Static(r) => r.server.set(server),
-            AnyRoute::File(_r) => {
-                // TODO(port): `_r.server.set(server)` — FileRoute.server Cell
-                // exists but is private; expose a `pub fn set_server` (or make
-                // the field `pub(super)`) in FileRoute.rs so the route learns
-                // its owning server before `on_pending_request()` fires.
-            }
-            AnyRoute::Html(_p) => {
-                // TODO(port): `unsafe { (**_p).server.set(server) }` —
-                // html_bundle::Route.server Cell exists but is private; expose
-                // a setter so the route can call back into the server.
-                let _ = server;
-            }
-            AnyRoute::FrameworkRouter(_) => {} // Zig: no-op (server.zig:51-58).
+            AnyRoute::File(r) => r.set_server(server),
+            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+            AnyRoute::Html(r) => unsafe { r.data.as_ref() }.server.set(server),
+            AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server (server.zig:51-58)
         }
     }
 
-    // from_js / from_options / html_route_from_js stay gated (JS callback bodies).
+    // from_js / from_options / html_route_from_js — bodies live in
+    // `server_body.rs` (`impl AnyRoute { … }`); same crate, separate file.
 }
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────

@@ -4917,23 +4917,8 @@ impl DevServer {
                 // body-aware path is gated. Pass None and append Content-Type manually.
                 let mut headers = bun_http::Headers::from(None, bun_http::headers::Options { body: None });
                 headers.append(b"Content-Type", &MimeType::HTML.value);
-                if headers.get(b"etag").is_none() {
-                    if !any_blob.slice().is_empty() {
-                        // LAYERING: `bun_http_types::ETag::append_to_headers` is
-                        // typed against the duplicate `http_types::ETag::Headers`
-                        // (`bun_http::Headers` is a structural twin). Inline the
-                        // 4-line body here so the call site stays on the
-                        // `bun_http` type until the two `Headers` collapse.
-                        let h: u64 = bun_core::hash::xxhash64(0, any_blob.slice());
-                        let mut etag_buf = [0u8; 40];
-                        let len = {
-                            use std::io::Write;
-                            let mut cursor = &mut etag_buf[..];
-                            write!(cursor, "\"{:016x}\"", h).expect("unreachable");
-                            40 - cursor.len()
-                        };
-                        headers.append(b"etag", &etag_buf[..len]);
-                    }
+                if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {
+                    bun_http::headers::append_etag(any_blob.slice(), &mut headers);
                 }
                 let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
                 let mut response: Response = Response::init(

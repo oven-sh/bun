@@ -178,11 +178,11 @@ impl Drop for UserOptions {
     fn drop(&mut self) {
         // arena: dropped by Bump's Drop
         // allocations: dropped by StringRefList's Drop
-        if let Some(_p) = self.bundler_options.plugin {
-            // SAFETY: Plugin is FFI-owned; destroy is the destructor for the
-            // pointer returned by Plugin::create.
-            // TODO(b2-blocked): crate::api::js_bundler::Plugin::destroy
-            // unsafe { Plugin::destroy(p.as_ptr()) };
+        if let Some(p) = self.bundler_options.plugin {
+            // SAFETY: `p` is the FFI handle returned by `Plugin::create` in
+            // `parse_plugin_array`; `destroy` is its paired destructor
+            // (unprotect()s the JSCell and tombstones the C++ object).
+            unsafe { Plugin::destroy(p.as_ptr()) };
         }
     }
 }

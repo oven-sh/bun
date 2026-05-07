@@ -403,7 +403,11 @@ impl ErrorReportRequest {
             },
         );
         // `should_finalize_self = true;` — see PORT NOTE at fn top.
-        ErrorReportRequest::finalize(ctx_ptr);
+        // SAFETY: `ctx` is the original Box::into_raw'd pointer (caller
+        // contract); the only borrow derived from it (`dev`) points into a
+        // separate DevServer allocation, so freeing `*ctx` does not invalidate
+        // any live reference.
+        unsafe { ErrorReportRequest::finalize(ctx) };
         Ok(())
     }
 }

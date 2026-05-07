@@ -1621,14 +1621,7 @@ impl<'a> BundleV2<'a> {
         debug_assert!(self.plugins.is_some());
         if let Some(completion) = self.completion {
             // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
-            let vt = crate::DeferredBatchTask::COMPLETION_DISPATCH
-                .load(core::sync::atomic::Ordering::Acquire);
-            debug_assert!(!vt.is_null(), "COMPLETION_DISPATCH not registered by T6");
-            // SAFETY: vtable registered by T6 at init; `completion` is a live
-            // non-null backref while the bundle is running.
-            unsafe {
-                ((*vt).enqueue_task_concurrent)(NonNull::new_unchecked(completion), task)
-            };
+            completion.enqueue_task_concurrent(task);
             return;
         }
         // From bake where the loop running the bundle is also the loop running
@@ -2086,8 +2079,26 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn wait_for_parse(&mut self) {
+        // bundle_v2.zig:488-491 — `this.loop().tick(this, &isDone)`.
+        //
+        // PORT NOTE: `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
+        // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
+        // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
+        // callback would be a Stacked-Borrows violation.
         let self_ptr: *mut Self = self;
-        event_loop_tick(self.r#loop(), self_ptr, Self::is_done);
+        let any_loop = self
+            .r#loop()
+            .expect("event loop not initialized for waitForParse")
+            .as_ptr();
+        // SAFETY: `any_loop` points into `self.linker.r#loop`, valid for the
+        // duration of this call; `self_ptr` is the live `&mut self`. The
+        // callback's `'static` lifetime erasure mirrors the Zig
+        // `*anyopaque` cast — `is_done` only touches by-value fields.
+        unsafe {
+            bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
+                (*ctx.cast::<BundleV2<'static>>()).is_done()
+            });
+        }
         bun_core::scoped_log!(Bundle, "Parsed {} files, producing {} ASTs", self.graph.input_files.len(), self.graph.ast.len());
     }
 

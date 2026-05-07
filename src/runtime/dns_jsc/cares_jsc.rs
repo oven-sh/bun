@@ -168,7 +168,7 @@ pub fn nameinfo_to_js_response(
     if !this.service.is_null() {
         // SAFETY: service is a non-null NUL-terminated C string from c-ares.
         let service_slice = unsafe { CStr::from_ptr(this.service as *const c_char) }.to_bytes();
-        array.put_index(global_this, 1, utf8_to_js(global_this, service_slice))?;
+        array.put_index(global_this, 1, utf8_to_js(global_this, service_slice)?)?;
     } else {
         array.put_index(global_this, 1, JSValue::UNDEFINED)?;
     }
@@ -243,7 +243,7 @@ pub fn caa_reply_to_js_response(
     while !caa.is_null() {
         // SAFETY: caa walks the c-ares-owned linked list.
         let node = unsafe { &mut *caa };
-        array.put_index(global_this, i, caa_reply_to_js(node, global_this))?;
+        array.put_index(global_this, i, caa_reply_to_js(node, global_this)?)?;
         caa = node.next;
         i += 1;
     }
@@ -254,7 +254,7 @@ pub fn caa_reply_to_js_response(
 pub fn caa_reply_to_js(
     this: &mut c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
 
     obj.put(global_this, b"critical", JSValue::js_number(this.critical as f64));
@@ -263,9 +263,9 @@ pub fn caa_reply_to_js(
     let property = unsafe { core::slice::from_raw_parts(this.property, this.plength as usize) };
     // SAFETY: value is a c-ares-owned buffer of length bytes.
     let value = unsafe { core::slice::from_raw_parts(this.value, this.length as usize) };
-    obj.put(global_this, property, utf8_to_js(global_this, value));
+    obj.put(global_this, property, utf8_to_js(global_this, value)?);
 
-    obj
+    Ok(obj)
 }
 
 // ── struct_ares_srv_reply ──────────────────────────────────────────────────
@@ -290,7 +290,7 @@ pub fn srv_reply_to_js_response(
     while !srv.is_null() {
         // SAFETY: srv walks the c-ares-owned linked list.
         let node = unsafe { &mut *srv };
-        array.put_index(global_this, i, srv_reply_to_js(node, global_this))?;
+        array.put_index(global_this, i, srv_reply_to_js(node, global_this)?)?;
         srv = node.next;
         i += 1;
     }

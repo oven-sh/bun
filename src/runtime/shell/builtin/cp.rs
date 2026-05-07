@@ -234,6 +234,57 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
+    /// Spec: cp.zig `ignoreEbusyErrorIfPossible`. Windows-only post-processing
+    /// of tasks that failed with EBUSY: if some other task already succeeded
+    /// for the same absolute src/tgt, the EBUSY is benign and the task is
+    /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
+    #[cfg(windows)]
+    fn ignore_ebusy_error_if_possible(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        loop {
+            // PORT NOTE: reshaped for borrowck — pop tasks one at a time
+            // (Zig iterated `tasks.items[idx..]` and bumped `idx` on the
+            // first non-ignorable hit so a re-entry resumes there).
+            let next = {
+                let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
+                    unreachable!()
+                };
+                if eb.idx < eb.tasks.len() {
+                    let t = eb.tasks[eb.idx];
+                    eb.idx += 1;
+                    // SAFETY: `t` is a live Box::into_raw'd task stashed in
+                    // `on_shell_cp_task_done`; not yet freed.
+                    let tref = unsafe { &*t };
+                    let ignorable = tref
+                        .tgt_absolute
+                        .as_ref()
+                        .map_or(false, |p| eb.absolute_targets.contains(p))
+                        || tref
+                            .src_absolute
+                            .as_ref()
+                            .map_or(false, |p| eb.absolute_srcs.contains(p));
+                    Some((t, ignorable))
+                } else {
+                    None
+                }
+            };
+            match next {
+                Some((t, true)) => {
+                    // SAFETY: paired with `Box::into_raw` in `create()`.
+                    drop(unsafe { Box::from_raw(t) });
+                }
+                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
+                None => break,
+            }
+        }
+        let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
+            unreachable!()
+        };
+        let exit_code = eb.main_exit_code;
+        // Spec: `state.ebusy.state.deinit()` — Drop handles the sets/vec.
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, exit_code)
+    }
+
     /// Spec: cp.zig `onShellCpTaskDone`.
     pub fn on_shell_cp_task_done(
         interp: &mut Interpreter,
@@ -243,10 +294,36 @@ impl Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
-        // TODO(b2-blocked): Windows EBUSY collision handling — push onto
-        // exec.ebusy.tasks if the task errored with EBUSY on its own
-        // src_absolute/tgt_absolute, otherwise record the absolute paths in
-        // the dedup maps. See cp.zig `onShellCpTaskDone`.
+        #[cfg(windows)]
+        {
+            // SAFETY: `task` is a live Box::into_raw'd task; main-thread only.
+            let tref = unsafe { &mut *task };
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                if let Some(err) = &tref.err {
+                    // Spec: cp.zig — defer the task if it errored with EBUSY
+                    // on its own resolved src/tgt path.
+                    let is_ebusy = matches!(err, ShellErr::Sys(sys)
+                        if sys.get_errno() == bun_sys::E::EBUSY
+                            && (tref.tgt_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p))
+                                || tref.src_absolute.as_deref()
+                                    .map_or(false, |p| sys.path.eql_utf8(p))));
+                    if is_ebusy {
+                        exec.ebusy.tasks.push(task);
+                        return Self::next(interp, cmd).run(interp);
+                    }
+                } else {
+                    // Record successful absolute paths so a deferred EBUSY
+                    // sibling can be suppressed.
+                    if let Some(tgt) = tref.tgt_absolute.take() {
+                        exec.ebusy.absolute_targets.insert(tgt);
+                    }
+                    if let Some(src) = tref.src_absolute.take() {
+                        exec.ebusy.absolute_srcs.insert(src);
+                    }
+                }
+            }
+        }
         Self::print_shell_cp_task(interp, cmd, task).run(interp);
     }
 
@@ -262,18 +339,11 @@ impl Cp {
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
         if let Some(e) = task.err.take() {
-            // TODO(b2-blocked): ShellErr → string formatting (Builtin.zig
-            // `taskErrorToString` ShellErr arm). For now use a generic msg.
-            let errstr = Builtin::fmt_error_arena(
-                interp,
-                cmd,
-                Some(Kind::Cp),
-                format_args!("operation failed\n"),
-            )
-            .to_vec();
+            let errstr = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
+            // Spec: else-arm `e.deinit()` — `e` drops here when not stored.
             // SAFETY: freshly allocated.
             return unsafe { OutputTask::<Cp>::start(output_task, interp, Some(&errstr)) };
         }

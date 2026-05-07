@@ -5754,12 +5754,12 @@ impl H2FrameParser {
                 }
                 if let Some(max_rejected_streams) = settings_js.get(global_object, "maxSessionRejectedStreams")? {
                     if max_rejected_streams.is_number() {
-                        this_ref.max_rejected_streams = max_rejected_streams.to_u64() as u32;
+                        this_ref.max_rejected_streams = max_rejected_streams.to_uint64_no_truncate() as u32;
                     }
                 }
                 if let Some(max_outstanding_settings) = settings_js.get(global_object, "maxOutstandingSettings")? {
                     if max_outstanding_settings.is_number() {
-                        this_ref.max_outstanding_settings = (max_outstanding_settings.to_u64() as u32).max(1);
+                        this_ref.max_outstanding_settings = (max_outstanding_settings.to_uint64_no_truncate() as u32).max(1);
                     }
                 }
                 if let Some(max_send_header_block_length) = settings_js.get(global_object, "maxSendHeaderBlockLength")? {
@@ -5858,13 +5858,27 @@ impl H2FrameParser {
         drop(streams);
 
         // defer: pool.put(this) / bun.destroy(this)
-        // TODO(port): ENABLE_ALLOCATOR_POOL path — for now leak; finalize() owns Box drop via codegen
+        // Zig has no destructors, so `pool.put` just reclaims storage. Rust still
+        // owes Drop on the remaining fields (`handlers`, `auto_flusher`, the now-
+        // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …); run them
+        // in-place so the slot returned to the pool is truly uninitialised.
+        let this = self as *mut Self;
+        // SAFETY: `this` is a live, fully-initialised allocation we exclusively own
+        // (refcount hit zero / errdefer path). After `drop_in_place` the storage is
+        // uninitialised and must not be accessed again — the branches below only
+        // reclaim the raw bytes.
+        unsafe { core::ptr::drop_in_place(this) };
         if ENABLE_ALLOCATOR_POOL {
-            // POOL.with_borrow_mut(|p| p.as_mut().unwrap().put(self));
-            // TODO(port): HiveArray.put requires *mut Self from pool slot
+            POOL.with_borrow_mut(|pool| {
+                pool.as_mut()
+                    .expect("H2FrameParser deinit before constructor initialised pool")
+                    .put(this)
+            });
         } else {
-            // SAFETY: self was Box::into_raw'd in constructor
-            unsafe { drop(Box::from_raw(self as *mut Self)) };
+            // SAFETY: `this` was `Box::into_raw`'d in `constructor`; the value has
+            // already been dropped in place so reclaim the allocation as a
+            // `MaybeUninit` box (no double drop).
+            unsafe { drop(Box::<core::mem::MaybeUninit<Self>>::from_raw(this.cast())) };
         }
     }
 

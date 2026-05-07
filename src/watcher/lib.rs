@@ -41,6 +41,7 @@ pub use watcher_impl::{
     AnyResolveWatcher, ChangedFilePath, Event, HashType, Item, ItemList, Op, PackageJSON,
     WatchEvent, WatchItem, WatchItemColumns, WatchItemField, WatchItemIndex, WatchItemKind,
     WatchList, Watcher, WatcherContext, MAX_COUNT, MAX_EVICTION_COUNT, REQUIRES_FILE_DESCRIPTORS,
+    WATCH_OPEN_FLAGS,
 };
 pub use WatchItemKind as Kind;
 

@@ -6130,7 +6130,7 @@ impl NodeFS {
     }
 
     pub fn unwatch_file(&mut self, _: &args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {
-        Maybe::Err(sys::Error::default())
+        Maybe::<ret::UnwatchFile>::todo()
     }
 
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {

@@ -189,7 +189,7 @@ impl SystemErrno {
     pub const ENOTSUP: SystemErrno = SystemErrno::EOPNOTSUPP;
 
     #[inline]
-    const fn from_raw(n: u16) -> SystemErrno {
+    pub const fn from_raw(n: u16) -> SystemErrno {
         debug_assert!((n as i32) < Self::MAX);
         // SAFETY: SystemErrno is #[repr(u16)] and contiguous 0..=97; caller has
         // range-checked against MAX above.

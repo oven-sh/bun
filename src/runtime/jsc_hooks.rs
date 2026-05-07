@@ -1199,6 +1199,7 @@ pub static RUNTIME_HOOKS_INSTANCE: RuntimeHooks = RuntimeHooks {
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,
     cron_clear_all_reload,
+    terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
 };
 
@@ -1296,6 +1297,18 @@ unsafe fn cron_clear_all_reload(vm: *mut VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     // SAFETY: per fn contract.
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(unsafe { &mut *vm });
+}
+
+/// `webcore.WebWorker.terminateAllAndWait(timeout_ms)` — spec
+/// VirtualMachine.zig:975. Forwards to the in-crate `bun_jsc::web_worker`
+/// implementation; routed through `RuntimeHooks` because `virtual_machine.rs`
+/// sits below `web_worker.rs` in the module DAG and the wait re-enters
+/// `auto_tick` (this crate) on the worker side.
+///
+/// # Safety
+/// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
+unsafe fn terminate_all_workers_and_wait(timeout_ms: u64) {
+    bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)` — spec

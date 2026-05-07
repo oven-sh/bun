@@ -9,6 +9,16 @@
 #[cfg(windows)] pub mod windows_errno;
 #[cfg(windows)] pub use windows_errno::*;
 
+impl SystemErrno {
+    /// Zig: `@enumFromInt(n)`. Unchecked discriminant cast; debug-asserts `n < MAX`.
+    #[inline]
+    pub fn from_int(n: u16) -> SystemErrno {
+        debug_assert!((n as usize) < (Self::MAX as usize));
+        // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous discriminants.
+        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+    }
+}
+
 impl bun_core::output::ErrName for SystemErrno {
     fn name(&self) -> &[u8] {
         <&'static str>::from(*self).as_bytes()

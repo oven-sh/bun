@@ -62,9 +62,9 @@ pub fn version_to_js(
             // SAFETY: tag-guarded union access (tag == Npm)
             let v = unsafe { &*dep.value.npm };
             object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
-            let version_str =
+            let mut version_str =
                 BunString::create_format(format_args!("{}", v.version.fmt(buf)));
-            object.put(global, b"version", version_str.to_js(global)?);
+            object.put(global, b"version", version_str.transfer_to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
@@ -91,7 +91,7 @@ pub fn version_to_js(
             }
         }
         _ => {
-            return Err(global.throw_todo("Unsupported dependency type"));
+            return Err(global.throw_todo(b"Unsupported dependency type"));
         }
     }
 
@@ -101,7 +101,7 @@ pub fn version_to_js(
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_string::String as BunString;
-    use bun_install::dependency::version::Tag;
+    use bun_install::dependency::{version::Tag, TagExt};
 
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
@@ -113,7 +113,7 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let as_utf8 = dependency_str.to_utf8();
 
     let tag = Tag::infer(as_utf8.slice());
-    BunString::static_(<&'static str>::from(tag).as_bytes()).to_js(global)
+    BunString::static_(<&'static str>::from(tag)).to_js(global)
 }
 
 /// Local helper for `log.toJS(global, msg)` — thin re-export now that
@@ -125,10 +125,8 @@ pub(crate) fn log_to_js(log: &bun_logger::Log, global: &JSGlobalObject, msg: &[u
 
 // TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_string::StringBuilder;
     use bun_logger::Log;
     use bun_semver::SlicedString;
-    use bun_install::Dependency;
     use bun_install::dependency;
 
     let arguments = frame.arguments_old::<2>();
@@ -180,12 +178,11 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         let a = alias_slice.slice();
         (a, a, a)
     };
-    let _ = StringBuilder::init_capacity; // keep import live for Phase-B swap-back
 
     let mut log = Log::init();
     let sliced = SlicedString::init(buf, name);
 
-    let dep: dependency::Version = match Dependency::parse(
+    let dep: dependency::Version = match dependency::parse(
         SlicedString::init(buf, alias).value(),
         None,
         buf,
@@ -215,7 +212,8 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install_jsc/dependency_jsc.zig (136 lines)
-//   confidence: medium
-//   todos:      3
-//   notes:      Version is tag+bare-union in Zig; if Rust bun_install models it as a single enum, drop the unsafe reads. Extension-trait import paths (StringJsc/LogJsc) and UpdateRequest::from_js path are guesses.
+//   confidence: high
+//   todos:      0
+//   notes:      Version is tag+bare-union (`DependencyVersionValue` in
+//               `bun_install_types`); per-arm reads are tag-guarded `unsafe`.
 // ──────────────────────────────────────────────────────────────────────────

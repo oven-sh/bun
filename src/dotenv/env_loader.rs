@@ -42,12 +42,10 @@ pub trait DirEntryProbe {
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
-impl DirEntryProbe for bun_sys::fs::DirEntry {
-    #[inline]
-    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        bun_sys::fs::DirEntry::has_comptime_query(self, query_lower)
-    }
-}
+// LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
+// depends on this crate). `impl DirEntryProbe for bun_resolver::fs::DirEntry`
+// is provided there — see src/resolver/lib.rs. No impl here; that would be a
+// dep-cycle.
 
 /// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
 /// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
@@ -1876,8 +1874,8 @@ pub fn set_instance(loader: *mut Loader<'static>) {
 //               copy_for_define all live)
 //   notes:      @field(this, base) → match helper; HashTableValue.value owned (Box<[u8]>),
 //               Phase B may need Cow. NullDelimitedEnvMap owns its strings (no Box::leak).
-//               load_default_files un-gated (calls bun_sys::fs::DirEntry::has_comptime_query
-//               stub — fills in once resolver→sys MOVE_DOWN lands). copy_for_define un-gated
+//               load_default_files un-gated (DirEntryProbe trait; impl lives in
+//               bun_resolver — define-low/impl-high pattern). copy_for_define un-gated
 //               via DefineStoreVTable + local DotEnvBehavior mirror (api.StringMap flattened
 //               to slice pair). load_env_file{,_dynamic} bodies re-gated on bun_logger::Source
 //               owning contents (PORTING.md §Forbidden bans Box::leak); get_s3_credentials

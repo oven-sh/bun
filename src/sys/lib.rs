@@ -33,27 +33,85 @@ impl From<Error> for bun_core::Error {
         bun_core::Error::from_errno(e.errno as i32)
     }
 }
-// Stub: `SystemError` is the JS-facing rich error (path/dest/syscall as bun.String).
-// Full def lives in `bun_jsc` (TYPE_ONLY move-in pending per CYCLEBREAK).
-#[derive(Default)]
+/// Port of `SystemError` (src/jsc/SystemError.zig) — the JS-facing rich error
+/// (path/dest/syscall as `bun.String`). The data side has no JSC dependency:
+/// the `*JSGlobalObject`-taking conversion methods (`toErrorInstance` etc.)
+/// live in `bun_jsc` as inherent extensions. `#[repr(C)]` and field order
+/// match the Zig `extern struct` exactly so the C++ `SystemError__*` externs
+/// (BunObject.cpp) read the same layout.
+#[repr(C)]
 pub struct SystemError {
-    // PORT NOTE: full Display lives in src/jsc/SystemError.zig (rich JS-side
-    // formatting). For T1 we provide a minimal impl so `bun_sys::Error` can
-    // delegate; Display matches `SystemError.format` shell-variant shape.
-    pub errno: i32,
+    pub errno: core::ffi::c_int,
+    /// label for errno
     pub code: bun_string::String,
+    /// it is illegal to have an empty message
     pub message: bun_string::String,
     pub path: bun_string::String,
-    pub dest: bun_string::String,
     pub syscall: bun_string::String,
-    pub fd: i32,
     pub hostname: bun_string::String,
+    /// MinInt = no file descriptor
+    pub fd: core::ffi::c_int,
+    pub dest: bun_string::String,
+}
+impl Default for SystemError {
+    fn default() -> Self {
+        Self {
+            errno: 0,
+            code: bun_string::String::empty(),
+            message: bun_string::String::empty(),
+            path: bun_string::String::empty(),
+            syscall: bun_string::String::empty(),
+            hostname: bun_string::String::empty(),
+            fd: core::ffi::c_int::MIN,
+            dest: bun_string::String::empty(),
+        }
+    }
+}
+impl SystemError {
+    /// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
+    /// (`Error::to_system_error` stores `errno` negated to match Node.)
+    #[inline]
+    pub fn get_errno(&self) -> E {
+        E::from_raw((self.errno * -1) as u16)
+    }
+    /// Zig: `SystemError.deref`.
+    pub fn deref(&self) {
+        self.path.deref();
+        self.code.deref();
+        self.message.deref();
+        self.syscall.deref();
+        self.hostname.deref();
+        self.dest.deref();
+    }
+    /// Zig: `SystemError.ref`.
+    pub fn ref_(&self) {
+        self.path.ref_();
+        self.code.ref_();
+        self.message.ref_();
+        self.syscall.ref_();
+        self.hostname.ref_();
+        self.dest.ref_();
+    }
 }
 impl core::fmt::Display for SystemError {
+    /// Port of `SystemError.format` (SystemError.zig:85). Zig forks on
+    /// `Output.enable_ansi_colors_stderr` to inject ANSI escapes via
+    /// `prettyFmt`; the Rust port emits the colorless variant
+    /// (`prettyFmt(..., false)` collapses `<r>/<red>/<d>/<b>` to nothing) so
+    /// `Display` stays side-effect-free. The colored path is handled by
+    /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(b2): match SystemError.zig writeFormat exactly (color, syscall, fd).
-        // Minimal: "<code>: <message> '<path>'"
-        write!(f, "SystemError(errno={})", self.errno)
+        if !self.path.is_empty() {
+            // "<code>: <path>: <message> (<syscall>())"
+            write!(
+                f,
+                "{}: {}: {} ({}())",
+                self.code, self.path, self.message, self.syscall,
+            )
+        } else {
+            // "<code>: <message> (<syscall>())"
+            write!(f, "{}: {} ({}())", self.code, self.message, self.syscall)
+        }
     }
 }
 pub mod walker_skippable;
@@ -880,7 +938,17 @@ pub fn last_errno() -> i32 {
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 #[inline] unsafe fn errno_ptr() -> *mut i32 { unsafe { libc::__errno_location() } }
 #[cfg(windows)]
-#[inline] fn last_errno() -> i32 { 0 /* TODO(b2-windows): GetLastError() */ }
+#[inline] fn last_errno() -> i32 {
+    // Zig: `std.c._errno().*` (sys.zig). The Windows CRT exposes the
+    // thread-local errno via `_errno()`; libuv-backed paths that need the
+    // Win32 `GetLastError()` go through `bun_sys::windows::get_last_errno`
+    // (which translates DWORD → uv errno) instead.
+    // SAFETY: `_errno()` returns a valid pointer to the calling thread's errno.
+    unsafe {
+        extern "C" { fn _errno() -> *mut core::ffi::c_int; }
+        *_errno()
+    }
+}
 
 /// `std.c._errno()` — pointer to thread-local errno. Prefer `last_errno()`
 /// for the value; this exists for callers that match the Zig `*_errno()` API
@@ -1016,6 +1084,8 @@ impl Tag {
     pub const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
     pub const ioctl: Tag = Tag(104);
+    pub const getrlimit: Tag = Tag(105);
+    pub const setrlimit: Tag = Tag(106);
     // PORT NOTE: sys.zig folds `inotify_init1`/`inotify_add_watch` under the
     // generic `.watch` tag; `INotifyWatcher.rs` was ported against the
     // draft-b1 enum that had a distinct `.inotify` variant. Alias to `.watch`
@@ -1025,7 +1095,7 @@ impl Tag {
     /// `@tagName(self)` — must match sys.zig spelling exactly (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 105] = [
+        const NAMES: [&str; 107] = [
             "TODO", "dup", "access", "connect", "chmod", "chown", "clonefile",
             "clonefileat", "close", "copy_file_range", "copyfile", "fchmod",
             "fchmodat", "fchown", "fcntl", "fdatasync", "fstat", "fstatat",
@@ -1046,7 +1116,7 @@ impl Tag {
             "GetFinalPathNameByHandle", "CloseHandle", "SetFilePointerEx",
             "SetEndOfFile",
             // port-only
-            "dup2", "fchdir", "fchownat", "ioctl",
+            "dup2", "fchdir", "fchownat", "ioctl", "getrlimit", "setrlimit",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -4924,7 +4994,7 @@ pub mod posix {
         let mut r = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
         // SAFETY: r is written on success.
         let rc = unsafe { libc::getrlimit(res as _, &mut r) };
-        if rc < 0 { return Err(super::err_with(super::Tag::TODO)); }
+        if rc < 0 { return Err(super::err_with(super::Tag::getrlimit)); }
         Ok(Rlimit { cur: r.rlim_cur as u64, max: r.rlim_max as u64 })
     }
     #[cfg(unix)]
@@ -4932,7 +5002,7 @@ pub mod posix {
         let r = libc::rlimit { rlim_cur: lim.cur as _, rlim_max: lim.max as _ };
         // SAFETY: r is a valid rlimit.
         let rc = unsafe { libc::setrlimit(res as _, &r) };
-        if rc < 0 { return Err(super::err_with(super::Tag::TODO)); }
+        if rc < 0 { return Err(super::err_with(super::Tag::setrlimit)); }
         Ok(())
     }
 

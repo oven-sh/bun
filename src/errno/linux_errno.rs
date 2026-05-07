@@ -227,10 +227,17 @@ impl SystemErrno {
     pub const EOPNOTSUPP: SystemErrno = SystemErrno::ENOTSUP;
 
     #[inline]
-    const fn from_raw(n: u16) -> SystemErrno {
+    pub const fn from_raw(n: u16) -> SystemErrno {
         debug_assert!(n < Self::MAX);
         // SAFETY: caller guarantees n < MAX; #[repr(u16)] with contiguous discriminants 0..134
         unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+    }
+
+    /// Zig: `@enumFromInt` — unchecked discriminant cast (debug-asserted in-range).
+    /// Mirrors the `@enumFromInt(this.errno * -1)` pattern in `SystemError.getErrno`.
+    #[inline]
+    pub const fn from_int(n: u16) -> SystemErrno {
+        Self::from_raw(n)
     }
 
     // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).

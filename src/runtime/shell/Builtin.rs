@@ -506,6 +506,10 @@ impl Builtin {
                     return None;
                 }
 
+                // PORT NOTE: Builtin.zig:502 passes only the const `is_pollable`
+                // and ignores the `var pollable` populated by `openForWritingImpl`
+                // (a Zig dead-store bug). We intentionally honor `pollable` here
+                // so a FIFO/socket redirect target on POSIX is marked pollable.
                 let redirect_writer = IOWriter::init(
                     redirfd,
                     io_writer::Flags {
@@ -827,19 +831,23 @@ impl Builtin {
                 Ok(buf.len())
             }
             BuiltinIO::ArrayBuf { buf: arraybuf, i } => {
-                let total = arraybuf.array_buffer.byte_len as u32;
-                if *i >= total {
+                // Spec: Builtin.zig writeNoIO .arraybuf — `len = buf.len` stays
+                // usize so `i + len > byte_len` is computed at usize width and
+                // cannot overflow. Mirror that here; only the stored cursor is u32.
+                let idx = *i as usize;
+                let total = arraybuf.array_buffer.byte_len as usize;
+                if idx >= total {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let len = buf.len() as u32;
-                let write_len = if *i + len > total { total - *i } else { len };
-                let dst = &mut arraybuf.slice_mut()[*i as usize..(*i + write_len) as usize];
-                dst.copy_from_slice(&buf[..write_len as usize]);
-                *i = i.saturating_add(write_len);
-                Ok(write_len as usize)
+                let len = buf.len();
+                let write_len = if idx + len > total { total - idx } else { len };
+                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                dst.copy_from_slice(&buf[..write_len]);
+                *i = i.saturating_add(write_len as u32);
+                Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
         }

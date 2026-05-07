@@ -160,7 +160,7 @@ impl Repository {
         self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
     }
 
-    pub fn count<B: bun_semver::string::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+    pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
         builder.count(self.owner.slice(buf));
         builder.count(self.repo.slice(buf));
         builder.count(self.committish.slice(buf));
@@ -168,7 +168,7 @@ impl Repository {
         builder.count(self.package_name.slice(buf));
     }
 
-    pub fn clone<B: bun_semver::string::StringBuilder>(
+    pub fn clone<B: bun_semver::StringBuilder>(
         &self,
         buf: &[u8],
         builder: &mut B,

@@ -1955,6 +1955,24 @@ impl<'a> ReachableFileVisitor<'a> {
     }
 }
 
+/// RAII guard returned by [`BundleV2::decrement_scan_counter_on_drop`].
+/// Decrements the bundle's pending-scan counter when dropped, mirroring Zig's
+/// `defer this.decrementScanCounter()` without holding a unique borrow across
+/// the body. Stores a raw pointer; caller guarantees the `BundleV2` outlives it.
+pub struct ScanCounterGuard {
+    bv2: *mut BundleV2<'static>,
+}
+
+impl Drop for ScanCounterGuard {
+    fn drop(&mut self) {
+        // SAFETY: constructed from `&mut BundleV2` in
+        // `decrement_scan_counter_on_drop`; the guard is a local that drops at
+        // scope exit while the `BundleV2` it points to is still alive. The
+        // lifetime is erased to `'static` only for storage — never observed.
+        unsafe { (*self.bv2).decrement_scan_counter() };
+    }
+}
+
 impl<'a> BundleV2<'a> {
     pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
         // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
@@ -3936,12 +3954,9 @@ fn on_resolve_from_js_loop_raw(resolve: *mut jsc_api::JSBundler::Resolve) -> bun
 
 impl<'a> BundleV2<'a> {
     pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
-        // SAFETY: `this` outlives `_dec_guard` (dropped at fn exit). Capturing
-        // `this` by reference would hold a unique borrow for the whole body and
-        // block every subsequent use; raw-ptr capture mirrors Zig's
-        // `defer this.decrementScanCounter()` without borrowck contention.
-        let this_ptr: *mut BundleV2 = this;
-        let _dec_guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).decrement_scan_counter() });
+        // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
+        // as a raw pointer so it does not hold a unique borrow across the body.
+        let _dec_guard = this.decrement_scan_counter_on_drop();
         bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {:?})",
             bstr::BStr::new(&resolve.import_record.namespace),
             bstr::BStr::new(&resolve.import_record.specifier),

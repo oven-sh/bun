@@ -1359,7 +1359,7 @@ impl PackageJSON {
                                 &sliced,
                                 r.log,
                             ) {
-                                if pm.dependency_version_is_exact_npm(&dependency_version) {
+                                if dependency_version.is_exact_npm() {
                                     if let Some(resolved) =
                                         pm.lockfile_resolve(&package_json.name, &dependency_version)
                                     {

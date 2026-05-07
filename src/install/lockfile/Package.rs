@@ -2659,7 +2659,10 @@ impl Package<u64> {
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
                         let mut cwd_buf = PathBuffer::uninit();
-                        let cwd = bun_sys::getcwd(&mut cwd_buf)?;
+                        // Zig `bun.getcwd` returned the slice; Rust port returns
+                        // the byte length — slice the buffer ourselves.
+                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
+                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
 
                         let num_notes = 'count: {
                             let mut i: usize = 0;
@@ -2688,7 +2691,7 @@ impl Package<u64> {
                                     >(
                                         cwd, &[note_path, b"package.json"]
                                     )
-                                    .to_bytes()
+                                    .as_bytes()
                                     .to_vec()
                                     .into_boxed_slice();
 
@@ -2722,7 +2725,7 @@ impl Package<u64> {
                         );
 
                         // TODO(port): `File::to_source` shim — see note above.
-                        let src = logger::Source::init_empty_file(abs_path.to_bytes());
+                        let src = logger::Source::init_empty_file(abs_path.as_bytes());
 
                         let _ = log.add_range_error_fmt_with_notes(
                             Some(&src),

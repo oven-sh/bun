@@ -539,24 +539,29 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             bstr::BStr::new(combined_script.as_bytes())
         );
 
-        // TODO(port): `[_]?[*:0]const u8` argv array with trailing null. Using a fixed array of
-        // `Option<*const c_char>` to match the Zig layout passed to spawnProcess via @ptrCast.
-        let mut argv: [Option<*const c_char>; 4] =
+        // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
+        // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
+        // raw pointers are already nullable, and `Option<*const T>` is a 2-word
+        // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
+        // to `Argv` would interleave discriminant words and EFAULT in the kernel.
+        let mut argv: [*const c_char; 4] =
             if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
-                    Some((*this).shell_bin.unwrap().as_ptr() as *const c_char),
-                    Some(b"-c\0".as_ptr() as *const c_char),
-                    Some(combined_script.as_ptr() as *const c_char),
-                    None,
+                    (*this).shell_bin.unwrap().as_ptr() as *const c_char,
+                    b"-c\0".as_ptr() as *const c_char,
+                    combined_script.as_ptr() as *const c_char,
+                    core::ptr::null(),
                 ]
             } else {
                 [
-                    Some(bun_core::self_exe_path()?.as_ptr() as *const c_char),
-                    Some(b"exec\0".as_ptr() as *const c_char),
-                    Some(combined_script.as_ptr() as *const c_char),
-                    None,
+                    bun_core::self_exe_path()?.as_ptr() as *const c_char,
+                    b"exec\0".as_ptr() as *const c_char,
+                    combined_script.as_ptr() as *const c_char,
+                    core::ptr::null(),
                 ]
             };
+        const _: () =
+            assert!(core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>());
 
         // PORT NOTE: Zig allocates the libuv pipes (`bun.new(uv.Pipe, zeroes)`),
         // stashes them in `this.stdout.source.?.pipe`, and then reuses the same
@@ -636,8 +641,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .insert(this as *mut LifecycleScriptSubprocess<'static>);
         let mut spawned = bun_spawn::spawn_process(
             &spawn_options,
-            // SAFETY: argv is a `[?[*:0]const u8; 4]` with trailing null; matches the C layout
-            // expected by spawn_process (Zig used @ptrCast here).
+            // argv is `[*const c_char; 4]` with trailing null — exactly the
+            // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
             argv.as_mut_ptr() as *mut _,
             (*this).envp.as_ptr() as *const *const c_char,
         )??;

@@ -64,6 +64,13 @@ pub type CStrPtr = *const c_char;
 // suspect.
 const _: () = assert!(core::mem::size_of::<*const c_char>() == core::mem::size_of::<usize>());
 const _: () = assert!(core::mem::align_of::<*const c_char>() == core::mem::align_of::<usize>());
+// Negative guard: `Option<*const c_char>` is **not** word-sized — it carries a
+// discriminant. Any `[Option<*const c_char>; N]` cast to `Argv` is a layout bug.
+// Use `Option<NonNull<c_char>>` for niche-optimized nullable storage instead.
+const _: () = assert!(core::mem::size_of::<Option<*const c_char>>() != core::mem::size_of::<usize>());
+const _: () = assert!(
+    core::mem::size_of::<Option<core::ptr::NonNull<c_char>>>() == core::mem::size_of::<usize>()
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Signal-forwarding / no-orphans FFI surface — moved down from

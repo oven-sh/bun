@@ -178,7 +178,9 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE delta handling", () => {
         // With the fix, DATA only arrives after reopenSent=true. Any
         // DATA before that means the stream window was not driven to 0.
         if (!reopenSent) {
-          rejectEarlyData(new Error("client emitted DATA before per-stream WINDOW_UPDATE — stream window was not shrunk"));
+          rejectEarlyData(
+            new Error("client emitted DATA before per-stream WINDOW_UPDATE — stream window was not shrunk"),
+          );
           return;
         }
         const inc = Buffer.alloc(4);

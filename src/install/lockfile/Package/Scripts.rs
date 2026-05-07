@@ -5,7 +5,6 @@ use bun_core::fmt::PathSep;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{initialize_store, Resolution, ResolutionTag};
-use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;

@@ -124,5 +124,5 @@ impl RawMutex for Mutex {
 //   source:     src/threading/guarded.zig (72 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      RawMutex trait stubbed here; lock/unlock split may need RAII guard in Phase B for borrowck ergonomics.
+//   notes:      RawMutex trait stubbed here; lock() returns an RAII GuardedLock (drop unlocks).
 // ──────────────────────────────────────────────────────────────────────────

@@ -25,6 +25,7 @@ pub use futex as Futex;
 pub use condition::Condition;
 pub use guarded::Guarded;
 pub use guarded::GuardedBy;
+pub use guarded::GuardedLock;
 pub use guarded::Debug as DebugGuarded;
 pub use wait_group::WaitGroup;
 pub use thread_pool::ThreadPool;

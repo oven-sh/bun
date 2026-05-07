@@ -4589,10 +4589,8 @@ impl<'a> Resolver<'a> {
         }
 
         let original_order = self.extension_order;
-        let _restore_ext = scopeguard::guard((), |_| {
-            // TODO(port): errdefer-style restore of self.extension_order; reshaped below
-        });
-        // PORT NOTE: reshaped for borrowck — restore happens at all return points below
+        // PORT NOTE: Zig `defer r.extension_order = original_order` — reshaped for
+        // borrowck so the restore happens explicitly at every return point below.
         self.extension_order = match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 &*self.opts.extension_order.css

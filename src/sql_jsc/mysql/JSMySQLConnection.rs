@@ -140,6 +140,20 @@ impl JSMySQLConnection {
         }
     }
 
+    /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
+    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
+    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
+    /// reference is live across the potential free in `deref()`.
+    ///
+    /// SAFETY: `this` must satisfy the contract of [`Self::deref`] for the
+    /// guard's entire lifetime.
+    #[inline]
+    unsafe fn ref_guard(this: *mut Self) -> DerefOnDrop {
+        // SAFETY: caller contract — `this` is live.
+        unsafe { (*this).ref_() };
+        DerefOnDrop(this)
+    }
+
     /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
     /// we never hold two `&mut` to it at once in this module.

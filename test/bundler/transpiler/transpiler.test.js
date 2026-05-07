@@ -4219,3 +4219,105 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });
+
+describe("Bun.Transpiler minify/DCE options", () => {
+  describe("minifySyntax as top-level option", () => {
+    it("if (false) is eliminated", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync("if (false) { console.log('dead'); } console.log('alive');").trim()).toBe(
+        'console.log("alive");',
+      );
+    });
+
+    it("string === string comparison is folded and DCE'd", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync('if ("a" === "b") { console.log("dead"); } console.log("alive");').trim()).toBe(
+        'console.log("alive");',
+      );
+    });
+
+    it("string === string in function with return", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync('function f() { if ("a" === "b") return true; return false; }').trim()).toBe(
+        "function f(){return!1}",
+      );
+    });
+
+    it("boolean literals are minified", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync("const x = true;").trim()).toBe("const x=!0;");
+    });
+
+    it("constant folding works", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync("const x = 1 + 2;").trim()).toBe("const x=3;");
+    });
+
+    it("if (true) body is kept, wrapper removed", () => {
+      const t = new Bun.Transpiler({ minifySyntax: true, minifyWhitespace: true });
+      expect(t.transformSync('if (true) { console.log("alive"); }').trim()).toBe('console.log("alive");');
+    });
+  });
+
+  describe("minifyIdentifiers as top-level option", () => {
+    it("identifiers are minified", () => {
+      const t = new Bun.Transpiler({ minifyIdentifiers: true });
+      const result = t.transformSync("const longVariableName = 1; console.log(longVariableName);");
+      expect(result).not.toContain("longVariableName");
+    });
+  });
+
+  describe("minify: { syntax: true } still works", () => {
+    it("if (false) is eliminated", () => {
+      const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+      expect(t.transformSync("if (false) { console.log('dead'); } console.log('alive');").trim()).toBe(
+        'console.log("alive");',
+      );
+    });
+  });
+
+  describe("cross-type strict equality folding", () => {
+    it("number === string folds to false", () => {
+      const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+      const result = t.transformSync('if (42 === "b") console.log("DEAD"); console.log("alive");').trim();
+      expect(result).not.toContain("DEAD");
+      expect(result).toContain("alive");
+    });
+
+    it("boolean === string folds to false", () => {
+      const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+      const result = t.transformSync('if (true === "b") console.log("DEAD"); console.log("alive");').trim();
+      expect(result).not.toContain("DEAD");
+      expect(result).toContain("alive");
+    });
+
+    it("string === boolean folds to false", () => {
+      const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+      const result = t.transformSync('if ("a" === true) console.log("DEAD"); console.log("alive");').trim();
+      expect(result).not.toContain("DEAD");
+      expect(result).toContain("alive");
+    });
+
+    it("number !== string folds to true", () => {
+      const t = new Bun.Transpiler({ minify: { syntax: true, whitespace: true } });
+      const result = t.transformSync('if (42 !== "b") console.log("ALIVE");').trim();
+      expect(result).toContain("ALIVE");
+      expect(result).not.toContain("!==");
+    });
+  });
+
+  describe("top-level flags override composite minify", () => {
+    it("minify: true + minifyIdentifiers: false keeps identifiers", () => {
+      const t = new Bun.Transpiler({ minify: true, minifyIdentifiers: false });
+      const result = t.transformSync("const longVariableName = 1; console.log(longVariableName);");
+      expect(result).toContain("longVariableName");
+    });
+
+    it("minify: true + minifySyntax: false skips syntax minification", () => {
+      const t = new Bun.Transpiler({ minify: true, minifySyntax: false });
+      const result = t.transformSync("const x = true;");
+      expect(result).toContain("true");
+      expect(result).not.toContain("!0");
+    });
+  });
+});

@@ -530,11 +530,16 @@ where
         self.count += 1;
     }
 
-    /// Spec: hot_reloader.zig `Task.deinit`. The task is a fixed-size buffer
-    /// owned by the reloader (not heap-allocated per dispatch), so this only
-    /// clears `count`; the next `append` reuses the slot.
-    pub fn deinit(&mut self) {
-        self.count = 0;
+    /// Spec: hot_reloader.zig `Task.deinit` → `bun.destroy(this)`. The
+    /// dispatched task was heap-allocated in [`Self::enqueue`] via
+    /// `Box::into_raw`; the event loop calls this after `run()` to free it.
+    ///
+    /// # Safety
+    /// `this` must have been created via `Box::into_raw` in [`Self::enqueue`]
+    /// and must not be used after this call.
+    pub unsafe fn deinit(this: *mut Self) {
+        // SAFETY: precondition — `this` came from Box::into_raw in `enqueue`.
+        drop(unsafe { Box::from_raw(this) });
     }
 
     pub fn run(&mut self) {
@@ -604,14 +609,6 @@ where
                 .enqueue_task_concurrent((*that).concurrent_task.assume_init_mut() as *mut _);
         }
         self.count = 0;
-    }
-
-    /// # Safety
-    /// `this` must have been created via `Box::into_raw` in [`Self::enqueue`] and
-    /// must not be used after this call.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: precondition — `this` came from Box::into_raw in `enqueue`.
-        drop(unsafe { Box::from_raw(this) });
     }
 }
 

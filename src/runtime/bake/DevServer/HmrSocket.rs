@@ -191,7 +191,7 @@ impl HmrSocket {
                             dev.inspector_server_id,
                             self.inspector_connection_id,
                             &mut pattern_str,
-                            maybe_rbi,
+                            maybe_rbi.map(|i| i.get() as i32).unwrap_or(-1),
                         );
                     }
                 }
@@ -284,7 +284,7 @@ impl HmrSocket {
                 if let Some(agent) = unsafe { dev.inspector() } {
                     let mut log_str = bun_str::String::init(data);
                     // `defer log_str.deref()` → Drop on bun_str::String
-                    agent.notify_console_log(dev.inspector_server_id, kind, &mut log_str);
+                    agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
@@ -398,7 +398,7 @@ impl HmrSocket {
                     dev.inspector_server_id,
                     self.inspector_connection_id,
                     &mut pattern_str,
-                    rbi,
+                    rbi.map(|i| i.get() as i32).unwrap_or(-1),
                 );
             }
         }

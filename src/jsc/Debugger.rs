@@ -8,7 +8,7 @@
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
 use core::cell::UnsafeCell;
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -221,9 +221,9 @@ pub extern "C" fn Bun__InspectorBunFrontendDevServerAgent__setEnabled(
 ) {
     // SAFETY: called on the JS thread with a live VM (C++ inspector agent
     // invokes this only after the VM is initialized).
-    if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
+    if let Some(dbg) = unsafe { (*VirtualMachine::get()).debugger.as_deref_mut() } {
         // SAFETY: JS-thread only; sole access to the `UnsafeCell` slot here.
-        unsafe { (*debugger.frontend_dev_server_agent.get()).handle = agent };
+        unsafe { (*dbg.frontend_dev_server_agent.get()).handle = agent };
     }
 }
 
@@ -448,15 +448,53 @@ impl Debugger {
         {
             // Spec Debugger.zig:56-77: arm a one-shot libuv timer that unrefs
             // `poll_ref` after the delay (Windows lacks a working
-            // `tickWithTimeout`). The Zig body uses `bun.windows.libuv.Timer`
-            // directly — those bindings live in `bun_sys::windows::libuv`,
-            // which is not yet ported. `tick_with_timeout` below is a no-op on
-            // the Windows `Loop` impl, so without this timer the `.shortly`
-            // path may busy-spin until the deadline check trips. Tracked as a
-            // TODO(port) per the original Zig comment ("TODO: remove this when
-            // tickWithTimeout actually works properly on Windows").
-            // TODO(port): wire `bun_sys::windows::libuv::Timer` once ported.
-            let _ = WAIT_FOR_CONNECTION_DELAY_MS;
+            // `tickWithTimeout`). Per the original Zig comment ("TODO: remove
+            // this when tickWithTimeout actually works properly on Windows").
+            use bun_sys::windows::libuv as uv;
+            if wait == Wait::Shortly {
+                // SAFETY: `this` is the live per-thread VM; `uv_loop()` returns
+                // the per-thread `uv_loop_t` initialized by `init()`.
+                let uv_loop = unsafe { (*this).uv_loop() };
+                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
+                unsafe { uv::uv_update_time(uv_loop) };
+                // Spec: `bun.handleOom(allocator.create(Timer))` + zero-init.
+                // SAFETY: all-zero is a valid pre-`uv_timer_init` state (C POD,
+                // matches `std.mem.zeroes`).
+                let timer: *mut uv::Timer =
+                    Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+                // SAFETY: `timer` freshly allocated; `uv_loop` valid.
+                unsafe { (*timer).init(uv_loop) };
+
+                unsafe extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
+                    let vm = VirtualMachine::get();
+                    // SAFETY: `vm` is the per-thread singleton; called on the
+                    // JS thread (libuv timer callback). Spec `.?` would panic;
+                    // unwinding across `extern "C"` is UB so we early-return.
+                    if let Some(d) = unsafe { (*vm).debugger.as_deref_mut() } {
+                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                    }
+                    // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
+                    // at offset 0); `deinit_timer` matches `uv_close_cb`.
+                    unsafe {
+                        uv::uv_close(handle.cast(), Some(deinit_timer));
+                    }
+                }
+                unsafe extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
+                    // SAFETY: `handle` is the `Box<Timer>` allocated above
+                    // (cast through `uv_handle_t` at offset 0); this is the
+                    // sole owner reclaiming it after `uv_close` completes.
+                    drop(unsafe { Box::from_raw(handle.cast::<uv::Timer>()) });
+                }
+                // SAFETY: `timer` initialized above.
+                unsafe {
+                    (*timer).start(
+                        WAIT_FOR_CONNECTION_DELAY_MS as u64,
+                        0,
+                        Some(on_debugger_timer),
+                    );
+                    (*timer).ref_();
+                }
+            }
         }
 
         // Drop the long-lived `&mut Debugger` before re-entering JS — see
@@ -1194,9 +1232,8 @@ impl LifecycleAgent {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/jsc/Debugger.zig (535 lines)
+//               src/runtime/server/InspectorBunFrontendDevServerAgent.zig
 //   confidence: high
 //   notes:      retroactivelyReportDiscoveredTests dispatched through
 //               RuntimeHooks (Jest runner lives in bun_runtime — cycle).
-//               Windows libuv-timer shim in wait_for_debugger_if_necessary
-//               pending bun_sys::windows::libuv::Timer port.
 // ──────────────────────────────────────────────────────────────────────────

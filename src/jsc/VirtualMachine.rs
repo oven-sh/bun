@@ -5394,7 +5394,7 @@ impl VirtualMachine {
                 global_ref,
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
-            if tag.tag != TagPayload::NativeCode {
+            if !matches!(tag.tag, TagPayload::NativeCode) {
                 let mut adapt = IoWriterAdapter(writer);
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, &mut adapt, error_instance, global_ref)
@@ -5671,11 +5671,24 @@ impl VirtualMachine {
         column: bun_core::Ordinal,
         source_handling: bun_sourcemap::SourceContentHandling,
     ) -> Option<bun_sourcemap::mapping::Lookup<'_>> {
-        if let Some(lookup) =
-            self.source_mappings
-                .resolve_mapping(path, line, column, source_handling)
+        // PORT NOTE: reshaped for borrowck (rust-lang/rust#54663) — the Zig
+        // `orelse` arm mutates `source_mappings` after the lookup miss, but the
+        // hit arm returns a `Lookup<'_>` that borrows it. Current NLL rejects
+        // that conditional-return-of-borrow even though the borrow is dead on
+        // the None arm. `resolve_mapping`'s borrowing fields are always `None`
+        // (see SavedSourceMap TODO(b2-blocked)), so lift the owned parts out
+        // into a non-borrowing tuple and rebuild after the borrow ends.
+        if let Some((mapping, prefetched)) = self
+            .source_mappings
+            .resolve_mapping(path, line, column, source_handling)
+            .map(|l| (l.mapping, l.prefetched_source_code))
         {
-            return Some(lookup);
+            return Some(bun_sourcemap::mapping::Lookup {
+                mapping,
+                source_map: None,
+                prefetched_source_code: prefetched,
+                name: None,
+            });
         }
 
         // Spec VirtualMachine.zig:3871-3889 — standalone-module-graph fallback.

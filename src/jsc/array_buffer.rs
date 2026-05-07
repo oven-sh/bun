@@ -84,14 +84,6 @@ unsafe extern "C" {
     fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
     fn JSC__ArrayBuffer__ref(self_: *mut JSCArrayBuffer);
     fn JSC__ArrayBuffer__deref(self_: *mut JSCArrayBuffer);
-    // From <JavaScriptCore/JSTypedArray.h> — `array_type` is the C enum
-    // `JSTypedArrayType` (ABI: `c_uint`, see `TypedArrayType::to_c`).
-    fn JSObjectMakeTypedArrayWithArrayBuffer(
-        ctx: *const JSGlobalObject,
-        array_type: c_uint,
-        buffer: jsc_c::JSObjectRef,
-        exception: jsc_c::ExceptionRef,
-    ) -> jsc_c::JSObjectRef;
 }
 
 impl ArrayBuffer {

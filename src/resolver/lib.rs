@@ -1746,7 +1746,7 @@ pub mod fs {
                 // was permanently misclassified as `.file` — surfacing as
                 // EISDIR at module load time.
                 let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_string::strings::to_kernel32_path(&mut wbuf.0[..], absolute_path_c.as_bytes());
+                let wpath = bun_string::strings::paths::to_kernel32_path(&mut wbuf.0[..], absolute_path_c.as_bytes());
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
                 let handle = unsafe {
                     w::CreateFileW(

@@ -237,17 +237,16 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let log = manager.log_mut();
+                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
                 let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-                    log,
+                    unsafe { &mut *manager.log },
                     root_package_json_path.as_bytes(),
                     Default::default(),
                 ) {
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            manager
-                                .log_mut()
+                            unsafe { &*manager.log }
                                 .print(Output::error_writer() as *mut _)
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
@@ -256,8 +255,7 @@ pub fn install_with_manager(
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            manager
-                                .log_mut()
+                            unsafe { &*manager.log }
                                 .print(Output::error_writer() as *mut _)
                                 .map_err(|_| bun_core::err!("WriteFailed"))?;
                         }
@@ -274,11 +272,11 @@ pub fn install_with_manager(
                 // borrowck doesn't see overlapping `&mut PackageManager` /
                 // `&mut Lockfile` (Zig `*T` semantics).
                 {
-                    let log = manager.log.unwrap().as_ptr();
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `parse` only reads `*log` / `*mgr` between writes
                     // to `lockfile`/`maybe_root`; no field of `*mgr` aliases
                     // the local `lockfile`.
+                    let log = unsafe { (*mgr).log };
                     maybe_root.parse(
                         &mut lockfile,
                         unsafe { &mut *mgr },
@@ -300,8 +298,8 @@ pub fn install_with_manager(
                     // from here on; `Diff::generate` reborrows disjoint fields
                     // (`log`, `lockfile`, `update_requests`) through it. No
                     // other live `&mut` to `*mgr` exists across the call.
-                    let log = unsafe { (*mgr).log.unwrap().as_ptr() };
-                    let from_lockfile: *mut Lockfile = unsafe { &mut (*mgr).lockfile };
+                    let log = unsafe { (*mgr).log };
+                    let from_lockfile: *mut Lockfile = unsafe { &mut *(*mgr).lockfile };
                     let update_requests = if unsafe { (*mgr).to_update } {
                         Some(unsafe { &(*mgr).update_requests[..] })
                     } else {
@@ -321,18 +319,32 @@ pub fn install_with_manager(
 
                 had_any_diffs = manager.summary.has_diffs();
 
+                // PORT NOTE: reshaped for borrowck — `string_builder()` borrows
+                // `&mut manager.lockfile.{buffers.string_bytes, string_pool}`
+                // for the builder's lifetime, but the body below also touches
+                // `manager.lockfile.{packages, buffers.dependencies, …}` and
+                // `manager` itself. Derive a single raw provenance root for the
+                // *new* lockfile (`manager.lockfile`) so we can hand-reborrow
+                // disjoint columns alongside the builder (Zig `*T` semantics).
+                let mgr: *mut PackageManager = manager;
+                // SAFETY: `mgr` is the sole provenance root from here through
+                // `builder.clamp()`. Every reborrow of `*to_lockfile` below is
+                // for a field disjoint from `string_bytes`/`string_pool` (the
+                // two columns the builder owns), so no `&mut` overlap.
+                let to_lockfile: *mut Lockfile = unsafe { &mut *(*mgr).lockfile };
+
                 if !had_any_diffs {
                     // always grab latest scripts for root package
-                    let mut builder_ = manager.lockfile.string_builder();
+                    let mut builder_ = unsafe { &mut *to_lockfile }.string_builder();
                     let builder = &mut builder_;
 
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
                     builder.allocate()?;
-                    manager.lockfile.packages.items_scripts_mut()[0] =
+                    unsafe { &mut (*to_lockfile).packages }.items_scripts_mut()[0] =
                         maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
                 } else {
-                    let mut builder_ = manager.lockfile.string_builder();
+                    let mut builder_ = unsafe { &mut *to_lockfile }.string_builder();
                     // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                     let builder = &mut builder_;
                     // If you changed packages, we will copy over the new package from the new lockfile
@@ -366,25 +378,28 @@ pub fn install_with_manager(
                     }
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
 
-                    let off = manager.lockfile.buffers.dependencies.len() as u32;
+                    let off = unsafe { &(*to_lockfile).buffers.dependencies }.len() as u32;
                     let len = new_dependencies.len() as u32;
-                    let old_resolutions_list = manager.lockfile.packages.resolutions[0];
-                    manager.lockfile.packages.dependencies[0] = lockfile::DependencySlice::new(off, len);
-                    manager.lockfile.packages.resolutions[0] = lockfile::DependencyIDSlice::new(off, len);
+                    let old_resolutions_list = unsafe { &(*to_lockfile).packages }.items_resolutions()[0];
+                    unsafe { &mut (*to_lockfile).packages }.items_dependencies_mut()[0] =
+                        lockfile::DependencySlice::new(off, len);
+                    unsafe { &mut (*to_lockfile).packages }.items_resolutions_mut()[0] =
+                        lockfile::PackageIDSlice::new(off, len);
                     builder.allocate()?;
 
                     let all_name_hashes: Vec<PackageNameHash> = 'brk: {
-                        if !manager.summary.overrides_changed {
+                        if !unsafe { &(*mgr).summary }.overrides_changed {
                             break 'brk Vec::new();
                         }
-                        let hashes_len = manager.lockfile.overrides.map.len() + lockfile.overrides.map.len();
+                        let hashes_len =
+                            unsafe { &(*to_lockfile).overrides }.map.len() + lockfile.overrides.map.len();
                         if hashes_len == 0 {
                             break 'brk Vec::new();
                         }
                         let mut all_name_hashes: Vec<PackageNameHash> = Vec::with_capacity(hashes_len);
-                        all_name_hashes.extend_from_slice(manager.lockfile.overrides.map.keys());
+                        all_name_hashes.extend_from_slice(unsafe { &(*to_lockfile).overrides }.map.keys());
                         all_name_hashes.extend_from_slice(lockfile.overrides.map.keys());
-                        let mut i = manager.lockfile.overrides.map.len();
+                        let mut i = unsafe { &(*to_lockfile).overrides }.map.len();
                         while i < all_name_hashes.len() {
                             if all_name_hashes[..i].contains(&all_name_hashes[i]) {
                                 let last = all_name_hashes.len() - 1;
@@ -400,11 +415,9 @@ pub fn install_with_manager(
                     // PORT NOTE: reshaped for borrowck — Zig: `lockfile.overrides
                     // .clone(manager, &lockfile, manager.lockfile, builder)`
                     // borrows `manager` + `manager.lockfile` + the local
-                    // `lockfile` + a field of `lockfile`. Route through raw
-                    // ptrs derived from a single provenance root each.
+                    // `lockfile` + a field of `lockfile`. Route through the raw
+                    // provenance roots derived above (`mgr`, `to_lockfile`).
                     {
-                        let mgr: *mut PackageManager = manager;
-                        let to_lockfile: *mut Lockfile = unsafe { &mut (*mgr).lockfile };
                         let from_lockfile: *mut Lockfile = &mut lockfile;
                         // SAFETY: `clone` reads `*from_lockfile` (string_bytes)
                         // and appends into `*to_lockfile` via `builder`; the
@@ -423,16 +436,17 @@ pub fn install_with_manager(
                         }
                     }
 
-                    manager.lockfile.trusted_dependencies = if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        Some(bun_core::handle_oom(trusted_dependencies.clone()))
-                    } else {
-                        None
-                    };
+                    unsafe { (*to_lockfile).trusted_dependencies = lockfile.trusted_dependencies.clone() };
 
-                    manager.lockfile.buffers.dependencies.reserve(len as usize);
-                    manager.lockfile.buffers.resolutions.reserve(len as usize);
+                    unsafe { &mut (*to_lockfile).buffers.dependencies }.reserve(len as usize);
+                    unsafe { &mut (*to_lockfile).buffers.resolutions }.reserve(len as usize);
 
-                    let old_resolutions = old_resolutions_list.get(&manager.lockfile.buffers.resolutions);
+                    // PORT NOTE: copy `old_resolutions` to a temporary Vec —
+                    // the slice indexes into `buffers.resolutions`, which we're
+                    // about to grow via spare-capacity writes / `set_len` below.
+                    let old_resolutions: Vec<PackageID> = old_resolutions_list
+                        .get(unsafe { &(*to_lockfile).buffers.resolutions })
+                        .to_vec();
 
                     // PORT NOTE: Zig slices raw spare capacity via `.items.ptr[off .. off + len]`,
                     // `@memset`s it (no drop), then extends `.items.len`. Mirror that ordering:

@@ -4325,11 +4325,10 @@ pub struct WindowsFileAttributes {
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let wpath = bun_str::strings::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
+    let wpath = bun_string::strings::paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
     // Win32 API does file path normalization, so we do not need the valid path assertion here.
     // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
     let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
-    syslog!("GetFileAttributesW({}) = {}", bun_core::fmt::utf16(wpath.as_slice()), dword);
     if dword == windows::INVALID_FILE_ATTRIBUTES {
         return None;
     }

@@ -1,13 +1,13 @@
 use core::ffi::CStr;
 
-use crate::shell::builtin::{Builtin, IoKind};
+use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{task_tag, EventLoopTask, EventLoopTaskPtr, TaskTag, Taskable};
+use bun_event_loop::{task_tag, EventLoopTask, TaskTag, Taskable};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -98,13 +98,14 @@ impl Yes {
                 me.buffer[..me.buffer_used].to_vec()
             };
             // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
-            // `taskErrorToString` and routes through `writeFailingError`.
+            // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
+            // `writeFailingError`.
             if let Err(e) = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk) {
-                let buf = Builtin::task_error_to_string(
+                let buf = Builtin::fmt_error_arena(
                     interp,
                     cmd,
-                    crate::shell::builtin::Kind::Yes,
-                    &e,
+                    Some(Kind::Yes),
+                    format_args!("{}\n", bstr::BStr::new(e.name())),
                 )
                 .to_vec();
                 return Self::write_failing_error(interp, cmd, &buf, 1);

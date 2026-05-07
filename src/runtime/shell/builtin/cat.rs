@@ -1,9 +1,12 @@
 use core::ffi::CStr;
+use std::sync::Arc;
 
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, IoKind, Kind};
 use crate::shell::interpreter::{
-    parse_flags, unsupported_flag, FlagParser, Interpreter, NodeId, ParseError, ParseFlagResult,
+    parse_flags, shell_openat, unsupported_flag, FlagParser, Interpreter, NodeId, ParseError,
+    ParseFlagResult,
 };
+use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;

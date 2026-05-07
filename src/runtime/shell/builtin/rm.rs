@@ -417,7 +417,7 @@ impl Rm {
         scopeguard::defer! { unsafe { ShellRmTask::decr_pending_and_maybe_deinit(task) }; }
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
-        let task_err = unsafe { (*task).err.take() };
+        let task_err = unsafe { (*task).err.get_mut().take() };
         // PORT NOTE: reshaped for borrowck — format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
@@ -632,13 +632,14 @@ pub struct ShellRmTask {
     /// Backref into `Rm::ExecState.output_count` so [`verbose_deleted`] can
     /// bump it from worker threads (Zig: `this.rm.state.exec.incrementOutputCount`).
     output_count: *const AtomicUsize,
-    pub err_mutex: parking_lot::Mutex<()>,
     /// Main-thread callbacks that must complete before this task can be freed:
     /// always one for `on_shell_rm_task_done` (via `finish_concurrently`), plus
     /// one per DirTask whose verbose output was queued. Decremented by
     /// [`decr_pending_and_maybe_deinit`].
     pub pending_main_callbacks: AtomicU32,
-    pub err: Option<bun_sys::Error>,
+    /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
+    /// can take `&self` without an interior `&mut` cast.
+    pub err: parking_lot::Mutex<Option<bun_sys::Error>>,
     pub join_style: JoinStyle,
     pub event_loop: EventLoopHandle,
     pub task: ShellTask,
@@ -710,9 +711,8 @@ impl ShellRmTask {
             root_is_absolute: is_absolute,
             error_signal,
             output_count,
-            err_mutex: parking_lot::Mutex::new(()),
             pending_main_callbacks: AtomicU32::new(1),
-            err: None,
+            err: parking_lot::Mutex::new(None),
             join_style,
             event_loop: evtloop,
             task: ShellTask::new(evtloop),
@@ -818,8 +818,12 @@ impl ShellRmTask {
         if self.error_signal().load(Ordering::SeqCst) {
             return;
         }
+        // SAFETY: `parent` is live; reuse its `task_manager` (preserves the
+        // original `*mut` provenance from `Box::into_raw` rather than deriving
+        // a writeable pointer from `&self`).
+        let task_manager = unsafe { (*parent).task_manager };
         let subtask = Box::into_raw(Box::new(DirTask {
-            task_manager: self as *const _ as *mut ShellRmTask,
+            task_manager,
             parent_task: parent,
             path,
             is_absolute: false,
@@ -1199,11 +1203,9 @@ impl ShellRmTask {
     }
 
     fn handle_err(&self, err: bun_sys::Error) {
-        let _g = self.err_mutex.lock();
-        // SAFETY: `err_mutex` serialises access to `self.err` across worker threads.
-        let me = unsafe { &mut *(self as *const _ as *mut ShellRmTask) };
-        if me.err.is_none() {
-            me.err = Some(err);
+        let mut slot = self.err.lock();
+        if slot.is_none() {
+            *slot = Some(err);
             self.error_signal().store(true, Ordering::SeqCst);
         }
     }

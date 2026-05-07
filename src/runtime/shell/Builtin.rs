@@ -568,9 +568,9 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
-                } else if let Some(body) = Self::js_body_value(jsval) {
-                    // SAFETY: `as_` (inside `js_body_value`) returned a live
-                    // JSC-owned `*mut Value` borrowed from a Response/Request.
+                } else if let Some(body) = crate::webcore::body::Value::from_request_or_response(jsval) {
+                    // SAFETY: returned a live JSC-owned `*mut Value` borrowed
+                    // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
                     // Spec: `body.* == .Blob and !body.Blob.needsToReadFile()`.
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
@@ -638,22 +638,6 @@ impl Builtin {
             None => {}
         }
 
-        None
-    }
-
-    /// Spec: Zig `jsval.as(jsc.WebCore.Body.Value)`. In the Rust port
-    /// `body::Value` is the *payload* of `Response`/`Request`, not itself a
-    /// `JsClass`; resolve via the wrapper types (matches the lookup
-    /// `JSValue.as(Body.Value)` performs internally in Zig).
-    fn js_body_value(jsval: crate::jsc::JSValue) -> Option<*mut crate::webcore::body::Value> {
-        if let Some(response) = jsval.as_::<crate::webcore::Response>() {
-            // SAFETY: `as_` returned a live `*mut Response` owned by the JS wrapper.
-            return Some(unsafe { &mut *response }.get_body_value());
-        }
-        if let Some(request) = jsval.as_::<crate::webcore::Request>() {
-            // SAFETY: `as_` returned a live `*mut Request` owned by the JS wrapper.
-            return Some(unsafe { &mut *request }.get_body_value());
-        }
         None
     }
 

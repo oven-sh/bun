@@ -32,8 +32,9 @@ macro_rules! pfmt {
 // ── Local extension shims ─────────────────────────────────────────────────
 // `bun_s3_signing::S3Credentials` exposes `guessRegion` / `guessBucket` as
 // FREE fns and the JS-options parser lives in
-// `runtime/webcore/s3/credentials_jsc.rs` (not yet mounted). Surface them as
-// associated fns via an extension trait so call sites keep their Zig shape.
+// `runtime/webcore/s3/credentials_jsc.rs`. Surface them as associated fns via
+// an extension trait so call sites keep their Zig shape
+// (`S3Credentials.guessRegion(...)` / `.getCredentialsWithOptions(...)`).
 pub trait S3CredentialsExt {
     fn guess_region(endpoint: &[u8]) -> &[u8];
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;

@@ -1302,17 +1302,15 @@ impl Request {
 
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = response.get_init_headers_mut() {
+                            // Zig: `req.#headers = try headers.cloneThis(globalThis);
+                            //       fields.insert(.headers);`
+                            // The flag is set unconditionally once `getInitHeaders()` yielded a
+                            // value, even if `cloneThis` returns null — so a later arg can't
+                            // repopulate headers from a different source.
                             match headers.clone_this(global_this) {
-                                Ok(Some(h)) => {
+                                Ok(h) => {
                                     // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers = Some(unsafe { HeadersRef::adopt(h) });
-                                    fields.insert(Fields::Headers);
-                                }
-                                Ok(None) => {
-                                    // Zig assigns `req.#headers = try headers.cloneThis(...)`
-                                    // then *unconditionally* `fields.insert(.headers)`, even
-                                    // when the clone yields null. Mirror that here so a later
-                                    // arg can't repopulate headers from a different source.
+                                    req.headers = h.map(|p| unsafe { HeadersRef::adopt(p) });
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),
@@ -1676,26 +1674,21 @@ impl Request {
         // PERF(port): see construct_into — `Request.body: Box<BodyValue>` until the
         // HiveRef field-type refactor lands (server/mod.rs tracks the same).
         let body: Box<BodyValue> = Box::new(body_);
-        // Zig: `const url = if (preserve_url) req.url else self.url.dupeRef();`
-        //      `errdefer if (!preserve_url) url.deref();`
-        // `BunString` is `Copy` and has no `Drop`, so in the preserve_url case we
-        // bitwise-copy and *leave `req.url` in place* — if `clone_headers` errors
-        // below, the caller's `finalize_without_deinit` still owns and releases it.
-        // (Previously this used `mem::replace`, which moved the ref out and leaked
-        // it on the preserve_url error path.)
+        // Last fallible call. Zig hoists `url` above this with an
+        // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
+        // computation below it so no guard is needed at all — `BunString` is
+        // `Copy` with no `Drop`, so an early return here leaves `req.url`
+        // untouched and still owned by the caller's `finalize_without_deinit`.
+        let headers = self.clone_headers(global_this)?;
+        // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
         let url = if preserve_url {
+            // Bitwise copy — `*req = Request { .. }` below overwrites the old
+            // value; `BunString` has no `Drop`, so the stale `req.url` slot is
+            // discarded and this copy becomes the sole live handle.
             req.url
         } else {
             self.url.dupe_ref()
         };
-        let url_guard = scopeguard::guard(url, |u| {
-            if !preserve_url {
-                u.deref();
-            }
-        });
-        let headers = self.clone_headers(global_this)?;
-        // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
-        let url = scopeguard::ScopeGuard::into_inner(url_guard);
 
         *req = Request {
             url,

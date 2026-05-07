@@ -1069,9 +1069,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 impl Drop for DevServer {
     fn drop(&mut self) {
         debug_log!("deinit");
-        DEV_SERVER_DEINIT_COUNT_FOR_TESTING
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            .saturating_add(0); // TODO(port): saturating += on static
+        // Zig used `+|= 1` (saturating add); for a usize test counter, wrapping
+        // at usize::MAX is unreachable in practice, so a plain fetch_add is fine.
+        DEV_SERVER_DEINIT_COUNT_FOR_TESTING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // TODO(port): Zig used `useAllFields(DevServer, .{...})` to ensure every field
         // was visited. In Rust, Drop on each field handles most freeing automatically.

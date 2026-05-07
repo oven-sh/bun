@@ -949,12 +949,13 @@ impl Response {
         let mut response = Response {
             body: Body { value: BodyValue::Empty },
             init: Init { status_code: 200, ..Default::default() },
-            url: BunString::empty(),
             ..Default::default()
         };
-        // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init on failure.
-        // In Rust, Body and Init impl Drop, so early-return `?` cleans up automatically;
-        // on success the value is moved into Box::new and not dropped here.
+        // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
+        // on failure. In Rust, `Body` impls `Drop` and `Init`'s drop glue
+        // (HeadersRef + OwnedString) releases its refs, so early-return `?`
+        // cleans up automatically; on success the value is moved into Box::new
+        // and not dropped here.
         let json_value = args.next_eat().unwrap_or(JSValue::ZERO);
 
         if !json_value.is_empty() {
@@ -1063,7 +1064,6 @@ impl Response {
             let mut response = Response {
                 init: Init { status_code: 302, ..Default::default() },
                 body: Body { value: BodyValue::Empty },
-                url: BunString::empty(),
                 ..Default::default()
             };
 
@@ -1075,7 +1075,8 @@ impl Response {
             }
             url_string_slice = url_string.to_slice();
             // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init on
-            // failure. In Rust, Drop handles cleanup on `?`.
+            // failure. In Rust, `Init`'s drop glue (HeadersRef + OwnedString)
+            // handles cleanup on `?`.
 
             if let Some(arg_init) = args.next_eat() {
                 if arg_init.is_undefined_or_null() {
@@ -1083,7 +1084,7 @@ impl Response {
                 } else if arg_init.is_number() {
                     response.init.status_code = Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
                 } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // errdefer response.init.deinit() — handled by Drop on `?` below
+                    // errdefer response.init.deinit() — handled by Init's drop glue on `?` below
                     response.init = init;
 
                     if response.init.status_code != 200 {
@@ -1138,7 +1139,6 @@ impl Response {
                     let mut response = Response {
                         init: Init { status_code: 302, ..Default::default() },
                         body: Body { value: BodyValue::Empty },
-                        url: BunString::empty(),
                         js_ref: JsRef::init_weak(js_this),
                         ..Default::default()
                     };

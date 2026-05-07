@@ -176,7 +176,7 @@ pub mod group {
             INDENT.fetch_add(1, Ordering::Relaxed);
             LAST_WAS_START.store(true, Ordering::Relaxed);
         }
-        // Guard returned unconditionally; `end()` is itself gated on
+        // Guard is returned unconditionally; `end()` is itself gated on
         // `get_log_enabled()` so the disabled path stays a symmetric no-op
         // (matches Zig's unconditional `defer group.end()`).
         GroupGuard(())
@@ -187,7 +187,8 @@ pub mod group {
             return;
         }
         INDENT.fetch_sub(1, Ordering::Relaxed);
-        // Zig: `defer last_was_start = false;` — read-then-clear, so a single swap suffices.
+        // Zig: `defer last_was_start = false;` — swap captures the prior value and clears it
+        // up-front; both return paths below observe the cleared state, equivalent to the defer.
         let last_was_start = LAST_WAS_START.swap(false, Ordering::Relaxed);
         if last_was_start {
             return; // std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};

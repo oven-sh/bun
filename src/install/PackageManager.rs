@@ -2329,7 +2329,8 @@ pub fn init_with_runtime_once(
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body (Zig PackageManager.zig:1031 onward).
     let manager = unsafe { &mut *manager_ptr };
-    manager.lockfile = Box::new(Lockfile::default());
+    // PORT NOTE: Zig `manager.lockfile = try allocator.create(Lockfile)` —
+    // folded into the struct literal above (`Box::new(Lockfile::default())`).
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

@@ -484,7 +484,6 @@ impl NodeHTTPResponse {
         true
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn dump_request_body(
         &mut self,
         global_object: &JSGlobalObject,
@@ -548,27 +547,22 @@ impl NodeHTTPResponse {
         self.upgrade_context.preserve_web_socket_headers_if_needed();
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::ENDED))
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_number_from_int32(self.flags.bits() as i32)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_aborted(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::SOCKET_CLOSED))
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
         let mut result: i32 = 0;
         match self.body_read_state {
@@ -586,7 +580,6 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(result)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || self.flags.contains(Flags::SOCKET_CLOSED)
@@ -599,7 +592,6 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(0)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn js_ref(
         &mut self,
         global_object: &JSGlobalObject,
@@ -611,7 +603,6 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn js_unref(
         &mut self,
         global_object: &JSGlobalObject,
@@ -634,7 +625,6 @@ fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) 
 }
 
 impl NodeHTTPResponse {
-    #[bun_jsc::host_fn(method)]
     pub fn write_head(
         &mut self,
         global_object: &JSGlobalObject,
@@ -798,7 +788,6 @@ fn write_head_internal(
 }
 
 impl NodeHTTPResponse {
-    #[bun_jsc::host_fn(method)]
     pub fn write_continue(
         &mut self,
         global_object: &JSGlobalObject,
@@ -893,7 +882,6 @@ impl NodeHTTPResponse {
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn do_pause(
         &mut self,
         _global: &JSGlobalObject,
@@ -920,7 +908,6 @@ impl NodeHTTPResponse {
         Ok(JSValue::TRUE)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn drain_request_body(
         &mut self,
         global_object: &JSGlobalObject,
@@ -951,7 +938,6 @@ impl NodeHTTPResponse {
         None
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn do_resume(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         scoped_log!(NodeHTTPResponse, "doResume");
         if self.flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1068,7 +1054,6 @@ pub fn node_http_request_on_reject(
 }
 
 impl NodeHTTPResponse {
-    #[bun_jsc::host_fn(method)]
     pub fn abort(&mut self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         if self.is_done() {
             return Ok(JSValue::UNDEFINED);
@@ -1472,7 +1457,6 @@ impl NodeHTTPResponse {
         }
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_writable(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1491,12 +1475,10 @@ impl NodeHTTPResponse {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_on_writable(&self, _global: &JSGlobalObject) -> JSValue {
         js::on_writable_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_on_abort(&self, _global: &JSGlobalObject) -> JSValue {
         if self.flags.contains(Flags::SOCKET_CLOSED) || self.flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
@@ -1504,7 +1486,6 @@ impl NodeHTTPResponse {
         js::on_aborted_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_abort(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1527,22 +1508,18 @@ impl NodeHTTPResponse {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_on_data(&self, _global: &JSGlobalObject) -> JSValue {
         js::on_data_get_cached(self.get_this_value()).unwrap_or(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_has_custom_on_data(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::HAS_CUSTOM_ON_DATA))
     }
 
-    #[bun_jsc::host_fn(getter)]
     pub fn get_upgraded(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.contains(Flags::UPGRADED))
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_has_custom_on_data(&mut self, _global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         self.flags
             .set(Flags::HAS_CUSTOM_ON_DATA, value.to_boolean());
@@ -1567,7 +1544,6 @@ impl NodeHTTPResponse {
         }
     }
 
-    #[bun_jsc::host_fn(setter)]
     pub fn set_on_data(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1626,7 +1602,6 @@ impl NodeHTTPResponse {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn write(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1671,7 +1646,6 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn flush_headers(
         &mut self,
         _global: &JSGlobalObject,
@@ -1692,7 +1666,6 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn end(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1704,7 +1677,6 @@ impl NodeHTTPResponse {
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn get_bytes_written(&mut self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         JSValue::js_number(self.bytes_written as f64)
     }
@@ -1739,7 +1711,6 @@ impl NodeHTTPResponse {
         self.raw_response.as_ref().unwrap().timeout(seconds);
     }
 
-    #[bun_jsc::host_fn(method)]
     pub fn cork(
         &mut self,
         global_object: &JSGlobalObject,

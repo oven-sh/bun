@@ -4754,7 +4754,7 @@ impl Blob {
         }
     }
 
-    pub fn to_json(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue> {
+    pub fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToJsonWithBytesFn>(global));
         }
@@ -4763,12 +4763,19 @@ impl Blob {
         }
 
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `StoreRef::as_ptr`). `LIFETIME == Share` ⇒ `to_json_with_bytes` never
-        // frees the pointer; it is read-only. Mirrors Zig
-        // `@constCast(this.sharedView())`.
+        // `StoreRef::as_ptr`). `to_json_with_bytes` only reads through it for the
+        // non-`Temporary` lifetimes below. Mirrors Zig `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
-        // TODO(port): dispatch on lifetime const-generic
-        self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
+        match lifetime {
+            Lifetime::Clone => self.to_json_with_bytes::<{ Lifetime::Clone }>(global, view_ptr),
+            Lifetime::Transfer => self.to_json_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr),
+            Lifetime::Share => self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr),
+            // UB guard: `Temporary` would `Box::from_raw(view_ptr)`, but
+            // `view_ptr` points at a store-owned interior slice (not a leaked
+            // `Box<[u8]>`). No Zig caller passes `.temporary` to `toJSON`; the
+            // leaked-buffer path calls `to_json_with_bytes` directly.
+            Lifetime::Temporary => unreachable!("Blob::to_json: store-owned bytes are never Temporary"),
+        }
     }
 
     /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.

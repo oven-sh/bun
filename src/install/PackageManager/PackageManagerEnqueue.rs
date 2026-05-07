@@ -308,8 +308,14 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
+        // PORT NOTE: reshaped for borrowck — `alias`/`resolved` borrow
+        // `this.lockfile.buffers.string_bytes`; split via raw root so the
+        // `&mut PackageManager` is reachable (the callee only reads them).
+        let this_ptr: *mut PackageManager = this;
+        // SAFETY: `enqueue_git_checkout` copies `alias`/`resolved` into the
+        // filename store and never resizes `string_bytes` while they are live.
         let task = enqueue_git_checkout(
-            this,
+            unsafe { &mut *this_ptr },
             checkout_id,
             repo_fd,
             dependency_id,

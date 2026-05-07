@@ -905,8 +905,7 @@ pub fn handle_template_value(
 
         if template_value.is_object() {
             if let Some(maybe_str) = template_value.get_own_truthy(global, "raw")? {
-                let bunstr = maybe_str.to_bun_string(global)?;
-                let _guard = scopeguard::guard((), |_| bunstr.deref());
+                let bunstr = OwnedString::new(maybe_str.to_bun_string(global)?);
 
                 // Check for null bytes in shell argument (security: prevent null byte injection)
                 if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
@@ -918,7 +917,7 @@ pub fn handle_template_value(
                         .throw());
                 }
 
-                if !builder.append_bun_str::<false>(bunstr)? {
+                if !builder.append_bun_str::<false>(bunstr.get())? {
                     return Err(global.throw(format_args!(
                         "Shell script string contains invalid UTF-16"
                     )));
@@ -982,8 +981,7 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         jsval: JSValue,
     ) -> JsResult<bool> {
-        let bunstr = jsval.to_bun_string(self.global_this)?;
-        let _guard = scopeguard::guard((), |_| bunstr.deref());
+        let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
 
         // Check for null bytes in shell argument (security: prevent null byte injection)
         if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
@@ -996,7 +994,7 @@ impl<'a> ShellSrcBuilder<'a> {
                 .throw());
         }
 
-        Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr)?)
+        Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
     }
 
     pub fn append_bun_str<const ALLOW_ESCAPE: bool>(
@@ -1045,9 +1043,8 @@ impl<'a> ShellSrcBuilder<'a> {
         }
         if ALLOW_ESCAPE {
             if needs_escape_utf8_ascii_latin1(utf8) {
-                let bunstr = BunString::clone_utf8(utf8);
-                let _guard = scopeguard::guard((), |_| bunstr.deref());
-                self.append_js_str_ref(bunstr)?;
+                let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
+                self.append_js_str_ref(bunstr.get())?;
                 return Ok(true);
             }
         }
@@ -1132,8 +1129,7 @@ pub mod testing_apis {
                 }
             };
 
-            let bunstr = string.to_bun_string(global)?;
-            let _g1 = scopeguard::guard((), |_| bunstr.deref());
+            let bunstr = OwnedString::new(string.to_bun_string(global)?);
             let utf8str = bunstr.to_utf8();
 
             for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {

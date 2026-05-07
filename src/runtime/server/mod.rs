@@ -1127,9 +1127,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
-            // from `self.listener`; deref'd once to read the socket fd.
-            let fd = unsafe { (*listener).socket().fd() };
-            self.vm_mut().remove_listening_socket_for_watch_mode(fd);
+            // from `self.listener`; deref'd once to read the socket fd. `vm` is a
+            // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
+            // lifetime, so the raw→`&mut` deref is sound.
+            unsafe {
+                let fd = (*listener).socket().fd();
+                (*self.vm_mut()).remove_listening_socket_for_watch_mode(fd);
+            }
         }
         self.notify_inspector_server_stopped();
 
@@ -1211,9 +1215,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // TODO(b2-blocked): vm.event_loop_handle = Async::Loop::get();
         if !SSL {
             // SAFETY: `socket` is a live uws ListenSocket FFI handle just bound
-            // by `app.listen`; deref'd once to read the socket fd.
-            let fd = unsafe { (*socket).socket().fd() };
-            self.vm_mut().add_listening_socket_for_watch_mode(fd);
+            // by `app.listen`; deref'd once to read the socket fd. `vm` is a
+            // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
+            // lifetime, so the raw→`&mut` deref is sound.
+            unsafe {
+                let fd = (*socket).socket().fd();
+                (*self.vm_mut()).add_listening_socket_for_watch_mode(fd);
+            }
         }
     }
 

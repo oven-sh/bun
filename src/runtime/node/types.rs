@@ -833,9 +833,13 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
+///
+/// `deinit_and_unprotect` / `to_thread_safe` / `slice` / `estimated_size` are
+/// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
+/// adds only the path-buffer slicers and JS-argument parsing that depend on
+/// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub trait PathLikeExt {
     fn deinit(&self);
-    fn deinit_and_unprotect(&self);
     fn slice_z_with_force_copy<'a, const FORCE: bool>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr where Self: Sized;
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr where Self: Sized;
@@ -848,7 +852,7 @@ pub trait PathLikeExt {
     ) -> JsResult<Option<PathLike>> where Self: Sized;
     fn from_bun_string(
         global: &JSGlobalObject,
-        str: &bun_str::String,
+        str: &mut bun_str::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> where Self: Sized;
 }
@@ -856,7 +860,6 @@ pub trait PathLikeExt {
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
 pub trait PathOrFdExt {
     fn deinit(&self);
-    fn deinit_and_unprotect(&self);
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -868,23 +871,6 @@ impl PathLikeExt for PathLike {
     /// no-op so call sites that spell `path.deinit()` keep compiling.
     #[inline]
     fn deinit(&self) {}
-
-    fn deinit_and_unprotect(&self) {
-        // Alternate cleanup path (unprotects JS-side buffers).
-        // PORT NOTE: Zig consumes `self`; Rust call sites pass `&self` /
-        // `&mut self` interchangeably, so take by reference and rely on Drop
-        // for the owned-side release.
-        match self {
-            // `ZigStringSlice` cleanup happens in its own `Drop`.
-            Self::EncodedSlice(_) => {}
-            Self::ThreadsafeString(val) => val.deinit(),
-            Self::SliceWithUnderlyingString(val) => val.deinit(),
-            Self::Buffer(val) => {
-                val.buffer.value.unprotect();
-            }
-            _ => {}
-        }
-    }
 
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
     // Rust const-generics can't change return mutability; we always return `&ZStr`.
@@ -1054,12 +1040,12 @@ impl PathLikeExt for PathLike {
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
-                let str = arg.to_bun_string(ctx)?;
-                // str.deref() on Drop
+                let mut str = arg.to_bun_string(ctx)?;
+                scopeguard::defer! { str.deref(); }
 
                 arguments.eat();
 
-                Ok(Some(Self::from_bun_string(ctx, &str, arguments.will_be_async)?))
+                Ok(Some(Self::from_bun_string(ctx, &mut str, arguments.will_be_async)?))
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {

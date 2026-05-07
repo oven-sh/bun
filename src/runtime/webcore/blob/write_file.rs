@@ -91,9 +91,9 @@ impl FileOpener for WriteFile {
         mkdir_if_not_exists(self, err, path, display_path)
     }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!("WriteFile is POSIX-only; see WriteFileWindows") }
     #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_uv_sys::uv_fs_t { unreachable!("WriteFile is POSIX-only") }
+    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t { unreachable!("WriteFile is POSIX-only") }
     #[cfg(windows)]
     fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) { unreachable!() }
     #[cfg(windows)]
@@ -103,7 +103,7 @@ impl FileOpener for WriteFile {
 impl MkdirpTarget for WriteFile {
     fn mkdirp_if_not_exists(&self) -> bool { self.mkdirp_if_not_exists }
     fn set_mkdirp_if_not_exists(&mut self, v: bool) { self.mkdirp_if_not_exists = v; }
-    fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
+    fn set_system_error(&mut self, e: bun_sys::SystemError) { self.system_error = Some(e.into()); }
     fn set_errno_if_present(&mut self, e: Error) { self.errno = Some(e); }
     fn set_opened_fd_if_present(&mut self, fd: Fd) { self.opened_fd = fd; }
 }
@@ -120,7 +120,7 @@ impl FileCloser for WriteFile {
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask { &mut self.task }
     fn update(&mut self) { WriteFile::update(self) }
     #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t { unreachable!() }
+    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t { unreachable!() }
 
     fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.

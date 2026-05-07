@@ -289,19 +289,24 @@ impl StatWatcherScheduler {
             Ok(())
         }
 
-        let mut holder = Box::new(Holder {
+        // Leak FIRST, then derive `ctx` from the leaked pointer. Deriving `ctx` from a
+        // `&mut *box` reborrow and then re-dereffing the Box (or calling `Box::into_raw`)
+        // would create a sibling Unique borrow under Stacked Borrows that pops the tag
+        // backing `ctx`; `update_timer` would then `Box::from_raw` an out-of-provenance
+        // pointer. With this ordering, `ctx` and `holder_ptr` share the same SRW tag and
+        // `Box::from_raw(ctx)` satisfies the "must originate from `Box::into_raw`" contract.
+        let holder_ptr = Box::into_raw(Box::new(Holder {
             scheduler: this,
             task: AnyTask::default(),
-        });
-        holder.task = AnyTask {
-            ctx: core::ptr::NonNull::new((&mut *holder as *mut Holder).cast()),
-            callback: update_timer,
-        };
-        let holder_ptr = Box::into_raw(holder);
-        // SAFETY: `holder_ptr` is leaked until `update_timer` reclaims it; `vm`
-        // is the live per-thread VM (JSC_BORROW). `addr_of_mut!` so the field
-        // pointer inherits whole-Box provenance.
+        }));
+        // SAFETY: `holder_ptr` was just `Box::into_raw`'d and is exclusively owned here
+        // until `update_timer` reclaims it; `vm` is the live per-thread VM (JSC_BORROW).
+        // `addr_of_mut!` so the field pointer inherits whole-Box provenance.
         unsafe {
+            (*holder_ptr).task = AnyTask {
+                ctx: core::ptr::NonNull::new(holder_ptr.cast()),
+                callback: update_timer,
+            };
             (*(*(*this).vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create(
                 Task::init(core::ptr::addr_of_mut!((*holder_ptr).task)),
             ));

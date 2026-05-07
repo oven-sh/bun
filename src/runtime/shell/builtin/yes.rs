@@ -97,12 +97,13 @@ impl Yes {
                 let me = Self::state_mut(interp, cmd);
                 me.buffer[..me.buffer_used].to_vec()
             };
-            // PORT NOTE: Zig `writeOnceNoIO` matched on `Maybe(usize)` and
-            // routed `.err` through `writeFailingError`. The Rust port's
-            // `Builtin::write_no_io` is infallible (only `Pipe`/`Ignore`
-            // outputs reach this path; `Fd` is `unreachable!`), so the error
-            // arm is dead until arraybuf outputs are wired.
-            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk);
+            // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
+            // `taskErrorToString` and routes through `writeFailingError`.
+            if let Err(e) = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &chunk) {
+                let buf =
+                    Builtin::task_error_to_string(interp, cmd, super::Kind::Yes, &e).to_vec();
+                return Self::write_failing_error(interp, cmd, &buf, 1);
+            }
         }
         // Bounce back via the event loop so we don't block the main thread.
         // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside

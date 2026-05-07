@@ -2783,5 +2783,7 @@ pub fn create_shell_interpreter(
 //               superseded by NodeId arena.
 //   not-ported: `initAndRunFromFile` (delegate to `init_and_run_from_source`
 //               once cli wires the read), `CmdEnvIter` (subproc.rs owns its
-//               own env iterator shape).
+//               own env iterator shape), `ShellExecEnv.writeFailingErrorFmt`
+//               (Zig `anytype ctx` + comptime fmt callback — callers port the
+//               three-arm match inline against their concrete `IO.OutKind`).
 // ──────────────────────────────────────────────────────────────────────────

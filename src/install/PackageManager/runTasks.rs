@@ -1746,9 +1746,10 @@ pub fn generate_network_task_for_tarball<'a>(
     }
 
     // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
-    // `get_network_task()` borrows `&mut this.preallocated_network_tasks`, so we
-    // compute every value that needs `this` *before* taking that borrow, then
-    // populate `network_task` without touching `this`.
+    // All `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
+    // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
+    // live only through `for_tarball`, leaving `this` free for the streaming
+    // tail.
     let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
         let patch_hash = this
             .lockfile
@@ -1757,7 +1758,12 @@ pub fn generate_network_task_for_tarball<'a>(
             .unwrap()
             .patchfile_hash()
             .unwrap();
-        let task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        // BACKREF: `PatchTask<'a>` carries `manager: &'a PackageManager`, but the
+        // task is stored long-term inside `NetworkTask` (which models it as
+        // `'static`). Erase the lifetime at the raw-pointer boundary so the
+        // borrow on `this` ends here — matches the Zig back-pointer semantics.
+        let task: *mut PatchTask<'static> =
+            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h).cast();
         // SAFETY: `task` is a fresh non-null `Box::into_raw` from
         // `new_apply_patch_hash`; we hold the only reference.
         if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
@@ -1768,8 +1774,6 @@ pub fn generate_network_task_for_tarball<'a>(
     } else {
         None
     };
-    let pkg_name = this.lockfile.str(&package.name);
-    let scope = this.scope_for_package_name(pkg_name);
     let cache_dir = directories::get_cache_directory(this);
     let temp_dir = directories::get_temporary_directory(this).handle;
     // Backref address only — stored, not dereffed in this function. The tag is
@@ -1793,6 +1797,9 @@ pub fn generate_network_task_for_tarball<'a>(
     // Zig-`undefined` fields (`callback`, http buffers) are written by
     // `for_tarball` / `schedule()` before being observed.
     let network_task = unsafe { &mut *net_ptr };
+
+    let pkg_name = this.lockfile.str(&package.name);
+    let scope = this.scope_for_package_name(pkg_name);
 
     let extract_tarball = ExtractTarball {
         package_manager: this_backref, // TODO(port): lifetime — BACKREF

@@ -51,23 +51,8 @@ pub struct NodeHTTPResponse {
 }
 
 
-mod _orig_imports {
-use bun_http::Method as HttpMethod;
-use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
-};
-use bun_output::{declare_scope, scoped_log};
-use bun_str::ZigString;
-use bun_uws as uws;
-use bun_uws_sys as uws_sys;
-
-use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
-use crate::webcore::AutoFlusher;
-}
-
-// Intrusive refcount methods (`ref` / `deref`) are provided by `bun_ptr::IntrusiveRc`
-// over the `ref_count` field; `deinit` is the drop callback.
-// TODO(port): wire `bun_ptr::IntrusiveRc<NodeHTTPResponse>` with `deinit` as destructor.
+// Intrusive refcount methods (`ref_` / `deref`) are hand-rolled below over the
+// `ref_count` field; `deinit` is the destructor invoked when count hits zero.
 
 bitflags! {
     #[repr(transparent)]
@@ -199,25 +184,6 @@ unsafe extern "C" {
     );
 }
 
-// ─── JS host_fn bodies + uws response writes (gated) ─────────────────────────
-// Everything below is `#[bun_jsc::host_fn]` getters/methods plus
-// on_data/on_abort/write_head/end which call bun_uws AnyResponse write/end/
-// on_aborted/on_writable (cycle-5-B) and bun_jsc JSValue/CallFrame methods.
-// TODO(b2-blocked): bun_jsc + bun_uws response surface.
-
-mod _gated {
-use super::*;
-use bstr::BStr;
-use bun_core::scoped_log;
-use bun_http::Method as HttpMethod;
-use bun_str::{ZigString, ZigStringSlice};
-use crate::server::jsc::{CallFrame, ErrorCode};
-use crate::webcore::HasAutoFlusher;
-
-bun_core::declare_scope!(NodeHTTPResponse, visible);
-
-// ─── Local shims (upstream methods gated/missing) ────────────────────────────
-
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
 #[inline]
 fn vm_get<'a>() -> &'a mut VirtualMachine {
@@ -230,19 +196,6 @@ fn vm_get<'a>() -> &'a mut VirtualMachine {
 fn bun_vm_mut(global: &JSGlobalObject) -> &mut VirtualMachine {
     // SAFETY: JS-thread only; bun_vm() returns the live VM for this global.
     unsafe { &mut *global.bun_vm() }
-}
-
-/// Local extension for `JSValue::with_async_context_if_needed` (upstream gated).
-trait JSValueAsyncCtxExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
-}
-impl JSValueAsyncCtxExt for JSValue {
-    #[inline]
-    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
-        // TODO(port): blocked_on: bun_jsc::JSValue::with_async_context_if_needed
-        let _ = _global;
-        self
-    }
 }
 
 /// Local shim for `globalObject.ERR(.CODE, msg, .{}).throw()` (Zig codegen helpers).

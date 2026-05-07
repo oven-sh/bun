@@ -1077,7 +1077,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // defaults:
             current_script_index: 0,
             remaining_fds: 0,
-            process: None,
+            process: core::ptr::null_mut(),
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,
@@ -1133,6 +1133,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .fetch_sub(1, Ordering::Relaxed);
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// §Dispatch: ProcessExitVTable instance for `LifecycleScriptSubprocess`.
+// Replaces the Zig `bun.TaggedPointerUnion` `inline switch` arm in
+// `ProcessExitHandler.call`; the low-tier `bun_spawn` crate defines the vtable
+// shape and each high-tier handler supplies its own static instance.
+// ──────────────────────────────────────────────────────────────────────────
+
+static LIFECYCLE_SCRIPT_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+    on_process_exit: |owner, process, status, rusage| {
+        // SAFETY: `owner` is the `LifecycleScriptSubprocess<'a>` allocation-rooted
+        // pointer registered via `set_exit_handler` in `spawn_next_script`; `bun_spawn`
+        // guarantees `process`/`rusage` are live for the duration of the callback.
+        unsafe {
+            (*owner.cast::<LifecycleScriptSubprocess<'_>>())
+                .on_process_exit(process, status, &*rusage);
+        }
+    },
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // BufferedReaderParent — wires the stdout/stderr OutputReaders back to

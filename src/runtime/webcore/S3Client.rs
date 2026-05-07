@@ -487,21 +487,18 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let mut blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
-        S3File::S3BlobStatTask::stat(global, &mut *blob)
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
+        S3File::S3BlobStatTask::stat(global, &mut blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -569,26 +566,32 @@ impl S3Client {
         let object_keys = args[0];
         let options = opt_js(args[1]);
 
-        let blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                PathLike::default(),
-                options,
-                &ptr.credentials,
-                ptr.options,
-                None,
-                None,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            PathLike::default(),
+            options,
+            &ptr.credentials,
+            ptr.options,
+            None,
+            None,
+            ptr.request_payer,
+        )?;
 
-        // `blob.store.?.data.s3` is a Zig tagged-union field access; the Rust
-        // `StoreRef` only impls `Deref` (not `DerefMut`), so getting a `&mut S3`
-        // here without a raw-pointer escape hatch isn't possible yet.
-        let _ = (&*blob, object_keys);
-        todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
+        // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
+        // `S3::list_objects` takes `&mut self` plus `&Store` (the same allocation);
+        // borrowck cannot prove these disjoint through `StoreRef`'s `Deref`, so go
+        // through the raw `as_ptr()` (mutable provenance from `Box::into_raw`).
+        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+        // SAFETY: `store_ptr` is live for the duration of `blob`; aliasing
+        // `&mut S3` (a field of `Store.data`) with `&Store` mirrors the Zig
+        // pointer semantics — single-threaded JS event-loop discipline.
+        unsafe {
+            (*store_ptr)
+                .data
+                .as_s3_mut()
+                .list_objects(&*store_ptr, global, object_keys, options)
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -609,23 +612,22 @@ impl S3Client {
             }
         };
         let options = args.next_eat();
-        let blob = scopeguard::guard(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-            // blocked_on: webcore::blob::Blob::detach (duplicate inherent impls in Blob.rs)
-            |_b| {},
-        );
-        // See `list_objects` — `StoreRef` lacks `DerefMut` for `&mut S3`.
-        let _ = &*blob;
-        todo!("blocked_on: webcore::blob::store::Data mutable s3 accessor through StoreRef")
+        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &ptr.credentials,
+            ptr.options,
+            ptr.acl,
+            ptr.storage_class,
+            ptr.request_payer,
+        )?;
+        // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
+        let store_ptr = blob.store.as_ref().unwrap().as_ptr();
+        // SAFETY: see `list_objects` — `store_ptr` live for `blob`; Zig-semantics
+        // shared-mutable interior on the JS event-loop thread.
+        unsafe { (*store_ptr).data.as_s3_mut().unlink(&*store_ptr, global, options) }
     }
 
     /// Called by the generated JSCell wrapper's `finalize()`. Runs on the

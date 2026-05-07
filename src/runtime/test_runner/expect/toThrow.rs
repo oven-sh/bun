@@ -157,12 +157,11 @@ pub fn to_throw(
             }
 
             let mut formatter2 = super::make_formatter(global);
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 signature,
-                "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
                 format_args!(
-                    "{}{}",
+                    "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
                     expected_value.to_fmt(&mut formatter),
                     received_message.to_fmt(&mut formatter2),
                 ),
@@ -185,11 +184,13 @@ pub fn to_throw(
                 return Ok(JSValue::UNDEFINED);
             }
 
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 signature,
-                "\n\nExpected message: not <green>{}<r>\n",
-                format_args!("{}", expected_message.to_fmt(&mut formatter)),
+                format_args!(
+                    "\n\nExpected message: not <green>{}<r>\n",
+                    expected_message.to_fmt(&mut formatter),
+                ),
             );
         }
 
@@ -202,11 +203,14 @@ pub fn to_throw(
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
             .unwrap_or(JSValue::UNDEFINED);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
-            format_args!("{}{}", expected_class, received_message.to_fmt(&mut formatter)),
+            format_args!(
+                "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
+                expected_class,
+                received_message.to_fmt(&mut formatter),
+            ),
         );
     }
 

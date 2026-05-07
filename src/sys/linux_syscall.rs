@@ -17,7 +17,7 @@
 #![allow(unreachable_pub)]
 
 use core::ffi::CStr;
-use rustix::fd::{AsRawFd, BorrowedFd, OwnedFd};
+use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
 use crate::{Fd, Mode};
@@ -28,10 +28,16 @@ use bun_core::ZStr;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reinterpret a raw posix fd as a `BorrowedFd` for the duration of a single
-/// rustix call. SAFETY: `fd` must be a valid open descriptor for the duration
-/// of the call (caller-owned; rustix never closes a `BorrowedFd`).
+/// rustix call. SAFETY: `fd` must be a valid open descriptor (and ≠ -1; that
+/// value is `BorrowedFd`'s niche) for the duration of the call. Caller-owned;
+/// rustix never closes a `BorrowedFd`.
+///
+/// The lifetime is unbounded (chosen by inference at each call site) rather
+/// than `'static` — every use in this module is a single-expression borrow,
+/// so inference picks a local lifetime and the wrapper cannot accidentally
+/// outlive the real fd.
 #[inline(always)]
-unsafe fn bfd(fd: i32) -> BorrowedFd<'static> {
+unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
     // SAFETY: forwarded — see fn doc.
     unsafe { BorrowedFd::borrow_raw(fd) }
 }
@@ -211,20 +217,46 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 
 // ──────────────────────────────────────────────────────────────────────────
 // vectored I/O
+//
+// `readv`/`preadv` cannot route through rustix's typed `io::readv` because
+// that API requires `&mut [IoSliceMut]`, and our callers (lib.rs:3211/3258)
+// hand us `vecs.as_ptr()` derived from a *shared* `&[PlatformIoVec]` —
+// fabricating a `&mut` slice from that pointer is UB under Stacked/Tree
+// Borrows regardless of whether rustix actually writes to the iovec array.
+// Instead pass the raw pointer straight to the kernel via `libc::syscall`,
+// exactly as the Zig `std.os.linux.readv` path does. `syscall(2)` is a thin
+// register-shuffle (no PLT entry per call, no pthread cancellation point);
+// glibc translates the kernel `-errno` to `-1`+TLS-errno, which `sys_retry`
+// decodes.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Raw `readv(2)`. `vecs` is `&[libc::iovec]` (the public `PlatformIoVec`
-/// alias); rustix's `IoSliceMut` is layout-identical (`#[repr(transparent)]`
-/// over `iovec`).
+/// EINTR-retry a raw `libc::syscall` returning a byte count.
+#[inline(always)]
+unsafe fn sys_retry(mut f: impl FnMut() -> libc::c_long) -> Result<usize, i32> {
+    loop {
+        let rc = f();
+        if rc >= 0 {
+            return Ok(rc as usize);
+        }
+        // SAFETY: `__errno_location()` returns a valid thread-local int*.
+        let e = unsafe { *libc::__errno_location() };
+        if e == libc::EINTR {
+            continue;
+        }
+        return Err(e);
+    }
+}
+
+/// Raw `readv(2)`. `vecs` is `*const libc::iovec` (the public `PlatformIoVec`
+/// alias). The kernel reads the iovec array and writes through each
+/// `iov_base`; the array itself is never mutated.
 #[inline]
 pub unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // SAFETY: caller guarantees `vecs[..n]` are valid readable iovecs whose
-    // `iov_base` are writable for `iov_len` bytes.
-    let slice = unsafe {
-        core::slice::from_raw_parts_mut(vecs as *mut rustix::io::IoSliceMut<'_>, n)
-    };
-    let fd = unsafe { bfd(fd.native()) };
-    retry(|| rustix::io::readv(fd, slice))
+    // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose `iov_base`
+    // are writable for `iov_len` bytes.
+    unsafe {
+        sys_retry(|| libc::syscall(libc::SYS_readv, fd.native(), vecs, n as libc::c_long))
+    }
 }
 
 /// Raw `writev(2)`.
@@ -241,11 +273,19 @@ pub unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize
 /// Raw `preadv(2)`.
 #[inline]
 pub unsafe fn preadv(fd: Fd, vecs: *const libc::iovec, n: usize, off: i64) -> Result<usize, i32> {
-    let slice = unsafe {
-        core::slice::from_raw_parts_mut(vecs as *mut rustix::io::IoSliceMut<'_>, n)
-    };
-    let fd = unsafe { bfd(fd.native()) };
-    retry(|| rustix::io::preadv(fd, slice, off as u64))
+    // The kernel `preadv` ABI splits the offset into (lo, hi) longs on every
+    // arch; on LP64 the kernel's `pos_from_hilo` shifts `hi` out entirely, so
+    // `lo` carries the full 64-bit offset. Mirror glibc's `LO_HI_LONG` for
+    // documentation fidelity.
+    let lo = off as libc::c_long;
+    let hi = ((off as u64) >> 32) as libc::c_long;
+    // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose `iov_base`
+    // are writable for `iov_len` bytes.
+    unsafe {
+        sys_retry(|| {
+            libc::syscall(libc::SYS_preadv, fd.native(), vecs, n as libc::c_long, lo, hi)
+        })
+    }
 }
 
 /// Raw `pwritev(2)`.
@@ -272,36 +312,42 @@ unsafe fn set_errno(e: i32) {
     unsafe { *libc::__errno_location() = e; }
 }
 
-/// libc-convention adapter: `Ok(v) → v`, `Err(e) → { errno = e; -1 }`.
-#[inline(always)]
-fn libc_ret<T: From<i8>>(r: Result<T, i32>) -> T {
-    match r {
-        Ok(v) => v,
-        Err(e) => {
-            // SAFETY: errno TLS write.
-            unsafe { set_errno(e) };
-            T::from(-1i8)
-        }
-    }
-}
-
 /// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
+///
+/// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
+/// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
+/// uninitialized buffer (legal for `read(2)`). Routing through rustix would
+/// require constructing `BorrowedFd` (UB for `-1`, its niche value) and
+/// `&mut [u8]` (UB for null or uninit). Instead forward the raw triple to
+/// the kernel via `libc::syscall(SYS_read, ..)` — pointer-only, no Rust
+/// references, identical semantics to the pre-refactor `libc::read` path
+/// minus the PLT hop and pthread cancellation point.
 #[inline]
 pub unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
-    // SAFETY: caller guarantees `buf[..count]` is writable.
-    let slice = unsafe { core::slice::from_raw_parts_mut(buf, count) };
-    let fd = unsafe { bfd(fd) };
-    libc_ret(once(rustix::io::read(fd, slice)).map(|n| n as isize))
+    // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
+    unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
 }
 
-/// Raw `write(2)` — libc-convention return.
+/// Raw `write(2)` — libc-convention return. See `read_raw` for why this
+/// bypasses rustix's typed wrapper.
 #[inline]
 pub unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
-    // SAFETY: caller guarantees `buf[..count]` is readable.
-    let slice = unsafe { core::slice::from_raw_parts(buf, count) };
-    let fd = unsafe { bfd(fd) };
-    libc_ret(once(rustix::io::write(fd, slice)).map(|n| n as isize))
+    // SAFETY: raw `write(2)`; kernel validates `fd`/`buf`/`count`.
+    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
+
+// Cross-crate layout pin: we reinterpret `*mut libc::epoll_event` as
+// `*const rustix::event::epoll::Event` below. Both mirror the kernel UAPI
+// struct (packed on x86_64, natural on aarch64), but that is an undocumented
+// coincidence — fail the build loudly if either crate ever diverges.
+const _: () = assert!(
+    core::mem::size_of::<libc::epoll_event>()
+        == core::mem::size_of::<rustix::event::epoll::Event>()
+);
+const _: () = assert!(
+    core::mem::align_of::<libc::epoll_event>()
+        == core::mem::align_of::<rustix::event::epoll::Event>()
+);
 
 /// Raw `epoll_ctl(2)` — libc-convention return.
 #[inline]
@@ -311,20 +357,24 @@ pub unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::epoll_eve
     // through the matching rustix call. `event` may be null for CTL_DEL.
     let epfd_b = unsafe { bfd(epfd) };
     let fd_b = unsafe { bfd(fd) };
-    let r: rustix::io::Result<()> = if op == libc::EPOLL_CTL_DEL {
-        rustix::event::epoll::delete(epfd_b, fd_b)
-    } else {
-        // SAFETY: non-DEL ops require a valid event; caller upholds this
-        // (matches `epoll_ctl(2)` contract). `libc::epoll_event` and
-        // `rustix::event::epoll::Event` are both the packed kernel struct.
-        let ev = unsafe { &*(event as *const rustix::event::epoll::Event) };
-        let data = ev.data;
-        let flags = ev.flags;
-        if op == libc::EPOLL_CTL_ADD {
-            rustix::event::epoll::add(epfd_b, fd_b, data, flags)
-        } else {
-            rustix::event::epoll::modify(epfd_b, fd_b, data, flags)
+    let r: rustix::io::Result<()> = match op {
+        libc::EPOLL_CTL_DEL => rustix::event::epoll::delete(epfd_b, fd_b),
+        libc::EPOLL_CTL_ADD | libc::EPOLL_CTL_MOD => {
+            // SAFETY: ADD/MOD require a valid event; caller upholds this
+            // (matches `epoll_ctl(2)` contract). Layout equivalence is
+            // statically asserted above.
+            let ev = unsafe { &*(event as *const rustix::event::epoll::Event) };
+            let data = ev.data;
+            let flags = ev.flags;
+            if op == libc::EPOLL_CTL_ADD {
+                rustix::event::epoll::add(epfd_b, fd_b, data, flags)
+            } else {
+                rustix::event::epoll::modify(epfd_b, fd_b, data, flags)
+            }
         }
+        // Unknown op: surface the kernel's EINVAL rather than silently
+        // aliasing to MOD (previous else-arm behavior).
+        _ => Err(Errno::INVAL),
     };
     match r {
         Ok(()) => 0,
@@ -358,15 +408,20 @@ pub unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) 
 /// Raw `copy_file_range(2)` — libc-convention return.
 #[inline]
 pub unsafe fn copy_file_range(
-    in_: i32, off_in: *mut i64, out: i32, off_out: *mut i64, len: usize, _flags: u32,
+    in_: i32, off_in: *mut i64, out: i32, off_out: *mut i64, len: usize, flags: u32,
 ) -> isize {
+    // rustix's wrapper hard-codes `flags = 0` (the only value any shipping
+    // kernel accepts). The Zig `std.os.linux.copy_file_range` and the
+    // pre-refactor `libc::syscall` path both forward `flags` verbatim, so a
+    // future flag bit passed through here would otherwise be silently
+    // dropped instead of EINVAL-ing. Catch that divergence in debug builds.
+    debug_assert_eq!(flags, 0, "copy_file_range: non-zero flags dropped by rustix wrapper");
     let inp = unsafe { bfd(in_) };
     let out = unsafe { bfd(out) };
     let oi: Option<&mut u64> =
         if off_in.is_null() { None } else { Some(unsafe { &mut *(off_in as *mut u64) }) };
     let oo: Option<&mut u64> =
         if off_out.is_null() { None } else { Some(unsafe { &mut *(off_out as *mut u64) }) };
-    // `flags` must be 0 on every extant kernel; rustix hard-codes it.
     match rustix::fs::copy_file_range(inp, oi, out, oo, len) {
         Ok(n) => n as isize,
         Err(e) => {
@@ -403,8 +458,6 @@ pub unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
 fn own_fd(fd: OwnedFd) -> Fd {
     // rustix returns `OwnedFd` (close-on-Drop). bun_sys manages fd lifetime
     // explicitly via `Fd` + `close()`, so leak the RAII wrapper and hand back
-    // the raw int.
-    let raw = fd.as_raw_fd();
-    core::mem::forget(fd);
-    Fd::from_native(raw)
+    // the raw int. `into_raw_fd` is the canonical leak-and-return.
+    Fd::from_native(fd.into_raw_fd())
 }

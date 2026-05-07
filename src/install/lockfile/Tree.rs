@@ -677,7 +677,13 @@ impl Tree {
         // PORT NOTE: reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 
-        let pkgs = builder.lockfile().packages.slice();
+        // SAFETY: `builder.lockfile` points at the `Lockfile` that constructed this
+        // `Builder` in `Lockfile::hoist`; it outlives `builder`. Dereferencing the raw
+        // pointer directly (instead of `builder.lockfile()`) detaches the resulting
+        // `&Lockfile` from `&builder` so subsequent `&mut builder` field borrows in the
+        // loop body do not conflict.
+        let lockfile: &Lockfile = unsafe { &*builder.lockfile };
+        let pkgs = lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
         // PORT NOTE: reshaped for borrowck — copy the `&'a [Dependency]` out of
         // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
@@ -694,7 +700,7 @@ impl Tree {
         }
 
         {
-            let sorter = DepSorter { lockfile: builder.lockfile() };
+            let sorter = DepSorter { lockfile };
             // PERF(port): Zig used std.sort.pdq; Rust slice::sort_unstable_by is also pdqsort.
             builder
                 .sort_buf
@@ -724,7 +730,7 @@ impl Tree {
                     builder.workspace_filters,
                     builder.install_root_dependencies,
                     builder.manager.expect("manager set when METHOD == Filter"),
-                    builder.lockfile(),
+                    lockfile,
                 ) {
                     continue;
                 }
@@ -1022,9 +1028,10 @@ impl Tree {
                 // PORT NOTE: reshaped for borrowck — `maybe_report_error` takes
                 // `&mut self` but the format args borrow `&self` (via
                 // `package_name`/`package_version`/`buf`). Inline against split
-                // field borrows: copy the `&'a Lockfile` out, then write to
-                // `builder.log` directly.
-                let lockfile = builder.lockfile();
+                // field borrows: deref the raw `*const Lockfile` directly so the
+                // `&Lockfile` is not tied to `&builder`, then write to `builder.log`.
+                // SAFETY: see `Builder::lockfile()` — pointer outlives `builder`.
+                let lockfile: &Lockfile = unsafe { &*builder.lockfile };
                 let buf = lockfile.buffers.string_bytes.as_slice();
                 let names = lockfile.packages.items_name();
                 let resolutions = lockfile.packages.items_resolution();

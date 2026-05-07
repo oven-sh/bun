@@ -13,7 +13,7 @@ use bun_event_loop::AnyEventLoop;
 use bun_io::heap as io_heap;
 use bun_io::{BufferedReader, BufferedReaderParent, EventLoopHandle, FilePollFlag, PosixFlags};
 
-use bun_spawn::{Process, Rusage, SpawnOptions, Status};
+use bun_spawn::{Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 use bun_str::ZStr;
 use bun_sys::{Fd, FdExt};
 use bun_aio::Loop as AsyncLoop;
@@ -196,7 +196,10 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub current_script_index: u8,
 
     pub remaining_fds: i8,
-    pub process: Option<std::sync::Arc<Process>>,
+    /// Zig: `?*Process`. `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
+    /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
+    /// in `reset_polls` (mirrors Zig `process.close(); process.deref();`). Null = none.
+    pub process: *mut Process,
     pub stdout: OutputReader,
     pub stderr: OutputReader,
     pub has_called_process_exit: bool,

@@ -17,7 +17,7 @@ use bun_core::err;
 use bun_interchange::json as json_parser;
 use bun_interchange::toml::TOML;
 use bun_logger as logger;
-use bun_logger::js_ast::{expr::Data as ExprData, E, Expr, ExprTag};
+use bun_logger::js_ast::{expr::Data as ExprData, Expr, ExprTag, E};
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::schema::api;
@@ -78,12 +78,20 @@ fn expr_get_object(expr: &Expr, name: &[u8]) -> Option<Expr> {
 
 #[inline]
 fn expr_as_bool(expr: &Expr) -> Option<bool> {
-    if let ExprData::EBoolean(b) = expr.data { Some(b.value) } else { None }
+    if let ExprData::EBoolean(b) = expr.data {
+        Some(b.value)
+    } else {
+        None
+    }
 }
 
 #[inline]
 fn expr_as_number(expr: &Expr) -> Option<f64> {
-    if let ExprData::ENumber(n) = expr.data { Some(n.value) } else { None }
+    if let ExprData::ENumber(n) = expr.data {
+        Some(n.value)
+    } else {
+        None
+    }
 }
 
 /// Zig `Expr.asString(allocator)` — UTF-8 view, allocating into `bump` only if
@@ -122,8 +130,12 @@ fn parse_macros_json(
     };
 
     for property in obj.properties.slice() {
-        let Some(key_expr) = property.key.as_ref() else { continue };
-        let Some(key) = expr_as_string(key_expr, bump) else { continue };
+        let Some(key_expr) = property.key.as_ref() else {
+            continue;
+        };
+        let Some(key) = expr_as_string(key_expr, bump) else {
+            continue;
+        };
         if !bun_resolver::is_package_path(key) {
             log.add_range_warning_fmt(
                 Some(json_source),
@@ -137,7 +149,9 @@ fn parse_macros_json(
             continue;
         }
 
-        let Some(value) = property.value.as_ref() else { continue };
+        let Some(value) = property.value.as_ref() else {
+            continue;
+        };
         let ExprData::EObject(value_obj) = &value.data else {
             log.add_warning_fmt(
                 Some(json_source),
@@ -159,9 +173,15 @@ fn parse_macros_json(
         let mut map = MacroImportReplacementMap::default();
         map.reserve(remap_properties.len());
         for remap in remap_properties {
-            let Some(remap_key) = remap.key.as_ref() else { continue };
-            let Some(import_name) = expr_as_string(remap_key, bump) else { continue };
-            let Some(remap_value) = remap.value.as_ref() else { continue };
+            let Some(remap_key) = remap.key.as_ref() else {
+                continue;
+            };
+            let Some(import_name) = expr_as_string(remap_key, bump) else {
+                continue;
+            };
+            let Some(remap_value) = remap.value.as_ref() else {
+                continue;
+            };
             let remap_value_str = match &remap_value.data {
                 ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
                 _ => {
@@ -411,8 +431,12 @@ impl<'a> Parser<'a> {
             let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
             let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
             for prop in properties {
-                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else { continue };
-                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else { continue };
+                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else {
+                    continue;
+                };
+                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else {
+                    continue;
+                };
                 keys.push(estring_to_owned(k, self.bump));
                 values.push(estring_to_owned(v, self.bump));
             }
@@ -421,8 +445,10 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"origin") {
             self.expect_string(&expr)?;
-            self.ctx.args.origin =
-                Some(estring_to_owned(expr.data.e_string().unwrap().get(), self.bump));
+            self.ctx.args.origin = Some(estring_to_owned(
+                expr.data.e_string().unwrap().get(),
+                self.bump,
+            ));
         }
 
         if let Some(env_expr) = expr_get(&json, b"env") {
@@ -507,8 +533,10 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = expr_get(&test_, b"coverageReporter") {
                     'brk: {
-                        self.ctx.test_options.coverage.reporters =
-                            CoverageReporters { text: false, lcov: false };
+                        self.ctx.test_options.coverage.reporters = CoverageReporters {
+                            text: false,
+                            lcov: false,
+                        };
                         if let ExprData::EString(_) = &expr.data {
                             let item_str = expr_as_string(&expr, self.bump).unwrap_or(b"");
                             if item_str == b"text" {
@@ -707,8 +735,7 @@ impl<'a> Parser<'a> {
                                 if items.is_empty() {
                                     break 'brk;
                                 }
-                                let mut patterns: Vec<Box<[u8]>> =
-                                    Vec::with_capacity(items.len());
+                                let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                                 for item in items {
                                     let ExprData::EString(s) = &item.data else {
                                         self.add_error(
@@ -748,8 +775,7 @@ impl<'a> Parser<'a> {
                                 if items.is_empty() {
                                     break 'brk;
                                 }
-                                let mut patterns: Vec<Box<[u8]>> =
-                                    Vec::with_capacity(items.len());
+                                let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                                 for item in items {
                                     let ExprData::EString(s) = &item.data else {
                                         self.add_error(
@@ -919,8 +945,10 @@ impl<'a> Parser<'a> {
             {
                 if let Some(dir) = expr_get(&_bun, b"outdir") {
                     self.expect_string(&dir)?;
-                    self.ctx.args.output_dir =
-                        Some(estring_to_owned(dir.data.e_string().unwrap().get(), self.bump));
+                    self.ctx.args.output_dir = Some(estring_to_owned(
+                        dir.data.e_string().unwrap().get(),
+                        self.bump,
+                    ));
                 }
             }
 
@@ -936,7 +964,10 @@ impl<'a> Parser<'a> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        names.push(estring_to_owned(item.data.e_string().unwrap().get(), self.bump));
+                        names.push(estring_to_owned(
+                            item.data.e_string().unwrap().get(),
+                            self.bump,
+                        ));
                     }
                     self.ctx.args.entry_points = names;
                 }
@@ -947,10 +978,7 @@ impl<'a> Parser<'a> {
                     let properties = object.properties.slice();
                     let mut valid_count: usize = 0;
                     for prop in properties {
-                        if !matches!(
-                            prop.value.as_ref().unwrap().data,
-                            ExprData::EBoolean(_)
-                        ) {
+                        if !matches!(prop.value.as_ref().unwrap().data, ExprData::EBoolean(_)) {
                             continue;
                         }
                         valid_count += 1;
@@ -964,7 +992,9 @@ impl<'a> Parser<'a> {
                             continue;
                         };
                         let key_expr = prop.key.as_ref().unwrap();
-                        let ExprData::EString(k) = &key_expr.data else { continue };
+                        let ExprData::EString(k) = &key_expr.data else {
+                            continue;
+                        };
                         let path = estring_to_owned(k, self.bump);
 
                         if !bun_resolver::is_package_path(&path) {
@@ -1039,9 +1069,15 @@ impl<'a> Parser<'a> {
                 });
             } else {
                 let jsx: &mut api::Jsx = self.ctx.args.jsx.as_mut().unwrap();
-                if !jsx_factory.is_empty() { jsx.factory = jsx_factory; }
-                if !jsx_fragment.is_empty() { jsx.fragment = jsx_fragment; }
-                if !jsx_import_source.is_empty() { jsx.import_source = jsx_import_source; }
+                if !jsx_factory.is_empty() {
+                    jsx.factory = jsx_factory;
+                }
+                if !jsx_fragment.is_empty() {
+                    jsx.fragment = jsx_fragment;
+                }
+                if !jsx_import_source.is_empty() {
+                    jsx.import_source = jsx_import_source;
+                }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
             }
@@ -1061,12 +1097,8 @@ impl<'a> Parser<'a> {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
-                self.ctx.debug.macros = MacroOptions::Map(parse_macros_json(
-                    &expr,
-                    self.log,
-                    self.source,
-                    self.bump,
-                ));
+                self.ctx.debug.macros =
+                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
@@ -1081,7 +1113,9 @@ impl<'a> Parser<'a> {
                     let mut externals: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        let ExprData::EString(s) = &item.data else { unreachable!() };
+                        let ExprData::EString(s) = &item.data else {
+                            unreachable!()
+                        };
                         externals.push(estring_to_owned(s, self.bump));
                     }
                     self.ctx.args.external = externals;
@@ -1210,484 +1244,523 @@ impl Bunfig {
 
 impl<'a> Parser<'a> {
     fn parse_registry_url_string(
-            &mut self,
-            str: &E::EString,
-        ) -> Result<api::NpmRegistry, bun_core::Error> {
-            let url = URL::parse(str.string(self.bump)?);
-            let mut registry = api::NpmRegistry::default();
+        &mut self,
+        str: &E::EString,
+    ) -> Result<api::NpmRegistry, bun_core::Error> {
+        let url = URL::parse(str.string(self.bump)?);
+        let mut registry = api::NpmRegistry::default();
 
-            // Token
-            if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = url.password.into();
-                let mut s = Vec::<u8>::new();
-                write!(
-                    &mut s,
-                    "{}://{}/{}/",
-                    bstr::BStr::new(url.display_protocol()),
-                    url.display_host(),
-                    bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
-                )
-                .expect("unreachable");
-                registry.url = s.into();
-            } else if !url.username.is_empty() && !url.password.is_empty() {
-                registry.username = url.username.into();
-                registry.password = url.password.into();
-                let mut s = Vec::<u8>::new();
-                write!(
-                    &mut s,
-                    "{}://{}/{}/",
-                    bstr::BStr::new(url.display_protocol()),
-                    url.display_host(),
-                    bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
-                )
-                .expect("unreachable");
-                registry.url = s.into();
-            } else {
-                // Do not include a trailing slash. There might be parameters at the end.
-                registry.url = url.href.into();
-            }
-
-            Ok(registry)
+        // Token
+        if url.username.is_empty() && !url.password.is_empty() {
+            registry.token = url.password.into();
+            let mut s = Vec::<u8>::new();
+            write!(
+                &mut s,
+                "{}://{}/{}/",
+                bstr::BStr::new(url.display_protocol()),
+                url.display_host(),
+                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
+            )
+            .expect("unreachable");
+            registry.url = s.into();
+        } else if !url.username.is_empty() && !url.password.is_empty() {
+            registry.username = url.username.into();
+            registry.password = url.password.into();
+            let mut s = Vec::<u8>::new();
+            write!(
+                &mut s,
+                "{}://{}/{}/",
+                bstr::BStr::new(url.display_protocol()),
+                url.display_host(),
+                bstr::BStr::new(bun_string::strings::trim(url.pathname, b"/")),
+            )
+            .expect("unreachable");
+            registry.url = s.into();
+        } else {
+            // Do not include a trailing slash. There might be parameters at the end.
+            registry.url = url.href.into();
         }
 
-        fn parse_registry_object(
-            &mut self,
-            obj: &E::Object,
-        ) -> Result<api::NpmRegistry, bun_core::Error> {
-            let mut registry = api::NpmRegistry::default();
+        Ok(registry)
+    }
 
-            if let Some(url) = obj.get(b"url") {
-                self.expect_string(&url)?;
-                registry.url = expr_as_string(&url, self.bump).unwrap().into();
-            }
-            if let Some(username) = obj.get(b"username") {
-                self.expect_string(&username)?;
-                registry.username = expr_as_string(&username, self.bump).unwrap().into();
-            }
-            if let Some(password) = obj.get(b"password") {
-                self.expect_string(&password)?;
-                registry.password = expr_as_string(&password, self.bump).unwrap().into();
-            }
-            if let Some(token) = obj.get(b"token") {
-                self.expect_string(&token)?;
-                registry.token = expr_as_string(&token, self.bump).unwrap().into();
-            }
+    fn parse_registry_object(
+        &mut self,
+        obj: &E::Object,
+    ) -> Result<api::NpmRegistry, bun_core::Error> {
+        let mut registry = api::NpmRegistry::default();
 
-            Ok(registry)
+        if let Some(url) = obj.get(b"url") {
+            self.expect_string(&url)?;
+            registry.url = expr_as_string(&url, self.bump).unwrap().into();
+        }
+        if let Some(username) = obj.get(b"username") {
+            self.expect_string(&username)?;
+            registry.username = expr_as_string(&username, self.bump).unwrap().into();
+        }
+        if let Some(password) = obj.get(b"password") {
+            self.expect_string(&password)?;
+            registry.password = expr_as_string(&password, self.bump).unwrap().into();
+        }
+        if let Some(token) = obj.get(b"token") {
+            self.expect_string(&token)?;
+            registry.token = expr_as_string(&token, self.bump).unwrap().into();
         }
 
-        fn parse_registry(&mut self, expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
-            match &expr.data {
-                ExprData::EString(s) => self.parse_registry_url_string(s),
-                ExprData::EObject(o) => self.parse_registry_object(o),
-                _ => {
-                    self.add_error(
-                        expr.loc,
-                        b"Expected registry to be a URL string or an object",
-                    )?;
-                    Ok(api::NpmRegistry::default())
-                }
+        Ok(registry)
+    }
+
+    fn parse_registry(&mut self, expr: &Expr) -> Result<api::NpmRegistry, bun_core::Error> {
+        match &expr.data {
+            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EObject(o) => self.parse_registry_object(o),
+            _ => {
+                self.add_error(
+                    expr.loc,
+                    b"Expected registry to be a URL string or an object",
+                )?;
+                Ok(api::NpmRegistry::default())
             }
         }
+    }
 
-        fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-            // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
-            // The helper methods (`expect*`, `add_error`, `parse_registry`) take
-            // `&mut self`, which under Stacked Borrows would invalidate any
-            // long-lived `&mut` derived from `self.ctx.install`. Move the box
-            // out so the install borrow is provably disjoint from `self`, then
-            // restore it on every exit path.
-            let mut install = self.ctx.install.take().expect("install slot primed");
-            let result = self.parse_install_inner(&mut install, install_obj);
-            self.ctx.install = Some(install);
-            result
-        }
+    fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
+        // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
+        // The helper methods (`expect*`, `add_error`, `parse_registry`) take
+        // `&mut self`, which under Stacked Borrows would invalidate any
+        // long-lived `&mut` derived from `self.ctx.install`. Move the box
+        // out so the install borrow is provably disjoint from `self`, then
+        // restore it on every exit path.
+        let mut install = self.ctx.install.take().expect("install slot primed");
+        let result = self.parse_install_inner(&mut install, install_obj);
+        self.ctx.install = Some(install);
+        result
+    }
 
-        fn parse_install_inner(
-            &mut self,
-            install: &mut api::BunInstall,
-            install_obj: &Expr,
-        ) -> Result<(), bun_core::Error> {
-            if let Some(cafile) = expr_get(install_obj, b"cafile") {
-                install.cafile = match expr_as_string(&cafile, self.bump) {
-                    Some(s) => Some(s.into()),
-                    None => {
-                        self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
-                        return Ok(());
-                    }
-                };
-            }
-
-            if let Some(ca) = expr_get(install_obj, b"ca") {
-                match &ca.data {
-                    ExprData::EArray(arr) => {
-                        let items = arr.items.slice();
-                        let mut list: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
-                        for item in items {
-                            match expr_as_string(item, self.bump) {
-                                Some(s) => list.push(s.into()),
-                                None => {
-                                    self.add_error(item.loc, b"Invalid CA. Expected a string.")?;
-                                    return Ok(());
-                                }
-                            }
-                        }
-                        install.ca = Some(api::Ca::List(list.into()));
-                    }
-                    ExprData::EString(s) => {
-                        install.ca = Some(api::Ca::Str(estring_to_owned(s, self.bump)));
-                    }
-                    _ => {
-                        self.add_error(
-                            ca.loc,
-                            b"Invalid CA. Expected a string or an array of strings.",
-                        )?;
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(exact) = expr_get(install_obj, b"exact") {
-                if let Some(v) = expr_as_bool(&exact) { install.exact = Some(v); }
-            }
-
-            if let Some(registry) = expr_get(install_obj, b"registry") {
-                install.default_registry = Some(self.parse_registry(&registry)?);
-            }
-
-            if let Some(scopes) = expr_get(install_obj, b"scopes") {
-                let mut registry_map = install.scoped.take().unwrap_or_default();
-                self.expect(&scopes, ExprTag::EObject)?;
-                let obj = scopes.data.e_object().unwrap();
-                registry_map.scopes.reserve(obj.properties.slice().len());
-                for prop in obj.properties.slice() {
-                    let Some(name_) = prop.key.as_ref().and_then(|k| expr_as_string(k, self.bump)) else { continue };
-                    let Some(value) = prop.value.as_ref() else { continue };
-                    if name_.is_empty() { continue }
-                    let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
-                    let registry = self.parse_registry(value)?;
-                    registry_map.scopes.insert(name.into(), registry);
-                }
-                install.scoped = Some(registry_map);
-            }
-
-            if let Some(v) = expr_get(install_obj, b"dryRun").and_then(|e| expr_as_bool(&e)) {
-                install.dry_run = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"production").and_then(|e| expr_as_bool(&e)) {
-                install.production = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"frozenLockfile").and_then(|e| expr_as_bool(&e)) {
-                install.frozen_lockfile = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"saveTextLockfile").and_then(|e| expr_as_bool(&e)) {
-                install.save_text_lockfile = Some(v);
-            }
-            if let Some(jobs) = expr_get(install_obj, b"concurrentScripts") {
-                if let Some(n) = expr_as_number(&jobs) {
-                    let n = num_to_u32(n);
-                    install.concurrent_scripts = if n == 0 { None } else { Some(n) };
-                }
-            }
-            if let Some(v) = expr_get(install_obj, b"ignoreScripts").and_then(|e| expr_as_bool(&e)) {
-                install.ignore_scripts = Some(v);
-            }
-            if let Some(node_linker_expr) = expr_get(install_obj, b"linker") {
-                self.expect_string(&node_linker_expr)?;
-                if let Some(s) = expr_as_string(&node_linker_expr, self.bump) {
-                    // PORT NOTE: `api::NodeLinker` is a CYCLEBREAK mirror of
-                    // `bun_install_types::NodeLinker`; map the string locally
-                    // rather than crossing the type boundary.
-                    install.node_linker = match s {
-                        b"hoisted" => Some(api::NodeLinker::Hoisted),
-                        b"isolated" => Some(api::NodeLinker::Isolated),
-                        _ => None,
-                    };
-                    if install.node_linker.is_none() {
-                        self.add_error(
-                            node_linker_expr.loc,
-                            b"Expected one of \"isolated\" or \"hoisted\"",
-                        )?;
-                    }
-                }
-            }
-            if let Some(v) = expr_get(install_obj, b"globalStore").and_then(|e| expr_as_bool(&e)) {
-                install.global_store = Some(v);
-            }
-
-            if let Some(lockfile_expr) = expr_get(install_obj, b"lockfile") {
-                if let Some(lockfile) = expr_get(&lockfile_expr, b"print") {
-                    self.expect_string(&lockfile)?;
-                    if let Some(value) = expr_as_string(&lockfile, self.bump) {
-                        if value != b"bun" {
-                            if value != b"yarn" {
-                                self.add_error(
-                                    lockfile.loc,
-                                    b"Invalid lockfile format, only 'yarn' output is implemented",
-                                )?;
-                            }
-                            install.save_yarn_lockfile = Some(true);
-                        }
-                    }
-                }
-                if let Some(v) = expr_get(&lockfile_expr, b"save").and_then(|e| expr_as_bool(&e)) {
-                    install.save_lockfile = Some(v);
-                }
-                if let Some(v) = expr_get(&lockfile_expr, b"path").and_then(|e| expr_as_string(&e, self.bump)) {
-                    install.lockfile_path = Some(v.into());
-                }
-                if let Some(v) = expr_get(&lockfile_expr, b"savePath").and_then(|e| expr_as_string(&e, self.bump)) {
-                    install.save_lockfile_path = Some(v.into());
-                }
-            }
-
-            if let Some(v) = expr_get(install_obj, b"optional").and_then(|e| expr_as_bool(&e)) {
-                install.save_optional = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"peer").and_then(|e| expr_as_bool(&e)) {
-                install.save_peer = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"dev").and_then(|e| expr_as_bool(&e)) {
-                install.save_dev = Some(v);
-            }
-            if let Some(v) = expr_get(install_obj, b"globalDir").and_then(|e| expr_as_string(&e, self.bump)) {
-                install.global_dir = Some(v.into());
-            }
-            if let Some(v) = expr_get(install_obj, b"globalBinDir").and_then(|e| expr_as_string(&e, self.bump)) {
-                install.global_bin_dir = Some(v.into());
-            }
-
-            if let Some(cache) = expr_get(install_obj, b"cache") {
-                'load: {
-                    if let Some(value) = expr_as_bool(&cache) {
-                        if !value {
-                            install.disable_cache = Some(true);
-                            install.disable_manifest_cache = Some(true);
-                        }
-                        break 'load;
-                    }
-                    if let Some(value) = expr_as_string(&cache, self.bump) {
-                        install.cache_directory = Some(value.into());
-                        break 'load;
-                    }
-                    if let ExprData::EObject(_) = cache.data {
-                        if let Some(v) = expr_get(&cache, b"disable").and_then(|e| expr_as_bool(&e)) {
-                            install.disable_cache = Some(v);
-                        }
-                        if let Some(v) = expr_get(&cache, b"disableManifest").and_then(|e| expr_as_bool(&e)) {
-                            install.disable_manifest_cache = Some(v);
-                        }
-                        if let Some(v) = expr_get(&cache, b"dir").and_then(|e| expr_as_string(&e, self.bump)) {
-                            install.cache_directory = Some(v.into());
-                        }
-                    }
-                }
-            }
-
-            if let Some(v) = expr_get(install_obj, b"linkWorkspacePackages").and_then(|e| expr_as_bool(&e)) {
-                install.link_workspace_packages = Some(v);
-            }
-
-            if let Some(security_obj) = expr_get(install_obj, b"security") {
-                if let ExprData::EObject(_) = security_obj.data {
-                    if let Some(scanner) = expr_get(&security_obj, b"scanner") {
-                        self.expect_string(&scanner)?;
-                        install.security_scanner =
-                            expr_as_string(&scanner, self.bump).map(Into::into);
-                    }
-                } else {
-                    self.add_error(
-                        security_obj.loc,
-                        b"Invalid security config, expected an object",
-                    )?;
-                }
-            }
-
-            if let Some(min_age) = expr_get(install_obj, b"minimumReleaseAge") {
-                match &min_age.data {
-                    ExprData::ENumber(seconds) => {
-                        if seconds.value < 0.0 {
-                            self.add_error(
-                                min_age.loc,
-                                b"Expected positive number of seconds for minimumReleaseAge",
-                            )?;
-                            return Ok(());
-                        }
-                        const MS_PER_S: f64 = 1000.0;
-                        install.minimum_release_age_ms = Some(seconds.value * MS_PER_S);
-                    }
-                    _ => {
-                        self.add_error(
-                            min_age.loc,
-                            b"Expected number of seconds for minimumReleaseAge",
-                        )?;
-                    }
-                }
-            }
-
-            if let Some(exclusions) = expr_get(install_obj, b"minimumReleaseAgeExcludes") {
-                match &exclusions.data {
-                    ExprData::EArray(arr) => 'brk: {
-                        let raw = arr.items.slice();
-                        if raw.is_empty() { break 'brk; }
-                        let mut list: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
-                        for p in raw {
-                            self.expect_string(p)?;
-                            list.push(estring_to_owned(p.data.e_string().unwrap().get(), self.bump));
-                        }
-                        install.minimum_release_age_excludes = Some(list.into());
-                    }
-                    _ => {
-                        self.add_error(
-                            exclusions.loc,
-                            b"Expected array for minimumReleaseAgeExcludes",
-                        )?;
-                    }
-                }
-            }
-
-            // bunfig.zig:824-839 — remap PnpmMatcher errors so callers (and the
-            // crash handler's `"Invalid Bunfig"` match) see the canonical
-            // bunfig error; only OOM passes through unchanged.
-            let remap = |e: FromExprError| -> bun_core::Error {
-                match e {
-                    FromExprError::OutOfMemory => err!(OutOfMemory),
-                    FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                        err!("Invalid Bunfig")
-                    }
+    fn parse_install_inner(
+        &mut self,
+        install: &mut api::BunInstall,
+        install_obj: &Expr,
+    ) -> Result<(), bun_core::Error> {
+        if let Some(cafile) = expr_get(install_obj, b"cafile") {
+            install.cafile = match expr_as_string(&cafile, self.bump) {
+                Some(s) => Some(s.into()),
+                None => {
+                    self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
+                    return Ok(());
                 }
             };
-            if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
-                install.public_hoist_pattern = Some(
-                    api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
-                        .map_err(remap)?,
-                );
-            }
-            if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
-                install.hoist_pattern = Some(
-                    api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
-                        .map_err(remap)?,
-                );
-            }
-
-            Ok(())
         }
 
-        fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
-            if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
-                let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
-                    if let ExprData::EArray(arr) = &config_plugins.data {
-                        let raw = arr.items.slice();
-                        if raw.is_empty() { break 'plugins None; }
-                        let mut plugins: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
-                        for p in raw {
-                            self.expect_string(p)?;
-                            plugins.push(estring_to_owned(p.data.e_string().unwrap().get(), self.bump));
+        if let Some(ca) = expr_get(install_obj, b"ca") {
+            match &ca.data {
+                ExprData::EArray(arr) => {
+                    let items = arr.items.slice();
+                    let mut list: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                    for item in items {
+                        match expr_as_string(item, self.bump) {
+                            Some(s) => list.push(s.into()),
+                            None => {
+                                self.add_error(item.loc, b"Invalid CA. Expected a string.")?;
+                                return Ok(());
+                            }
                         }
-                        break 'plugins Some(plugins);
-                    } else {
-                        let s = config_plugins.data.e_string().unwrap();
-                        break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
                     }
+                    install.ca = Some(api::Ca::List(list.into()));
+                }
+                ExprData::EString(s) => {
+                    install.ca = Some(api::Ca::Str(estring_to_owned(s, self.bump)));
+                }
+                _ => {
+                    self.add_error(
+                        ca.loc,
+                        b"Invalid CA. Expected a string or an array of strings.",
+                    )?;
+                    return Ok(());
+                }
+            }
+        }
+
+        if let Some(exact) = expr_get(install_obj, b"exact") {
+            if let Some(v) = expr_as_bool(&exact) {
+                install.exact = Some(v);
+            }
+        }
+
+        if let Some(registry) = expr_get(install_obj, b"registry") {
+            install.default_registry = Some(self.parse_registry(&registry)?);
+        }
+
+        if let Some(scopes) = expr_get(install_obj, b"scopes") {
+            let mut registry_map = install.scoped.take().unwrap_or_default();
+            self.expect(&scopes, ExprTag::EObject)?;
+            let obj = scopes.data.e_object().unwrap();
+            registry_map.scopes.reserve(obj.properties.slice().len());
+            for prop in obj.properties.slice() {
+                let Some(name_) = prop.key.as_ref().and_then(|k| expr_as_string(k, self.bump))
+                else {
+                    continue;
                 };
-                // TODO: accept entire config object.
-                self.ctx.args.serve_plugins = plugins;
+                let Some(value) = prop.value.as_ref() else {
+                    continue;
+                };
+                if name_.is_empty() {
+                    continue;
+                }
+                let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
+                let registry = self.parse_registry(value)?;
+                registry_map.scopes.insert(name.into(), registry);
             }
+            install.scoped = Some(registry_map);
+        }
 
-            if let Some(hmr) = expr_get(serve_obj, b"hmr") {
-                if let Some(v) = expr_as_bool(&hmr) { self.ctx.args.serve_hmr = Some(v); }
+        if let Some(v) = expr_get(install_obj, b"dryRun").and_then(|e| expr_as_bool(&e)) {
+            install.dry_run = Some(v);
+        }
+        if let Some(v) = expr_get(install_obj, b"production").and_then(|e| expr_as_bool(&e)) {
+            install.production = Some(v);
+        }
+        if let Some(v) = expr_get(install_obj, b"frozenLockfile").and_then(|e| expr_as_bool(&e)) {
+            install.frozen_lockfile = Some(v);
+        }
+        if let Some(v) = expr_get(install_obj, b"saveTextLockfile").and_then(|e| expr_as_bool(&e)) {
+            install.save_text_lockfile = Some(v);
+        }
+        if let Some(jobs) = expr_get(install_obj, b"concurrentScripts") {
+            if let Some(n) = expr_as_number(&jobs) {
+                let n = num_to_u32(n);
+                install.concurrent_scripts = if n == 0 { None } else { Some(n) };
             }
+        }
+        if let Some(v) = expr_get(install_obj, b"ignoreScripts").and_then(|e| expr_as_bool(&e)) {
+            install.ignore_scripts = Some(v);
+        }
+        if let Some(node_linker_expr) = expr_get(install_obj, b"linker") {
+            self.expect_string(&node_linker_expr)?;
+            if let Some(s) = expr_as_string(&node_linker_expr, self.bump) {
+                // PORT NOTE: `api::NodeLinker` is a CYCLEBREAK mirror of
+                // `bun_install_types::NodeLinker`; map the string locally
+                // rather than crossing the type boundary.
+                install.node_linker = match s {
+                    b"hoisted" => Some(api::NodeLinker::Hoisted),
+                    b"isolated" => Some(api::NodeLinker::Isolated),
+                    _ => None,
+                };
+                if install.node_linker.is_none() {
+                    self.add_error(
+                        node_linker_expr.loc,
+                        b"Expected one of \"isolated\" or \"hoisted\"",
+                    )?;
+                }
+            }
+        }
+        if let Some(v) = expr_get(install_obj, b"globalStore").and_then(|e| expr_as_bool(&e)) {
+            install.global_store = Some(v);
+        }
 
-            if let Some(minify) = expr_get(serve_obj, b"minify") {
-                if let Some(v) = expr_as_bool(&minify) {
-                    self.ctx.args.serve_minify_syntax = Some(v);
-                    self.ctx.args.serve_minify_whitespace = Some(v);
-                    self.ctx.args.serve_minify_identifiers = Some(v);
-                } else if minify.is_object() {
-                    if let Some(syntax) = expr_get(&minify, b"syntax") {
-                        self.ctx.args.serve_minify_syntax = Some(expr_as_bool(&syntax).unwrap_or(false));
+        if let Some(lockfile_expr) = expr_get(install_obj, b"lockfile") {
+            if let Some(lockfile) = expr_get(&lockfile_expr, b"print") {
+                self.expect_string(&lockfile)?;
+                if let Some(value) = expr_as_string(&lockfile, self.bump) {
+                    if value != b"bun" {
+                        if value != b"yarn" {
+                            self.add_error(
+                                lockfile.loc,
+                                b"Invalid lockfile format, only 'yarn' output is implemented",
+                            )?;
+                        }
+                        install.save_yarn_lockfile = Some(true);
                     }
-                    if let Some(whitespace) = expr_get(&minify, b"whitespace") {
-                        self.ctx.args.serve_minify_whitespace = Some(expr_as_bool(&whitespace).unwrap_or(false));
+                }
+            }
+            if let Some(v) = expr_get(&lockfile_expr, b"save").and_then(|e| expr_as_bool(&e)) {
+                install.save_lockfile = Some(v);
+            }
+            if let Some(v) =
+                expr_get(&lockfile_expr, b"path").and_then(|e| expr_as_string(&e, self.bump))
+            {
+                install.lockfile_path = Some(v.into());
+            }
+            if let Some(v) =
+                expr_get(&lockfile_expr, b"savePath").and_then(|e| expr_as_string(&e, self.bump))
+            {
+                install.save_lockfile_path = Some(v.into());
+            }
+        }
+
+        if let Some(v) = expr_get(install_obj, b"optional").and_then(|e| expr_as_bool(&e)) {
+            install.save_optional = Some(v);
+        }
+        if let Some(v) = expr_get(install_obj, b"peer").and_then(|e| expr_as_bool(&e)) {
+            install.save_peer = Some(v);
+        }
+        if let Some(v) = expr_get(install_obj, b"dev").and_then(|e| expr_as_bool(&e)) {
+            install.save_dev = Some(v);
+        }
+        if let Some(v) =
+            expr_get(install_obj, b"globalDir").and_then(|e| expr_as_string(&e, self.bump))
+        {
+            install.global_dir = Some(v.into());
+        }
+        if let Some(v) =
+            expr_get(install_obj, b"globalBinDir").and_then(|e| expr_as_string(&e, self.bump))
+        {
+            install.global_bin_dir = Some(v.into());
+        }
+
+        if let Some(cache) = expr_get(install_obj, b"cache") {
+            'load: {
+                if let Some(value) = expr_as_bool(&cache) {
+                    if !value {
+                        install.disable_cache = Some(true);
+                        install.disable_manifest_cache = Some(true);
                     }
-                    if let Some(identifiers) = expr_get(&minify, b"identifiers") {
-                        self.ctx.args.serve_minify_identifiers = Some(expr_as_bool(&identifiers).unwrap_or(false));
+                    break 'load;
+                }
+                if let Some(value) = expr_as_string(&cache, self.bump) {
+                    install.cache_directory = Some(value.into());
+                    break 'load;
+                }
+                if let ExprData::EObject(_) = cache.data {
+                    if let Some(v) = expr_get(&cache, b"disable").and_then(|e| expr_as_bool(&e)) {
+                        install.disable_cache = Some(v);
                     }
+                    if let Some(v) =
+                        expr_get(&cache, b"disableManifest").and_then(|e| expr_as_bool(&e))
+                    {
+                        install.disable_manifest_cache = Some(v);
+                    }
+                    if let Some(v) =
+                        expr_get(&cache, b"dir").and_then(|e| expr_as_string(&e, self.bump))
+                    {
+                        install.cache_directory = Some(v.into());
+                    }
+                }
+            }
+        }
+
+        if let Some(v) =
+            expr_get(install_obj, b"linkWorkspacePackages").and_then(|e| expr_as_bool(&e))
+        {
+            install.link_workspace_packages = Some(v);
+        }
+
+        if let Some(security_obj) = expr_get(install_obj, b"security") {
+            if let ExprData::EObject(_) = security_obj.data {
+                if let Some(scanner) = expr_get(&security_obj, b"scanner") {
+                    self.expect_string(&scanner)?;
+                    install.security_scanner = expr_as_string(&scanner, self.bump).map(Into::into);
+                }
+            } else {
+                self.add_error(
+                    security_obj.loc,
+                    b"Invalid security config, expected an object",
+                )?;
+            }
+        }
+
+        if let Some(min_age) = expr_get(install_obj, b"minimumReleaseAge") {
+            match &min_age.data {
+                ExprData::ENumber(seconds) => {
+                    if seconds.value < 0.0 {
+                        self.add_error(
+                            min_age.loc,
+                            b"Expected positive number of seconds for minimumReleaseAge",
+                        )?;
+                        return Ok(());
+                    }
+                    const MS_PER_S: f64 = 1000.0;
+                    install.minimum_release_age_ms = Some(seconds.value * MS_PER_S);
+                }
+                _ => {
+                    self.add_error(
+                        min_age.loc,
+                        b"Expected number of seconds for minimumReleaseAge",
+                    )?;
+                }
+            }
+        }
+
+        if let Some(exclusions) = expr_get(install_obj, b"minimumReleaseAgeExcludes") {
+            match &exclusions.data {
+                ExprData::EArray(arr) => 'brk: {
+                    let raw = arr.items.slice();
+                    if raw.is_empty() {
+                        break 'brk;
+                    }
+                    let mut list: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
+                    for p in raw {
+                        self.expect_string(p)?;
+                        list.push(estring_to_owned(
+                            p.data.e_string().unwrap().get(),
+                            self.bump,
+                        ));
+                    }
+                    install.minimum_release_age_excludes = Some(list.into());
+                }
+                _ => {
+                    self.add_error(
+                        exclusions.loc,
+                        b"Expected array for minimumReleaseAgeExcludes",
+                    )?;
+                }
+            }
+        }
+
+        // bunfig.zig:824-839 — remap PnpmMatcher errors so callers (and the
+        // crash handler's `"Invalid Bunfig"` match) see the canonical
+        // bunfig error; only OOM passes through unchanged.
+        let remap = |e: FromExprError| -> bun_core::Error {
+            match e {
+                FromExprError::OutOfMemory => err!(OutOfMemory),
+                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
+                    err!("Invalid Bunfig")
+                }
+            }
+        };
+        if let Some(public_hoist_pattern_expr) = expr_get(install_obj, b"publicHoistPattern") {
+            install.public_hoist_pattern = Some(
+                api::PnpmMatcher::from_expr(&public_hoist_pattern_expr, self.log, self.source)
+                    .map_err(remap)?,
+            );
+        }
+        if let Some(hoist_pattern_expr) = expr_get(install_obj, b"hoistPattern") {
+            install.hoist_pattern = Some(
+                api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
+                    .map_err(remap)?,
+            );
+        }
+
+        Ok(())
+    }
+
+    fn parse_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
+        if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
+            let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
+                if let ExprData::EArray(arr) = &config_plugins.data {
+                    let raw = arr.items.slice();
+                    if raw.is_empty() {
+                        break 'plugins None;
+                    }
+                    let mut plugins: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
+                    for p in raw {
+                        self.expect_string(p)?;
+                        plugins.push(estring_to_owned(
+                            p.data.e_string().unwrap().get(),
+                            self.bump,
+                        ));
+                    }
+                    break 'plugins Some(plugins);
                 } else {
-                    self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+                    let s = config_plugins.data.e_string().unwrap();
+                    break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
                 }
-            }
+            };
+            // TODO: accept entire config object.
+            self.ctx.args.serve_plugins = plugins;
+        }
 
-            if let Some(expr) = expr_get(serve_obj, b"define") {
-                self.expect(&expr, ExprTag::EObject)?;
-                let obj = expr.data.e_object().unwrap();
-                let properties = obj.properties.slice();
-                let mut keys: Vec<Box<[u8]>> = Vec::new();
-                let mut values: Vec<Box<[u8]>> = Vec::new();
-                for prop in properties {
-                    let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else { continue };
-                    let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else { continue };
-                    keys.push(estring_to_owned(k, self.bump));
-                    values.push(estring_to_owned(v, self.bump));
+        if let Some(hmr) = expr_get(serve_obj, b"hmr") {
+            if let Some(v) = expr_as_bool(&hmr) {
+                self.ctx.args.serve_hmr = Some(v);
+            }
+        }
+
+        if let Some(minify) = expr_get(serve_obj, b"minify") {
+            if let Some(v) = expr_as_bool(&minify) {
+                self.ctx.args.serve_minify_syntax = Some(v);
+                self.ctx.args.serve_minify_whitespace = Some(v);
+                self.ctx.args.serve_minify_identifiers = Some(v);
+            } else if minify.is_object() {
+                if let Some(syntax) = expr_get(&minify, b"syntax") {
+                    self.ctx.args.serve_minify_syntax =
+                        Some(expr_as_bool(&syntax).unwrap_or(false));
                 }
-                self.ctx.args.serve_define = Some(api::StringMap { keys, values });
-            }
-            self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
-
-            if let Some(public_path) = expr_get(serve_obj, b"publicPath") {
-                if let Some(v) = expr_as_string(&public_path, self.bump) {
-                    self.ctx.args.serve_public_path = Some(v.into());
+                if let Some(whitespace) = expr_get(&minify, b"whitespace") {
+                    self.ctx.args.serve_minify_whitespace =
+                        Some(expr_as_bool(&whitespace).unwrap_or(false));
                 }
+                if let Some(identifiers) = expr_get(&minify, b"identifiers") {
+                    self.ctx.args.serve_minify_identifiers =
+                        Some(expr_as_bool(&identifiers).unwrap_or(false));
+                }
+            } else {
+                self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
             }
+        }
 
-            if let Some(env) = expr_get(serve_obj, b"env") {
-                match &env.data {
-                    ExprData::ENull(_) => {
+        if let Some(expr) = expr_get(serve_obj, b"define") {
+            self.expect(&expr, ExprTag::EObject)?;
+            let obj = expr.data.e_object().unwrap();
+            let properties = obj.properties.slice();
+            let mut keys: Vec<Box<[u8]>> = Vec::new();
+            let mut values: Vec<Box<[u8]>> = Vec::new();
+            for prop in properties {
+                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else {
+                    continue;
+                };
+                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else {
+                    continue;
+                };
+                keys.push(estring_to_owned(k, self.bump));
+                values.push(estring_to_owned(v, self.bump));
+            }
+            self.ctx.args.serve_define = Some(api::StringMap { keys, values });
+        }
+        self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
+
+        if let Some(public_path) = expr_get(serve_obj, b"publicPath") {
+            if let Some(v) = expr_as_string(&public_path, self.bump) {
+                self.ctx.args.serve_public_path = Some(v.into());
+            }
+        }
+
+        if let Some(env) = expr_get(serve_obj, b"env") {
+            match &env.data {
+                ExprData::ENull(_) => {
+                    self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
+                }
+                ExprData::EBoolean(b) => {
+                    self.ctx.args.serve_env_behavior = if b.value {
+                        api::DotEnvBehavior::load_all
+                    } else {
+                        api::DotEnvBehavior::disable
+                    };
+                }
+                ExprData::EString(str) => {
+                    if str.eql_comptime(b"inline") {
+                        self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
+                    } else if str.eql_comptime(b"disable") {
                         self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
-                    }
-                    ExprData::EBoolean(b) => {
-                        self.ctx.args.serve_env_behavior = if b.value {
-                            api::DotEnvBehavior::load_all
-                        } else {
-                            api::DotEnvBehavior::disable
-                        };
-                    }
-                    ExprData::EString(str) => {
-                        if str.eql_comptime(b"inline") {
-                            self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
-                        } else if str.eql_comptime(b"disable") {
-                            self.ctx.args.serve_env_behavior = api::DotEnvBehavior::disable;
-                        } else {
-                            let slice = str.string(self.bump)?;
-                            if let Some(asterisk) =
-                                bun_core::strings::index_of_char(slice, b'*')
-                            {
-                                if asterisk > 0 {
-                                    self.ctx.args.serve_env_prefix =
-                                        Some(Box::<[u8]>::from(&slice[..asterisk]));
-                                    self.ctx.args.serve_env_behavior = api::DotEnvBehavior::prefix;
-                                } else {
-                                    self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
-                                }
+                    } else {
+                        let slice = str.string(self.bump)?;
+                        if let Some(asterisk) = bun_core::strings::index_of_char(slice, b'*') {
+                            if asterisk > 0 {
+                                self.ctx.args.serve_env_prefix =
+                                    Some(Box::<[u8]>::from(&slice[..asterisk]));
+                                self.ctx.args.serve_env_behavior = api::DotEnvBehavior::prefix;
                             } else {
-                                self.add_error(
+                                self.ctx.args.serve_env_behavior = api::DotEnvBehavior::load_all;
+                            }
+                        } else {
+                            self.add_error(
                                     env.loc,
                                     b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",
                                 )?;
-                            }
                         }
                     }
-                    _ => {
-                        self.add_error(
+                }
+                _ => {
+                    self.add_error(
                             env.loc,
                             b"Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character",
                         )?;
-                    }
                 }
             }
-
-            Ok(())
         }
+
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

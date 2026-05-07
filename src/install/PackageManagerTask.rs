@@ -257,6 +257,22 @@ impl<'a> Task<'a> {
                         break 'body;
                     };
 
+                    // PORT NOTE: Zig accessed the bare-union field
+                    // `network.callback.package_manifest.*` directly; in Rust
+                    // `Callback` is a tagged enum, so destructure the variant.
+                    // SAFETY: tag == PackageManifest ⇒ the network task was
+                    // built by `NetworkTask::for_manifest` with this variant.
+                    let crate::network_task::Callback::PackageManifest {
+                        loaded_manifest,
+                        is_extended_manifest,
+                        ..
+                    } = &network.callback
+                    else {
+                        unsafe { core::hint::unreachable_unchecked() }
+                    };
+                    let loaded_manifest = loaded_manifest.clone();
+                    let is_extended_manifest = *is_extended_manifest;
+
                     let scope = manager.scope_for_package_name(manifest.name.slice()) as *const _;
                     let package_manifest = match npm::Registry::get_package_metadata(
                         // SAFETY: scope is borrowed from manager.options which is not
@@ -266,9 +282,9 @@ impl<'a> Task<'a> {
                         body.slice(),
                         &mut this.log,
                         manifest.name.slice(),
-                        network.callback.package_manifest.loaded_manifest.clone(),
+                        loaded_manifest,
                         manager,
-                        network.callback.package_manifest.is_extended_manifest,
+                        is_extended_manifest,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -499,11 +515,17 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply(); // bun.handleOom dropped — Rust aborts on OOM
-                if pt.callback.apply.logger.errors > 0 {
-                    // TODO(port): `defer pt.callback.apply.logger.deinit()`
+                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                // PORT NOTE: Zig accessed bare-union field `pt.callback.apply`;
+                // `apply_patch_task` is only ever populated with the Apply
+                // variant (see `new_apply_patch_hash`), so destructure it.
+                let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
+                    unsafe { core::hint::unreachable_unchecked() }
+                };
+                if apply.logger.errors > 0 {
+                    // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
                     // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
-                    let _ = pt.callback.apply.logger.print(Output::error_writer() as *mut _);
+                    let _ = apply.logger.print(Output::error_writer() as *mut _);
                 }
             }
         }

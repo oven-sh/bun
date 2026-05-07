@@ -1305,7 +1305,7 @@ fn transpile_source_code_inner(
                         // PORT NOTE: we can't widen `TranspileExtra` (lower
                         // tier) to carry the `Box<Arena>` back, so park it in
                         // the per-VM slot UN-reset. `transpile_file`'s
-                        // `_reset_arena` scopeguard (`ModuleLoader::reset_arena`,
+                        // `_reset_arena` guard (`ModuleLoader::reset_arena`,
                         // spec :1083) runs after `process_fetch_log` and
                         // resets/reclaims it then — matching the spec lifetime.
                         // TODO(b2-cycle): once AsyncModule un-gates, the

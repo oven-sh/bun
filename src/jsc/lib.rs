@@ -1576,6 +1576,12 @@ pub mod api {
 #[allow(non_snake_case)]
 pub mod Node {
     pub use crate::node_path::*;
+    /// `bun.api.node.ErrorCode` — the Node-compat `ERR_*` codes. The Zig spec
+    /// defines this in `runtime/node/types.zig` as a re-export of the codegen
+    /// `Error` enum; in the Rust port that enum is [`crate::ErrorCode`], so the
+    /// `node::ErrorCode` alias resolves to it directly (LAYERING: avoids a
+    /// `bun_jsc → bun_runtime` cycle for `DeferredError` / `node_error_binding`).
+    pub use crate::ErrorCode;
 }
 pub use self::Node as node;
 

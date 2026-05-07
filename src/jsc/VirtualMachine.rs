@@ -2863,7 +2863,7 @@ impl VirtualMachine {
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
-            graph: graph.as_ptr().cast(),
+            graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
@@ -2875,12 +2875,7 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        // SAFETY: `graph` outlives the VM (owned by the caller / embedded binary).
-        // PORT NOTE: the resolver's `StandaloneModuleGraph` is a forward-decl
-        // opaque (resolver/__forward_decls); we hold it as `*mut c_void` here
-        // and cast on store — `.cast()` infers the resolver's expected type.
-        vm_ref.transpiler.resolver.standalone_module_graph =
-            Some(unsafe { &*graph.as_ptr().cast() });
+        vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -2895,10 +2890,7 @@ impl VirtualMachine {
         opts: Options,
     ) -> Result<*mut VirtualMachine, bun_core::Error> {
         let init_opts = InitOptions {
-            graph: opts
-                .graph
-                .map(|g| g.as_ptr().cast())
-                .unwrap_or(core::ptr::null_mut()),
+            graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,

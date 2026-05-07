@@ -1754,10 +1754,10 @@ impl JSValue {
     pub fn to_fmt<'a, 'b>(
         self,
         formatter: &'a mut crate::console_object::Formatter<'b>,
-    ) -> crate::console_object::ZigFormatter<'a, 'b> {
+    ) -> crate::console_object::formatter::ZigFormatter<'a, 'b> {
         formatter.remaining_values = &[];
         formatter.stack_check.update();
-        crate::console_object::ZigFormatter::new(formatter, self)
+        crate::console_object::formatter::ZigFormatter::new(formatter, self)
     }
 
     // ── Next-tick scheduling (JSValue.zig:275). ───────────────────────────

@@ -8,6 +8,8 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::fmt::Write as _;
+use bun_io::Write as _;
+use crate::ZigStringJsc as _;
 
 use bun_collections::HashMap;
 use bun_core::{Environment, Output, StackCheck};
@@ -30,11 +32,11 @@ mod JSLexer {
         bun_js_parser::lexer::is_latin1_identifier(name)
     }
     /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
-    /// over a UTF-16 slice. Delegates to the canonical impl in
-    /// `bun_js_printer` (widened to `pub` for this caller).
+    /// over a UTF-16 slice. Canonical impl lives next to the u8 overload in
+    /// `bun_js_parser::lexer`.
     #[inline]
     pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
-        bun_js_printer::is_latin1_identifier_u16(name)
+        bun_js_parser::lexer::is_latin1_identifier_u16(name)
     }
 }
 mod JSPrinter {
@@ -443,8 +445,13 @@ fn message_with_type_and_level_(
     let mut writer_adapter = IoWriterAdapter(raw_writer);
     let writer: &mut dyn bun_io::Write = &mut writer_adapter;
 
-    if let Some(runner) = crate::Jest::runner() {
-        runner.bun_test_root.on_before_print();
+    // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
+    // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
+    // high-tier hook checks `Jest.runner` and calls `onBeforePrint()`; no-op
+    // when `bun test` isn't running or hooks aren't installed.
+    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+        // SAFETY: JS-thread only; the hook touches a thread-local singleton.
+        unsafe { (hooks.console_on_before_print)() };
     }
 
     let mut print_length = len;
@@ -629,7 +636,7 @@ impl<'a> TablePrinter<'a> {
             !(matches!(tag.tag, TagPayload::String | TagPayload::StringPossiblyFormatted));
         let _ = value_formatter.format::<false>(tag, &mut counter, value, self.global_object);
         // VisibleCharacterCounter write cannot fail.
-        let _ = counter.flush();
+        let _ = bun_io::Write::flush(&mut counter);
 
         Ok(width as u32)
     }

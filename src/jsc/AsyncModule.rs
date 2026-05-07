@@ -234,7 +234,7 @@ impl AsyncModule {
 
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
-        jsc::from_js_host_call_generic(global_this, core::panic::Location::caller(), || {
+        jsc::from_js_host_call_generic(global_this, || {
             // SAFETY: C ABI — all pointers are valid for the call; `errorable`
             // / `specifier` / `referrer` outlive the FFI body.
             unsafe {
@@ -718,8 +718,9 @@ impl AsyncModule {
         // SAFETY: `this` was Box::into_raw'd in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
         let global_this = this.global_this();
-        // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-        let jsc_vm = unsafe { &mut *global_this.bun_vm() };
+        // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
+        // thread); the Zig `globalThis.bunVM()` returns the same pointer.
+        let jsc_vm = unsafe { &mut *VirtualMachine::get() };
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
             jsc_vm.package_manager().end_progress_bar();

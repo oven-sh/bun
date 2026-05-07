@@ -526,11 +526,11 @@ impl JSGlobalObject {
         path: BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path` borrow stack
         // locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, || unsafe {
+        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
             Bun__runOnLoadPlugins(
                 self,
                 ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
@@ -551,11 +551,11 @@ impl JSGlobalObject {
         source: BunString,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
-        crate::mark_binding(core::panic::Location::caller());
+        crate::mark_binding();
         let ns_ptr = if namespace_.length() > 0 { Some(&namespace_) } else { None };
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `ns_ptr`/`&path`/`&source` borrow
         // stack locals that outlive the call; null `namespace_` is permitted by the C++ side.
-        let result = crate::from_js_host_call(self, || unsafe {
+        let result = crate::from_js_host_call(self, Location::caller(), || unsafe {
             Bun__runOnResolvePlugins(
                 self,
                 ns_ptr.map(|p| p as *const BunString).unwrap_or(core::ptr::null()),
@@ -665,10 +665,11 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JSValue::ZERO;
         }
+        // `@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)` is the literal string.
         err.put(
             self,
             ZigString::static_str("code"),
-            ZigString::static_str(<&'static str>::from(NodeErrorCode::ERR_OUT_OF_RANGE)).to_js(self),
+            ZigString::static_str("ERR_OUT_OF_RANGE").to_js(self),
         );
         err
     }

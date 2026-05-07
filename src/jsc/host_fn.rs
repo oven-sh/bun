@@ -107,10 +107,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
                  \n\
                  \x20   fn: {s}\n\
                  \x20value: {f}\n",
-                (
-                    func,
-                    jsc::ConsoleObject::formatter::ZigFormatter::new(&mut formatter, value),
-                ),
+                (func, value.to_fmt(&mut formatter)),
             );
             Output::flush();
             // `formatter` drops here (Zig: `defer formatter.deinit()`).

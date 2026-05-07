@@ -675,7 +675,17 @@ impl TranspilerJob {
         {
             MacroRemap::default()
         } else {
-            transpiler.options.macro_remap.clone()
+            // PORT NOTE: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
+            // has no nested `Clone` impl (the inherent `clone()` requires
+            // `V: Clone`); the Zig copied it by value. Re-key shallowly here
+            // matching the build-command conversion (transpiler.rs:2616).
+            let mut m = MacroRemap::default();
+            for (k, v) in transpiler.options.macro_remap.iter() {
+                if let Ok(inner) = v.clone() {
+                    m.insert(k, inner);
+                }
+            }
+            m
         };
 
         let mut fallback_source: logger::Source = logger::Source::default();
@@ -726,7 +736,7 @@ impl TranspilerJob {
                 .unwrap_or(false)
                 && is_main
                 && set_break_point_on_first_line(),
-            runtime_transpiler_cache: if !RuntimeTranspilerCache::is_disabled() {
+            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
                 Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
             } else {
                 None
@@ -758,7 +768,7 @@ impl TranspilerJob {
 
         if is_node_override {
             if let Some(code) = node_fallbacks::contents_from_path(specifier) {
-                let fallback_path = Fs::Path::init_with_namespace(specifier, b"node");
+                let fallback_path = logger::fs::Path::init_with_namespace(specifier, b"node");
                 fallback_source = logger::Source {
                     path: fallback_path,
                     contents: std::borrow::Cow::Borrowed(code),

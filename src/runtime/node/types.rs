@@ -1430,16 +1430,17 @@ impl FileSystemFlags {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
+                        // Zig: `@as(i32, @intCast(...))` — release builds wrap.
                         break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
                             .ok()
-                            .map(|v| i32::try_from(v).unwrap());
+                            .map(|v| v as i32);
                     }
                 } else {
                     let chars = str.slice();
                     if chars[0].is_ascii_digit() {
                         break 'brk strings::parse_int::<Mode>(chars, 10)
                             .ok()
-                            .map(|v| i32::try_from(v).unwrap());
+                            .map(|v| v as i32);
                     }
                 }
 

@@ -19,7 +19,7 @@ pub mod kind_enum {
     }
 }
 
-use core::cell::{RefCell, UnsafeCell};
+use core::cell::UnsafeCell;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_jsc::{
@@ -861,37 +861,36 @@ impl MatchedRoute {
         }
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
-                QUERY_STRING_VALUES_BUF.with_borrow_mut(|values_buf| {
-                    // SAFETY: thread-local stores `[&'static [u8]; 256]` only because Zig's
-                    // `threadlocal var` had no lifetime param. Entries are scratch — fully
-                    // overwritten by `iter.next()` before each read and never escape this
-                    // closure, so relaxing `'static` to the iterator lifetime is sound.
-                    let values_buf: &mut [&[u8]; 256] = unsafe {
-                        core::mem::transmute::<&mut [&'static [u8]; 256], &mut [&[u8]; 256]>(
-                            values_buf,
-                        )
-                    };
-                    QUERY_STRING_VALUE_REFS_BUF.with_borrow_mut(|refs_buf| {
-                        let mut iter = self.query.iter();
-                        while let Some(entry) = iter.next(values_buf) {
-                            let entry_name = entry.name;
-                            let mut str = ZigString::from_bytes(entry_name);
+                // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
+                // JS-thread stack budget. The Zig original parked these in
+                // `threadlocal var` purely as a zero-init convenience; porting that as a
+                // `RefCell<[&'static [u8]; 256]>` TLS slot is unsound: `iter.next()`
+                // writes QueryStringMap-lifetime slices into it, and once the map drops
+                // the TLS slot is left holding dangling `&'static [u8]` — invalid-value
+                // UB the next time `with_borrow_mut` produces a `&mut` over it. A stack
+                // array lets inference tie the element lifetime to `iter` and dies with
+                // this frame.
+                let mut values_buf: [&[u8]; 256] = [b""; 256];
+                let mut refs_buf: [ZigString; 256] = [ZigString::EMPTY; 256];
 
-                            debug_assert!(!entry.values.is_empty());
-                            if entry.values.len() > 1 {
-                                let values = &mut refs_buf[0..entry.values.len()];
-                                for (i, value) in entry.values.iter().enumerate() {
-                                    values[i] = ZigString::from_bytes(value);
-                                }
-                                obj.put_record(global, &mut str, values)?;
-                            } else {
-                                refs_buf[0] = ZigString::from_bytes(entry.values[0]);
-                                obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
-                            }
+                let mut iter = self.query.iter();
+                while let Some(entry) = iter.next(&mut values_buf) {
+                    let entry_name = entry.name;
+                    let mut str = ZigString::from_bytes(entry_name);
+
+                    debug_assert!(!entry.values.is_empty());
+                    if entry.values.len() > 1 {
+                        let values = &mut refs_buf[0..entry.values.len()];
+                        for (i, value) in entry.values.iter().enumerate() {
+                            values[i] = ZigString::from_bytes(value);
                         }
-                        Ok(())
-                    })
-                })
+                        obj.put_record(global, &mut str, values)?;
+                    } else {
+                        refs_buf[0] = ZigString::from_bytes(entry.values[0]);
+                        obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
+                    }
+                }
+                Ok(())
             }
         }
 
@@ -1026,16 +1025,8 @@ impl MatchedRoute {
 // PORT NOTE: `bun.ThreadlocalBuffers(struct { buf: if (isWindows) [MAX_PATH_BYTES*2]u8 else void })`
 #[cfg(windows)]
 thread_local! {
-    static WIN32_NORMALIZE_BUF: RefCell<[u8; MAX_PATH_BYTES * 2]> =
-        const { RefCell::new([0u8; MAX_PATH_BYTES * 2]) };
-}
-
-// `threadlocal var query_string_values_buf: [256]string` / `[256]ZigString`
-thread_local! {
-    static QUERY_STRING_VALUES_BUF: RefCell<[&'static [u8]; 256]> =
-        const { RefCell::new([b"" as &[u8]; 256]) };
-    static QUERY_STRING_VALUE_REFS_BUF: RefCell<[ZigString; 256]> =
-        const { RefCell::new([ZigString::EMPTY; 256]) };
+    static WIN32_NORMALIZE_BUF: core::cell::RefCell<[u8; MAX_PATH_BYTES * 2]> =
+        const { core::cell::RefCell::new([0u8; MAX_PATH_BYTES * 2]) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1173,28 +1173,9 @@ impl BlobExt for Blob {
         }
         // Zig: `var blob_internal: PathOrBlob = .{ .blob = this.* }` — a raw
         // bitwise copy with NO ref bumps; `write_file_internal` then `dupe()`s
-        // its own owned `destination_blob` from it. Mirror that here as a
-        // *non-owning shallow view*: borrow `name`/`content_type` (no
-        // `dupe_ref`, no Box) so scope-exit has nothing to release for them,
-        // and clone only the `StoreRef`, whose `Drop` balances the bump.
-        // Using `self.dupe()` instead leaked the `name` ref and (when
-        // `content_type_allocated`) a boxed `content_type` — `Blob` has no
-        // `Drop`, so neither was ever freed.
-        let mut blob_internal = PathOrBlob::Blob(Blob {
-            reported_estimated_size: self.reported_estimated_size,
-            size: self.size,
-            offset: self.offset,
-            store: self.store.clone(), // +1 ↔ Drop on scope exit
-            content_type: self.content_type, // borrowed; `self` owns it
-            content_type_allocated: self.content_type_allocated,
-            content_type_was_set: self.content_type_was_set,
-            charset: self.charset,
-            is_jsdom_file: self.is_jsdom_file,
-            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-            global_this: self.global_this,
-            last_modified: self.last_modified,
-            name: self.name, // borrowed; no `dupe_ref()`
-        });
+        // its own owned `destination_blob` from it. `borrowed_view()` is the
+        // sound Rust spelling — see its doc for why `dupe()` would leak here.
+        let mut blob_internal = PathOrBlob::Blob(self.borrowed_view());
         write_file_internal(
             global_this,
             &mut blob_internal,

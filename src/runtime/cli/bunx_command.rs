@@ -290,7 +290,7 @@ impl BunxCommand {
                 ExprData::EObject(object) => {
                     for prop in object.properties.slice() {
                         if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_utf8_string_literal() {
+                            if let Some(bin_name) = key.as_string(&bump) {
                                 if bin_name.is_empty() {
                                     continue;
                                 }
@@ -301,7 +301,7 @@ impl BunxCommand {
                 }
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_utf8_string_literal() {
+                        if let Some(name) = name_expr.as_string(&bump) {
                             return Ok(Box::<[u8]>::from(name));
                         }
                     }
@@ -312,7 +312,7 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
+                if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Zig: `defer bin_dir.close()` — Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);

@@ -508,7 +508,7 @@ impl S3Ext for S3 {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
             // intrusive refcount (Zig: `store.ref()`).
-            store: unsafe { StoreRef::retained(NonNull::from(store)) },
+            store: unsafe { StoreRef::retained(store) },
             resolved_list_options: options,
             global: global_this as *const _,
         }));

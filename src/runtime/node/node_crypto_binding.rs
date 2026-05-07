@@ -366,16 +366,19 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
     }
 
     pub fn run_from_js(this: *mut Self) {
-        // SAFETY: `this` was boxed in `init`; we are on the JS thread.
-        let this_ref = unsafe { &mut *this };
         // RAII: `this` is a `Box::into_raw` pointer threaded through C callbacks as
         // `*mut c_void`, so it cannot live as a `Box` for its whole lifetime. A `Drop`
         // impl on `CryptoJob<Ctx>` would force a `Ctx: CryptoJobCtx` bound onto the
         // struct (see PORT NOTE on the struct def), so defer the one-shot free here.
-        scopeguard::defer! {
+        // Guard captures the raw pointer (Copy) and is declared BEFORE the `&mut *this`
+        // reborrow below so the reborrow drops first — otherwise `Box::from_raw` in
+        // `deinit` would alias a still-live `&mut Self` (Stacked Borrows UB).
+        let _guard = scopeguard::guard(this, |this| {
             // SAFETY: only call site; runs once.
             unsafe { Self::deinit(this) };
-        }
+        });
+        // SAFETY: `this` was boxed in `init`; we are on the JS thread.
+        let this_ref = unsafe { &mut *this };
         let vm = this_ref.vm;
 
         // SAFETY: `vm` is the singleton JS VM, live for process lifetime.

@@ -132,6 +132,71 @@ unsafe impl AssertNoUninitializedPadding for bool {}
 unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializedPadding for [T; N] {}
 
 // ──────────────────────────────────────────────────────────────────────────
+// Cross-runtime layout pins
+//
+// Every type below is `std.mem.sliceAsBytes`-serialised into either `bun.lockb`
+// (the binary lockfile) or the `.npm` manifest cache. Their sizes/alignments
+// are therefore an ABI contract with Zig-built Bun: a Zig-written lockfile
+// must round-trip through this build and vice versa. The expected values are
+// computed by hand from the `extern struct` declarations in the corresponding
+// `.zig` files (no `@typeInfo` available in Rust). If any assert fires the
+// on-disk format has drifted — either fix the Rust `#[repr(C)]` layout or
+// bump the relevant format version (`bun.lockb` `format_version` /
+// `PackageManifest::Serializer::VERSION`).
+//
+// The asserts are gated to 64-bit little-endian targets because that is the
+// only ABI the binary formats are defined for (Zig hard-codes `.little` and
+// `@alignOf([*]u8) == 8` in the lockfile header).
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+pub mod layout_asserts {
+    use core::mem::{align_of, size_of};
+
+    macro_rules! pin {
+        ($ty:ty, size = $sz:expr, align = $al:expr) => {
+            const _: () = assert!(
+                size_of::<$ty>() == $sz,
+                concat!(
+                    "on-disk layout drift: size_of::<", stringify!($ty),
+                    ">() != ", stringify!($sz), " (Zig extern-struct spec)",
+                ),
+            );
+            const _: () = assert!(
+                align_of::<$ty>() == $al,
+                concat!(
+                    "on-disk layout drift: align_of::<", stringify!($ty),
+                    ">() != ", stringify!($al), " (Zig extern-struct spec)",
+                ),
+            );
+        };
+    }
+
+    // ── leaf POD shared by both formats ──────────────────────────────────
+    pin!(bun_semver::String,             size = 8,  align = 1); // [8]u8
+    pin!(bun_semver::ExternalString,     size = 16, align = 8); // String + u64
+    pin!(crate::ExternalSlice<u8>,       size = 8,  align = 4); // u32 off + u32 len
+    pin!(crate::ExternalStringMap,       size = 16, align = 4);
+    pin!(crate::integrity::Integrity,    size = 65, align = 1); // u8 tag + [64]u8
+    pin!(crate::repository::Repository,  size = 40, align = 1); // 5 × String
+    pin!(crate::bin::Value,              size = 16, align = 4); // union: [String;2] | ExternalSlice
+    pin!(crate::bin::Bin,                size = 20, align = 4);
+    pin!(bun_semver::Version,            size = 56, align = 8); // 3×u64 + Tag(2×ExternalString)
+
+    // ── bun.lockb package-table columns (Package.Serializer) ─────────────
+    // Iterated in declaration order by `MultiArrayList::Slice::column_bytes_mut`;
+    // each column is written as a raw byte slab, so per-column `size_of` is the
+    // load-bearing contract — see `lockfile/Package.rs::serializer::sizes()`.
+    pin!(crate::resolution::Value<u64>,  size = 64, align = 8); // union: VersionedURL | Repository | String
+    pin!(crate::resolution::Resolution,  size = 72, align = 8); // u8 tag + [7]u8 + Value
+    pin!(crate::lockfile::package::Meta, size = 88, align = 4);
+    pin!(crate::lockfile::package::Scripts, size = 49, align = 1);
+
+    // ── .npm manifest cache (PackageManifest.Serializer) ─────────────────
+    pin!(crate::npm::PackageVersion,     size = 240, align = 8);
+    pin!(crate::npm::NpmPackage,         size = 120, align = 8);
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/padding_checker.zig (108 lines)
 //   confidence: medium

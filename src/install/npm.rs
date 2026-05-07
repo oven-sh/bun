@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, ObjectPool, StringSet};
+use bun_collections::{HashMap, StringSet};
 use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClient};
@@ -275,12 +275,12 @@ pub mod registry {
         std::sync::LazyLock::new(|| Wyhash11::hash(0, strings::without_trailing_slash(DEFAULT_URL.as_bytes())));
     pub fn default_url_hash() -> u64 { *DEFAULT_URL_HASH }
 
-    // TODO(b2): ObjectPool<T, THREADSAFE, MAX, S> — Zig passes init fn as a
-    // type-level param; Rust ObjectPool routes init via `ObjectPoolType` trait.
-    // Wire `MutableString: ObjectPoolType` (init = MutableString::init2048) then
-    // drop the `S = UnwiredStorage` default. Gated until that lands.
-    
-    pub type BodyPool = ObjectPool<MutableString, true, 8>;
+    // Zig: `ObjectPool(MutableString, MutableString.init2048, true, 8)`.
+    // `MutableString: ObjectPoolType` (init = init2048) is provided in
+    // bun_string; the `object_pool!` macro generates the per-monomorphization
+    // thread-local storage so `BodyPool::get()` doesn't hit `UnwiredStorage`'s
+    // `unreachable!()`.
+    bun_collections::object_pool!(pub BodyPool: MutableString, threadsafe, 8);
 
     #[derive(Default, Clone)]
     pub struct Scope {
@@ -760,14 +760,17 @@ impl PackageVersion {
     }
 }
 
-// TODO(b2): re-enable once Bin is the real #[repr(C)] layout (currently stub)
-
-// PORT NOTE(phase-d): the Zig layout is 240 bytes; the Rust `Bin` stub is not
-// yet `#[repr(C)]`-faithful, so the size differs. The on-disk serialiser
-// encodes the *actual* `size_of::<PackageVersion>()`, so reads/writes stay
-// self-consistent — only cross-runtime cache compatibility is affected.
-// Tracked in `padding_checker`.
-const _: usize = core::mem::size_of::<PackageVersion>();
+// Layout pin (mirrors Zig `comptime { if (@sizeOf(Npm.PackageVersion) != 240) @compileError(...) }`).
+// `PackageVersion` is `std.mem.sliceAsBytes`-serialised into the on-disk
+// `.npm` manifest cache, so its size and field offsets are an ABI contract
+// with every Zig-built Bun that wrote a cache entry. A mismatch here means a
+// cross-runtime cache read will mis-slice — fail loudly at compile time
+// instead. (Full per-type asserts live in `padding_checker::layout_asserts`.)
+const _: () = assert!(
+    core::mem::size_of::<PackageVersion>() == 240,
+    "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
+     bump PackageManifest::Serializer::VERSION if intentional",
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 

@@ -280,8 +280,10 @@ impl<'a> Subprocess<'a> {
     /// # Safety
     /// Caller must be on the owning JS thread with no other live `&mut Process`.
     #[inline]
-    fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — Zig `*Process` semantics.
+    fn process_mut(&mut self) -> &mut Process {
+        // SAFETY: see `process()` — Zig `*Process` semantics. `&mut self`
+        // guarantees no other `&Process`/`&mut Process` is live through this
+        // `Subprocess`; `Process` itself is single-mutator (JS thread).
         unsafe { &mut *self.process }
     }
 

@@ -18,12 +18,12 @@ use bun_jsc::console_object::Formatter as ConsoleFormatter;
 pub struct Collection {
     /// set to true after collection phase ends
     pub locked: bool,
-    pub describe_callback_queue: Vec<QueuedDescribe<'static>>,
-    pub current_scope_callback_queue: Vec<QueuedDescribe<'static>>,
-    // TODO(port): the two Vec<QueuedDescribe<'static>> above are self-referential — the
-    // &'a DescribeScope fields borrow into the tree rooted at `root_scope`. LIFETIMES.tsv
-    // classifies them BORROW_PARAM, but Phase B will likely need NonNull<DescribeScope>
-    // (same as `active_scope`) to express this without a self-borrow.
+    pub describe_callback_queue: Vec<QueuedDescribe>,
+    pub current_scope_callback_queue: Vec<QueuedDescribe>,
+    // The two queues above are self-referential — their `NonNull<DescribeScope>` fields point
+    // into the tree rooted at `root_scope`. They are stored as raw `NonNull` (not `&`) so that
+    // `active_scope_mut()` may hand out `&mut DescribeScope` to the same nodes without
+    // invalidating any live shared-reference tags under Stacked Borrows.
 
     pub root_scope: Box<DescribeScope>,
     pub active_scope: NonNull<DescribeScope>,
@@ -31,10 +31,18 @@ pub struct Collection {
     pub filter_buffer: Vec<u8>,
 }
 
-pub struct QueuedDescribe<'a> {
+pub struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
-    active_scope: &'a DescribeScope,
-    new_scope: &'a DescribeScope,
+    /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
+    /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
+    /// queue entries are live; a `&` here would be invalidated by that `&mut` (Stacked Borrows).
+    /// The pointee is a `Box<DescribeScope>` inside `TestScheduleEntry::Describe`, so its address
+    /// is stable for the lifetime of the owning `Collection`.
+    active_scope: NonNull<DescribeScope>,
+    /// See `active_scope` — same invariants. Derived from the `&mut DescribeScope` returned by
+    /// `append_describe`, so it carries write-capable provenance (later assigned to
+    /// `Collection.active_scope` and mutated through).
+    new_scope: NonNull<DescribeScope>,
 }
 // Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
 
@@ -91,8 +99,13 @@ impl Collection {
 
     /// Mutable view of the currently-active describe scope.
     ///
-    /// SAFETY: see `active_scope()`. The returned `&mut` reborrows from `&mut self`, so
-    /// borrowck prevents simultaneous access to `self.root_scope` while it is live.
+    /// SAFETY: see `active_scope()` for validity. The returned `&mut` reborrows from `&mut self`,
+    /// so borrowck prevents simultaneous access to `self.root_scope` while it is live. The
+    /// self-referential queues (`describe_callback_queue` / `current_scope_callback_queue`) hold
+    /// only raw `NonNull<DescribeScope>` to the same nodes, never `&DescribeScope`, so creating
+    /// this `&mut` does not invalidate any outstanding shared-reference tags. `active_scope` is
+    /// always assigned from a `&mut`-derived `NonNull` (root in `init()`, `new_scope` in
+    /// `step()`), so it carries write-capable provenance.
     #[inline]
     pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
         unsafe { self.active_scope.as_mut() }
@@ -125,17 +138,15 @@ impl Collection {
                 bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
             ));
 
-            // TODO(port): lifetime — see note on Collection field; transmuting borrow to 'static here.
-            // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
-            // stored in self; 'static is a Phase-A placeholder (see TODO above).
-            let active_scope: &'static DescribeScope =
-                unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(self.active_scope()) };
+            // Store raw NonNull cursors (not `&`) so later `active_scope_mut()` calls on the same
+            // node do not invalidate them. Both pointees live in `root_scope`'s Box-allocated tree
+            // and outlive every QueuedDescribe stored in `self`. `new_scope` is `&mut`, so the
+            // resulting NonNull carries write-capable provenance (later assigned to
+            // `self.active_scope` in `step()` and mutated through).
             self.current_scope_callback_queue.push(QueuedDescribe {
-                active_scope,
+                active_scope: self.active_scope,
                 callback: DeprecatedStrong::init(cb),
-                // SAFETY: borrow points into root_scope's tree which outlives every QueuedDescribe
-                // stored in self; 'static is a Phase-A placeholder (see TODO above).
-                new_scope: unsafe { core::mem::transmute::<&DescribeScope, &'static DescribeScope>(new_scope) },
+                new_scope: NonNull::from(new_scope),
             });
         }
         Ok(())
@@ -190,7 +201,9 @@ impl Collection {
         // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
         for item in this.current_scope_callback_queue.drain(..).rev() {
-            if item.new_scope.failed {
+            // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives
+            // every queued item; short-lived read, no aliasing `&mut` is live here.
+            if unsafe { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
                 drop(item); // Zig: item.deinit() — Strong released here
             } else {
@@ -204,21 +217,23 @@ impl Collection {
             let first = this.describe_callback_queue.pop().unwrap();
             // `defer first.deinit()` — handled by Drop at end of loop body / continue.
 
-            if first.active_scope.failed {
+            // SAFETY: `active_scope` points into `root_scope`'s Box-allocated tree, which outlives
+            // every queued item; short-lived read, no aliasing `&mut` is live here.
+            if unsafe { first.active_scope.as_ref() }.failed {
                 continue; // do not execute callbacks that came from a failed describe scope
             }
 
             let callback = &first.callback;
-            let active_scope = first.active_scope;
+            let previous_scope = first.active_scope;
             let new_scope = first.new_scope;
-
-            let previous_scope = active_scope;
 
             group::log(format_args!(
                 "collection:runOne set scope from {}",
                 bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
             ));
-            this.active_scope = NonNull::from(new_scope);
+            // `new_scope` was constructed from the `&mut DescribeScope` returned by
+            // `append_describe`, so it carries write-capable provenance for `active_scope_mut()`.
+            this.active_scope = new_scope;
             group::log(format_args!(
                 "collection:runOne set scope to {}",
                 bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
@@ -229,7 +244,7 @@ impl Collection {
                 global_this,
                 callback.get(),
                 false,
-                RefDataValue::Collection { active_scope: NonNull::from(previous_scope) },
+                RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,
             ) {
                 // the result is available immediately; queue
@@ -259,5 +274,5 @@ impl Collection {
 //   source:     src/test_runner/Collection.zig (170 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      QueuedDescribe<'a> is self-referential into root_scope tree — Phase B likely needs NonNull instead of &'a; group.begin/end/log debug-tracing API shape guessed.
+//   notes:      QueuedDescribe is self-referential into root_scope tree — uses NonNull (not &) so active_scope_mut() does not alias; group.begin/end/log debug-tracing API shape guessed.
 // ──────────────────────────────────────────────────────────────────────────

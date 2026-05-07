@@ -151,9 +151,6 @@ impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> RequestCtxOps
 where
     Self: RequestCtx,
     ThisServer: super::ServerLike + 'static,
-    super::request_context::TransportFor<SSL, H3>: super::request_context::Transport,
-    Self: crate::api::native_promise_context::NativePromiseContextType
-        + super::request_context::RequestContextHostFns,
 {
     type Server = ThisServer;
     #[inline]
@@ -227,10 +224,6 @@ where
             last: bool,
         ) where
             S: super::ServerLike + 'static,
-            super::request_context::TransportFor<SSL_, H3_>: super::request_context::Transport,
-            NewRequestContext<S, SSL_, DBG_, H3_>:
-                crate::api::native_promise_context::NativePromiseContextType
-                    + super::request_context::RequestContextHostFns,
         {
             NewRequestContext::<S, SSL_, DBG_, H3_>::on_buffered_body_chunk(ctx, chunk, last);
         }
@@ -1251,8 +1244,6 @@ impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeSe
 where
     // PORT NOTE: see the bounded `impl NewServer` below for why these are
     // spelled out — `on_web_socket_upgrade` lives in that impl.
-    super::request_context::TransportFor<SSL, false>: super::request_context::Transport,
-    super::request_context::TransportFor<SSL, true>: super::request_context::Transport,
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {
@@ -1324,15 +1315,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG>
 where
-    // PORT NOTE (const-generic dispatch): the per-transport `RequestContext`
-    // inherent methods are only defined where `TransportFor<SSL,H3>: Transport`
-    // and `Self: RequestContextHostFns` (the host-fn export table is
-    // monomorphized per (SSL,DBG,H3) tuple). Spelling the bounds here lets every
-    // call to `ServerRequestContext` / `ServerH3RequestContext` resolve without
-    // each method repeating them — Rust cannot see that all four bool combos are
-    // covered by the concrete impls in `RequestContext.rs`.
-    super::request_context::TransportFor<SSL, false>: super::request_context::Transport,
-    super::request_context::TransportFor<SSL, true>: super::request_context::Transport,
+    // PORT NOTE (const-generic dispatch): `RequestContextHostFns` (the host-fn
+    // export table) is blanket-impl'd per (SSL,DBG,H3) tuple in
+    // `RequestContext.rs` for `ThisServer: ServerLike`; restating it here lets
+    // method bodies name `<NewRequestContext<..> as RequestContextHostFns>::ON_*`
+    // without each method repeating the bound.
     NewRequestContext<Self, SSL, DEBUG, false>: super::request_context::RequestContextHostFns,
     NewRequestContext<Self, SSL, DEBUG, true>: super::request_context::RequestContextHostFns,
 {

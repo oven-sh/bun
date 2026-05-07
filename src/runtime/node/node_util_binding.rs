@@ -1,9 +1,10 @@
-use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _};
+use bun_jsc::{bun_string_jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_str::{self as bstr, strings, String as BunString, ZigString};
 use bun_str::strings::EncodingNonAscii;
 use bun_sys::UV_E;
 
 use bun_dotenv::env_loader as envloader;
+use crate::node::types::{Encoding, ENCODING_MAP};
 use crate::node::util::validators;
 
 #[bun_jsc::host_fn]
@@ -34,7 +35,7 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if err_int == -3013 { return BunString::static_("EAI_BADHINTS").to_js(global); }
     if err_int == -3014 { return BunString::static_("EAI_PROTOCOL").to_js(global); }
 
-    // PORT NOTE: Zig `@"2BIG"` — Rust identifiers cannot start with a digit; `_2BIG`.
+    // Zig `@"2BIG"` — Rust identifiers cannot start with a digit; uv_e exposes it as `_2BIG`.
     if err_int == -UV_E::_2BIG { return BunString::static_("E2BIG").to_js(global); }
     if err_int == -UV_E::ACCES { return BunString::static_("EACCES").to_js(global); }
     if err_int == -UV_E::ADDRINUSE { return BunString::static_("EADDRINUSE").to_js(global); }
@@ -106,7 +107,7 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if err_int == -UV_E::NOEXEC { return BunString::static_("ENOEXEC").to_js(global); }
 
     let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
-    bun_string_jsc::transfer_to_js(&mut fmtstring, global)
+    fmtstring.transfer_to_js(global)
 }
 
 #[bun_jsc::host_fn]
@@ -153,19 +154,20 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
+// PERF(port): `encoding` was a comptime parameter (Zig); demoted to runtime
+// because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
+// `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
 fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B
+    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B.
     // Allocator param dropped (non-AST crate uses global mimalloc).
-    //
-    // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // PORT NOTE: const-generic enum dispatch reshaped to a runtime match over the
-    // buffer's element type; logic is identical and the per-arm bodies are
-    // monomorphic anyway.
 
     // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
     // — Vec<BunString> dropping at scope exit derefs each element via bun_str::String's Drop.
     let mut lines: Vec<BunString> = Vec::new();
 
+    // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
+    // PORT NOTE: reshaped — comptime enum cannot select an associated type in
+    // stable Rust; split into two arms over the buffer's element type.
     match encoding {
         EncodingNonAscii::Utf16 => {
             let buffer: &[u16] = str.utf16();
@@ -180,7 +182,7 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
             let buffer: &[u8] = str.byte_slice();
             let mut it = SplitNewlineIterator { buffer, index: Some(0) };
             while let Some(line) = it.next() {
-                let encoded_line = if matches!(encoding, EncodingNonAscii::Utf8) {
+                let encoded_line = if encoding == EncodingNonAscii::Utf8 {
                     BunString::borrow_utf8(line)
                 } else {
                     BunString::clone_latin1(line)
@@ -191,7 +193,7 @@ fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &BunString) -
         }
     }
 
-    bun_string_jsc::to_js_array(global, lines.as_slice())
+    bun_string_jsc::to_js_array(global, &lines)
 }
 
 pub struct SplitNewlineIterator<'a, T> {
@@ -227,9 +229,9 @@ pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     debug_assert!(str.tag() != bstr::Tag::Dead);
     // `defer str.deref()` — handled by Drop
     if str.length() == 0 {
-        return Ok(crate::node::Encoding::Utf8.to_js(global));
+        return Ok(Encoding::Utf8.to_js(global));
     }
-    if let Some(enc) = str.in_map_case_insensitive(&crate::node::types::ENCODING_MAP) {
+    if let Some(enc) = str.in_map_case_insensitive(&ENCODING_MAP) {
         return Ok(enc.to_js(global));
     }
     Ok(JSValue::UNDEFINED)
@@ -241,11 +243,10 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     validators::validate_string(global, content, "content")?;
 
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
-    // Non-AST crate: arena dropped; Map/Loader/to_slice use global allocator and Drop.
+    // Non-AST crate: arena dropped; Map/Loader use global allocator and Drop.
 
-    // SAFETY: `validate_string` above guarantees `content` is a string ⇒
-    // `as_string()` returns a non-null JSString cell, live for the duration of
-    // this host call (rooted on the JS call stack via `frame`).
+    // SAFETY: `validate_string` above guarantees `content.is_string()`, so
+    // `as_string()` returns a non-null live JSString*.
     let str = unsafe { &*content.as_string() }.to_slice(global);
 
     let mut map = envloader::Map::init();
@@ -253,12 +254,11 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     p.load_from_string::<true, false>(str.slice())?;
     drop(p);
 
-    let obj = JSValue::create_empty_object(global, map.map.count());
-    debug_assert_eq!(map.map.keys().len(), map.map.values().len());
-    for (k, v) in map.map.keys().iter().zip(map.map.values().iter()) {
+    let obj = JSValue::create_empty_object(global, map.count());
+    for (k, v) in map.iter() {
         obj.put(
             global,
-            ZigString::init_utf8(k),
+            &ZigString::init_utf8(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }
@@ -268,7 +268,7 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/node/node_util_binding.zig (237 lines)
-//   confidence: medium
-//   todos:      2
-//   notes:      split() reshaped for const-generic type dispatch (u8/u16); UV_E::@"2BIG" → _2BIG
+//   confidence: high
+//   notes:      split() reshaped for u8/u16 type dispatch; UV_E::@"2BIG" → _2BIG;
+//               comptime EncodingNonAscii demoted to runtime arg (no adt_const_params)
 // ──────────────────────────────────────────────────────────────────────────

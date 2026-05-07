@@ -39,46 +39,18 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// TODO(port): Zig `NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool,
-// comptime ThisServer: type, comptime http3: bool) type` — modeled here as a generic struct
-// with const-generic flags and a generic `ThisServer` type param. Associated `App`/`Req`/`Resp`
-// type aliases are selected via the `Transport` helper trait below; Phase B may need to adjust
-// once the uws crate's surface is finalized.
-pub trait Transport {
-    type Response;
-    type Request;
-}
-
-// TODO(port): the Zig picks `uws.H3.Response` vs `uws.NewApp(ssl_enabled).Response` and
-// `uws.H3.Request` vs `uws.Request`. Const-generic `bool` cannot drive an
-// associated type in stable Rust without specialization, so the four
-// monomorphizations are spelled out. Once `bun_uws_sys` exposes a `Transport`
-// trait directly, collapse these.
-pub struct TransportFor<const SSL_ENABLED: bool, const HTTP3: bool>;
-impl Transport for TransportFor<false, false> {
-    type Response = bun_uws_sys::NewAppResponse<false>;
-    type Request = bun_uws_sys::Request;
-}
-impl Transport for TransportFor<true, false> {
-    type Response = bun_uws_sys::NewAppResponse<true>;
-    type Request = bun_uws_sys::Request;
-}
-impl Transport for TransportFor<false, true> {
-    type Response = bun_uws_sys::h3::Response;
-    type Request = bun_uws_sys::h3::Request;
-}
-impl Transport for TransportFor<true, true> {
-    type Response = bun_uws_sys::h3::Response;
-    type Request = bun_uws_sys::h3::Request;
-}
-
-// PORT NOTE: spelling these as `<TransportFor<SSL,H3> as Transport>::Response`
-// forces a `where TransportFor<SSL,H3>: Transport` bound onto every generic
-// that names `RequestContext` AND the inherent methods on the associated type
-// can't be called from generic code anyway. Instead the field stores
-// `uws::AnyResponse` (Copy enum over the three concrete handles) and dispatches
-// at runtime — same shape as `AnyRequestContext` and `AnyServer`. The const
-// params still pick which variant `create()` constructs.
+// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
+// type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
+// `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
+// uws.Request` at comptime. Stable Rust cannot drive an associated type from a
+// const-generic `bool` without specialization, and an early `Transport`
+// helper-trait approach forced `where TransportFor<SSL,H3>: Transport` bounds
+// onto every generic that named `RequestContext` (which Rust then *cannot*
+// discharge for a generic `const SSL: bool` — only the four concrete combos
+// have impls). So instead the `resp` field stores `uws::AnyResponse` (a Copy
+// enum over the three concrete handles) and dispatches at runtime — same shape
+// as `AnyRequestContext` / `AnyServer`. The const params still pick which
+// variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 

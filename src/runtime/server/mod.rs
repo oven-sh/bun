@@ -115,8 +115,8 @@ pub use any_request_context::AnyRequestContext;
 #[path = "InspectorBunFrontendDevServerAgent.rs"]
 pub mod inspector_bun_frontend_dev_server_agent;
 
-// Full Phase-A draft (4.3kL) — kept gated; bodies are pulled into the
-// `_gated` blocks below as they are made to compile.
+// `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
+// route setup, …) split out to keep this module declaration file readable.
 
 #[path = "server_body.rs"]
 mod server_body;

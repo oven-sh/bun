@@ -2,7 +2,6 @@ use core::fmt;
 
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_str::ZigString;
-use crate::node::ErrorCode;
 
 pub fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
@@ -17,9 +16,8 @@ pub fn throw_err_invalid_arg_value(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // TODO(port): exact shape of `global.ERR(code, fmt, args).throw()` builder API
-    let _ = ErrorCode::ERR_INVALID_ARG_VALUE;
-    global_this.throw_type_error(args)
+    // Zig: `global.ERR(.INVALID_ARG_VALUE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_VALUE"`.
+    global_this.err(jsc::ErrorCode::INVALID_ARG_VALUE, args).throw()
 }
 
 #[cold]
@@ -27,9 +25,8 @@ pub fn throw_err_invalid_arg_type_with_message(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // TODO(port): exact shape of `global.ERR(code, fmt, args).throw()` builder API
-    let _ = ErrorCode::ERR_INVALID_ARG_TYPE;
-    global_this.throw_type_error(args)
+    // Zig: `global.ERR(.INVALID_ARG_TYPE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_TYPE"`.
+    global_this.err(jsc::ErrorCode::INVALID_ARG_TYPE, args).throw()
 }
 
 // PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
@@ -59,21 +56,6 @@ pub fn throw_err_invalid_arg_type(
 pub fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     // Zig: `global.ERR(.OUT_OF_RANGE, fmt, args).throw()` — RangeError with `.code = "ERR_OUT_OF_RANGE"`.
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
-}
-
-// Local helpers bridging the not-yet-ported `JSGlobalObject::throw_*` surface.
-#[inline]
-fn throw_invalid_argument_type_value(
-    global_this: &JSGlobalObject,
-    name: &str,
-    expected: &str,
-    value: JSValue,
-) -> JsError {
-    let _ = value;
-    throw_err_invalid_arg_type_with_message(
-        global_this,
-        format_args!("The \"{}\" argument must be of type {}", name, expected),
-    )
 }
 
 #[inline]

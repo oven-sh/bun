@@ -229,7 +229,7 @@ impl SocketAddress {
                 flowinfo: 0,
                 addr: [0u8; 16],
                 scope_id,
-                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in6 is #[repr(C)] POD
+                ..inet::sockaddr_in6::ZEROED
             };
             if !pton_noerr(inet::AF_INET6, inner, (&mut sin6.addr) as *mut _ as *mut c_void) {
                 return Ok(JSValue::UNDEFINED);
@@ -240,7 +240,7 @@ impl SocketAddress {
                 family: AF::INET.int(),
                 port: port_.to_be(),
                 addr: 0,
-                ..unsafe { mem::zeroed() } // SAFETY: sockaddr_in is #[repr(C)] POD
+                ..inet::sockaddr_in::ZEROED
             };
             if !pton_noerr(inet::AF_INET, paddr, (&mut sin.addr) as *mut _ as *mut c_void) {
                 return Ok(JSValue::UNDEFINED);

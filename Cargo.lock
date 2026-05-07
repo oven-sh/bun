@@ -1800,6 +1800,7 @@ dependencies = [
  "bun_jsc",
  "bun_libarchive",
  "bun_libdeflate_sys",
+ "bun_libuv_sys",
  "bun_logger",
  "bun_logger_jsc",
  "bun_lolhtml_sys",

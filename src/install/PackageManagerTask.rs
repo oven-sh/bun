@@ -287,7 +287,11 @@ impl<'a> Task<'a> {
                     let loaded_manifest = loaded_manifest.clone();
                     let is_extended_manifest = *is_extended_manifest;
 
-                    let scope = manager.scope_for_package_name(manifest.name.slice()) as *const _;
+                    // SAFETY: shared read of `manager.options` (never mutated by
+                    // worker threads). Decay to a raw pointer so the `&PackageManager`
+                    // autoref does not stay live across the `&mut *manager` below.
+                    let scope = unsafe { (*manager).scope_for_package_name(manifest.name.slice()) }
+                        as *const _;
                     let package_manifest = match npm::Registry::get_package_metadata(
                         // SAFETY: scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
@@ -297,7 +301,10 @@ impl<'a> Task<'a> {
                         &mut this.log,
                         manifest.name.slice(),
                         loaded_manifest,
-                        manager,
+                        // SAFETY: see `manager` decl — short-lived `&mut` at call
+                        // boundary only (callee touches `cache_directory_` /
+                        // `temporary_directory` lazily; same race as Zig spec).
+                        unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
                         Ok(v) => v,

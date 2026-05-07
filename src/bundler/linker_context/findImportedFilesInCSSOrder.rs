@@ -205,15 +205,14 @@ pub fn find_imported_files_in_css_order<'a>(
                                 deep_clone_conditions(wrapping_conditions, self.allocator);
                             let mut nested_import_records =
                                 shallow_clone_records(wrapping_import_records);
-                            let _ = &mut nested_import_records;
 
                             // Clone these import conditions and append them to the state
-                            handle_oom(nested_conditions.append(
+                            nested_conditions.append_assume_capacity(
                                 import_rule.conditions_with_import_records(
                                     self.allocator,
                                     &mut nested_import_records,
                                 ),
-                            ));
+                            );
                             self.visit(
                                 record.source_index,
                                 &mut nested_conditions,
@@ -243,12 +242,12 @@ pub fn find_imported_files_in_css_order<'a>(
                         // merged. When this happens we need to generate a nested imported
                         // CSS file using a data URL.
                         if import_rule.has_conditions() {
-                            handle_oom(all_conditions.append(
+                            all_conditions.append_assume_capacity(
                                 import_rule.conditions_with_import_records(
                                     self.allocator,
                                     &mut all_import_records,
                                 ),
-                            ));
+                            );
                             handle_oom(self.order.append(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(
                                     fs_path_from_import_record(&record.path),

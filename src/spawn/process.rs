@@ -4385,12 +4385,12 @@ pub mod sync {
                 }
             }
             let ppid_idx = pfds_len;
-            if ppid_fd != spawn_sys::INVALID_FD {
-                push(&mut buf, &mut pfds_len, ppid_fd);
+            if ppid_fd.fd() != spawn_sys::INVALID_FD {
+                push(&mut buf, &mut pfds_len, ppid_fd.fd());
             }
             let chld_idx = pfds_len;
-            if chld_fd != spawn_sys::INVALID_FD {
-                push(&mut buf, &mut pfds_len, chld_fd);
+            if chld_fd.fd() != spawn_sys::INVALID_FD {
+                push(&mut buf, &mut pfds_len, chld_fd.fd());
             }
 
             // SAFETY: valid pollfd array
@@ -4403,7 +4403,7 @@ pub mod sync {
                 }
             }
 
-            if (ppid_fd != spawn_sys::INVALID_FD && buf[ppid_idx].revents != 0)
+            if (ppid_fd.fd() != spawn_sys::INVALID_FD && buf[ppid_idx].revents != 0)
                 || (need_ppid_fallback && unsafe { libc::getppid() } != ppid)
             {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
@@ -4411,7 +4411,7 @@ pub mod sync {
 
             // Drain the signalfd so the next poll blocks; the actual reap
             // happens at the top of the next iteration.
-            if chld_fd != spawn_sys::INVALID_FD && buf[chld_idx].revents != 0 {
+            if chld_fd.fd() != spawn_sys::INVALID_FD && buf[chld_idx].revents != 0 {
                 // SAFETY: zeroed signalfd_siginfo is valid for read target
                 let mut si: libc::signalfd_siginfo = unsafe { core::mem::zeroed() };
                 let si_bytes = unsafe {
@@ -4420,7 +4420,7 @@ pub mod sync {
                         core::mem::size_of::<libc::signalfd_siginfo>(),
                     )
                 };
-                while bun_sys::read(chld_fd, si_bytes).unwrap_or(0)
+                while bun_sys::read(chld_fd.fd(), si_bytes).unwrap_or(0)
                     == core::mem::size_of::<libc::signalfd_siginfo>()
                 {}
             }

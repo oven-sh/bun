@@ -26,7 +26,9 @@ use bun_sys::{self, Fd, FdExt as _};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
+use crate::lockfile::package::PackageSliceExt as _;
 use crate::package_manager_real::install_with_manager as InstallWithManager;
+use crate::package_manager_real::package_manager_options::Do;
 
 struct PackagePath {
     pkg_path: Box<[PackageID]>,
@@ -86,7 +88,7 @@ pub fn do_partial_install_of_security_scanner(
         InstallWithManager::get_workspace_filters(manager, original_cwd)?;
     // `defer manager.allocator.free(workspace_filters)` — workspace_filters is now owned, drops at scope exit.
 
-    if !manager.options.do_.install_packages {
+    if !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(());
     }
 
@@ -216,7 +218,7 @@ pub fn perform_security_scan_after_resolution(
         return Ok(None);
     };
 
-    if manager.options.dry_run || !manager.options.do_.install_packages {
+    if manager.options.dry_run || !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(None);
     }
 

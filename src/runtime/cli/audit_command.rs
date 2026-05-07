@@ -4,7 +4,6 @@ use std::io::Write as _;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::lockfile::Lockfile;
 use bun_install::package_manager::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};

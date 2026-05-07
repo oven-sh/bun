@@ -2,7 +2,13 @@
 
 use bun_collections::StringHashMap;
 use bun_core::Error;
-use bun_js_parser::Expr;
+// `Expr` here is the JSON parser's AST node (`bun_logger::js_ast::Expr`, re-
+// exported via `crate::bun_json`). It is intentionally NOT `bun_js_parser::Expr`
+// — that lives in a higher-tier crate and is a distinct type. Consumers of
+// `MapEntry.root` (e.g. `Package::parse_with_json`) take the lower-tier
+// `bun_json::Expr`, so storing the parser-crate type here would create a
+// cross-tier mismatch.
+use crate::bun_json::Expr;
 use bun_js_printer::options::Indentation;
 use bun_logger::{Log, Source};
 use bun_paths::{self, is_absolute, PathBuffer};

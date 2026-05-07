@@ -3991,15 +3991,47 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests += 1;
         req.set_yield(false);
         // SAFETY: handle_oom aborts on failure; pointer is non-null and owns a fresh pool slot.
-        let ctx = unsafe { &mut *bun_core::handle_oom((*self.request_pool_allocator).try_get()) };
+        let ctx_slot = unsafe { bun_core::handle_oom((*self.request_pool_allocator).try_get()) };
         let mut should_deinit_context = false;
-        // TODO(port): Body::Value / AbortSignal::new / Request::new_ — same
-        // surface gap as prepare_js_request_context_for; un-gates with the
-        // shared RequestContext setup helpers.
-        let _ = (&mut *ctx, req, resp, upgrade_ctx, &mut should_deinit_context);
-        todo!("blocked_on: bun_jsc::AbortSignal::new / webcore::Body::Value / Request::new");
-        #[allow(unreachable_code)]
-        let request_object: &mut Request = unreachable!();
+        let self_ptr: *mut Self = self;
+        <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
+            ctx_slot,
+            self_ptr,
+            req,
+            resp,
+            Some(&mut should_deinit_context),
+            None,
+        );
+        // SAFETY: ctx_slot was just initialized by create_in.
+        let ctx = unsafe { &mut *ctx_slot };
+
+        let mut body_init = BodyValue::Null;
+        let body_ptr = self
+            .vm_mut()
+            .init_request_body_value(&mut body_init as *mut BodyValue as *mut c_void)
+            as *mut BodyValue;
+        ctx.request_body = NonNull::new(body_ptr);
+
+        let signal = AbortSignal::new(unsafe { &*self.global_this });
+        // SAFETY: AbortSignal::new returns a +1-ref'd C++ opaque.
+        unsafe { (*signal).pending_activity_ref() };
+        // SAFETY: signal is live; ref_() bumps for Request's copy.
+        let _ = unsafe { (*signal).ref_() };
+        // TODO(port): RequestContext.signal field type vs raw +1 ref — see set_signal.
+        let request_object_box = Request::new(Request::init(
+            ctx.method,
+            AnyRequestContext::init(ctx as *const _),
+            SSL,
+            None,
+            Box::new(BodyValue::Null),
+        ));
+        ctx.upgrade_context = Some(upgrade_ctx);
+        let request_object: &mut Request =
+            // SAFETY: leaked so the ctx (which outlives this stack frame) can
+            // hold the borrow; freed via ctx.deinit's request_weakref.
+            unsafe { &mut *Box::into_raw(request_object_box) };
+        ctx.request_weakref = bun_ptr::WeakPtr::<Request>::init_ref(request_object);
+
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = unsafe { &*self.global_this };
         let args = [
@@ -4013,20 +4045,30 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
+        let request_object_ptr: *mut Request = request_object;
         let _detach_guard = scopeguard::guard((), |_| {
             // uWS request will not live longer than this function
-            request_object.request_context.detach_request();
+            // SAFETY: see request_object above.
+            unsafe { (*request_object_ptr).request_context.detach_request() };
         });
+
+        // SAFETY: self_ptr is live for the request's duration; the &mut held
+        // by ctx.create's BACKREF aliases disjoint fields.
+        ctx.on_response(unsafe { &*self_ptr }, request_value, response_value);
+
         ctx.defer_deinit_until_callback_completes = None;
 
-        // TODO(port): ctx.{on_response,deinit,should_render_missing,render_missing,to_async}
-        // require `RequestContext<Self, ..>: NativePromiseContextType` and
-        // `Self: server::ServerLike`, which are only impl'd for the
-        // `server::NewServer` monomorphizations in mod.rs — not for this
-        // module's draft `NewServer`. Un-gates with the type-unification pass
-        // (see `server::AnyRoute unification` blocker above).
-        let _ = (should_deinit_context, req, request_object, request_value, response_value);
-        todo!("blocked_on: server::ServerLike impl for server_body::NewServer (ctx.on_response/deinit/render_missing/to_async)");
+        if should_deinit_context {
+            ctx.deinit();
+            return;
+        }
+
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return;
+        }
+
+        ctx.to_async(req, request_object);
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -4125,7 +4167,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `&mut self` access (config, user_routes, dev_server), so a single
         // long-lived `&mut *app_ptr` would alias.
         macro_rules! app { () => { unsafe { &mut *app_ptr } } }
-        let any_server: AnyServer = todo!("blocked_on: bun_collections::TaggedPtrUnion From<*const NewServer<SSL,DEBUG>>");
+        let any_server: super::AnyServer = self.as_any_server();
         let dev_server = self.dev_server.as_deref_mut();
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md

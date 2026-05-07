@@ -920,6 +920,21 @@ pub mod expr {
         pub fn as_e_number(&self) -> Option<E::Number> {
             if let Data::ENumber(n) = *self { Some(n) } else { None }
         }
+        /// `std.meta.activeTag(self)` — discriminant as `ExprTag`.
+        #[inline]
+        pub fn tag(&self) -> super::ExprTag {
+            use super::ExprTag;
+            match self {
+                Data::EArray(_) => ExprTag::EArray,
+                Data::EObject(_) => ExprTag::EObject,
+                Data::EString(_) => ExprTag::EString,
+                Data::EBoolean(_) => ExprTag::EBoolean,
+                Data::ENumber(_) => ExprTag::ENumber,
+                Data::ENull(_) => ExprTag::ENull,
+                Data::EUndefined(_) => ExprTag::EUndefined,
+                Data::EMissing(_) => ExprTag::EMissing,
+            }
+        }
         #[inline]
         pub fn is_e_string(&self) -> bool { matches!(self, Data::EString(_)) }
         #[inline]

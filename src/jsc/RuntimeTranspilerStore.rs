@@ -6,7 +6,8 @@ use core::mem::offset_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
-use bun_aio::KeepAlive;
+use bun_aio::{AllocatorType, KeepAlive};
+use bun_aio::posix_event_loop::get_vm_ctx;
 use bun_alloc::Arena;
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, Loader, ModuleType};
@@ -76,7 +77,7 @@ pub fn dump_source_string_failiable(
     // PORT NOTE: full Zig body uses std.fs.{Dir, makeOpenPath, writeFile, createFile,
     // readFileAlloc} which are forbidden (`bun_sys` only). bun_sys does not yet expose
     // a directory handle abstraction with makeOpenPath, so this debug-only dump is a
-    // no-op pending those wrappers. The body is intentionally NOT a `todo!()` — this
+    // no-op pending those wrappers. The body is intentionally NOT a panic stub — this
     // is unreachable in release and exists solely for ad-hoc debugging.
     Ok(())
 }
@@ -359,10 +360,9 @@ impl TranspilerJob {
         let promise = self.promise.swap();
         // SAFETY: vm/global_this outlive the job (BACKREF).
         let global_this = unsafe { &*self.global_this };
-        // TODO(port): KeepAlive::unref takes EventLoopCtx; the VM→EventLoopCtx vtable is
-        // installed in the high tier (bun_runtime). Mirror neighboring callers and disable
-        // the keep-alive here so the event-loop ref count is balanced.
-        self.poll_ref.disable();
+        // PORT NOTE: Zig `poll_ref.unref(vm)` — the Rust KeepAlive takes an `EventLoopCtx`
+        // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
+        self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
         let referrer = core::mem::replace(&mut self.non_threadsafe_referrer, String::empty());
         let mut log = core::mem::replace(&mut self.log, logger::Log::init());
@@ -402,10 +402,10 @@ impl TranspilerJob {
     }
 
     pub fn schedule(&mut self) {
-        // TODO(port): KeepAlive::ref_ takes EventLoopCtx; the VM→EventLoopCtx vtable is
-        // installed in the high tier (bun_runtime). See web_worker.rs / JSSecrets.rs for
-        // the same deferral. The unref side is balanced via `disable()` in
-        // `run_from_js_thread`.
+        // PORT NOTE: Zig `poll_ref.ref(this.vm)` — the Rust KeepAlive takes an
+        // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
+        // `bun_runtime::init`).
+        self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         WorkPool::schedule(&mut self.work_task);
     }
 
@@ -911,6 +911,6 @@ impl TranspilerJob {
 //   confidence: medium
 //   notes:      run() does heavy defer→scopeguard + by-value Transpiler copy via
 //               ptr::read+ManuallyDrop; vm/global_this are raw *mut (BACKREF —
-//               struct crosses threads); KeepAlive ref/unref deferred until the
-//               VM→EventLoopCtx vtable is wired (matches neighboring callers).
+//               struct crosses threads); KeepAlive ref/unref routed via the
+//               `get_vm_ctx` hook (matches AsyncModule.rs).
 // ──────────────────────────────────────────────────────────────────────────

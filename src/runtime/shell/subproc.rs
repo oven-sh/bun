@@ -61,16 +61,7 @@ fn read_state_str(s: ReadState) -> &'static str {
 pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
-// ─── Local mirror of `shell.ShellErr` until shell_body.rs is un-gated ────────
-// shell_body.rs defines the canonical 4-variant enum but is module-private; the
-// `crate::shell::ShellErr` placeholder in mod.rs is a newtype around sys::Error
-// without the `Custom`/`Sys` variants needed here. Mirror just the two variants
-// this file constructs so spawn error paths compile.
-pub enum ShError {
-    Sys(SystemError),
-    Custom(Box<[u8]>),
-}
-pub type ShResult<T> = core::result::Result<T, ShError>;
+use crate::shell::ShellErr;
 // pub const ShellSubprocess = NewShellSubprocess(.js);
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
@@ -92,25 +83,11 @@ pub struct ShellIO {
     pub stderr: Option<Arc<IOWriter>>,
 }
 
-impl ShellIO {
-    pub fn r#ref(&mut self) {
-        // TODO(port): IOWriter uses intrusive refcount in Zig; with Arc the
-        // "ref without producing a handle" operation has no direct equivalent.
-        // Callers should clone() the Arc instead.
-        if let Some(io) = &self.stdout {
-            let _ = Arc::clone(io);
-        }
-        if let Some(io) = &self.stderr {
-            let _ = Arc::clone(io);
-        }
-    }
-
-    pub fn deref(&mut self) {
-        // Dropping the Option releases our Arc strong count.
-        self.stdout.take();
-        self.stderr.take();
-    }
-}
+// PORT NOTE: Zig's `ShellIO.ref/deref` bumped intrusive IOWriter refcounts
+// without producing a handle. With `Arc<IOWriter>` the only correct way to
+// retain is to *clone the Arc and keep it*; a freestanding `ref()` that
+// discards the clone is a no-op. Callers hold their own `Arc` clones and
+// `ShellIO`'s `Drop` releases them — no explicit ref/deref methods.
 
 // ───────────────────────────────────────────────────────────────────────────
 // ShellSubprocess
@@ -281,11 +258,20 @@ impl ShellSubprocess {
     // }
 
     fn close_process(&mut self) {
-        self.proc().set_exit_handler_default();
-        self.proc().close();
-        // TODO(port): in Zig this was an explicit deref(); with intrusive
-        // ref-count the field drop in deinit handles it. Left as-is to mirror
-        // call ordering.
+        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
+        if process.is_null() {
+            return;
+        }
+        // SAFETY: `process` was produced by `to_process` (Box::into_raw) and is
+        // live until the deref below drops the last strong ref.
+        unsafe {
+            (*process).set_exit_handler_default();
+            (*process).close();
+            // Spec: `this.process.deref()` — release the intrusive ref taken
+            // by `spawn_result.toProcess`. `*mut Process` has no Drop, so this
+            // must be explicit.
+            bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
+        }
     }
 
     pub fn disconnect(&mut self) {
@@ -420,7 +406,7 @@ impl ShellSubprocess {
         // to initialize the object.
         out: &mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
-    ) -> ShResult<()> {
+    ) -> sh::Result<()> {
         let mut spawn_args = spawn_args_;
 
         match Self::spawn_maybe_sync_impl(
@@ -444,7 +430,7 @@ impl ShellSubprocess {
         // to initialize the object.
         out_subproc: &mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
-    ) -> ShResult<()> {
+    ) -> sh::Result<()> {
         const IS_SYNC: bool = false;
 
         if !spawn_args.override_env && spawn_args.env_array.is_empty() {
@@ -482,7 +468,7 @@ impl ShellSubprocess {
         let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
-                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
@@ -490,7 +476,7 @@ impl ShellSubprocess {
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
                 stdin_opt.deinit();
-                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stderr_opt = match stdio_guard[2].as_spawn_option(2) {
@@ -501,7 +487,7 @@ impl ShellSubprocess {
                     stdin_opt.deinit();
                     stdout_opt.deinit();
                 }
-                return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
+                return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
 
@@ -543,12 +529,12 @@ impl ShellSubprocess {
                 let mut msg = Vec::<u8>::new();
                 use std::io::Write;
                 let _ = write!(&mut msg, "Failed to spawn process: {}", err.name());
-                return Err(ShError::Custom(msg.into_boxed_slice()));
+                return Err(ShellErr::Custom(msg.into_boxed_slice()));
             }
             Ok(r) => match r {
                 bun_sys::Result::Err(err) => {
                     drop(spawn_options);
-                    return Err(ShError::Sys(err.to_shell_system_error()));
+                    return Err(ShellErr::Sys(err.to_shell_system_error()));
                 }
                 bun_sys::Result::Ok(result) => result,
             },
@@ -635,7 +621,7 @@ impl ShellSubprocess {
                 let sys_err = err.to_shell_system_error();
                 let _ = subproc.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return Err(ShError::Sys(sys_err));
+                return Err(ShellErr::Sys(sys_err));
             }
         }
 
@@ -647,7 +633,7 @@ impl ShellSubprocess {
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
                 let _ = unsafe { &mut *subprocess }.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return Err(ShError::Sys(sys_err));
+                return Err(ShellErr::Sys(sys_err));
             }
             if !spawn_args.lazy {
                 if let Readable::Pipe(pipe) = &mut subproc.stdout {
@@ -665,7 +651,7 @@ impl ShellSubprocess {
                 // SAFETY: subprocess was allocated above and is uniquely owned here.
                 let _ = unsafe { &mut *subprocess }.try_kill(SignalCode::SIGTERM as i32);
                 Self::abort_after_failed_start(subprocess);
-                return Err(ShError::Sys(sys_err));
+                return Err(ShellErr::Sys(sys_err));
             }
 
             if !spawn_args.lazy {

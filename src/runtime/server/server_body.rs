@@ -2063,9 +2063,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if self.inspector_server_id.0 != 0 {
-            // TODO(port): blocked_on: bun_jsc::Debugger::HTTPServerAgent::notify_server_routes_updated
-            // (HTTPServerAgent is an opaque stub upstream; AnyServer::from also lacks a generic impl).
-            let _ = &self.vm.debugger;
+            if let Some(debugger) = &self.vm.debugger {
+                bun_core::handle_oom(http_server_agent_notify_routes_updated(
+                    &debugger.http_server_agent,
+                    self.inspector_server_id,
+                    &self.user_routes,
+                    &self.config.static_routes,
+                ));
+            }
         }
     }
 

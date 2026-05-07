@@ -372,7 +372,14 @@ impl CatalogMap {
         new_catalog.default.ensure_total_capacity(self.default.count())?;
 
         let old_buf = old.buffers.string_bytes.as_slice();
-        let new_buf = builder.lockfile.buffers.string_bytes.as_slice();
+        // `builder.allocate()` ran before this call (see lockfile.rs
+        // `clean_with_logger`), so `string_bytes` will not reallocate during
+        // `append`; capture as raw `*const [u8]` so the shared `new_ctx` view
+        // doesn't conflict with the `&mut builder` calls below.
+        // SAFETY: stable address (no realloc — `allocate()` reserved upfront);
+        // only read for hashing/eq, never written through this pointer.
+        let new_buf_ptr: *const [u8] = builder.string_bytes.as_slice();
+        let new_buf: &[u8] = unsafe { &*new_buf_ptr };
         let new_ctx = ctx(new_buf);
 
         let mut deps_iter = self.default.iterator();

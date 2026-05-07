@@ -639,7 +639,7 @@ impl TranspilerJob {
         let hash = Watcher::get_hash(path.text);
 
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init (BACKREF).
-        let import_watcher: *mut ImportWatcher = vm.bun_watcher.cast();
+        let import_watcher: *mut ImportWatcher = unsafe { (*vm).bun_watcher }.cast();
         if !import_watcher.is_null() {
             // SAFETY: import_watcher is live; only the JS thread mutates the watchlist
             // shape — the worker thread reads SoA columns by index.

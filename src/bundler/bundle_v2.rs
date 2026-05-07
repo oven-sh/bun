@@ -5179,9 +5179,11 @@ impl<'a> BundleV2<'a> {
                     import_record.path = ir_path_from_fs(&path_primary);
                     let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
-                    let resolve_task = Box::leak(Box::new(ParseTask::default()));
                     file_map_result.path_pair.primary = path_primary;
-                    *resolve_task = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
+                    // Arena-owned (Zig: `allocator.create(ParseTask)`).
+                    let resolve_task_val = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
+                    // SAFETY: arena outlives the bundle pass.
+                    let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
                     resolve_task.known_target = target;
                     // Use transpiler JSX options, applying force_node_env like the disk path does
                     resolve_task.jsx = transpiler.options.jsx.clone();
@@ -5478,7 +5480,10 @@ impl<'a> BundleV2<'a> {
             import_record.path = ir_path_from_fs(path);
             // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
             bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
-            let resolve_task = Box::leak(Box::new(ParseTask::init(&resolve_result, js_ast::Index::INVALID, self)));
+            // Arena-owned (Zig: `allocator.create(ParseTask)`).
+            let resolve_task_val = ParseTask::init(&resolve_result, js_ast::Index::INVALID, self);
+            // SAFETY: arena outlives the bundle pass.
+            let resolve_task: &mut ParseTask = unsafe { &mut *self.arena_create(resolve_task_val) };
 
             resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                 Target::Browser

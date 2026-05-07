@@ -233,20 +233,25 @@ impl<'a> MiniEventLoop<'a> {
         self.loop_
     }
 
-    /// Shared borrow of the `DotEnv::Loader` backref (Zig: `this.env.?`).
+    /// Raw pointer to the `DotEnv::Loader` backref (Zig: `this.env.?`).
     ///
-    /// Returns `None` until [`init_global`] populates it. A `&mut`-returning
-    /// accessor is intentionally **not** provided: the loader may be shared
-    /// via the process-global `dotenv::INSTANCE` (and `Transpiler::env`), so
-    /// handing out `&mut` here cannot prove exclusivity. Callers needing
-    /// mutation deref the stored `NonNull` directly under their own SAFETY
-    /// contract.
+    /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
+    /// a `&mut`-returning accessor is provided: the loader may be shared via
+    /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
+    /// other safe paths (`GlobalMini::create_null_delimited_env_map`,
+    /// `EventLoopHandle::create_null_delimited_env_map`, `interpreter.rs`)
+    /// materialize `&mut DotEnvLoader` from the same allocation via raw deref.
+    /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
+    /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
+    /// deref the returned `NonNull` for a tightly-scoped borrow under their
+    /// own SAFETY contract instead (mirrors [`loop_ptr`](Self::loop_ptr)).
+    ///
+    /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
+    /// loader set in `init_global` that outlives `self` (never freed — Zig
+    /// parity).
     #[inline]
-    pub fn env_ref(&self) -> Option<&DotEnvLoader<'a>> {
-        // SAFETY: `env` is an `Option<NonNull<DotEnvLoader>>` backref; the
-        // loader is a thread-/process-lifetime singleton that outlives `self`
-        // (set in `init_global`, never freed — Zig parity).
-        unsafe { self.env.map(|p| p.as_ref()) }
+    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader<'a>>> {
+        self.env
     }
 
     #[inline]

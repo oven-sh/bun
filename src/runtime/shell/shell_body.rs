@@ -362,8 +362,12 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn env(self) -> &'a bun_dotenv::Loader<'a> {
-        // `MiniEventLoop.env` is set during `initGlobal` and outlives the loop.
-        self.mini.env_ref().unwrap()
+        // SAFETY: `MiniEventLoop.env` is set during `initGlobal` and outlives the
+        // loop (see `MiniEventLoop::env_ptr` invariant). Caller must not hold the
+        // returned `&Loader` across a path that takes `&mut Loader` from the same
+        // allocation (e.g. `create_null_delimited_env_map`); current callers scope
+        // it to read-only env-var lookups.
+        unsafe { self.mini.env_ptr().unwrap().as_ref() }
     }
 
     #[inline]

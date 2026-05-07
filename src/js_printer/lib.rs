@@ -61,24 +61,12 @@ use bun_options_types::import_record::Flags as ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local stand-ins for types not yet exported by lower-tier crates.
-// ──────────────────────────────────────────────────────────────────────────
+pub use bun_options_types::schema::api::CssInJsBehavior;
 
-/// Local stand-in for `bun_options_types::schema::api::CssInJsBehavior` —
-/// schema.rs has not yet been ported (only schema.zig defines this enum).
-// TODO(b2-blocked): bun_options_types::schema::api::CssInJsBehavior
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum CssInJsBehavior { #[default] Facade, FacadeOnlyCssFiles, AutoOnlyCssFiles }
-
-/// Local stand-in for `bun_resolver::fs::Path`. The resolver crate is a
-/// sibling tier-4 crate and pulling it in would risk a dependency cycle;
-/// `Options.source_path` is only ever forwarded, never inspected, so an
-/// opaque newtype suffices for now.
-// TODO(b2-blocked): bun_resolver::fs::Path
-#[derive(Clone, Default)]
-pub struct FsPath(());
+/// `fs.Path` from `src/resolver/fs.zig`. The resolver crate is a sibling
+/// tier-4 crate; the canonical struct was MOVED DOWN to `bun_paths::fs::Path`
+/// so both the resolver and the printer can name it without a dep cycle.
+pub use bun_paths::fs::Path as FsPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — Phase-A draft in `renamer.rs`. The five former `Box::leak` sites
@@ -1101,8 +1089,7 @@ pub struct Options<'a> {
     pub indent: Indentation,
     pub runtime_imports: runtime::Imports,
     pub module_hash: u32,
-    // TODO(b2-blocked): bun_resolver::fs::Path — `FsPath` is a local stand-in.
-    pub source_path: Option<FsPath>,
+    pub source_path: Option<FsPath<'a>>,
     // allocator: dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,

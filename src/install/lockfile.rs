@@ -2963,14 +2963,7 @@ impl Lockfile {
                 buf: bytes,
                 resolutions,
             };
-            alphabetized_names.sort_by(|a, b| {
-                if alphabetizer.is_alphabetical(*a, *b) {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                }
-            });
-            // PERF(port): Zig used pdqsort — profile in Phase B.
+            alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
         }
 
         string_builder.allocate().expect("unreachable");

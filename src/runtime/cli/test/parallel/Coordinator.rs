@@ -689,20 +689,6 @@ pub mod abort_handler {
 
     pub static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
-    /// RAII scope for the SIGINT/SIGTERM (or ConsoleCtrl) handler: returned by
-    /// `install()`, restores the previous handlers on drop. `abort_all()` may
-    /// also call `uninstall()` explicitly before process exit; that path never
-    /// unwinds back to drop this guard, so the handlers are restored exactly
-    /// once on every exit path.
-    #[must_use = "dropping immediately uninstalls the handler"]
-    pub struct Installed(());
-
-    impl Drop for Installed {
-        fn drop(&mut self) {
-            uninstall();
-        }
-    }
-
     #[cfg(unix)]
     static mut PREV_INT: MaybeUninit<libc::sigaction> = MaybeUninit::uninit();
     #[cfg(unix)]

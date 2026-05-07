@@ -1824,12 +1824,8 @@ pub fn generate_network_task_for_tarball<'a>(
             .unwrap()
             .patchfile_hash()
             .unwrap();
-        // BACKREF: `PatchTask<'a>` carries `manager: &'a PackageManager`, but the
-        // task is stored long-term inside `NetworkTask` (which models it as
-        // `'static`). Erase the lifetime at the raw-pointer boundary so the
-        // borrow on `this` ends here — matches the Zig back-pointer semantics.
-        let task: *mut PatchTask<'static> =
-            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h).cast();
+        let task: *mut PatchTask =
+            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
         // SAFETY: `task` is a fresh non-null `Box::into_raw` from
         // `new_apply_patch_hash`; we hold the only reference.
         if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {

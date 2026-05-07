@@ -617,7 +617,7 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask<'static>) {
+pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task: 0x{:x} {}",
@@ -634,7 +634,7 @@ pub fn enqueue_patch_task(this: &mut PackageManager, task: *mut PatchTask<'stati
 }
 
 /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
-pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask<'static>) {
+pub fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut PatchTask) {
     bun_output::scoped_log!(
         PackageManager,
         "Enqueue patch task pre: 0x{:x} {}",
@@ -1771,10 +1771,7 @@ fn enqueue_git_clone(
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                // The `'a` BACKREF on `PatchTask` is the singleton
-                // `PackageManager`, which outlives every task — erase to
-                // `'static` to match the `Task<'static>` slot lifetime.
-                let mut pt = Box::from_raw(pt.cast::<PatchTask<'static>>());
+                let mut pt = Box::from_raw(pt);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -1853,10 +1850,7 @@ pub fn enqueue_git_checkout(
                     .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
-                // The `'a` BACKREF on `PatchTask` is the singleton
-                // `PackageManager`, which outlives every task — erase to
-                // `'static` to match the `Task<'static>` slot lifetime.
-                let mut pt = Box::from_raw(pt.cast::<PatchTask<'static>>());
+                let mut pt = Box::from_raw(pt);
                 pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
@@ -1996,9 +1990,7 @@ pub enum ResolvedPackageTask {
     NetworkTask(*mut NetworkTask),
 
     /// Apply patch task or calc patch hash task
-    // PORT NOTE: PatchTask carries a `&'a PackageManager` BACKREF; the singleton
-    // outlives every task, so callers route through `'static`.
-    PatchTask(*mut PatchTask<'static>),
+    PatchTask(*mut PatchTask),
 }
 
 pub struct ResolvedPackageResult {
@@ -2759,6 +2751,203 @@ fn resolution_satisfies_dependency(
     }
 
     false
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `impl PackageManager` — inherent-method facade over the free fns above.
+//
+// Zig mounts this file via `usingnamespace`, so `pkg_manager.enqueueX(...)`
+// resolves to these free fns by first-arg-is-`*Self` UFCS. Rust has no
+// `usingnamespace`; sibling files (PackageManagerLifecycle, …Directories,
+// runTasks) all expose an `impl PackageManager` block instead. Match that
+// pattern here so cross-file callers can keep the `.method()` shape.
+// ──────────────────────────────────────────────────────────────────────────
+
+impl PackageManager {
+    #[inline]
+    pub fn enqueue_dependency_with_main(
+        &mut self,
+        id: DependencyID,
+        dependency: &Dependency,
+        resolution: PackageID,
+        install_peer: bool,
+    ) -> Result<(), bun_core::Error> {
+        enqueue_dependency_with_main(self, id, dependency, resolution, install_peer)
+    }
+
+    #[inline]
+    pub fn enqueue_dependency_with_main_and_success_fn(
+        &mut self,
+        id: DependencyID,
+        dependency: &Dependency,
+        resolution: PackageID,
+        install_peer: bool,
+        success_fn: SuccessFn,
+        fail_fn: Option<FailFn>,
+    ) -> Result<(), bun_core::Error> {
+        enqueue_dependency_with_main_and_success_fn(
+            self,
+            id,
+            dependency,
+            resolution,
+            install_peer,
+            success_fn,
+            fail_fn,
+        )
+    }
+
+    #[inline]
+    pub fn enqueue_dependency_list(&mut self, dependencies_list: Lockfile::DependencySlice) {
+        enqueue_dependency_list(self, dependencies_list)
+    }
+
+    #[inline]
+    pub fn enqueue_tarball_for_download(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        url: &[u8],
+        task_context: TaskCallbackContext,
+        patch_name_and_version_hash: Option<u64>,
+    ) -> Result<(), EnqueueTarballForDownloadError> {
+        enqueue_tarball_for_download(
+            self,
+            dependency_id,
+            package_id,
+            url,
+            task_context,
+            patch_name_and_version_hash,
+        )
+    }
+
+    #[inline]
+    pub fn enqueue_tarball_for_reading(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        alias: &[u8],
+        resolution: &Resolution,
+        task_context: TaskCallbackContext,
+    ) {
+        enqueue_tarball_for_reading(
+            self,
+            dependency_id,
+            package_id,
+            alias,
+            resolution,
+            task_context,
+        )
+    }
+
+    #[inline]
+    pub fn enqueue_git_for_checkout(
+        &mut self,
+        dependency_id: DependencyID,
+        alias: &[u8],
+        resolution: &Resolution,
+        task_context: TaskCallbackContext,
+        patch_name_and_version_hash: Option<u64>,
+    ) {
+        enqueue_git_for_checkout(
+            self,
+            dependency_id,
+            alias,
+            resolution,
+            task_context,
+            patch_name_and_version_hash,
+        )
+    }
+
+    #[inline]
+    pub fn enqueue_package_for_download(
+        &mut self,
+        name: &[u8],
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        version: Semver::Version,
+        url: &[u8],
+        task_context: TaskCallbackContext,
+        patch_name_and_version_hash: Option<u64>,
+    ) -> Result<(), EnqueuePackageForDownloadError> {
+        enqueue_package_for_download(
+            self,
+            name,
+            dependency_id,
+            package_id,
+            version,
+            url,
+            task_context,
+            patch_name_and_version_hash,
+        )
+    }
+
+    #[inline]
+    pub fn enqueue_dependency_to_root(
+        &mut self,
+        name: &[u8],
+        version: &dependency::Version,
+        version_buf: &[u8],
+        behavior: Behavior,
+    ) -> DependencyToEnqueue {
+        enqueue_dependency_to_root(self, name, version, version_buf, behavior)
+    }
+
+    #[inline]
+    pub fn enqueue_network_task(&mut self, task: *mut NetworkTask) {
+        enqueue_network_task(self, task)
+    }
+
+    #[inline]
+    pub fn enqueue_patch_task(&mut self, task: *mut PatchTask) {
+        enqueue_patch_task(self, task)
+    }
+
+    #[inline]
+    pub fn enqueue_patch_task_pre(&mut self, task: *mut PatchTask) {
+        enqueue_patch_task_pre(self, task)
+    }
+
+    #[inline]
+    pub fn enqueue_parse_npm_package(
+        &mut self,
+        task_id: Task::Id,
+        name: StringOrTinyString,
+        network_task: *mut NetworkTask,
+    ) -> *mut ThreadPool::Task {
+        enqueue_parse_npm_package(self, task_id, name, network_task)
+    }
+
+    #[inline]
+    pub fn enqueue_extract_npm_package(
+        &mut self,
+        tarball: ExtractTarball,
+        network_task: *mut NetworkTask,
+    ) -> *mut ThreadPool::Task {
+        enqueue_extract_npm_package(self, tarball, network_task)
+    }
+
+    #[inline]
+    pub fn enqueue_git_checkout(
+        &mut self,
+        task_id: Task::Id,
+        dir: Fd,
+        dependency_id: DependencyID,
+        name: &[u8],
+        resolution: Resolution,
+        resolved: &[u8],
+        patch_name_and_version_hash: Option<u64>,
+    ) -> *mut ThreadPool::Task {
+        enqueue_git_checkout(
+            self,
+            task_id,
+            dir,
+            dependency_id,
+            name,
+            resolution,
+            resolved,
+            patch_name_and_version_hash,
+        )
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

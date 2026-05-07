@@ -40,7 +40,7 @@ pub struct Task<'a> {
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`
     pub package_manager: *const PackageManager,
     /// default: `None`
-    pub apply_patch_task: Option<Box<PatchTask<'a>>>,
+    pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
     pub next: *mut Task<'a>,

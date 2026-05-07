@@ -246,14 +246,14 @@ impl<'a> Installer<'a> {
         );
         // SAFETY: `new_apply_patch_hash` returns a freshly Box-allocated PatchTask;
         // sole ownership lives in this scope. Mirrors Zig `defer patch_task.deinit()`.
-        struct PatchTaskGuard(*mut install::PatchTask<'static>);
+        struct PatchTaskGuard(*mut install::PatchTask);
         impl Drop for PatchTaskGuard {
             fn drop(&mut self) {
                 // SAFETY: exclusive owner; created by `Box::into_raw` in `new_*`.
                 unsafe { install::PatchTask::destroy(self.0) };
             }
         }
-        let _guard = PatchTaskGuard(patch_task_ptr.cast());
+        let _guard = PatchTaskGuard(patch_task_ptr);
         // SAFETY: exclusive owner — see above.
         let patch_task = unsafe { &mut *patch_task_ptr };
         bun_core::handle_oom(patch_task.apply());

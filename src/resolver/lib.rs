@@ -1684,9 +1684,9 @@ pub mod fs {
         }
 
         /// Port of `RealFS.kind` in `fs.zig` — lstat + (if symlink) open + fstat +
-        /// readlink to populate an `EntryCache`. POSIX path; the Windows reparse-
-        /// point/`GetFinalPathNameByHandle` arm lives in `fs_full::RealFS::kind`
-        /// and is wired once the inline surface switches over.
+        /// readlink to populate an `EntryCache`. Windows: `GetFileAttributesW` +
+        /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
+        /// realpath.
         pub fn kind(
             &mut self,
             dir_: &[u8],
@@ -1716,13 +1716,82 @@ pub mod fs {
 
             #[cfg(windows)]
             {
-                // TODO(b2-blocked): Windows reparse-point + GetFinalPathNameByHandle
-                // realpath chain — full body in `fs_full::RealFS::kind`. Fall through
-                // to the lstat path which is correct for non-reparse files/dirs.
+                use bun_sys::windows as w;
                 let _ = (existing_fd, store_fd);
-                let stat_ = bun_sys::lstat(absolute_path_c)?;
-                let file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
-                cache.kind = if file_kind == FileKind::Directory { EntryKind::Dir } else { EntryKind::File };
+                let file = bun_sys::get_file_attributes(absolute_path_c)
+                    .ok_or(bun_core::err!("FileNotFound"))?;
+                // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
+                // the link is a directory link (junctions always do; symlinks
+                // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
+                // links and file symlinks don't), so this is already the
+                // correct `Entry.Kind` without following the chain.
+                cache.kind = if file.is_directory { EntryKind::Dir } else { EntryKind::File };
+                if !file.is_reparse_point {
+                    return Ok(cache);
+                }
+
+                // For the realpath, open the path and let the kernel follow
+                // every hop, then `GetFinalPathNameByHandle` (same as libuv's
+                // `uv_fs_realpath`). The previous manual readlink+join loop
+                // resolved relative targets against `dirname(absolute_path_c)`,
+                // but that path may itself contain unresolved intermediate
+                // symlinks (e.g. with the isolated linker's global virtual
+                // store, `node_modules/.bun/<pkg>` is a symlink into
+                // `<cache>/links/`, and the dep symlinks inside point at
+                // siblings via `..\..\<dep>-<hash>`). Windows resolves
+                // relative reparse targets against the *real* parent, so the
+                // join landed in the project-side `.bun/` instead of
+                // `<cache>/links/`, the re-stat returned FileNotFound, the
+                // error was swallowed at `Entry.kind`, and a directory symlink
+                // was permanently misclassified as `.file` — surfacing as
+                // EISDIR at module load time.
+                let mut wbuf = bun_paths::w_path_buffer_pool::get();
+                let wpath = bun_string::strings::to_kernel32_path(&mut wbuf.0[..], absolute_path_c.as_bytes());
+                // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
+                let handle = unsafe {
+                    w::CreateFileW(
+                        wpath.as_ptr(),
+                        0,
+                        w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                        core::ptr::null_mut(),
+                        w::OPEN_EXISTING,
+                        // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                        // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                        // follow the full reparse chain to the final target.
+                        w::FILE_FLAG_BACKUP_SEMANTICS,
+                        core::ptr::null_mut(),
+                    )
+                };
+                // Dangling link / loop / EACCES: `cache.kind` is already set
+                // from the link's own directory bit, which is correct for all
+                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
+                // fall back to the `.file` placeholder anyway, so returning
+                // the half-populated cache is strictly better than `try`.
+                // Empty `cache.symlink` makes the resolver fall back to
+                // `parent.abs_real_path + base`.
+                if handle == w::INVALID_HANDLE_VALUE {
+                    return Ok(cache);
+                }
+                scopeguard::defer! {
+                    // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
+                    unsafe { let _ = w::CloseHandle(handle); }
+                }
+
+                // SAFETY: all-zero is a valid BY_HANDLE_FILE_INFORMATION (POD).
+                let mut info: w::BY_HANDLE_FILE_INFORMATION = unsafe { core::mem::zeroed() };
+                // SAFETY: `handle` is valid; `info` is a valid out-param.
+                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                    cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+                        EntryKind::Dir
+                    } else {
+                        EntryKind::File
+                    };
+                }
+
+                let mut buf2 = bun_paths::path_buffer_pool::get();
+                if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
+                    cache.symlink = PathString::init(FilenameStore::instance().append_slice(real)?);
+                }
                 return Ok(cache);
             }
 
@@ -1866,10 +1935,37 @@ pub mod fs {
 
             #[cfg(target_os = "windows")]
             {
-                // TODO(b2-blocked): Windows fallback chain (SYSTEMROOT/WINDIR/HOME/getcwd)
-                // requires owned-static storage; deferred to avoid Box::leak (forbidden).
-                // Zig: fs.zig:556-578.
-                return b"C:\\Windows\\Temp";
+                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
+                // The computed path borrows env-var storage joined with a literal,
+                // so it must own its buffer. This runs once for the process via
+                // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
+                // the allowed process-lifetime singleton (PORTING.md §Forbidden
+                // exception), not a per-call leak.
+                static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+                return OWNED.get_or_init(|| {
+                    if let Some(windir) = env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get()) {
+                        let mut out = bun_string::strings::without_trailing_slash(windir).to_vec();
+                        out.extend_from_slice(b"\\Temp");
+                        return out;
+                    }
+                    if let Some(profile) = env_var::HOME.get() {
+                        let mut buf = bun_paths::PathBuffer::uninit();
+                        let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
+                        let out = bun_paths::resolve_path::join_abs_string_buf::<
+                            bun_paths::resolve_path::platform::Loose,
+                        >(profile, &mut buf[..], &parts);
+                        return out.to_vec();
+                    }
+                    let mut tmp_buf = bun_paths::PathBuffer::uninit();
+                    let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
+                        Ok(len) => &tmp_buf[..len],
+                        Err(_) => panic!("Failed to get cwd for platformTempDir"),
+                    };
+                    let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
+                    let mut out = bun_string::strings::without_trailing_slash(root).to_vec();
+                    out.extend_from_slice(b"\\Windows\\Temp");
+                    out
+                }).as_slice();
             }
             #[cfg(target_os = "macos")]
             {
@@ -2883,9 +2979,31 @@ mod bun_paths {
     pub fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts))
     }
-    /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Type-only
-    /// here; callers pass it to `open_dir_z` which wants a `&ZStr`.
-    pub fn path_literal(p: &'static [u8]) -> &'static [u8] { p }
+    /// Zig `bun.pathLiteral` — compile-time platform-separator literal. Zig
+    /// rewrites `/` → `\` at comptime; Rust can't transform a borrowed
+    /// `&'static [u8]` in a const fn, so this is a macro that emits a fresh
+    /// const array with the swap applied. Result is `&'static [u8; N]`
+    /// (coerces to `&[u8]`).
+    #[macro_export]
+    #[doc(hidden)]
+    macro_rules! __resolver_path_literal {
+        ($p:expr) => {{
+            const __IN: &[u8] = $p;
+            const __N: usize = __IN.len();
+            const fn __swap(input: &[u8]) -> [u8; __N] {
+                let mut out = [0u8; __N];
+                let mut i = 0;
+                while i < __N {
+                    out[i] = if cfg!(windows) && input[i] == b'/' { b'\\' } else { input[i] };
+                    i += 1;
+                }
+                out
+            }
+            const __OUT: [u8; __N] = __swap(__IN);
+            &__OUT
+        }};
+    }
+    pub use __resolver_path_literal as path_literal;
     pub fn windows_filesystem_root(p: &[u8]) -> &[u8] {
         ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
@@ -4004,9 +4122,13 @@ pub struct Resolver<'a> {
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. Set by `bun_install` (or lazily
-    /// via [`INIT_AUTO_INSTALLER`]); when `None`, [`use_package_manager`] is
-    /// `false` and the auto-install path is unreachable.
+    /// below `bun_install` in the dep graph. The runtime/bundler that enables
+    /// auto-install (`opts.global_cache != .disable`) is responsible for
+    /// constructing the `PackageManager` (Zig: `PackageManager.initWithRuntime`)
+    /// and assigning it here BEFORE resolution; the resolver no longer
+    /// constructs it lazily — that would require depending on `bun_install`,
+    /// which depends on us. When `None`, [`get_package_manager`] panics if the
+    /// auto-install path is reached.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Spec resolver.zig:477 `env_loader: ?*DotEnv.Loader` — raw nullable pointer.
@@ -4194,33 +4316,23 @@ impl<'a> Resolver<'a> {
         self.dir_cache
     }
 
-    /// Port of resolver.zig `getPackageManager`. Lazily constructs the
-    /// auto-install backend via the `bun_install_types::INIT_AUTO_INSTALLER`
-    /// hook (which `bun_install` registers at startup and which is itself
-    /// responsible for `HTTPThread::init`). Only reached from the auto-install
-    /// path (`load_node_modules` global-cache block) when
+    /// Port of resolver.zig `getPackageManager`. The Zig spec lazily calls
+    /// `PackageManager.initWithRuntime` here; in the Rust crate graph that
+    /// would be a `bun_resolver → bun_install` cycle, so the
+    /// runtime/bundler (the one place that flips `opts.global_cache` on) is
+    /// responsible for constructing the `PackageManager`, wiring its
+    /// `on_wake` handler, and assigning [`Self::package_manager`] BEFORE the
+    /// first resolve. This accessor only unwraps that field. Reached from the
+    /// auto-install path (`load_node_modules` global-cache block) when
     /// [`use_package_manager`] is `true`.
     pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
-        if let Some(pm) = self.package_manager {
-            return pm.as_ptr();
-        }
-        // `use_package_manager()` returned `true`, so the hook must be
-        // registered (it is set alongside `opts.global_cache` by bun_install).
-        let init = Install::INIT_AUTO_INSTALLER
-            .read()
-            .expect("auto-install enabled but bun_install did not register INIT_AUTO_INSTALLER");
-        let pm = init(
-            self.log(),
-            self.opts.install,
-            // SAFETY: env_loader is set whenever auto-install is enabled
-            // (Transpiler::init wires both); cast to opaque for the hook ABI.
-            self.env_loader.unwrap().cast(),
-        );
-        // SAFETY: pm is a process-lifetime allocation owned by PackageManager
-        // itself (Zig: `bun.TrivialNew`); it outlives the resolver.
-        unsafe { pm.as_ptr().as_mut().unwrap() }.set_on_wake(self.on_wake_package_manager.clone());
-        self.package_manager = Some(pm);
-        pm.as_ptr()
+        self.package_manager
+            .expect(
+                "auto-install enabled (opts.global_cache) but Resolver.package_manager was not \
+                 set; the caller that enabled auto-install must construct PackageManager \
+                 (initWithRuntime) and assign it before resolving",
+            )
+            .as_ptr()
     }
 
     #[inline]
@@ -6962,17 +7074,27 @@ impl<'a> Resolver<'a> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: i32 = 1;
-        dir_info_uncached_path_buf[..input_path.len()].copy_from_slice(input_path);
-        // SAFETY: threadlocal buffer outlives this fn; len ≤ MAX_PATH_BYTES checked above
-        let path: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(dir_info_uncached_path_buf.as_mut_ptr(), input_path.len()) };
+        let input_path_len = input_path.len();
+        dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
+        // SAFETY: threadlocal buffer outlives this fn; len + 1 ≤ MAX_PATH_BYTES (PathBuffer
+        // always has the +1 sentinel slot). The slice spans one byte past the copied
+        // path so the NUL-splice/restore at `input_path_len` (queue index 0, processed
+        // last in the open-dir loop below) writes through `path`'s own provenance.
+        // Narrowing to exactly `input_path_len` would make that write one-past-end of
+        // the slice tag — UB under Stacked Borrows even though the underlying buffer
+        // is larger (Zig's `path.ptr[len]` carries full-buffer provenance; Rust's
+        // `from_raw_parts_mut` does not).
+        let path: &mut [u8] = unsafe {
+            core::slice::from_raw_parts_mut(dir_info_uncached_path_buf.as_mut_ptr(), input_path_len + 1)
+        };
 
         bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
             result: top_result,
-            unsafe_path: path as *const [u8],
+            unsafe_path: &path[..input_path_len] as *const [u8],
             safe_path: b"" as *const [u8],
             fd: FD::INVALID,
         });
-        let mut top = Dirname::dirname(path);
+        let mut top = Dirname::dirname(&path[..input_path_len]);
 
         let mut top_parent = allocators::Result {
             index: allocators::NOT_FOUND,
@@ -7141,12 +7263,16 @@ impl<'a> Resolver<'a> {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
                     // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
-                    let prev_char = path[queue_top_unsafe_path.len()..].first().copied().unwrap_or(0);
-                    // SAFETY: path is &mut into the threadlocal buffer; index in-bounds (≤ input_path.len()).
-                    // Snapshot the raw byte pointer so the `restore` guard captures only
-                    // a Copy `*mut u8` and `path` stays reborrowable below.
+                    // `queue_top_unsafe_path.len()` is ≤ `input_path_len` < `path.len()` for
+                    // every queue item, so this indexes in-bounds (the +1 sentinel slot for
+                    // queue index 0 — see the `path` construction above).
+                    let prev_char = path[queue_top_unsafe_path.len()];
+                    // SAFETY: `path` is a `&mut` into the threadlocal buffer spanning
+                    // `input_path_len + 1` bytes; offset is in-bounds (see above). Snapshot
+                    // the raw byte pointer so the restore below captures only a Copy
+                    // `*mut u8` and `path` stays reborrowable for `ZStr::from_raw`.
                     let restore_at: *mut u8 = unsafe { path.as_mut_ptr().add(queue_top_unsafe_path.len()) };
-                    // SAFETY: `restore_at` is in-bounds of the threadlocal path buffer.
+                    // SAFETY: `restore_at` is in-bounds of `path` (see above).
                     unsafe { *restore_at = 0 };
                     // SAFETY: NUL written above
                     let sentinel = unsafe { bun_core::ZStr::from_raw(path.as_ptr(), queue_top_unsafe_path.len()) };
@@ -8508,7 +8634,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         // TODO(port): std.fs.Dir.openDirZ → bun_sys
-                        let Ok(file) = bun_sys::open_dir_z(fd, bun_paths::path_literal(b"node_modules/.bin"), Default::default()) else {
+                        let Ok(file) = bun_sys::open_dir_z(fd, bun_paths::path_literal!(b"node_modules/.bin"), Default::default()) else {
                             break 'append_bin_dir;
                         };
                         let _close = bun_sys::CloseOnDrop::new(file);

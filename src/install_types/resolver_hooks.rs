@@ -1413,16 +1413,3 @@ pub trait PackageJsonView {
     fn os(&self) -> OperatingSystem;
     fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_>;
 }
-
-/// Factory hook installed by `bun_install` so the resolver can lazily
-/// construct a `PackageManager` (Zig: `PackageManager.initWithRuntime`). When
-/// `None`, auto-install is unavailable and the resolver's
-/// `use_package_manager()` short-circuits.
-pub type InitAutoInstaller = fn(
-    log: *mut bun_logger::Log,
-    install_opts: *const (),
-    env_loader: NonNull<c_void>,
-) -> NonNull<dyn AutoInstaller>;
-
-pub static INIT_AUTO_INSTALLER: parking_lot::RwLock<Option<InitAutoInstaller>> =
-    parking_lot::RwLock::new(None);

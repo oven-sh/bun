@@ -329,10 +329,9 @@ pub type FolderResolutionMap = HashMap<u64, FolderResolution /* , IdentityContex
 type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
-type PatchTaskFifo =
-    LinearFifo<*mut PatchTask<'static>, StaticBuffer<*mut PatchTask<'static>, 32>>;
+type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
-pub type PatchTaskQueue = UnboundedQueue<PatchTask<'static> /* , .next */>;
+pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);

@@ -1665,6 +1665,7 @@ impl Package<u64> {
     fn parse_dependency(
         workspace_paths: &mut lockfile::NameHashMap,
         workspace_versions: &mut lockfile::VersionHashMap,
+        duplicate_checker_map: &mut lockfile::DuplicateCheckerMap,
         pm: &mut PackageManager,
         log: &mut logger::Log,
         source: &logger::Source,
@@ -1712,7 +1713,13 @@ impl Package<u64> {
             string_builder.append::<String>(version)
         };
 
-        let buf = string_builder.string_bytes.as_slice();
+        // PORT NOTE: `buf` aliases `string_builder.string_bytes` while later
+        // `string_builder.append()` calls write into the *pre-reserved* tail
+        // (`allocate()` ran before this fn). No realloc occurs, so the raw
+        // pointer stays valid; a `&[u8]` would needlessly lock the builder.
+        let buf_ptr: *const [u8] = string_builder.string_bytes.as_slice();
+        // SAFETY: see note above — capacity was reserved by `allocate()`.
+        let buf: &[u8] = unsafe { &*buf_ptr };
         let sliced = external_version.sliced(buf);
 
         let mut dependency_version = Dependency::parse_with_optional_tag(
@@ -1984,10 +1991,7 @@ impl Package<u64> {
             && !group.behavior.is_workspace()
         {
             // PERF(port): was assume_capacity
-            let entry = lockfile
-                .scratch
-                .duplicate_checker_map
-                .get_or_put(external_alias.hash)?;
+            let entry = duplicate_checker_map.get_or_put(external_alias.hash)?;
             if entry.found_existing {
                 // duplicate dependencies are allowed in optionalDependencies
                 if group.behavior.is_optional() {
@@ -2568,12 +2572,16 @@ impl Package<u64> {
                                 if cfg!(debug_assertions) {
                                     debug_assert!(i == extern_strings.len());
                                 }
+                                // PORT NOTE: Zig passed the full extern_strings
+                                // buffer + tail subslice; `init` only needs the
+                                // tail's offset, so construct directly to avoid
+                                // the aliasing borrow.
                                 self.bin = Bin {
                                     tag: bin::Tag::Map,
                                     value: bin::Value {
-                                        map: ExternalStringList::init(
-                                            lockfile.buffers.extern_strings.as_slice(),
-                                            extern_strings,
+                                        map: ExternalStringList::new(
+                                            current_len as u32,
+                                            extern_strings.len() as u32,
                                         ),
                                     },
                                     ..Default::default()
@@ -2784,6 +2792,7 @@ impl Package<u64> {
                     if let Some(dep_) = Self::parse_dependency(
                         &mut lockfile.workspace_paths,
                         &mut lockfile.workspace_versions,
+                        &mut lockfile.scratch.duplicate_checker_map,
                         pm,
                         log,
                         source,
@@ -2806,13 +2815,13 @@ impl Package<u64> {
                             dep.behavior = dep.behavior.add(Behavior::OPTIONAL);
                         }
 
-                        package_dependencies[total_dependencies_count as usize] = dep;
-                        total_dependencies_count += 1;
-
                         // SAFETY: `parse_dependency` was called with
                         // `Tag::Workspace`, so `dep.version.value.workspace`
                         // is the active union member.
                         let ws_path = unsafe { dep.version.value.workspace };
+                        package_dependencies[total_dependencies_count as usize] = dep;
+                        total_dependencies_count += 1;
+
                         lockfile.workspace_paths.put(external_name.hash, ws_path)?;
                         if let Some(version) = workspace_version {
                             lockfile
@@ -2835,6 +2844,7 @@ impl Package<u64> {
                                 if let Some(dep_) = Self::parse_dependency(
                                     &mut lockfile.workspace_paths,
                                     &mut lockfile.workspace_versions,
+                                    &mut lockfile.scratch.duplicate_checker_map,
                                     pm,
                                     log,
                                     source,
@@ -2895,6 +2905,7 @@ impl Package<u64> {
             if let Some(dep_) = Self::parse_dependency(
                 &mut lockfile.workspace_paths,
                 &mut lockfile.workspace_versions,
+                &mut lockfile.scratch.duplicate_checker_map,
                 pm,
                 log,
                 source,
@@ -2953,9 +2964,15 @@ impl Package<u64> {
 
         // This function depends on package.dependencies being set, so it is done at the very end.
         if FEATURES.is_main {
-            lockfile
-                .overrides
-                .parse_append(pm, lockfile, self, log, source, json, &mut string_builder)?;
+            lockfile.overrides.parse_append(
+                pm,
+                lockfile.buffers.dependencies.as_slice(),
+                self,
+                log,
+                source,
+                json,
+                &mut string_builder,
+            )?;
 
             let mut found_any_catalog_or_catalog_object = false;
             let mut has_workspaces = false;

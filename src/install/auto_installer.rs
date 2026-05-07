@@ -125,7 +125,7 @@ impl hooks::AutoInstaller for PackageManager {
             .map_err(Into::into)
     }
 
-    fn lockfile_str(&self, s: &SemverString) -> &[u8] {
+    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
         self.lockfile.str(s)
     }
 
@@ -377,10 +377,6 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
-        tag_to_hooks(dependency::Tag::infer(dep))
-    }
-
-    fn dependency_version_is_exact_npm(&self, v: &hooks::DependencyVersion) -> bool {
-        v.npm().map(|n| n.version.is_exact()).unwrap_or(false)
+        tag_to_hooks(<dependency::Tag as dependency::TagExt>::infer(dep))
     }
 }

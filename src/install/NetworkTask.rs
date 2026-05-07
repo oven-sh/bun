@@ -61,8 +61,7 @@ pub struct NetworkTask {
     /// Key in patchedDependencies in package.json
     // PORT NOTE: `'static` because NetworkTask is stored lifetime-less in
     // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
-    // `&PackageManager` that outlives the task.
-    pub apply_patch_task: Option<Box<PatchTask<'static>>>,
+    pub apply_patch_task: Option<Box<PatchTask>>,
     pub next: *mut NetworkTask,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
@@ -834,7 +833,7 @@ impl NetworkTask {
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
         package_manager: *const PackageManager,
-        apply_patch_task: Option<Box<PatchTask<'static>>>,
+        apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
         unsafe {

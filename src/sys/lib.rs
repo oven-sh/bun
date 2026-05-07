@@ -4304,6 +4304,42 @@ pub fn openat_windows_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<F
 
 // ── existence checks ──
 
+/// Port of sys.zig `WindowsFileAttributes` — view over the `DWORD` returned
+/// by `GetFileAttributesW`. Only the two bits the resolver inspects are
+/// surfaced as fields (matching the Zig packed-struct field names) so callers
+/// can write `attrs.is_directory` / `attrs.is_reparse_point`.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct WindowsFileAttributes {
+    pub is_directory: bool,
+    pub is_reparse_point: bool,
+    /// Raw `dwFileAttributes` for callers that need other bits.
+    pub raw: u32,
+}
+
+/// Port of sys.zig:3424 `getFileAttributes`. Accepts a UTF-8 path (the
+/// resolver only ever calls it with one); the wide-path arm is the
+/// `GetFileAttributesW` body inlined. Returns `None` on
+/// `INVALID_FILE_ATTRIBUTES`.
+#[cfg(windows)]
+pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let wpath = bun_str::strings::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
+    // Win32 API does file path normalization, so we do not need the valid path assertion here.
+    // SAFETY: `wpath` is NUL-terminated UTF-16 produced by `to_kernel32_path`.
+    let dword = unsafe { w::GetFileAttributesW(wpath.as_ptr()) };
+    syslog!("GetFileAttributesW({}) = {}", bun_core::fmt::utf16(wpath.as_slice()), dword);
+    if dword == windows::INVALID_FILE_ATTRIBUTES {
+        return None;
+    }
+    Some(WindowsFileAttributes {
+        is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        raw: dword,
+    })
+}
+
 /// sys.zig:3447 — `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))] {

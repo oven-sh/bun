@@ -121,7 +121,7 @@ impl OverrideMap {
     pub fn parse_append(
         &mut self,
         pm: &mut PackageManager,
-        lockfile: &mut Lockfile,
+        lockfile_dependencies: &[Dependency],
         root_package: &Package,
         log: &mut logger::Log,
         json_source: &logger::Source,
@@ -130,9 +130,9 @@ impl OverrideMap {
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0); // only call parse once
         if let Some(overrides) = expr.as_property(b"overrides") {
-            self.parse_from_overrides(pm, lockfile, root_package, json_source, log, overrides.expr, builder)?;
+            self.parse_from_overrides(pm, lockfile_dependencies, root_package, json_source, log, overrides.expr, builder)?;
         } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            self.parse_from_resolutions(pm, lockfile, root_package, json_source, log, resolutions.expr, builder)?;
+            self.parse_from_resolutions(pm, lockfile_dependencies, root_package, json_source, log, resolutions.expr, builder)?;
         }
         scoped_log!(OverrideMap, "parsed {} overrides", self.map.count());
         Ok(())
@@ -142,7 +142,7 @@ impl OverrideMap {
     pub fn parse_from_overrides(
         &mut self,
         pm: &mut PackageManager,
-        lockfile: &mut Lockfile,
+        lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &logger::Source,
         log: &mut logger::Log,
@@ -200,7 +200,7 @@ impl OverrideMap {
 
             if let Some(version) = parse_override_value(
                 "override",
-                lockfile,
+                lockfile_dependencies,
                 pm,
                 root_package,
                 source,
@@ -221,7 +221,7 @@ impl OverrideMap {
     pub fn parse_from_resolutions(
         &mut self,
         pm: &mut PackageManager,
-        lockfile: &mut Lockfile,
+        lockfile_dependencies: &[Dependency],
         root_package: &Package,
         source: &logger::Source,
         log: &mut logger::Log,
@@ -274,7 +274,7 @@ impl OverrideMap {
 
             if let Some(version) = parse_override_value(
                 "resolution",
-                lockfile,
+                lockfile_dependencies,
                 pm,
                 root_package,
                 source,
@@ -296,7 +296,11 @@ impl OverrideMap {
 // Only used in warning-message formatting, so runtime &'static str is fine.
 pub fn parse_override_value(
     field: &'static str,
-    lockfile: &mut Lockfile,
+    // PORT NOTE: Zig took `*Lockfile` but only read `buffers.dependencies` and
+    // `buffers.string_bytes`. Callers hold a live `StringBuilder` (which owns
+    // `&mut string_bytes`), so accept the dependency slice directly and read
+    // string-bytes through `builder.string_bytes`.
+    lockfile_dependencies: &[Dependency],
     package_manager: &mut PackageManager,
     root_package: &Package,
     source: &logger::Source,
@@ -321,9 +325,9 @@ pub fn parse_override_value(
         let ref_name_str = SemverString::init(ref_name, ref_name);
         let pkg_deps: &[Dependency] = root_package
             .dependencies
-            .get(lockfile.buffers.dependencies.as_slice());
+            .get(lockfile_dependencies);
         for dep in pkg_deps {
-            if dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.as_slice(), ref_name) {
+            if dep.name.eql(ref_name_str, builder.string_bytes.as_slice(), ref_name) {
                 return Ok(Some(dep.clone()));
             }
         }
@@ -341,7 +345,12 @@ pub fn parse_override_value(
     }
 
     let literal_string = builder.append::<SemverString>(value);
-    let literal_sliced = literal_string.sliced(lockfile.buffers.string_bytes.as_slice());
+    // PORT NOTE: `string_bytes` was pre-reserved by `allocate()`; subsequent
+    // `append` calls don't realloc, so a raw view is sound here while we still
+    // need `&mut builder` for the next `append`.
+    let string_bytes_ptr: *const [u8] = builder.string_bytes.as_slice();
+    // SAFETY: see note above.
+    let literal_sliced = literal_string.sliced(unsafe { &*string_bytes_ptr });
 
     let name_hash = SemverBuilder::string_hash(key);
     let name = builder.append_with_hash::<SemverString>(key, name_hash);

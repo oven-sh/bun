@@ -537,10 +537,18 @@ impl PatchTask {
         };
         // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
         // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. Use a separate scratch buffer for the
-        // latter (Zig aliased the same buffer; the field is "TODO: never read"
-        // per `PackageInstall.zig`).
+        // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
+        // assumes `destination_dir_subpath` is a prefix slice *into*
+        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
+        // `verifyPackageJSONNameAndVersion`). Rust can't express that aliasing
+        // with `&ZStr` + `&mut [u8]`, so use a separate buffer but mirror the
+        // prefix bytes so the invariant holds for any future call that reaches
+        // those paths.
         let mut dest_subpath_buf = [0u8; 1024];
+        dest_subpath_buf[..tempdir_name.len() + 1]
+            .copy_from_slice(tempdir_name.as_bytes_with_nul());
+        // SAFETY: BACKREF — see `manager()`.
+        let lockfile = unsafe { &self.manager().lockfile };
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
@@ -553,7 +561,7 @@ impl PatchTask {
             file_count: 0,
             // dummy value
             node_modules: &dummy_node_modules,
-            lockfile: &self.manager.lockfile,
+            lockfile,
         };
 
         match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
@@ -665,7 +673,7 @@ impl PatchTask {
             return log.add_error_fmt_opts(
                 format_args!(
                     "renaming changes to cache dir: {}",
-                    e.with_path(&patch.cache_dir_subpath)
+                    e.with_path(cache_dir_subpath_z.as_bytes())
                 ),
                 Default::default(),
             );
@@ -692,6 +700,9 @@ impl PatchTask {
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
+                    // SAFETY: BACKREF — read-only lockfile access on the worker
+                    // thread; same contract as the Zig pointer dereference here.
+                    let manager = unsafe { self.manager() };
                     log.add_error_fmt(
                         None,
                         Loc::EMPTY,
@@ -699,13 +710,13 @@ impl PatchTask {
                             "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
                             BStr::new(&calc_hash.patchfile_path),
                             BStr::new(
-                                self.manager
+                                manager
                                     .lockfile
                                     .patched_dependencies
                                     .get(&calc_hash.name_and_version_hash)
                                     .unwrap()
                                     .path
-                                    .slice(&self.manager.lockfile.buffers.string_bytes)
+                                    .slice(&manager.lockfile.buffers.string_bytes)
                             ),
                         ),
                     )
@@ -790,14 +801,12 @@ impl PatchTask {
 
     pub fn notify(&mut self) {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
-        // `patch_task_queue` is `UnboundedQueue<PatchTask<'static>>`; erase the
-        // `'a` (BACKREF lifetime) at the raw-pointer boundary.
-        self.manager
-            .patch_task_queue
-            .push(self as *mut Self as *mut PatchTask<'static>);
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
-        // `wake_raw` only touches atomics / the event loop.
-        unsafe { PackageManager::wake_raw(self.manager as *const _ as *mut PackageManager) };
+        // only touches the lock-free queue and event-loop wake atomics.
+        unsafe {
+            self.manager().patch_task_queue.push(self as *mut Self);
+            PackageManager::wake_raw(self.manager as *mut PackageManager);
+        }
     }
 
     pub fn schedule(&mut self, batch: &mut Batch) {
@@ -805,10 +814,10 @@ impl PatchTask {
     }
 
     pub fn new_calc_patch_hash(
-        manager: &'a mut PackageManager,
+        manager: &mut PackageManager,
         name_and_version_hash: u64,
         state: Option<EnqueueAfterState>,
-    ) -> *mut PatchTask<'a> {
+    ) -> *mut PatchTask {
         let patchdep = manager
             .lockfile
             .patched_dependencies
@@ -832,7 +841,7 @@ impl PatchTask {
                 result: None,
                 logger: Log::init(),
             }),
-            manager: &*manager,
+            manager: manager as *const PackageManager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -846,11 +855,11 @@ impl PatchTask {
     }
 
     pub fn new_apply_patch_hash(
-        pkg_manager: &'a mut PackageManager,
+        pkg_manager: &mut PackageManager,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
-    ) -> *mut PatchTask<'a> {
+    ) -> *mut PatchTask {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
 
         // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
@@ -909,7 +918,7 @@ impl PatchTask {
                 task_id: None,
                 install_context: None,
             }),
-            manager: &*pkg_manager,
+            manager: pkg_manager as *const PackageManager,
             project_dir: FileSystem::instance().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
@@ -944,6 +953,6 @@ use crate::package_manager_task::Id as TaskId;
 // PORT STATUS
 //   source:     src/install/patch_install.zig (593 lines)
 //   confidence: medium
-//   todos:      12
-//   notes:      &'a PackageManager on heap-intrusive struct is awkward; owned-ZStr field type, std.fs.Dir mapping, MultiArrayList column accessors, and Log early-deinit semantics need Phase B attention.
+//   todos:      11
+//   notes:      manager BACKREF stored as *const PackageManager (matches NetworkTask); owned-ZStr field type, std.fs.Dir mapping, and Log early-deinit semantics need Phase B attention.
 // ──────────────────────────────────────────────────────────────────────────

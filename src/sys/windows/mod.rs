@@ -301,6 +301,10 @@ pub fn CreateIoCompletionPort(
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
+pub use bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION;
+pub use bun_windows_sys::externs::OPEN_EXISTING;
+pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
+pub use bun_windows_sys::externs::CreateFileW;
 
 pub use bun_windows_sys::externs::CommandLineToArgvW;
 

@@ -374,6 +374,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_bunfig"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_alloc",
+ "bun_bundler",
+ "bun_clap",
+ "bun_collections",
+ "bun_core",
+ "bun_interchange",
+ "bun_js_parser",
+ "bun_logger",
+ "bun_options_types",
+ "bun_paths",
+ "bun_standalone_graph",
+ "bun_string",
+ "bun_sys",
+ "const_format",
+ "enum-map",
+ "enumset",
+ "libc",
+ "parking_lot",
+ "phf",
+ "scopeguard",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_cares_sys"
 version = "0.0.0"
 dependencies = [
@@ -906,6 +936,7 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_base64",
+ "bun_bunfig",
  "bun_clap",
  "bun_collections",
  "bun_core",
@@ -1176,6 +1207,7 @@ dependencies = [
  "bun_event_loop",
  "bun_hash",
  "bun_http",
+ "bun_http_types",
  "bun_install",
  "bun_io",
  "bun_js_parser",
@@ -1187,6 +1219,7 @@ dependencies = [
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
+ "bun_s3_signing",
  "bun_sha_hmac",
  "bun_simdutf_sys",
  "bun_sourcemap",
@@ -1662,6 +1695,7 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_url",
+ "bun_watcher",
  "bun_wyhash",
  "const_format",
  "enum-map",
@@ -1719,6 +1753,7 @@ dependencies = [
  "bun_brotli",
  "bun_bundler",
  "bun_bundler_jsc",
+ "bun_bunfig",
  "bun_cares_sys",
  "bun_clap",
  "bun_collections",
@@ -1760,6 +1795,7 @@ dependencies = [
  "bun_s3_signing",
  "bun_safety",
  "bun_semver",
+ "bun_semver_jsc",
  "bun_sha_hmac",
  "bun_shell_parser",
  "bun_simdutf_sys",
@@ -1770,6 +1806,7 @@ dependencies = [
  "bun_standalone_graph",
  "bun_string",
  "bun_sys",
+ "bun_sys_jsc",
  "bun_tcc_sys",
  "bun_threading",
  "bun_transpiler",
@@ -1869,6 +1906,7 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
+ "bun_jsc",
  "bun_semver",
  "bun_string",
  "const_format",

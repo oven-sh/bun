@@ -468,6 +468,28 @@ impl<'a> LoadResult<'a> {
             },
         }
     }
+
+    /// Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
+    /// Callers reach this only after `handleLoadLockfileErrors` has exited on
+    /// the `NotFound`/`Err` arms, so the variant is known-`Ok`.
+    #[inline]
+    #[track_caller]
+    pub fn ok(&self) -> &LoadResultOk<'a> {
+        match self {
+            LoadResult::Ok(ok) => ok,
+            _ => unreachable!("LoadResult::ok() on non-Ok variant"),
+        }
+    }
+
+    /// Mutable projection of [`LoadResult::ok`].
+    #[inline]
+    #[track_caller]
+    pub fn ok_mut(&mut self) -> &mut LoadResultOk<'a> {
+        match self {
+            LoadResult::Ok(ok) => ok,
+            _ => unreachable!("LoadResult::ok_mut() on non-Ok variant"),
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

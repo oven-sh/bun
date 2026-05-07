@@ -788,6 +788,11 @@ macro_rules! wrap_host_fn {
 
 mod fields {
     use super::*;
+    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on the
+    // Phase-A `ffi_body::FFI` (real, compiled bodies) — not yet hoisted onto the
+    // canonical `crate::ffi::FFI`. They are static (no `&self`), so type identity
+    // is irrelevant; route to them directly until the two `FFI` structs merge.
+    use super::super::ffi_body::FFI as FfiImpl;
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
     pub fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -795,7 +800,7 @@ mod fields {
         let mut iter = args.slice().iter();
         let object = eat_required(global, &mut iter)?;
         let is_callback = next_eat(&mut iter);
-        FFI::print(global, object, is_callback)
+        FfiImpl::print(global, object, is_callback)
     }
 
     // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
@@ -813,7 +818,7 @@ mod fields {
         let mut iter = args.slice().iter();
         let interface = eat_required(global, &mut iter)?;
         let js_callback = eat_required(global, &mut iter)?;
-        FFI::callback(global, interface, js_callback)
+        FfiImpl::callback(global, interface, js_callback)
     }
 
     // linkSymbols → FFI::link_symbols(global, JSValue) -> JSValue
@@ -821,7 +826,7 @@ mod fields {
         let args = callframe.arguments_old::<1>();
         let mut iter = args.slice().iter();
         let object = eat_required(global, &mut iter)?;
-        Ok(FFI::link_symbols(global, object))
+        Ok(FfiImpl::link_symbols(global, object))
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>

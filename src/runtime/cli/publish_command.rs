@@ -399,13 +399,68 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromWorkspaceError> {
-        // TODO(port): `Lockfile::load_from_cwd` / `LoadResult` variants /
-        // `PackageManager::{log, original_package_json_path}` are unit-stubs
-        // in `bun_install` (gated behind `package_manager_real`, reconciler-6).
-        // The Zig body builds a `pack::Context` from the lockfile load result
-        // and calls `pack::pack::<true>`; gated until upstream stubs widen.
-        let _ = (ctx, manager);
-        todo!("blocked_on: bun_install::Lockfile::load_from_cwd + bun_install::lockfile::LoadResult variants (reconciler-6)")
+        // PORT NOTE: reshaped for borrowck — Zig stack-allocated a `Lockfile`
+        // and freely aliased `*PackageManager` across `loadFromCwd` + the
+        // `pack::Context` borrow. In Rust the lockfile must outlive `'a`
+        // (it's borrowed by `pack::Context.lockfile`), so leak it (single-shot
+        // CLI; freed at process exit).
+        let lockfile: &'a mut Lockfile = Box::leak(Box::<Lockfile>::default());
+        let manager_ptr: *mut PackageManager = manager;
+        // SAFETY: `manager.log` is set once at `PackageManager::init`.
+        let log: &mut logger::Log = unsafe { &mut *manager.log };
+        let load_from_disk_result =
+            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
+
+        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
+            LoadResult::Ok(ok) => Some(&*ok.lockfile),
+            LoadResult::NotFound => None,
+            LoadResult::Err(cause) => 'err: {
+                match cause.step {
+                    LoadStep::OpenFile => {
+                        if cause.value == err!("ENOENT") {
+                            break 'err None;
+                        }
+                        Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
+                    }
+                    LoadStep::ParseFile => {
+                        Output::err_generic("failed to parse lockfile: {}", (cause.value.name(),));
+                    }
+                    LoadStep::ReadFile => {
+                        Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
+                    }
+                    LoadStep::Migrating => {
+                        Output::err_generic("failed to migrate lockfile: {}", (cause.value.name(),));
+                    }
+                }
+
+                if log.has_errors() {
+                    let _ = log.print(Output::error_writer() as *mut _);
+                }
+
+                Global::crash();
+            }
+        };
+
+        // PORT NOTE: capture the package.json path before constructing
+        // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
+        // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
+        let abs_pkg_json =
+            bun_core::ZBox::from_bytes(unsafe { &*manager_ptr }.original_package_json_path.as_bytes());
+
+        let mut pack_ctx = pack::Context {
+            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`; the
+            // overlapping borrow with `lockfile_ref` mirrors Zig's freely-
+            // aliased `*PackageManager`.
+            manager: unsafe { &mut *manager_ptr },
+            command_ctx: ctx,
+            lockfile: lockfile_ref,
+            bundled_deps: Vec::new(),
+            stats: pack::Stats::default(),
+        };
+
+        // `pack::<true>` returns `Some(Context<true>)` on success.
+        Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
+            .expect("pack::<true> always yields a publish context"))
     }
 }
 

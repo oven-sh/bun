@@ -482,7 +482,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             let pkg_json = match manager
                 .workspace_package_json_cache
                 .get_with_path(log, pkg_json_path.slice(), Default::default())
-                .unwrap_result()
+                .unwrap()
             {
                 Ok(j) => j,
                 Err(_) => return Err(invalid_pnpm_lockfile()),
@@ -552,7 +552,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
                     .get_with_path(log, path_buf.slice(), Default::default())
-                    .unwrap_result()
+                    .unwrap()
                 {
                     Ok(j) => j,
                     Err(_) => return Err(invalid_pnpm_lockfile()),
@@ -1550,7 +1550,7 @@ fn parse_append_importer_dependencies(
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
                     .get_with_path(log, path_buf.slice(), Default::default())
-                    .unwrap_result()
+                    .unwrap()
                 {
                     Ok(j) => j,
                     Err(_) => return Err(ParseAppendDependenciesError::InvalidPnpmLockfile),
@@ -1621,7 +1621,7 @@ fn update_package_json_after_migration(
                 ..Default::default()
             },
         )
-        .unwrap_result()
+        .unwrap()
     {
         Ok(j) => j,
         Err(_) => return Ok(()),

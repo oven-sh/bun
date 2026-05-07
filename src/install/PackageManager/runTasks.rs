@@ -509,7 +509,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             logger::Loc::EMPTY,
                             format_args!(
                                 "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                                bstr::BStr::new(&metadata.url),
+                                // SAFETY: `metadata.url` borrows the `url_buf` we own
+                                // on this `task`; live for the whole arm.
+                                bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
                         );
@@ -519,7 +521,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             logger::Loc::EMPTY,
                             format_args!(
                                 "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                                bstr::BStr::new(&metadata.url),
+                                // SAFETY: `metadata.url` borrows the `url_buf` we own
+                                // on this `task`; live for the whole arm.
+                                bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
                         );
@@ -843,7 +847,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             logger::Loc::EMPTY,
                             format_args!(
                                 "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                                bstr::BStr::new(&metadata.url),
+                                // SAFETY: `metadata.url` borrows the `url_buf` we own
+                                // on this `task`; live for the whole arm.
+                                bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
                         );
@@ -853,7 +859,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             logger::Loc::EMPTY,
                             format_args!(
                                 "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                                bstr::BStr::new(&metadata.url),
+                                // SAFETY: `metadata.url` borrows the `url_buf` we own
+                                // on this `task`; live for the whole arm.
+                                bstr::BStr::new(unsafe { &*metadata.url }),
                                 response.status_code,
                             ),
                         );
@@ -1184,10 +1192,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     // `dependency::Value` union arm.
                                     match version.tag {
                                         bun_install::DependencyVersionTag::Git => unsafe {
-                                            version.value.git.package_name = pkg.name;
+                                            (*version.value.git).package_name = pkg.name;
                                         },
                                         bun_install::DependencyVersionTag::Github => unsafe {
-                                            version.value.github.package_name = pkg.name;
+                                            (*version.value.github).package_name = pkg.name;
                                         },
                                         bun_install::DependencyVersionTag::Tarball => unsafe {
                                             version.value.tarball.package_name = pkg.name;

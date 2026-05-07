@@ -22,6 +22,7 @@ bun_aio.workspace = true
 bun_analytics.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
+bun_bunfig.workspace = true
 bun_clap.workspace = true
 bun_core.workspace = true
 # TODO(b1): bun_bundler dep gated — crate not green yet
@@ -47,6 +48,7 @@ bun_patch.workspace = true
 bun_paths.workspace = true
 bun_perf.workspace = true
 bun_picohttp.workspace = true
+bun_resolver.workspace = true
 bun_semver.workspace = true
 bun_sha_hmac.workspace = true
 bun_simdutf_sys.workspace = true

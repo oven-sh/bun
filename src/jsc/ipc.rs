@@ -1689,184 +1689,6 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
-#[crate::host_fn]
-fn emit_process_error_event(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [ex] = callframe.arguments_as_array::<1>();
-    (ipc_hooks().process_emit_error_event)(global_this, ex);
-    Ok(JSValue::UNDEFINED)
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FromEnum {
-    SubprocessExited,
-    Subprocess,
-    Process,
-}
-
-fn do_send_err(
-    global_object: &JSGlobalObject,
-    callback: JSValue,
-    ex: JSValue,
-    from: FromEnum,
-) -> JsResult<JSValue> {
-    if callback.is_callable() {
-        js_value_call_next_tick_1(callback, global_object, ex)?;
-        return Ok(JSValue::FALSE);
-    }
-    if from == FromEnum::Process {
-        let target = jsc::JSFunction::create(
-            global_object,
-            BunString::empty(),
-            // `#[crate::host_fn]` emits the C-ABI shim under this name; the
-            // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
-            __jsc_host_emit_process_error_event,
-            1,
-            Default::default(),
-        );
-        js_value_call_next_tick_1(target, global_object, ex)?;
-        return Ok(JSValue::FALSE);
-    }
-    // Bun.spawn().send() should throw an error (unless callback is passed)
-    Err(global_object.throw_value(ex))
-}
-
-pub fn do_send(
-    ipc: Option<&mut SendQueue>,
-    global_object: &JSGlobalObject,
-    call_frame: &CallFrame,
-    from: FromEnum,
-) -> JsResult<JSValue> {
-    let [mut message, mut handle, options_, mut callback] =
-        call_frame.arguments_as_array::<4>();
-
-    if handle.is_callable() {
-        callback = handle;
-        handle = JSValue::UNDEFINED;
-    } else if options_.is_callable() {
-        callback = options_;
-    } else if !options_.is_undefined() {
-        global_object.validate_object("options", options_, Default::default())?;
-    }
-
-    let connected = ipc.as_ref().map_or(false, |i| i.is_connected());
-    if !connected {
-        let msg = match from {
-            FromEnum::Process => "process.send() can only be used if the IPC channel is open.",
-            FromEnum::Subprocess => {
-                "Subprocess.send() can only be used if an IPC channel is open."
-            }
-            FromEnum::SubprocessExited => {
-                "Subprocess.send() cannot be used after the process has exited."
-            }
-        };
-        let ex = jsc::ErrorBuilder::new(
-            global_object,
-            jsc::ErrorCode::IPC_CHANNEL_CLOSED,
-            format_args!("{}", msg),
-        )
-        .to_js();
-        return do_send_err(global_object, callback, ex, from);
-    }
-
-    let ipc_data = ipc.unwrap();
-
-    if message.is_undefined() {
-        // `JSGlobalObject::throw_missing_arguments_value` (gated) — single-arg case.
-        return Err(jsc::ErrorBuilder::new(
-            global_object,
-            jsc::ErrorCode::MISSING_ARGS,
-            format_args!("The \"message\" argument must be specified"),
-        )
-        .throw());
-    }
-    if !message.is_string()
-        && !message.is_object()
-        && !message.is_number()
-        && !message.is_boolean()
-        && !message.is_null()
-    {
-        // `JSGlobalObject::throw_invalid_argument_type_value_one_of` (gated).
-        // TODO(port): include `determine_specific_type(message)` in the message
-        // once that helper is available on the stub `JSGlobalObject`.
-        let _ = message;
-        return Err(jsc::ErrorBuilder::new(
-            global_object,
-            jsc::ErrorCode::INVALID_ARG_TYPE,
-            format_args!(
-                "The \"message\" argument must be one of type string, object, number, or boolean"
-            ),
-        )
-        .throw());
-    }
-
-    if !handle.is_undefined_or_null() {
-        let serialized_array: JSValue = ipc_serialize(global_object, message, handle)?;
-        if serialized_array.is_undefined_or_null() {
-            handle = JSValue::UNDEFINED;
-        } else {
-            let serialized_handle = serialized_array.get_index(global_object, 0)?;
-            let serialized_message = serialized_array.get_index(global_object, 1)?;
-            handle = serialized_handle;
-            message = serialized_message;
-        }
-    }
-
-    let mut zig_handle: Option<Handle> = None;
-    if !handle.is_undefined_or_null() {
-        // `bun.jsc.API.Listener` lives in `bun_runtime`; cycle-broken via hook.
-        if let Some(fd) = (ipc_hooks().listener_fd_from_js)(handle) {
-            log!("got listener");
-            zig_handle = Some(Handle::init(fd, handle));
-        }
-    }
-
-    let status =
-        ipc_data.serialize_and_send(global_object, message, IsInternal::External, callback, zig_handle);
-
-    if status == SerializeAndSendResult::Failure {
-        let ex =
-            global_object.create_type_error_instance(format_args!("process.send() failed"));
-        // `JSValue.putZigString` → thin wrapper over `JSC__JSValue__put`; the
-        // ported `JSValue::put` takes the key as `&[u8]` directly.
-        ex.put(
-            global_object,
-            b"syscall",
-            crate::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
-        );
-        return do_send_err(global_object, callback, ex, from);
-    }
-
-    // in the success or backoff case, serializeAndSend will handle calling the callback
-    Ok(if status == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
-    })
-}
-
-#[crate::host_fn]
-pub fn emit_handle_ipc_message(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [target, message, handle] = callframe.arguments_as_array::<3>();
-    if !target.is_null() && !target.is_cell() {
-        return Ok(JSValue::UNDEFINED);
-    }
-    // Dispatch to `Subprocess` / `IPCInstance` lives in `bun_runtime`; route
-    // through the registered hook (cycle-break).
-    (ipc_hooks().emit_handle_ipc_message)(
-        global_this,
-        target,
-        DecodedIPCMessage::Data(message),
-        handle,
-    );
-    Ok(JSValue::UNDEFINED)
-}
-
 enum IPCCommand {
     Handle(JSValue),
     Ack,
@@ -1902,7 +1724,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_clear_exception(global_this);
+                        global_this.clear_exception();
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,
@@ -1963,8 +1785,9 @@ fn handle_ipc_message(
                 // Get file descriptor and clear it
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
-                let target: JSValue = match send_queue.owner.kind {
-                    SendQueueOwnerKind::Subprocess => send_queue.owner.this_jsvalue(),
+                // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
+                let target: JSValue = match unsafe { (*send_queue.owner).kind() } {
+                    SendQueueOwnerKind::Subprocess => unsafe { (*send_queue.owner).this_jsvalue() },
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 

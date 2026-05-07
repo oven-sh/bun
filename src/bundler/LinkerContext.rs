@@ -24,7 +24,7 @@ use bun_js_parser::{self as js_ast, Ref, Expr, Stmt, Part, Symbol, Binding, Depe
 // but a distinct type; LinkerGraph/JSMeta/etc. are typed against the crate
 // re-export, so use that here.
 use crate::Index;
-use bun_js_parser::{E, S, B, G};
+use bun_js_parser::{E, S, G};
 use bun_js_printer::{self as js_printer, renamer};
 use bun_js_parser::lexer as lex;
 

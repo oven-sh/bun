@@ -44,12 +44,14 @@ use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_bunfig::Arguments as Command;
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
-    RunTasksCallbacks, invalid_dependency_id, invalid_package_id,
+    invalid_dependency_id, invalid_package_id,
 };
 use crate::lockfile::{self, Lockfile};
+use crate::lockfile::package::PackageSliceExt as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::package_manager::{PackageManager, WorkspaceFilter};
+use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
+use crate::package_manager_task as Task;
 use store::{
     Entry as StoreEntry, EntryListExt as _, EntrySliceExt as _, Node as StoreNode,
     NodeListExt as _, NodeSliceExt as _,
@@ -140,6 +142,43 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+/// `RunTasksCallbacks` impl for the isolated-install loop. Mirrors the Zig
+/// anonymous-struct call shape `{ .onExtract = onPackageExtracted, .onResolve = {},
+/// .onPackageManifestError = {}, .onPackageDownloadError = onPackageDownloadError,
+/// .progress_bar = false, .manifests_only = false }` with `Ctx == *Store.Installer`.
+pub struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+
+impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
+    type Ctx = store::Installer<'a>;
+
+    const HAS_ON_EXTRACT: bool = true;
+    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
+    const IS_STORE_INSTALLER: bool = true;
+
+    fn on_extract_store_installer(ctx: &mut Self::Ctx, task_id: Task::Id) {
+        ctx.on_package_extracted(task_id);
+    }
+
+    fn on_package_download_error(
+        ctx: &mut Self::Ctx,
+        id: Task::Id,
+        name: &[u8],
+        resolution: &Resolution,
+        err: bun_core::Error,
+        url: &[u8],
+    ) {
+        ctx.on_package_download_error(id, name, resolution, err, url);
+    }
+
+    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
+        // SAFETY: identity cast — narrows the invariant `'a` param to the
+        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
+        // The returned reference cannot outlive `'x`, so all inner `'a`
+        // borrows remain valid.
+        unsafe { core::mem::transmute::<&'x mut store::Installer<'a>, &'x mut store::Installer<'x>>(ctx) }
     }
 }
 

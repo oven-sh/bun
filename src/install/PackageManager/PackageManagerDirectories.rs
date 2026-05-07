@@ -41,6 +41,57 @@ impl PackageManager {
     pub fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
+
+    #[inline]
+    pub fn cached_git_folder_name(&self, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+        cached_git_folder_name(self, repository, patch_hash)
+    }
+
+    #[inline]
+    pub fn cached_github_folder_name(&self, repository: &Repository, patch_hash: Option<u64>) -> &'static ZStr {
+        cached_github_folder_name(self, repository, patch_hash)
+    }
+
+    #[inline]
+    pub fn cached_npm_package_folder_name(
+        &self,
+        name: &[u8],
+        version: Semver::Version,
+        patch_hash: Option<u64>,
+    ) -> &'static ZStr {
+        cached_npm_package_folder_name(self, name, version, patch_hash)
+    }
+
+    #[inline]
+    pub fn cached_tarball_folder_name(&self, url: SemverString, patch_hash: Option<u64>) -> &'static ZStr {
+        cached_tarball_folder_name(self, url, patch_hash)
+    }
+
+    #[inline]
+    pub fn save_lockfile(
+        &mut self,
+        load_result: &LoadResult,
+        save_format: LockfileFormat,
+        had_any_diffs: bool,
+        lockfile_before_install: &Lockfile,
+        packages_len_before_install: usize,
+        log_level: LogLevel,
+    ) -> Result<(), AllocError> {
+        save_lockfile(
+            self,
+            load_result,
+            save_format,
+            had_any_diffs,
+            lockfile_before_install,
+            packages_len_before_install,
+            log_level,
+        )
+    }
+
+    #[inline]
+    pub fn write_yarn_lock(&mut self) -> Result<(), Error> {
+        write_yarn_lock(self)
+    }
 }
 
 // ───────────────────────────── cache directory ────────────────────────────────

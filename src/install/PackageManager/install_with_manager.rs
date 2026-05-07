@@ -40,8 +40,9 @@ use crate::isolated_install::install_isolated_packages;
 // names so the body reads the same as the spec.
 use crate::package_manager_real::{
     enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    run_tasks, save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
+use crate::package_manager_real::run_tasks::{run_tasks, RunTasksCallbacks};
 
 use super::security_scanner;
 
@@ -85,7 +86,7 @@ pub fn install_with_manager(
         lockfile::LoadResult::NotFound
     };
 
-    update_lockfile_if_needed(manager, &load_result)?;
+    update_lockfile_if_needed(manager, load_result)?;
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);

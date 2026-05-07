@@ -824,11 +824,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 break 'existing_patchfile_hash None;
             };
 
-            let resolution_clone = pkg.resolution.clone();
+            let pkg_resolution = pkg.resolution;
             let cache_result = compute_cache_dir_and_subpath(
                 manager,
                 &pkg_name,
-                &resolution_clone,
+                &pkg_resolution,
                 &mut folder_path_buf,
                 existing_patchfile_hash,
             );
@@ -934,7 +934,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             #[cfg(not(windows))]
             {
                 if let Ok(st) = sys::lstat(p.slice_z()) {
-                    sys::posix::s_islnk(st.mode as u32)
+                    sys::posix::s_islnk(st.st_mode as u32)
                 } else {
                     return;
                 }

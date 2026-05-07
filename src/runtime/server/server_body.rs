@@ -3335,29 +3335,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         unsafe { NodeHTTP_setUsingCustomExpectHandler(SSL, self.app.unwrap() as *mut c_void, value) };
     }
 
-    // TODO(port): `var did_send_idletimeout_warning_once = false;` is a per-monomorphization static.
-    // Use AtomicBool in a generic-associated static via OnceLock or a plain static keyed on (SSL,DEBUG).
-    fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
-        // TODO(port): per-generic static
-        static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-        &FLAG
-    }
-
     fn on_timeout_for_idle_warn(_: *mut c_void, _: Option<*mut c_void>) {
-        if DEBUG && !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed) {
-            if !crate::cli::Command::get().debug.silent {
-                Self::did_send_idletimeout_warning_once().store(true, core::sync::atomic::Ordering::Relaxed);
-                Output::pretty_errorln(
-                    "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
-                );
-                Output::flush();
-            }
-        }
+        // Registration is gated on `should_add_timeout_handler_for_warning`
+        // (which already checks `DEBUG`), so this is reachable only in
+        // debug-mode servers; the body matches the Zig spec.
+        if DEBUG { on_timeout_for_idle_warn(); }
     }
 
     fn should_add_timeout_handler_for_warning(&self) -> bool {
         if DEBUG {
-            if !Self::did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed)
+            if !did_send_idletimeout_warning_once().load(core::sync::atomic::Ordering::Relaxed)
                 && !crate::cli::Command::get().debug.silent
             {
                 return !self.config.has_idle_timeout;

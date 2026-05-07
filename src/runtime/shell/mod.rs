@@ -353,21 +353,13 @@ pub mod ast {
     }
 }
 
-// TODO(b2-blocked): bun_shell_parser — these come from shell_body.rs once un-gated.
-pub struct ShellErr(pub bun_sys::Error);
-impl ShellErr {
-    pub fn new_sys(e: bun_sys::Error) -> Self {
-        Self(e)
-    }
-    /// Spec `ShellErr.newSys(jsc.SystemError)` — recover the syscall errno
-    /// from the JS-facing struct (`to_shell_system_error` negated it).
-    pub fn from_system(e: &bun_sys::SystemError) -> Self {
-        Self(bun_sys::Error {
-            errno: e.errno.unsigned_abs() as u16,
-            ..Default::default()
-        })
-    }
-}
+// Canonical 4-variant error enum (shell.zig `ShellErr`). Defined in
+// `shell_body.rs` and re-exported so subproc/state nodes use the same type.
+pub use shell_body::ShellErr;
+
+/// Spec: shell.zig `bun.shell.Result(T)`.
+pub type Result<T> = core::result::Result<T, ShellErr>;
+
 pub struct ParsedShellScript(());
 pub struct Subprocess(());
 

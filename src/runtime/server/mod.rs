@@ -563,17 +563,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         server.on_pending_request();
 
         // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
-        // re-entrancy bookkeeping; routed through cfg(debug_assertions).
+        // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
+        // (no-op enter/exit in release builds).
         let vm_ptr = server.vm as *mut jsc::VirtualMachine;
-        #[cfg(debug_assertions)]
-        // SAFETY: vm backref is live for the server's lifetime.
-        unsafe { (*(*vm_ptr).event_loop()).debug.enter() };
-        let _dbg_guard = scopeguard::guard((), move |_| {
-            #[cfg(debug_assertions)]
-            // SAFETY: see above.
-            unsafe { (*(*vm_ptr).event_loop()).debug.exit() };
-            let _ = vm_ptr;
-        });
+        // SAFETY: vm backref is live for the server's lifetime; `event_loop()`
+        // returns the VM-owned `*mut EventLoop` whose `debug` field outlives
+        // this frame.
+        let _dbg_guard = unsafe {
+            bun_jsc::event_loop::Debug::enter_scope(core::ptr::addr_of_mut!(
+                (*(*vm_ptr).event_loop()).debug
+            ))
+        };
         req.set_yield(false);
         resp_ref.timeout(server.config.idle_timeout);
 
@@ -799,15 +799,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let is_stack = matches!(req, SavedRequestUnion::Stack(_));
         let request_object = prepared.request_object;
-        let _detach_guard = scopeguard::guard((), move |_| {
-            if is_stack {
-                // uWS request will not live longer than this function
-                // SAFETY: `request_object` is the heap allocation produced by
-                // `Request::new` (or saved by `PreparedRequest::save`); kept
-                // alive by `ctx.request_weakref` for the request's lifetime.
-                unsafe { (*request_object).request_context.detach_request() };
-            }
-        });
+        // uWS request will not live longer than this function — only detach
+        // when it's the stack-allocated original (a saved request already
+        // copied everything it needs).
+        // SAFETY: `request_object` is kept alive by `ctx.request_weakref` for
+        // the request's lifetime.
+        let _detach_guard =
+            is_stack.then(|| unsafe { DetachRequestOnDrop::new(request_object) });
 
         // SAFETY: `ctx` was just allocated (or saved) by this server; no other
         // borrow is live across this scope.
@@ -875,12 +873,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let request_object = prepared.request_object;
 
         // uWS request will not live longer than this function
-        let _detach_guard = scopeguard::guard((), move |_| {
-            // SAFETY: `request_object` is the heap allocation produced by
-            // `Request::new`; kept alive by `ctx.request_weakref` until
-            // `RequestContext::deinit` releases it.
-            unsafe { (*request_object).request_context.detach_request() };
-        });
+        // SAFETY: `request_object` is the heap allocation produced by
+        // `Request::new`; kept alive by `ctx.request_weakref` until
+        // `RequestContext::deinit` releases it.
+        let _detach_guard = unsafe { DetachRequestOnDrop::new(request_object) };
 
         // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
         // frame; no other borrow is live across this scope.
@@ -1916,7 +1912,7 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     let err_code = unsafe { bun_boringssl_sys::ERR_get_error() };
     if err_code != 0 {
         // SAFETY: ERR_clear_error has no preconditions.
-        let _guard = scopeguard::guard((), |_| unsafe { bun_boringssl_sys::ERR_clear_error() });
+        scopeguard::defer! { unsafe { bun_boringssl_sys::ERR_clear_error() }; }
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
         return true;
     }
@@ -2472,10 +2468,7 @@ impl ServerAllConnectionsClosedTask {
         // SAFETY: `global_object` is the per-VM JSGlobalObject, kept alive for
         // the VM's lifetime; the task is only dispatched on that VM's JS thread.
         let global_object: &jsc::JSGlobalObject = unsafe { &*this.global_object };
-        let tracker = this.tracker;
-        tracker.will_dispatch(global_object);
-        let _guard =
-            scopeguard::guard((), move |_| tracker.did_dispatch(global_object));
+        let _dispatch = this.tracker.dispatch(global_object);
 
         // Zig: `var promise = this.promise; defer promise.deinit();` —
         // `JSPromiseStrong`'s Drop releases the strong handle on scope exit.

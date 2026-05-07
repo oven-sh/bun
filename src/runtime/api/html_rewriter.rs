@@ -1576,8 +1576,22 @@ impl TextChunk {
         self.content_handler(lolhtml::TextChunk::replace, call_frame.this(), global_object, content, content_options)
     }
 
-    // TODO(port): host_fn.wrapInstanceMethod — before/after/replace are emitted
-    // by #[bun_jsc::host_fn(method)] wrappers around the `_` variants.
+    // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
+
+    pub fn before(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.before_(call_frame, global, content, opts))
+    }
+
+    pub fn after(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.after_(call_frame, global, content, opts))
+    }
+
+    pub fn replace(&mut self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (content, opts) = eat_content_args(global, call_frame)?;
+        Ok(self.replace_(call_frame, global, content, opts))
+    }
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

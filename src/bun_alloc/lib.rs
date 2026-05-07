@@ -879,6 +879,30 @@ pub unsafe fn default_free(ptr: *mut u8, len: usize) {
     basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
 }
 
+/// Zig: `bun.default_allocator.dupe(u8, src)` for raw `[]u8` not owned by a
+/// `Vec`/`Box` — symmetric with [`default_free`]. Returns a `&'static [u8]`
+/// view onto a fresh mimalloc allocation; caller is responsible for pairing
+/// with `default_free(ptr, len)`.
+///
+/// Empty input borrows the static empty slice (no allocation; `default_free`
+/// no-ops on `len == 0`).
+pub fn default_dupe(src: &[u8]) -> &'static [u8] {
+    if src.is_empty() {
+        return b"";
+    }
+    let ptr = basic::C_ALLOCATOR
+        .raw_alloc(src.len(), Alignment::from_byte_units(1), 0)
+        .unwrap_or_else(|| crate::out_of_memory());
+    // SAFETY: `raw_alloc` returned a fresh, writable allocation of `src.len()`
+    // bytes, byte-aligned; non-overlapping with `src`. The returned slice's
+    // lifetime is tied to the matching `default_free` call (caller contract),
+    // hence `'static` at the type level.
+    unsafe {
+        core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
+        core::slice::from_raw_parts(ptr, src.len())
+    }
+}
+
 /// Memory is typically not decommitted immediately when freed. Sensitive
 /// information kept in memory can be read until the OS decommits it or the
 /// allocator reuses it. Zero it before dropping.

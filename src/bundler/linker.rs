@@ -144,14 +144,15 @@ mod hardcoded_module {
 }
 
 // ── PluginRunner shim ───────────────────────────────────────────────────
-// CYCLEBREAK: `crate::transpiler::PluginRunner` is an opaque `[u8; 0]`
-// FORWARD_DECL (real impl lives in `bundler_jsc::PluginRunner`, which depends
-// back on `bun_bundler`). The linker only needs the cheap pre-filter
-// `could_be_plugin` (pure, no JSC) and the `on_resolve` hook. Port the
-// pre-filter body from `PluginRunner.zig:22`; `on_resolve` returns `None`
-// here because the opaque struct carries no `JSGlobalObject` to dispatch
-// through — the real JSC-side runner casts `*mut PluginRunner` back to its
-// own type and never reaches this impl.
+// CYCLEBREAK: `crate::transpiler::PluginRunner` carries a type-erased
+// `global_object: *mut c_void` (real `*mut JSGlobalObject` lives in `bun_jsc`,
+// which depends back on `bun_bundler`). The linker only needs the cheap
+// pre-filter `could_be_plugin` (pure, no JSC) and the `on_resolve` hook. Port
+// the pre-filter body from `PluginRunner.zig:22`; `on_resolve` returns `None`
+// here because dispatching `runOnResolvePlugins` requires the JSC vtable —
+// `bundler_jsc::plugin_runner` casts `global_object` back and provides the
+// real body. The legacy linker (Bun.Transpiler) never wires a plugin_runner
+// when `is_bun`, so this path is effectively dead.
 #[derive(Clone, Copy)]
 pub enum PluginTarget {
     Bun,

@@ -723,8 +723,23 @@ pub mod api {
                 context: *mut core::ffi::c_void,
                 kind: u8,
             );
+            #[link_name = "JSBundlerPlugin__drainDeferred"]
+            fn JSBundlerPlugin__drainDeferred(this: *mut Plugin, rejected: bool);
         }
         impl Plugin {
+            /// `Plugin.drainDeferred` (JSBundler.zig) — resolve every onLoad
+            /// `.defer()` promise. Zig wraps the FFI in `fromJSHostCallGeneric`
+            /// for exception-scope tracking and returns `JSError!void`; the
+            /// only bundler caller (`DeferredBatchTask::run_on_js_thread`) is
+            /// `catch return`, so the void FFI call is the observable
+            /// behaviour at this tier. The JSC-aware wrapper lives on
+            /// `bun_runtime`'s `PluginJscExt`.
+            pub fn drain_deferred(&mut self, rejected: bool) {
+                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature
+                // matches JSBundlerPlugin.cpp `JSBundlerPlugin__drainDeferred`.
+                unsafe { JSBundlerPlugin__drainDeferred(self, rejected) }
+            }
+
             pub fn has_any_matches(
                 &self,
                 path: &crate::ungate_support::bun_fs::Path,

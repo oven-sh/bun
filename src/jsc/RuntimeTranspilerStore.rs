@@ -625,10 +625,17 @@ impl TranspilerJob {
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
         // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
-        let mut transpiler = core::mem::ManuallyDrop::new(unsafe {
+        let mut transpiler_storage = core::mem::ManuallyDrop::new(unsafe {
             ptr::read(ptr::addr_of!((*vm).transpiler))
         });
-        let transpiler: &mut Transpiler<'static> = &mut *transpiler;
+        // SAFETY (lifetime erasure): `Transpiler<'a>`'s `'a` only constrains the
+        // `allocator` field (and resolver opts that share it), which we
+        // immediately overwrite below via `set_allocator(&arena)`. The bytewise
+        // copy is never dropped (ManuallyDrop), so no borrow tied to the
+        // shortened `'a` outlives `arena`.
+        let transpiler: &mut Transpiler<'_> = unsafe {
+            &mut *((&mut *transpiler_storage) as *mut Transpiler<'static> as *mut Transpiler<'_>)
+        };
         transpiler.set_allocator(allocator);
         transpiler.set_log(&mut log);
         // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options

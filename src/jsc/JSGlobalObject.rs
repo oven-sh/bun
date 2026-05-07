@@ -1374,28 +1374,22 @@ impl JSGlobalObject {
 // Nested types (moved out of `impl` since Rust impls cannot contain type defs).
 // ──────────────────────────────────────────────────────────────────────────────
 
-pub struct GregorianDateTime {
-    pub year: i32,
-    pub month: i32,
-    pub day: i32,
-    pub hour: i32,
-    pub minute: i32,
-    pub second: i32,
-    pub weekday: i32,
-}
+// `GregorianDateTime`, `BunPluginTarget`, `ValidateObjectOpts` — canonical defs
+// live at crate root (lib.rs) so `bun_jsc::BunPluginTarget` etc. resolve to one
+// type. Re-exported here for callers that path through `js_global_object::`.
+pub use crate::{BunPluginTarget, GregorianDateTime, IntegerRange, ValidateObjectOpts};
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum BunPluginTarget {
-    Bun = 0,
-    Node = 1,
-    Browser = 2,
-}
-
-// PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
-// (only `errno`/`name` default to null). Callers must always supply `code`.
+/// Options for [`JSGlobalObject::throw_sys_error`].
+///
+/// PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
+/// (only `errno`/`name` default to null). Callers must always supply `code`.
+///
+/// LAYERING: Zig types `code` as `jsc.Node.ErrorCode` (an enum living in
+/// `bun_runtime::node::nodejs_error_code`, which depends on `bun_jsc`). The body
+/// only ever does `@tagName(opts.code)` — i.e. it needs the *string* — so `code`
+/// is `&'static str` here. Runtime-tier callers pass `code.tag_name()`.
 pub struct SysErrOptions {
-    pub code: NodeErrorCode,
+    pub code: &'static str,
     pub errno: Option<i32>,
     pub name: Option<&'static [u8]>,
 }
@@ -1406,17 +1400,32 @@ pub enum ThreadKind {
     Other,
 }
 
-#[derive(Default, Copy, Clone)]
-pub struct ValidateObjectOpts {
-    pub allow_array: bool,
-    pub allow_function: bool,
-    pub nullable: bool,
-}
+/// `bun.webcore.ScriptExecutionContext.Identifier` — defined here (not in
+/// `bun_runtime`) because [`JSGlobalObject::script_execution_context_identifier`]
+/// must return it and `bun_runtime` depends on `bun_jsc`. Runtime re-exports
+/// this as `webcore::script_execution_context::Identifier`.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct ScriptExecutionContextIdentifier(pub u32);
 
-// Unified with the crate-root definition (lib.rs) — re-exported here so
-// `bun_jsc::js_global_object::IntegerRange` keeps resolving for any caller
-// that named it via this path.
-pub use crate::IntegerRange;
+impl ScriptExecutionContextIdentifier {
+    #[inline]
+    pub const fn from_raw(id: u32) -> Self { Self(id) }
+    #[inline]
+    pub const fn raw(self) -> u32 { self.0 }
+
+    /// Returns `None` if the context referred to by `self` no longer exists.
+    pub fn global_object(self) -> Option<&'static JSGlobalObject> {
+        // SAFETY: FFI call returns a valid pointer or null; JSGlobalObject is owned by the VM.
+        unsafe { ScriptExecutionContextIdentifier__getGlobalObject(self.0).as_ref() }
+    }
+
+    /// Returns `None` if the context referred to by `self` no longer exists.
+    pub fn bun_vm(self) -> Option<*mut VirtualMachine> {
+        // Concurrently because identifiers are mostly used by off-thread tasks.
+        Some(self.global_object()?.bun_vm_ptr())
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported (callconv(.c)) functions — Zig used `comptime { @export(...) }`.
@@ -1430,12 +1439,12 @@ pub extern "C" fn Zig__GlobalObject__resolve(
     source: *mut BunString,
     query: *mut BunString,
 ) {
-    crate::mark_binding(core::panic::Location::caller());
+    crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
     let (res, global, specifier, source, query) = unsafe {
-        (&mut *res, &*global, &*specifier, &*source, &mut *query)
+        (&mut *res, &*global, (*specifier).dupe_ref(), (*source).dupe_ref(), &mut *query)
     };
-    if let Err(_) = VirtualMachine::resolve(res, global, specifier.clone(), source.clone(), query, true) {
+    if VirtualMachine::resolve(res, global, specifier, source, Some(query), true).is_err() {
         debug_assert!(!res.success);
     }
 }
@@ -1445,37 +1454,27 @@ pub extern "C" fn Zig__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,
 ) -> JSValue {
-    crate::mark_binding(core::panic::Location::caller());
+    crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &mut *exception) }
+    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
 // Safe wrapper used internally (matches Zig's pub fn).
 #[inline]
-pub fn report_uncaught_exception(global: &JSGlobalObject, exception: &mut Exception) -> JSValue {
-    crate::mark_binding(core::panic::Location::caller());
+pub fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
+    crate::mark_binding();
     VirtualMachine::report_uncaught_exception(global, exception)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Zig__GlobalObject__onCrash() {
-    crate::mark_binding(core::panic::Location::caller());
-    Output::flush();
+    crate::mark_binding();
+    bun_core::output::flush();
     panic!("A C++ exception occurred");
 }
 
-// TODO(port): Zig wrapped `getBodyStreamOrBytesForWasmStreaming` via `jsc.host_fn.wrap3(...)`
-// and exported it. The wrap helper produces a JSHostFn-calling-convention shim. In Rust the
-// `#[bun_jsc::host_fn]` proc-macro emits the shim; the export name must match
-// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`.
-#[bun_jsc::host_fn(export = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming")]
-pub fn get_body_stream_or_bytes_for_wasm_streaming(
-    global: &JSGlobalObject,
-    response_value: JSValue,
-    streaming_compiler: *mut c_void,
-) -> JsResult<JSValue> {
-    global.get_body_stream_or_bytes_for_wasm_streaming(response_value, streaming_compiler)
-}
+// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is exported from
+// `bun_runtime::webcore::wasm_streaming` (LAYERING — see method comment above).
 
 // ──────────────────────────────────────────────────────────────────────────────
 // extern "C" declarations

@@ -145,7 +145,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                         import_record_path,
-                        bun_options_types::ImportKind::Stmt,
+                        bun_options_types::ImportKind::Stmt.into(),
                         e,
                     )
                     .expect("unreachable");
@@ -591,12 +591,19 @@ impl<'a> Run<'a> {
                 let mime_type: Option<&[u8]> = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
-                    if let Some(resp) = value.as_::<WebCore::Response>() {
-                        // SAFETY: `as_` returns the live `m_ctx` payload.
-                        return self.run(unsafe { (*resp).get_blob_without_call_frame(self.global) }?);
-                    } else if let Some(resp) = value.as_::<WebCore::Request>() {
-                        // SAFETY: see above.
-                        return self.run(unsafe { (*resp).get_blob_without_call_frame(self.global) }?);
+                    // LAYERING: `Response`/`Request` (and their `BodyMixin::
+                    // get_blob_without_call_frame`) live in `bun_runtime::
+                    // webcore`, which depends on this crate. The downcast +
+                    // body-extract is dispatched through `RuntimeHooks` (the
+                    // established §Dispatch cycle-break) so the data shapes
+                    // stay in the high tier.
+                    let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+                    // SAFETY: `value` is a live encoded JSValue; `self.global`
+                    // is the per-thread global, live for this call.
+                    if let Some(body_blob) =
+                        unsafe { (hooks.body_mixin_get_blob)(value, self.global) }?
+                    {
+                        return self.run(body_blob);
                     } else if let Some(resp) = value.as_::<WebCore::Blob>() {
                         blob_ = Some(resp);
                     } else if value.as_::<ResolveMessage>().is_some()
@@ -626,7 +633,8 @@ impl<'a> Run<'a> {
                         },
                         content_type: |p| {
                             // SAFETY: see `shared_view`.
-                            let ct: &[u8] = unsafe { &(*p.cast::<WebCore::Blob>()).content_type };
+                            let ct: &[u8] =
+                                unsafe { (*p.cast::<WebCore::Blob>()).content_type_slice() };
                             // SAFETY: lifetime-erase per `BlobVTable` contract.
                             unsafe { core::mem::transmute::<&[u8], &'static [u8]>(ct) }
                         },

@@ -619,50 +619,72 @@ impl SocketConfig {
 /// cached-accessor pair for every listed property. Kept crate-private; callers
 /// outside this crate use [`crate::codegen_cached_accessors!`] which wraps the
 /// same extern contract without the module scaffolding.
+///
+/// `$Payload` is the native `m_ctx` payload type. When the payload struct is
+/// defined in (or below) this crate — e.g. `webcore_types::Blob` — pass it so
+/// the extern signatures here unify with that file's typed declarations
+/// (avoids `clashing_extern_declarations`). When the payload lives in a
+/// dependent crate (`bun_runtime`), pass `()` (type-erased; the dependent
+/// crate casts).
 macro_rules! js_class_module {
+    // Shorthand: payload erased to `()` (lives in a higher crate).
     (
         $mod_name:ident = $TypeName:literal { $( $prop:ident ),* $(,)? }
+    ) => {
+        js_class_module!($mod_name = $TypeName as () { $( $prop ),* });
+    };
+    (
+        $mod_name:ident = $TypeName:literal as $Payload:ty { $( $prop:ident ),* $(,)? }
     ) => {
         pub mod $mod_name {
             use $crate::{JSGlobalObject, JSValue};
             $crate::codegen_cached_accessors!($TypeName; $( $prop ),*);
+
+            type Payload = $Payload;
 
             // `${TypeName}__fromJS` / `__fromJSDirect` / `__create` /
             // `__getConstructor` — implemented in C++ by
             // `src/codegen/generate-classes.ts` (`symbolName(typeName, name)`
             // ⇒ `${typeName}__${name}`). All use `JSC_CALLCONV` (= sysv64 on
             // win-x64, C otherwise).
+            //
+            // `improper_ctypes`: when `$Payload` is a real Rust struct (e.g.
+            // `Blob`) the lint recurses through its fields and flags
+            // non-`#[repr(C)]` interiors. The pointer is opaque to C++ — only
+            // Rust dereferences it — so the lint is a false positive here.
             #[cfg(all(windows, target_arch = "x86_64"))]
+            #[allow(improper_ctypes)]
             unsafe extern "sysv64" {
                 #[link_name = concat!($TypeName, "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut ();
+                fn __from_js(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut ();
+                fn __from_js_direct(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
+                fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
                 #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                fn __dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool;
+                fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
+            #[allow(improper_ctypes)]
             unsafe extern "C" {
                 #[link_name = concat!($TypeName, "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut ();
+                fn __from_js(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut ();
+                fn __from_js_direct(value: JSValue) -> *mut Payload;
                 #[link_name = concat!($TypeName, "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut ()) -> JSValue;
+                fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                 #[link_name = concat!($TypeName, "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
                 #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                fn __dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool;
+                fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
             }
 
             /// Return the wrapped native pointer if `value` is (a subclass of)
             /// the JS wrapper type; `None` on type mismatch.
             #[inline]
-            pub fn from_js(value: JSValue) -> ::core::option::Option<*mut ()> {
+            pub fn from_js(value: JSValue) -> ::core::option::Option<*mut Payload> {
                 // SAFETY: `value` is a valid encoded JSValue; the C++ side
                 // type-checks and returns the `m_ctx` pointer or null.
                 let ptr = unsafe { __from_js(value) };
@@ -672,7 +694,7 @@ macro_rules! js_class_module {
             /// As `from_js`, but only matches *direct* instances with the
             /// canonical structure (no subclass / no expando properties).
             #[inline]
-            pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut ()> {
+            pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut Payload> {
                 // SAFETY: see `from_js`.
                 let ptr = unsafe { __from_js_direct(value) };
                 if ptr.is_null() { None } else { Some(ptr) }
@@ -682,7 +704,7 @@ macro_rules! js_class_module {
             /// allocates the JSCell with the cached structure and stores `ptr`
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
             #[inline]
-            pub fn to_js(ptr: *mut (), global: &JSGlobalObject) -> JSValue {
+            pub fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
                 // SAFETY: `global` is an opaque ZST FFI handle (see
                 // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
                 // only, never written through on the Rust side; `ptr` is a
@@ -709,7 +731,7 @@ macro_rules! js_class_module {
             /// Caller must ensure the previous `m_ctx` is finalized exactly
             /// once elsewhere — the C++ side overwrites without freeing.
             #[inline]
-            pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut ()) -> bool {
+            pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool {
                 // SAFETY: `value` is a valid encoded JSValue; the C++ side
                 // type-checks before writing `m_ctx`.
                 unsafe { __dangerously_set_ptr(value, ptr) }
@@ -720,7 +742,9 @@ macro_rules! js_class_module {
 
 js_class_module!(JSTimeout   = "Timeout"   { callback, arguments, idleTimeout, repeat, idleStart });
 js_class_module!(JSImmediate = "Immediate" { callback, arguments });
-js_class_module!(JSBlob      = "Blob"      { name, stream });
+// Payload `Blob` lives in this crate (`webcore_types`) — pass it so the extern
+// signatures unify with the typed declarations there.
+js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
 js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
 // `values: ["ondrain", "oncancel", "stream"]` in src/runtime/api/ResumableSink.classes.ts.

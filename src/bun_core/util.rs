@@ -179,6 +179,66 @@ pub fn from_slice_boxed<T: Copy>(default: &[T]) -> Box<[T]> {
     Box::<[T]>::from(default)
 }
 
+// ─── Unaligned<T> ─────────────────────────────────────────────────────────────
+/// Port of Zig's `align(1) T` element type. Rust references and slices require
+/// natural alignment for `T`; producing a `&[u16]` from an odd address is
+/// instant UB even if never dereferenced. `#[repr(packed)]` on this wrapper
+/// drops the alignment requirement to 1, so `&[Unaligned<T>]` is the sound
+/// translation of `[]align(1) T`. Reads/writes go through `ptr::read_unaligned`
+/// / `ptr::write_unaligned` (the compiler emits byte-wise or unaligned-load
+/// instructions as appropriate for the target).
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+pub struct Unaligned<T: Copy>(T);
+
+impl<T: Copy> Unaligned<T> {
+    #[inline(always)]
+    pub const fn new(value: T) -> Self {
+        Self(value)
+    }
+
+    #[inline(always)]
+    pub fn get(self) -> T {
+        // `self` is by-value (already moved into an aligned local), so a plain
+        // field read is fine; the `packed` repr only affects in-place borrows.
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, value: T) {
+        // SAFETY: `self` points to `size_of::<T>()` writable bytes; alignment
+        // is 1 by `#[repr(packed)]`, hence `write_unaligned`.
+        unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
+    }
+
+    /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
+    /// `ptr` is naturally aligned (Zig `@alignCast`). Panics in debug if not.
+    #[inline]
+    pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
+        debug_assert!(
+            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
+            core::mem::align_of::<T>(),
+        );
+        // SAFETY: same address, same length, same element size; alignment
+        // precondition asserted above. `Unaligned<T>` is `repr(C, packed)`
+        // around a single `T`, so layout is byte-identical.
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
+    }
+
+    /// Mutable counterpart of [`slice_align_cast`].
+    #[inline]
+    pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
+        debug_assert!(
+            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
+            core::mem::align_of::<T>(),
+        );
+        // SAFETY: see `slice_align_cast`; `&mut` exclusivity is preserved.
+        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
+    }
+}
+
 // ─── needsAllocator ───────────────────────────────────────────────────────────
 // Zig: `fn needsAllocator(comptime Fn: anytype) bool { ArgsTuple(Fn).len > 2 }`
 // Used only to decide whether to pass `allocator` to `ensureUnusedCapacity`.

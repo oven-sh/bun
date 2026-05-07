@@ -409,10 +409,13 @@ impl ShellSubprocess {
         event_loop: EventLoopHandle,
         shellio: &mut ShellIO,
         spawn_args_: SpawnArgs<'_>,
+        cmd_parent: *mut ShellCmd,
         // We have to use an out pointer because this function may invoke callbacks that expect a
         // fully initialized parent object. Writing to this out pointer may be the last step needed
-        // to initialize the object.
-        out: &mut *mut Self,
+        // to initialize the object. Raw (not `&mut`) so the caller can pass an
+        // address inside the `Cmd` arena slot without holding a `&mut` borrow
+        // across this re-entrant call.
+        out: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
         let mut spawn_args = spawn_args_;
@@ -421,6 +424,7 @@ impl ShellSubprocess {
             event_loop,
             &mut spawn_args,
             shellio,
+            cmd_parent,
             out,
             notify_caller_process_already_exited,
         ) {
@@ -433,10 +437,11 @@ impl ShellSubprocess {
         event_loop: EventLoopHandle,
         spawn_args: &mut SpawnArgs<'_>,
         shellio: &mut ShellIO,
+        cmd_parent: *mut ShellCmd,
         // We have to use an out pointer because this function may invoke callbacks that expect a
         // fully initialized parent object. Writing to this out pointer may be the last step needed
         // to initialize the object.
-        out_subproc: &mut *mut Self,
+        out_subproc: *mut *mut Self,
         notify_caller_process_already_exited: &mut bool,
     ) -> sh::Result<()> {
         const IS_SYNC: bool = false;
@@ -527,31 +532,16 @@ impl ShellSubprocess {
         // completion. Zig threads this implicitly via `Base.interpreter`; the
         // NodeId-arena port plumbs it explicitly through `SpawnArgs`.
         let interp = spawn_args.interp;
-        // SAFETY: `cmd_parent` points at the live `Cmd` arena slot owned by
-        // `interp` (set by `Cmd::transition_to_exec`); accessed only for the
-        // disjoint `args` field while `out_subproc` writes `exec.subproc.child`.
-        let cmd_parent = unsafe { &mut *spawn_args.cmd_parent };
-        // Build the `[*:null]?[*:0]const u8` argv view for spawnProcess. Zig's
-        // `Cmd.args` is `ArrayList(?[*:0]const u8)` so it just appends `null`;
-        // the Rust port stores `Vec<Vec<u8>>`, so materialise a contiguous
-        // pointer array here. Each entry must be NUL-terminated — Expansion
-        // produces them that way (mirrors Zig's `[:0]const u8`), but assert in
-        // debug and patch defensively in release.
-        let mut argv: Vec<*const c_char> = Vec::with_capacity(cmd_parent.args.len() + 1);
-        for arg in &mut cmd_parent.args {
-            if arg.last() != Some(&0) {
-                debug_assert!(false, "Cmd.args entry missing NUL terminator");
-                arg.push(0);
-            }
-            argv.push(arg.as_ptr().cast::<c_char>());
-        }
-        argv.push(core::ptr::null());
+        // argv is built by the caller (Cmd::transition_to_exec) from
+        // `Cmd.args`, NUL-terminated and null-sentinel-terminated, so this
+        // function never needs to borrow the `Cmd` arena slot.
+        debug_assert!(matches!(spawn_args.argv.last(), Some(p) if p.is_null()));
 
         spawn_args.env_array.push(core::ptr::null());
 
         let spawn_result = match bun_process::spawn_process(
             &spawn_options,
-            argv.as_ptr(),
+            spawn_args.argv.as_ptr(),
             spawn_args.env_array.as_ptr(),
         ) {
             Err(err) => {
@@ -588,7 +578,13 @@ impl ShellSubprocess {
         // does `allocator.create()` then assigns the struct literal in place.
         let mut slot = Box::<Subprocess>::new_uninit();
         let subprocess: *mut Subprocess = slot.as_mut_ptr();
-        *out_subproc = subprocess;
+        // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
+        // the heap-stable `Box<SubprocExec>` staged by the caller before this
+        // call; no `&` to that slot is live (the caller's `&mut Cmd` borrow
+        // ended before the call). Written *before* any callback below
+        // (`watch`/`start`/`read_all`) so re-entrant `Cmd` callbacks see a
+        // populated `exec.subproc.child`.
+        unsafe { *out_subproc = subprocess };
 
         let stdin = match Writable::init(stdio0, event_loop, subprocess, spawn_stdin) {
             Ok(w) => w,
@@ -630,7 +626,7 @@ impl ShellSubprocess {
                 stdout,
                 stderr,
                 flags: if IS_SYNC { Flags::IS_SYNC } else { Flags::empty() },
-                cmd_parent: spawn_args.cmd_parent,
+                cmd_parent,
                 closed: EnumSet::empty(),
             });
         }
@@ -1252,13 +1248,12 @@ impl Readable {
 
 pub struct SpawnArgs<'a> {
     pub arena: &'a mut Arena,
-    /// Backref to the spawning [`ShellCmd`] arena slot. Stored raw (not
-    /// `&'a mut`) because [`Subprocess`] retains it as `*mut ShellCmd` past
-    /// `'a`, and `Cmd::transition_to_exec` simultaneously holds a `&mut` into
-    /// `cmd.exec.subproc.child` for the `out_subproc` write — a `&'a mut` here
-    /// would alias both. Dereferenced exactly once (argv build) inside
-    /// `spawn_maybe_sync_impl`.
-    pub cmd_parent: *mut ShellCmd,
+    /// `[*:null]?[*:0]const u8` argv view for `spawn_process`. Built by the
+    /// caller from `Cmd.args` (each `Vec<u8>` NUL-terminated) so this struct
+    /// never needs to borrow the `Cmd` arena slot — passing the whole `Cmd`
+    /// would alias the `out_subproc` write into `cmd.exec.subproc.child`.
+    /// Must include the trailing null sentinel.
+    pub argv: Vec<*const c_char>,
     /// Backref so [`PipeReader`] async-I/O callbacks can drive
     /// [`Yield::run`]. Zig threaded the interpreter implicitly via
     /// `Base.interpreter`; the NodeId-arena port drops that field, so the
@@ -1348,13 +1343,13 @@ impl<'a> EnvMapIter<'a> {
 impl<'a> SpawnArgs<'a> {
     pub fn default<const IS_SYNC: bool>(
         arena: &'a mut Arena,
-        cmd_parent: *mut ShellCmd,
         interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
     ) -> SpawnArgs<'a> {
         let mut out = SpawnArgs {
             arena,
             interp,
+            argv: Vec::new(),
 
             override_env: false,
             env_array: Vec::new(),
@@ -1376,7 +1371,6 @@ impl<'a> SpawnArgs<'a> {
                 b""
             },
             detached: false,
-            cmd_parent,
             // .ipc_mode = IPCMode.none,
             // .ipc_callback = .zero,
         };

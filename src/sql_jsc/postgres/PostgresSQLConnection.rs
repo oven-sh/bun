@@ -4,7 +4,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{self, Output};
 use bun_string::{self as bstr_mod, strings, String as BunString};
-use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine};
+use crate::jsc::{
+    self as jsc, CallFrame, EventLoopSqlExt as _, HasAutoFlush, JSGlobalObject,
+    JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+};
 use bun_uws as uws;
 use bun_aio::KeepAlive;
 use bun_boringssl as BoringSSL;
@@ -1048,7 +1051,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // pool — and every reconnect — shares one `SSL_CTX*` per distinct
         // config instead of building a fresh one per `PostgresSQLConnection`.
         let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
-        secure = vm.rare_data().ssl_ctx_cache().get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+        secure = vm.ssl_ctx_cache().get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
         if secure.is_none() {
             drop(tls_config);
             // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
@@ -1227,11 +1230,8 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         // mutably and `postgres_group` needs a `&VirtualMachine`; route both
         // through the raw singleton pointer (cf. `setup_tls`).
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
-        // overlap (rare_data() returns a disjoint `*mut RareData`).
-        let group = unsafe { (*vm_ptr).rare_data().postgres_group(&*vm_ptr, false) };
-        // SAFETY: `postgres_group` returns a non-null heap `*mut SocketGroup`
-        // owned by RareData; converting to `&mut` for the connect call only.
-        let group = unsafe { &mut *group };
+        // overlap (rare_data() returns a disjoint `&mut RareData`).
+        let group = unsafe { (*vm_ptr).rare_data().postgres_group::<false>(&*vm_ptr) };
         // SAFETY: path is a valid slice into options_buf which is owned by *ptr.
         let path_slice = unsafe { &*this.path };
         let result = if !path_slice.is_empty() {

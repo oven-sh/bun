@@ -7,6 +7,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::zig_string::ZigString;
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
+use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_string::String
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult, VM,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER,

@@ -2920,10 +2920,7 @@ impl DevServer {
             }),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
-            bundler::bundle_v2::EventLoop::Js(
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                unsafe { &*self.vm }.event_loop(),
-            ),
+            event_loop,
             false, // watching is handled separately
             Some(bun_threading::work_pool::WorkPool::get()),
             heap,

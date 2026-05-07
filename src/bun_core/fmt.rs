@@ -677,22 +677,50 @@ thread_local! {
         const { Cell::new(None) };
 }
 
-fn get_shared_buffer() -> &'static mut SharedTempBuffer {
-    SHARED_TEMP_BUFFER_PTR.with(|cell| {
-        let ptr = match cell.get() {
-            Some(p) => p,
-            None => {
+/// RAII borrow of the thread-local shared temp buffer.
+///
+/// On construction: takes (or allocates) the buffer and nulls the thread-local
+/// cell so any recursive borrow allocates a fresh one instead of aliasing this
+/// one. On drop: restores the buffer to the cell, or frees it if recursion has
+/// already restored a different buffer (mirrors fmt.zig's `defer` block).
+struct SharedTempBufferBorrow {
+    ptr: NonNull<SharedTempBuffer>,
+}
+
+impl SharedTempBufferBorrow {
+    fn new() -> Self {
+        let ptr = SHARED_TEMP_BUFFER_PTR.with(|cell| {
+            cell.take().unwrap_or_else(|| {
                 let b = Box::new([0u8; 32 * 1024]);
                 // SAFETY: Box::into_raw is non-null.
-                let p = unsafe { NonNull::new_unchecked(Box::into_raw(b)) };
-                cell.set(Some(p));
-                p
+                unsafe { NonNull::new_unchecked(Box::into_raw(b)) }
+            })
+        });
+        Self { ptr }
+    }
+
+    #[inline]
+    fn chunk(&mut self) -> &mut SharedTempBuffer {
+        // SAFETY: this borrow uniquely owns the buffer for its lifetime; the
+        // thread-local cell was nulled on construction so recursion cannot alias it.
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl Drop for SharedTempBufferBorrow {
+    fn drop(&mut self) {
+        SHARED_TEMP_BUFFER_PTR.with(|c| {
+            if let Some(existing) = c.get() {
+                if existing != self.ptr {
+                    // Recursion restored a different buffer; free ours.
+                    // SAFETY: ptr was allocated via Box::into_raw and is uniquely owned by self.
+                    drop(unsafe { Box::from_raw(self.ptr.as_ptr()) });
+                }
+            } else {
+                c.set(Some(self.ptr));
             }
-        };
-        // SAFETY: pointer is owned by this thread's cell; caller is the unique
-        // borrower (Zig code defensively nulls the cell during use to handle recursion).
-        unsafe { &mut *ptr.as_ptr() }
-    })
+        });
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

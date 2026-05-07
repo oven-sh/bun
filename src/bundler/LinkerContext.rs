@@ -1145,13 +1145,13 @@ impl SourceMapDataTask {
                 .cast::<SourceMapDataTask>())
         };
         let ctx: *mut LinkerContext = task.ctx;
-        let _guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             // SAFETY: ctx backref valid for task lifetime
             unsafe {
                 (*ctx).mark_pending_task_done();
                 (*ctx).source_maps.line_offset_wait_group.finish();
             }
-        });
+        }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
         // deliberately do NOT materialize `&mut BundleV2` here — these tasks
@@ -1176,13 +1176,13 @@ impl SourceMapDataTask {
                 .cast::<SourceMapDataTask>())
         };
         let ctx: *mut LinkerContext = task.ctx;
-        let _guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             // SAFETY: ctx backref
             unsafe {
                 (*ctx).mark_pending_task_done();
                 (*ctx).source_maps.quoted_contents_wait_group.finish();
             }
-        });
+        }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
@@ -2253,10 +2253,8 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        let _guard = scopeguard::guard((), |_| {
-            #[cfg(debug_assertions)]
-            debug_tree_shake!("end()");
-        });
+        #[cfg(debug_assertions)]
+        scopeguard::defer! { debug_tree_shake!("end()"); }
 
         if self.graph.files_live.is_set(source_index as usize) {
             return;
@@ -2415,10 +2413,8 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        let _guard = scopeguard::guard((), |_| {
-            #[cfg(debug_assertions)]
-            debug_tree_shake!("end()");
-        });
+        #[cfg(debug_assertions)]
+        scopeguard::defer! { debug_tree_shake!("end()"); }
 
         // PORT NOTE: reshaped for borrowck — clone dependencies before recursing (recursion mutates `parts`)
         let dependencies: Vec<Dependency> = part.dependencies.slice().to_vec();

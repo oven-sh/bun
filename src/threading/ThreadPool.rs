@@ -959,16 +959,16 @@ impl Thread {
         };
         let self_ptr: *mut Thread = &mut self_;
         CURRENT.with(|c| c.set(self_ptr));
-        let _current_guard = scopeguard::guard((), |_| {
+        scopeguard::defer! {
             CURRENT.with(|c| c.set(ptr::null_mut()));
-        });
+        }
 
         // SAFETY: thread_pool outlives this worker (join() waits).
         unsafe { (*thread_pool).register(self_ptr) };
-        let _unregister_guard = scopeguard::guard((), move |_| {
+        scopeguard::defer! {
             // SAFETY: thread_pool outlives this worker; self_ptr is our stack-local Thread.
             unsafe { (*thread_pool).unregister(self_ptr) };
-        });
+        }
 
         let mut is_waking = false;
         loop {

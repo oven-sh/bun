@@ -112,19 +112,18 @@ pub enum DependencyVersionTag {
     Catalog = 9,
 }
 
-/// Resolver-visible projection of `install::dependency::Version`. The full
-/// `Version.Value` union references `bun_semver::query::Group` (a
-/// self-referential linked list that is `!Clone`/`!Send`); the resolver only
-/// reads `.tag` and `.value.npm.version.is_exact()`, so the value payload is
-/// an opaque, install-supplied box.
+/// Resolver-visible projection of `install::dependency::Version`. The resolver
+/// only reads `.tag` and round-trips the whole value through [`AutoInstaller`]
+/// methods; the parsed `Version.Value` union is install-internal and is stored
+/// here as an opaque inline buffer so the struct stays `Send`/`Clone`.
 #[derive(Default, Clone)]
 pub struct DependencyVersion {
     pub tag: DependencyVersionTag,
     pub literal: SemverString,
-    /// Opaque payload owned by `bun_install` (the parsed `Version.Value`).
-    /// The resolver never inspects it directly — it round-trips through
-    /// [`AutoInstaller`] methods.
-    pub value: Option<core::ptr::NonNull<()>>,
+    /// Opaque inline storage for `bun_install::dependency::Version.Value`
+    /// (largest variant is 5×u64). The install impl transmutes into/out of
+    /// this; the resolver never inspects it.
+    pub value: [u64; 5],
 }
 
 #[derive(Default, Clone)]

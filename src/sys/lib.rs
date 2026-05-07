@@ -5220,8 +5220,8 @@ pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Er
 ///
 /// `Fd`/`Dir`/`File` are intentionally non-owning `Copy` handles (matching
 /// Zig). When a scope owns one and must close it on every exit path
-/// (Zig: `defer fd.close()`), wrap the fd in this guard instead of writing
-/// `scopeguard::guard((), |_| fd.close())`.
+/// (Zig: `defer fd.close()`), wrap the fd in this guard — do not hand-roll a
+/// `scopeguard` closure.
 #[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
 pub struct CloseOnDrop(Fd);
 impl CloseOnDrop {

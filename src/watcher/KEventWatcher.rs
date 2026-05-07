@@ -78,8 +78,6 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut changelist_array: [libc::kevent; CHANGELIST_COUNT] = unsafe { core::mem::zeroed() };
     let changelist = &mut changelist_array;
 
-    let _flush = scopeguard::guard((), |_| Output::flush());
-
     // SAFETY: fd is a valid kqueue fd; changelist points to CHANGELIST_COUNT zeroed entries
     let mut count: c_int = unsafe {
         c::kevent(
@@ -135,9 +133,9 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         }
     }
 
-    this.mutex.lock();
-    // PORT NOTE: edition-2021 disjoint capture — closure borrows only `this.mutex`.
-    let _unlock = scopeguard::guard((), |_| this.mutex.unlock());
+    // RAII: `MutexGuard` holds the mutex by raw pointer (no borrow of `this`)
+    // and unlocks on Drop — Zig: `this.mutex.lock(); defer this.mutex.unlock();`.
+    let _guard = this.mutex.lock_guard();
     if this.running {
         // PORT NOTE: reshaped for borrowck — copy the (small, ≤128) deduped slice
         // into a local so `this` is no longer mutably borrowed via `watch_events`
@@ -148,6 +146,9 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         (this.on_file_update)(this.ctx, &mut deduped.clone(), changed, &this.watchlist);
     }
 
+    // Zig: `defer Output.flush()`. No early returns above, so flush once at the
+    // single exit point instead of via scopeguard.
+    Output::flush();
     Ok(())
 }
 

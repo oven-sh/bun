@@ -2989,7 +2989,7 @@ impl DevServer {
                 ssr_transpiler: unsafe {
                     ::core::ptr::NonNull::from((*self_ptr).ssr_transpiler.assume_init_mut())
                 },
-                plugins: self.bundler_options.plugin.map(|p| p.cast()),
+                plugins: self.bundler_options.plugin,
             }),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },

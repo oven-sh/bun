@@ -845,7 +845,7 @@ impl ServerConfig {
                     ];
                     let mut found = false;
                     for method in METHODS {
-                        let method_name = bun_str::String::static_(method_as_str(method));
+                        let method_name = bun_str::String::static_(method.as_str());
                         if let Some(function) =
                             value.get_own(global, &method_name)?
                         {
@@ -866,7 +866,7 @@ impl ServerConfig {
                                     ),
                                 });
                             } else if let Some(html_route) =
-                                any_route_from_js(global, &path, function, &mut *init_ctx)?
+                                AnyRoute::from_js(global, &path, function, &mut *init_ctx)?
                             {
                                 let mut method_set = http_method::Set::empty();
                                 method_set.insert(method);
@@ -885,7 +885,7 @@ impl ServerConfig {
                     }
                 }
 
-                let Some(route) = any_route_from_js(global, &path, value, &mut *init_ctx)? else {
+                let Some(route) = AnyRoute::from_js(global, &path, value, &mut *init_ctx)? else {
                     return Err(global.throw_invalid_arguments(
                         "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>\n\n\
                          To bundle frontend apps on-demand with Bun.serve(), import HTML files.\n\n\
@@ -1357,34 +1357,29 @@ impl ServerConfig {
 
         // ---- base_uri / base_url normalization ----
         if !args.base_uri.is_empty() {
-            // SAFETY: base_url borrows into base_uri's heap allocation; we reset
-            // base_url to default before every base_uri reassignment below.
-            args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
-            if args.base_url.hostname.is_empty() {
-                args.base_url = URL::default();
+            let base_url = URL::parse(&args.base_uri);
+            if base_url.hostname.is_empty() {
                 args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
-                args.base_url = URL::default();
                 args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments(
                     "Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.",
                 ));
             }
 
-            if args.base_url.protocol.is_empty() {
+            if base_url.protocol.is_empty() {
                 let protocol: &[u8] = if args.ssl_config.is_some() {
                     b"https"
                 } else {
                     b"http"
                 };
-                let hostname = args.base_url.hostname;
+                let hostname = base_url.hostname;
                 let needs_brackets: bool =
                     strings::is_ipv6_address(hostname) && hostname[0] != b'[';
-                // original base_uri kept alive via mem::replace below until reparse completes
-                let pathname = strings::trim_leading_char(args.base_url.pathname, b'/');
+                let pathname = strings::trim_leading_char(base_url.pathname, b'/');
                 let mut buf: Vec<u8> = Vec::new();
                 if needs_brackets {
                     if (port == 80 && args.ssl_config.is_none())
@@ -1430,13 +1425,10 @@ impl ServerConfig {
                     }
                 }
                 // Zig: `const original_base_uri = args.base_uri; defer free(original_base_uri);`
-                // Keep the previous allocation alive across the reparse — `hostname`
-                // / `pathname` above (and args.base_url's fields) still borrow into it.
-                let prev_base_uri =
-                    core::mem::replace(&mut args.base_uri, buf.into_boxed_slice());
-                // SAFETY: see parse_base_url_static; new base_uri now owns the bytes.
-                args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
-                drop(prev_base_uri);
+                // `base_url` (and so `hostname`/`pathname`) borrow into the
+                // original allocation; drop the borrow before reassigning.
+                drop(base_url);
+                args.base_uri = buf.into_boxed_slice();
             }
         } else {
             let hostname: &[u8] = if has_hostname {
@@ -1503,21 +1495,17 @@ impl ServerConfig {
                     "Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.",
                 ));
             }
-
-            // SAFETY: base_url borrows into base_uri's heap allocation; reset on error below.
-            args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
         }
 
         // I don't think there's a case where this can happen
         // but let's check anyway, just in case
-        if args.base_url.hostname.is_empty() {
-            args.base_url = URL::default();
+        let base_url = URL::parse(&args.base_uri);
+        if base_url.hostname.is_empty() {
             args.base_uri = Box::default();
             return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
         }
 
-        if !args.base_url.username.is_empty() || !args.base_url.password.is_empty() {
-            args.base_url = URL::default();
+        if !base_url.username.is_empty() || !base_url.password.is_empty() {
             args.base_uri = Box::default();
             return Err(global
                 .throw_invalid_arguments("baseURI can't have a username or password"));

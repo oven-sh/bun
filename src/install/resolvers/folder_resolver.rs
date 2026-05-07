@@ -2,24 +2,27 @@ use core::fmt;
 
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
-use bun_js_parser as js_ast;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
 use bun_sys::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
+use bun_semver::version::VersionInt;
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
+use crate::bun_json::Expr;
 use crate::dependency::{self, Dependency};
-use crate::install::{Features, Lockfile, PackageID};
-// PORT NOTE: typed against the real `PackageManager` (not the lib.rs stub) —
-// `PackageManagerResolution` / `PackageManagerEnqueue` are the only callers
-// and they pass `package_manager_real::PackageManager`.
-use crate::package_manager_real::PackageManager;
+use crate::install::{Features, PackageID};
+use crate::lockfile::{Lockfile, StringBuilder};
 use crate::lockfile::Package as LockfilePackage;
+use crate::lockfile::package::ResolverContext;
+use crate::package_manager_real::PackageManager;
 use crate::npm;
-use crate::resolution::{Resolution, Tag as ResolutionTag, Value as ResolutionValue, NpmVersionInfo};
+use crate::resolution::{
+    Resolution, ResolutionType, Tag as ResolutionTag, TaggedValue, Value as ResolutionValue,
+};
+use crate::versioned_url::VersionedURLType;
 
 #[derive(Copy, Clone)]
 pub enum FolderResolution {
@@ -36,13 +39,6 @@ pub struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
     pub version: dependency::Version,
     pub quoted: bool,
-}
-
-impl<'a> Default for PackageWorkspaceSearchPathFormatter<'a> {
-    fn default() -> Self {
-        // TODO(port): Zig default only set `quoted = true`; manager has no default.
-        unreachable!("construct PackageWorkspaceSearchPathFormatter with explicit fields")
-    }
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
@@ -90,14 +86,15 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             let quoted = QuotedFormatter { text: paths.rel };
             fmt::Display::fmt(&quoted, f)
         } else {
+            // Zig `writer.writeAll(bytes)` — paths are byte slices that may not
+            // be valid UTF-8 on every platform, so go through `bstr`'s lossy
+            // `Display` impl.
             write!(f, "{}", bstr::BStr::new(paths.rel))
-            // TODO(port): writer.writeAll(bytes) — Display only accepts &str; consider a byte-writer trait
         }
     }
 }
 
 // Zig: std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80)
-// TODO(port): bun_collections::HashMap needs identity-hash context + 80% max load factor
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
 pub fn normalize(path: &[u8]) -> &[u8] {
@@ -110,38 +107,33 @@ pub fn hash(normalized_path: &[u8]) -> u64 {
 
 // ── NewResolver(comptime tag: Resolution.Tag) type ────────────────────────
 // PORT NOTE: `Resolution.Tag` (Zig nested decl) is `crate::resolution::Tag` in Rust;
-// const-generic requires `#[derive(ConstParamTy)]` on that enum (added in lib.rs stub).
+// const-generic requires `#[derive(ConstParamTy)]` on that enum (added in resolution.rs).
 pub struct NewResolver<'a, const TAG: ResolutionTag> {
     pub folder_path: &'a [u8],
 }
 
-impl<'a, const TAG: ResolutionTag> NewResolver<'a, TAG> {
-    pub fn resolve<B: semver::StringBuilder>(
-        &self,
-        builder: &mut B,
-        _json: js_ast::Expr,
-    ) -> Result<Resolution, bun_core::Error> {
-        // TODO(port): narrow error set
-        // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
-        let appended = builder.append::<SemverString>(self.folder_path);
-        // PORT NOTE: stub `resolution::Value` is a struct mirroring the Zig `extern union`
-        // (one field per variant), not a Rust enum — assign the matching field by TAG.
-        let mut value = ResolutionValue::default();
-        match TAG {
-            ResolutionTag::Folder => value.folder = appended,
-            ResolutionTag::Symlink => value.symlink = appended,
-            ResolutionTag::Workspace => value.workspace = appended,
-            _ => unreachable!(),
-        }
-        Ok(Resolution { tag: TAG, value, ..Default::default() })
+impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
+    fn check_bundled_dependencies() -> bool {
+        matches!(TAG, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
-    pub fn count<B: semver::StringBuilder>(&self, builder: &mut B, _json: js_ast::Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
         builder.count(self.folder_path);
     }
 
-    pub const fn check_bundled_dependencies() -> bool {
-        matches!(TAG, ResolutionTag::Folder | ResolutionTag::Symlink)
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        // Zig: @unionInit(Resolution.Value, @tagName(tag), builder.append(String, this.folder_path))
+        let appended = builder.append::<SemverString>(self.folder_path);
+        Ok(ResolutionType::init(match TAG {
+            ResolutionTag::Folder => TaggedValue::Folder(appended),
+            ResolutionTag::Symlink => TaggedValue::Symlink(appended),
+            ResolutionTag::Workspace => TaggedValue::Workspace(appended),
+            _ => unreachable!(),
+        }))
     }
 }
 
@@ -153,39 +145,47 @@ pub struct CacheFolderResolver {
     pub version: semver::Version,
 }
 
-impl CacheFolderResolver {
-    pub fn resolve<B>(&self, _builder: B, _json: js_ast::Expr) -> Result<Resolution, bun_core::Error> {
-        // TODO(port): narrow error set
-        Ok(Resolution {
-            tag: ResolutionTag::Npm,
-            value: ResolutionValue {
-                npm: NpmVersionInfo {
-                    version: self.version,
-                    url: SemverString::from(b""),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-    }
-
-    pub fn count<B>(&self, _builder: B, _json: js_ast::Expr) {}
-
-    pub const fn check_bundled_dependencies() -> bool {
+impl ResolverContext for CacheFolderResolver {
+    fn check_bundled_dependencies() -> bool {
         true
     }
+
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+
+    fn resolve<SemverIntType: VersionInt>(
+        &mut self,
+        _builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<SemverIntType>, bun_core::Error> {
+        // The npm payload is the only `Resolution.Value` variant whose layout
+        // depends on `SemverIntType` (it carries `Version<SemverIntType>`).
+        // `parse_with_json` always invokes `resolve::<u64>`, so build the
+        // concrete `Resolution` (= `ResolutionType<u64>`) and cast it back to
+        // the generic — a no-op at the only call site.
+        let resolution = Resolution::init(TaggedValue::Npm(VersionedURLType {
+            version: self.version,
+            url: SemverString::from(b""),
+        }));
+        debug_assert_eq!(
+            core::mem::size_of::<ResolutionType<SemverIntType>>(),
+            core::mem::size_of::<Resolution>(),
+        );
+        // SAFETY: `ResolutionType<SemverIntType>` only differs from
+        // `ResolutionType<u64>` in `Value::npm.version`'s integer width; the
+        // sole caller monomorphizes with `SemverIntType = u64`, so the layouts
+        // are identical (asserted above).
+        Ok(unsafe { core::mem::transmute_copy(&resolution) })
+    }
 }
 
-// TODO(port): trait to unify NewResolver<TAG> and CacheFolderResolver for `read_package_json_from_disk`
-// (Zig used `comptime ResolverType: type`). The associated const `IS_WORKSPACE` replaces the
-// `if (comptime ResolverType == WorkspaceResolver)` check.
-pub trait FolderResolverImpl {
+/// Compile-time check replacing Zig's `if (comptime ResolverType == WorkspaceResolver)`.
+trait IsWorkspace {
     const IS_WORKSPACE: bool;
 }
-impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
+impl<'a, const TAG: ResolutionTag> IsWorkspace for NewResolver<'a, TAG> {
     const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
 }
-impl FolderResolverImpl for CacheFolderResolver {
+impl IsWorkspace for CacheFolderResolver {
     const IS_WORKSPACE: bool = false;
 }
 
@@ -276,17 +276,35 @@ fn normalize_package_json_path<'a>(
     }
 }
 
-fn read_package_json_from_disk<R: FolderResolverImpl>(
-    manager: &mut PackageManager,
+fn read_package_json_from_disk<R: ResolverContext + IsWorkspace>(
+    manager: *mut PackageManager,
     abs: &ZStr,
     version: dependency::Version,
     features: Features,
     // PERF(port): was comptime monomorphization (features + ResolverType) — profile in Phase B
     resolver: &mut R,
 ) -> Result<LockfilePackage, bun_core::Error> {
-    // TODO(port): narrow error set
+    // Zig threaded `manager.lockfile`, `manager`, `manager.log` as three args;
+    // Rust borrowck rejects the overlap on `&mut *manager`, so split via the
+    // raw pointer once here (mirrors `Package::parse_from_real_manager`).
+    // SAFETY: `manager` is `&mut *self` from the sole caller `get_or_put`; the
+    // `lockfile` and `log` fields are disjoint from each other and from
+    // `workspace_package_json_cache`, and `parse`/`parse_with_json` only reach
+    // back into the manager through the `pm` argument they receive — no
+    // re-entrancy through `read_package_json_from_disk`.
+    macro_rules! split {
+        () => {
+            unsafe {
+                let m = &mut *manager;
+                let lockfile: *mut Lockfile = &mut *m.lockfile;
+                let log: *mut logger::Log = m.log;
+                (&mut *lockfile, &mut *manager, &mut *log)
+            }
+        };
+    }
+
     let mut body = npm::Registry::BodyPool::get();
-    // defer Npm.Registry.BodyPool.release(body) — handled by guard Drop
+    // defer Npm.Registry.BodyPool.release(body) — handled by PoolGuard's Drop.
 
     let mut package = LockfilePackage::default();
 
@@ -295,84 +313,73 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace,
         );
 
-        // SAFETY: `log` is set by `PackageManager::init()` before any resolver
-        // path runs (mirrors Zig's non-optional `*logger.Log`).
-        let log: &mut logger::Log = unsafe { &mut *manager.log };
-        let json = match manager
-            .workspace_package_json_cache
-            .get_with_path(log, abs.as_bytes(), Default::default())
-        {
-            crate::package_manager_real::workspace_package_json_cache::GetResult::Entry(e) => e,
-            crate::package_manager_real::workspace_package_json_cache::GetResult::ReadErr(e)
-            | crate::package_manager_real::workspace_package_json_cache::GetResult::ParseErr(e) => {
-                return Err(e);
-            }
+        // SAFETY: see split! comment.
+        let json = unsafe {
+            let m = &mut *manager;
+            let log: &mut logger::Log = &mut *m.log;
+            m.workspace_package_json_cache
+                .get_with_path(log, abs.as_bytes(), Default::default())
+                .unwrap()?
         };
 
-        // TODO(port): `Package::parse_with_json::<R, FEATURES>` is typed against
-        // `lockfile_real::Lockfile`, but the stub `PackageManager.lockfile` is
-        // `crate::lockfile::Lockfile`. The aliasing borrows
-        // (`&mut manager.lockfile` + `&mut *manager` + `&mut *manager.log`)
-        // also need a raw-pointer split. Body deferred until the stub/real
-        // Lockfile types unify.
-        let _ = (&mut package, &json.source, &json.root, &mut *resolver, features);
-        todo!("blocked_on: Package::parse_with_json — stub PackageManager.lockfile vs lockfile_real::Lockfile type mismatch (reconciler-6)");
+        let (lockfile, pm, log) = split!();
+        package.parse_with_json(
+            lockfile,
+            pm,
+            log,
+            &json.source,
+            json.root,
+            resolver,
+            features,
+        )?;
     } else {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
-        let source = &'brk: {
+        let source = &{
             let file = File::from_fd(
                 bun_sys::openat_a(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?,
             );
-            // defer file.close() — TODO(port): File should impl Drop to close
+            let _close = scopeguard::guard((), |_| {
+                let _ = file.close();
+            });
 
-            {
-                body.reset();
-                // TODO(port): toManaged/moveToUnmanaged dance is a no-op in Rust (Vec owns its allocator)
-                let _ = file
-                    .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)?;
-            }
+            body.reset();
+            // PORT NOTE: Zig's `toManaged`/`moveToUnmanaged` dance is a no-op
+            // in Rust — `Vec` already owns its allocator.
+            let _ = file
+                .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)?;
 
-            break 'brk logger::Source::init_path_string(abs.as_bytes(), body.list.as_slice());
+            logger::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
 
-        // TODO(port): see note above on `parse_with_json` — same stub/real
-        // `Lockfile` type mismatch and triple-borrow split applies to `parse`.
-        let _ = (&mut package, source, &mut *resolver, features);
-        todo!("blocked_on: Package::parse — stub PackageManager.lockfile vs lockfile_real::Lockfile type mismatch (reconciler-6)");
+        let (lockfile, pm, log) = split!();
+        package.parse(lockfile, pm, log, source, resolver, features)?;
     }
 
-    #[allow(unreachable_code)]
+    let has_scripts = package.scripts.has_any() || {
+        let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+        let binding_dot_gyp_path =
+            bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
+                dir,
+                &[b"binding.gyp" as &[u8]],
+            );
+        bun_sys::exists(binding_dot_gyp_path.as_bytes())
+    };
+
+    package.meta.set_has_install_script(has_scripts);
+
+    // SAFETY: disjoint borrow of `manager.lockfile`; see split! comment.
+    let lockfile: &mut Lockfile = unsafe { &mut (*manager).lockfile };
+    if let Some(existing_id) =
+        lockfile.get_package_id(package.name_hash, Some(version), &package.resolution)
     {
-        let has_scripts = package.scripts.has_any() || 'brk: {
-            let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-            let binding_dot_gyp_path =
-                bun_paths::resolve_path::join_abs_string_z::<bun_paths::platform::Auto>(
-                    dir,
-                    &[b"binding.gyp" as &[u8]],
-                );
-            break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
-        };
-
-        package.meta.set_has_install_script(has_scripts);
-
-        // TODO(port): `package.resolution` is `resolution_real::ResolutionType<u64>`,
-        // stub `Lockfile::get_package_id` wants `&crate::resolution::Resolution`.
-        // Pass a defaulted stub-typed resolution until the types unify.
-        let resolution_stub = crate::resolution::Resolution::default();
-        if let Some(existing_id) = manager.lockfile.get_package_id(
-            package.name_hash,
-            Some(&version),
-            &resolution_stub,
-        ) {
-            package.meta.id = existing_id;
-            manager.lockfile.packages.set(existing_id, package);
-            return Ok(manager.lockfile.packages.get(existing_id));
-        }
-
-        manager.lockfile.append_package(package)
+        package.meta.id = existing_id;
+        lockfile.packages.set(existing_id as usize, package);
+        return Ok(lockfile.packages.get(existing_id as usize));
     }
+
+    Ok(lockfile.append_package(package)?)
 }
 
 #[derive(Copy, Clone)]
@@ -397,7 +404,6 @@ pub fn get_or_put(
     #[cfg(windows)]
     {
         // SAFETY: abs/rel point into `joined` (or a threadlocal buffer) which is mutable here.
-        // TODO(port): @constCast — verify rel is always backed by mutable storage
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(unsafe {
             core::slice::from_raw_parts_mut(abs.as_ptr() as *mut u8, abs.len())
         });
@@ -414,58 +420,60 @@ pub fn get_or_put(
         return *existing;
     }
 
+    let manager_ptr: *mut PackageManager = manager;
+
     let result: Result<LockfilePackage, bun_core::Error> = match global_or_relative {
-        GlobalOrRelative::Global(_) => 'global: {
+        GlobalOrRelative::Global(_) => {
             let mut path = PathBuffer::uninit();
             path[..non_normalized_path.len()].copy_from_slice(non_normalized_path);
             let mut resolver: SymlinkResolver = NewResolver {
                 folder_path: &path[0..non_normalized_path.len()],
             };
-            break 'global read_package_json_from_disk(
-                manager,
+            read_package_json_from_disk(
+                manager_ptr,
                 abs,
                 version,
                 Features::LINK,
                 &mut resolver,
-            );
+            )
         }
         GlobalOrRelative::Relative(tag) => match tag {
-            dependency::version::Tag::Folder => 'folder: {
+            dependency::version::Tag::Folder => {
                 let mut resolver: Resolver = NewResolver { folder_path: rel };
-                break 'folder read_package_json_from_disk(
-                    manager,
+                read_package_json_from_disk(
+                    manager_ptr,
                     abs,
                     version,
                     Features::FOLDER,
                     &mut resolver,
-                );
+                )
             }
-            dependency::version::Tag::Workspace => 'workspace: {
+            dependency::version::Tag::Workspace => {
                 let mut resolver: WorkspaceResolver = NewResolver { folder_path: rel };
-                break 'workspace read_package_json_from_disk(
-                    manager,
+                read_package_json_from_disk(
+                    manager_ptr,
                     abs,
                     version,
                     Features::WORKSPACE,
                     &mut resolver,
-                );
+                )
             }
             _ => unreachable!(),
         },
-        GlobalOrRelative::CacheFolder(_) => 'cache_folder: {
+        GlobalOrRelative::CacheFolder(_) => {
             let mut resolver = CacheFolderResolver {
                 // SAFETY: `GlobalOrRelative::CacheFolder` is only passed by
                 // `PackageManagerResolution` with a `version.tag == .npm`
                 // dependency (Zig: `version.value.npm.version.toVersion()`).
                 version: unsafe { version.value.npm.version.to_version() },
             };
-            break 'cache_folder read_package_json_from_disk(
-                manager,
+            read_package_json_from_disk(
+                manager_ptr,
                 abs,
                 version,
                 Features::NPM,
                 &mut resolver,
-            );
+            )
         }
     };
 
@@ -492,7 +500,6 @@ pub fn get_or_put(
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/install/resolvers/folder_resolver.zig (352 lines)
-//   confidence: medium
-//   todos:      12
-//   notes:      const-generic Resolution::Tag needs ConstParamTy; getOrPut reshaped (lookup→compute→insert) for borrowck; Paths/normalize_package_json_path lifetimes are aliasing-heavy (abs/rel both borrow joined + threadlocal)
+//   confidence: high
+//   notes:      const-generic Resolution::Tag needs ConstParamTy; getOrPut reshaped (lookup→compute→insert) for borrowck; read_package_json_from_disk borrow-splits manager via raw pointer (mirrors Package::parse_from_real_manager).
 // ──────────────────────────────────────────────────────────────────────────

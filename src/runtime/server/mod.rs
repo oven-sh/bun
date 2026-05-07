@@ -518,14 +518,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
         // re-entrancy bookkeeping; routed through cfg(debug_assertions).
+        let vm_ptr = server.vm as *mut jsc::VirtualMachine;
         #[cfg(debug_assertions)]
         // SAFETY: vm backref is live for the server's lifetime.
-        unsafe { (*(server.vm as *mut jsc::VirtualMachine)).event_loop_debug_enter() };
-        let vm_ptr = server.vm as *mut jsc::VirtualMachine;
+        unsafe { (*(*vm_ptr).event_loop()).debug.enter() };
         let _dbg_guard = scopeguard::guard((), move |_| {
             #[cfg(debug_assertions)]
             // SAFETY: see above.
-            unsafe { (*vm_ptr).event_loop_debug_exit() };
+            unsafe { (*(*vm_ptr).event_loop()).debug.exit() };
+            let _ = vm_ptr;
         });
         req.set_yield(false);
         resp_ref.timeout(server.config.idle_timeout);
@@ -597,16 +598,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (body data buffered into `ctx` won't surface on `request.body`).
         // The bake path (the only caller through `AnyServer`) does not read
         // `request.body`, so this is not observable there.
-        let request_object = Box::leak(crate::webcore::Request::new(
-            crate::webcore::Request::init(
+        //
+        // PORT NOTE (ownership): `Request::new` is `bun.TrivialNew` — the heap
+        // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
+        // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
+        // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
+        let request_object: *mut crate::webcore::Request =
+            Box::into_raw(crate::webcore::Request::new(crate::webcore::Request::init(
                 ctx_mut.method,
                 AnyRequestContext::init(ctx),
                 SSL,
                 Some(signal_ref),
                 Box::new(crate::webcore::body::Value::Null),
-            ),
-        ));
-        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(request_object);
+            )));
+        // SAFETY: freshly allocated; uniquely owned here.
+        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -663,8 +669,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         Some(PreparedRequest {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(global),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(global) {
+                // SAFETY: `request_object` is the freshly-allocated heap
+                // `Request`; ownership transfers to the JS wrapper.
+                CreateJsRequest::Yes => unsafe { (*request_object).to_js(global) },
+                CreateJsRequest::Bake => match unsafe { (*request_object).to_js_for_bake(global) } {
                     Ok(v) => v,
                     Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                     Err(_) => return None,

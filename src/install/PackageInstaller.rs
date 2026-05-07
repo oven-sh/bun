@@ -1191,6 +1191,15 @@ impl<'a> PackageInstaller<'a> {
             );
         };
 
+        // PORT NOTE: reshaped for borrowck — `PackageInstall` borrows several `self.*`
+        // fields while subsequent code also accesses `self.manager` / `self.node_modules`
+        // / `self.lockfile` mutably (Zig aliased freely). Detach the borrows via raw
+        // pointers so `installer`'s lifetime is independent of `&mut self`.
+        // SAFETY: BACKREF — none of these fields are dropped, moved, or resized while
+        // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
+        let node_modules_ptr: *const NodeModulesFolder = &self.node_modules;
+        let lockfile_ptr: *const Lockfile = &*self.lockfile;
+        let subpath_buf_ptr: *mut PathBuffer = &mut self.destination_dir_subpath_buf;
         let mut installer = PackageInstall {
             progress: if self.manager.options.log_level.show_progress() {
                 Some(progress!(self))
@@ -1199,7 +1208,7 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
             destination_dir_subpath,
-            destination_dir_subpath_buf: &mut self.destination_dir_subpath_buf,
+            destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `allocator: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
             patch: patch_patch.map(|p| package_install::Patch {
@@ -1207,8 +1216,8 @@ impl<'a> PackageInstaller<'a> {
                 path: Box::<[u8]>::from(p),
             }),
             package_version,
-            node_modules: &self.node_modules,
-            lockfile: &*self.lockfile,
+            node_modules: unsafe { &*node_modules_ptr },
+            lockfile: unsafe { &*lockfile_ptr },
             cache_dir_subpath: ZStr::EMPTY,
             file_count: 0,
         };
@@ -1494,12 +1503,12 @@ impl<'a> PackageInstaller<'a> {
 
             // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
             // into cache, then install into node_modules
-            if let Some(patch) = installer.patch.as_ref() {
+            if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
                 if installer.patched_package_missing_from_cache(self.manager, package_id) {
                     let task = PatchTask::new_apply_patch_hash(
                         self.manager,
                         package_id,
-                        patch.contents_hash,
+                        patch_contents_hash,
                         patch_name_and_version_hash.unwrap(),
                     );
                     // SAFETY: `task` was just `Box::into_raw`'d in `new_apply_patch_hash`;
@@ -1518,8 +1527,9 @@ impl<'a> PackageInstaller<'a> {
             }
 
             if !IS_PENDING_PACKAGE_INSTALL
-                && !self.can_install_package_for_tree(
-                    self.lockfile.buffers.trees.as_mut_slice(),
+                && !Self::can_install_package_for_tree(
+                    &self.completed_trees,
+                    self.lockfile.buffers.trees.as_slice(),
                     self.current_tree_id,
                 )
             {

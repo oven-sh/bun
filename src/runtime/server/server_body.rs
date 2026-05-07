@@ -2877,11 +2877,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let base_url: Box<[u8]> = strings::trim(config.base_url.href, b"/").into();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        let dev_server: Option<Box<DevServer>> = if config.bake.is_some() {
-            // TODO(port): bake::UserOptions field shapes (root: &ZStr, framework/bundler_options
-            // by value) don't yet line up with dev_server::Options; defer until both stabilize.
-            let _ = core::any::type_name::<dev_server_mod::DevServer>(); // keep import live
-            todo!("blocked_on: bun_runtime::bake::dev_server::Options field-shape mismatch")
+        let dev_server: Option<Box<DevServer>> = if let Some(bake_options) = config.bake.take() {
+            // PORT NOTE: `framework`/`bundler_options` are moved out of
+            // `config.bake` (Zig copied the whole struct by value into the
+            // server first, then read fields out of it). The arena that backs
+            // `root` lives inside `bake_options.arena`; DevServer borrows it
+            // for `'static` (arena outlives DevServer per Zig comment).
+            let broadcast = config.broadcast_console_log_from_browser_to_server_for_bake;
+            // SAFETY: `bake_options.arena` is moved into DevServer (transitively)
+            // and outlives every borrow of `root`; lifetime erased to `'static`
+            // per the same Phase-A convention used in `bake_body::UserOptions`.
+            let arena: &'static bake::Arena = unsafe { &*(&bake_options.arena as *const _) };
+            let root: &'static ZStr = bake_options.root;
+            let framework = unsafe { core::ptr::read(&bake_options.framework) };
+            let bundler_options = unsafe { core::ptr::read(&bake_options.bundler_options) };
+            // Prevent UserOptions::drop from double-freeing the moved fields.
+            mem::forget(bake_options);
+            Some(dev_server_mod::init(dev_server_mod::Options {
+                arena,
+                root,
+                vm: unsafe { &*jsc::VirtualMachine::get() },
+                framework,
+                bundler_options,
+                broadcast_console_log_from_browser_to_server: broadcast,
+                dump_sources: dev_server_mod::Options::DEFAULT_DUMP_SOURCES,
+                dump_state_on_crash: None,
+            })?)
         } else {
             None
         };
@@ -3315,15 +3336,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                             node_response.promise = mem::replace(&mut strong_promise, StrongOptional::empty());
                             // TODO: properly propagate exception upwards
-                            let _ = (result, strong_self);
-                            // result.then2(global, strong_self,
-                            //     node_http_response::Bun__NodeHTTPRequest__onResolve,
-                            //     node_http_response::Bun__NodeHTTPRequest__onReject) catch {};
-                            todo!("blocked_on: bun_jsc::JSValue::then2 (JSValue-ctx variant)");
-                            #[allow(unreachable_code)]
-                            {
-                                is_async = true;
-                            }
+                            result.then2(
+                                global,
+                                strong_self,
+                                super::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                                super::node_http_response::Bun__NodeHTTPRequest__onReject,
+                            );
+                            is_async = true;
                         }
 
                         break 'brk HTTPResult::Pending(result);

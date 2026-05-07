@@ -136,6 +136,34 @@ pub mod fs {
     string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
     string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
 
+    // Method names matching Zig `BSSStringList.append` / `appendLowerCase`
+    // (allocators.zig) — `OOM!T` mapped per PORTING.md.
+    macro_rules! string_store_append_impl {
+        ($t:ty, $backing:ident) => {
+            impl $t {
+                /// Zig: `<Store>.append(allocator, value)`.
+                #[inline]
+                pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+                    // SAFETY: `$backing()` returns the raw `*mut` singleton; the singleton
+                    // serializes all mutation through its internal `mutex`.
+                    let s = unsafe { &mut *$backing() }.append(value).map_err(|_| bun_alloc::AllocError)?;
+                    // SAFETY: returned slice borrows the process-lifetime singleton; re-erase to `'static`.
+                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                }
+                /// Zig: `<Store>.appendLowerCase(allocator, value)`.
+                #[inline]
+                pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+                    // SAFETY: see `append`.
+                    let s = unsafe { &mut *$backing() }.append_lower_case(value).map_err(|_| bun_alloc::AllocError)?;
+                    // SAFETY: see `append`.
+                    Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+                }
+            }
+        };
+    }
+    string_store_append_impl!(DirnameStore, dirname_store_backing);
+    string_store_append_impl!(FilenameStore, filename_store_backing);
+
     // ── FileSystem ───────────────────────────────────────────────────────
 
     /// Port of `FileSystem` in `fs.zig`.
@@ -331,6 +359,64 @@ pub mod fs {
         /// Port of `FileSystem.relativeFrom` in `fs.zig`.
         pub fn relative_from(&self, from: &[u8]) -> &'static [u8] {
             bun_paths::resolve_path::relative(from, self.top_level_dir)
+        }
+
+        /// Zig: `f.top_level_dir` — cached cwd captured at `FileSystem::init`.
+        #[inline] pub fn top_level_dir(&self) -> &'static [u8] { self.top_level_dir }
+
+        /// Zig: `f.top_level_dir = slice` (PackageManager.zig:776). `dir` must be
+        /// `'static` (interned in `DirnameStore` or a process-lifetime buffer
+        /// like `cwd_buf`). Takes `&self` because callers hold `&'static
+        /// FileSystem` from `instance()`; only called during single-threaded
+        /// CLI init so the interior write is unaliased.
+        #[inline]
+        pub fn set_top_level_dir(&self, dir: &'static [u8]) {
+            // SAFETY: single-threaded CLI init only (PackageManager.zig:776);
+            // `self` is the process-static singleton.
+            unsafe { (*(self as *const Self as *mut Self)).top_level_dir = dir; }
+        }
+
+        /// Zig: `topLevelDirWithoutTrailingSlash` (fs.zig).
+        pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
+            let d = self.top_level_dir;
+            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) { &d[..d.len() - 1] } else { d }
+        }
+
+        /// Zig: `FileSystem.normalize` (fs.zig:415) —
+        /// `path_handler.normalizeString(str, true, .auto)`.
+        #[inline]
+        pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
+            use bun_paths::resolve_path::{normalize_string, platform};
+            normalize_string::<true, platform::Auto>(str)
+        }
+
+        /// Zig: `f.dirname_store` (fs.zig:76).
+        #[inline] pub fn dirname_store(&self) -> &'static DirnameStore { self.dirname_store }
+        /// Zig: `f.filename_store` (fs.zig:77).
+        #[inline] pub fn filename_store(&self) -> &'static FilenameStore { self.filename_store }
+
+        /// Zig: `FileSystem.RealFS.getDefaultTempDir()` — `BUN_TMPDIR` or the
+        /// platform fallback. Process-static once-computed.
+        #[inline] pub fn get_default_temp_dir() -> &'static [u8] { RealFS::get_default_temp_dir() }
+
+        /// Zig: `fs.fs.readDirectory(dir, null, generation, store_fd)`
+        /// (fs.zig:872 `RealFS.readDirectory`). Returns the cached
+        /// `*EntriesOption` slot owned by the resolver's BSSMap singleton
+        /// (process-lifetime).
+        #[inline]
+        pub fn read_directory(
+            &self,
+            dir: &[u8],
+            generation: Generation,
+            store_fd: bool,
+        ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
+            // SAFETY: `self` is the process-static singleton; `read_directory`
+            // is serialized through `RealFS.entries_mutex` internally.
+            let fs = unsafe { &mut *(self as *const Self as *mut Self) };
+            let r = fs.fs.read_directory(dir, None, generation, store_fd)?;
+            // SAFETY: `r` borrows the BSSMap singleton (process-lifetime); re-erase
+            // to `'static` so `&mut self` is dropped before the caller binds the slot.
+            Ok(unsafe { &mut *(r as *mut EntriesOption) })
         }
     }
 
@@ -873,6 +959,15 @@ pub mod fs {
         pub fn base_lowercase(&self) -> &[u8] {
             self.base_lowercase_.slice()
         }
+
+        /// Zig: `entry.dir` field (fs.zig:333) — interned in DirnameStore.
+        #[inline] pub fn dir(&self) -> &'static [u8] { self.dir }
+
+        /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
+        #[inline] pub fn abs_path(&self) -> PathString { self.abs_path }
+
+        /// Zig: `entry.abs_path = PathString.init(...)`.
+        #[inline] pub fn set_abs_path(&mut self, p: PathString) { self.abs_path = p; }
 
         /// Port of `Entry.kind` in `fs.zig` — stat-on-first-use.
         // PORT NOTE: `Entry` lives in the EntryStore BSSMap singleton; all access is

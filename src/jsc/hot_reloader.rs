@@ -150,17 +150,12 @@ impl HotReloaderCtx for VirtualMachine {
 
     fn log_level_at_least_info(&self) -> bool {
         // Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info)`.
+        // Note `Level.atLeast` is `self <= other` (Verbose=0..Err=4), so this is
+        // true for Verbose/Debug/Info — i.e. "verbose enough to print info".
         // SAFETY: `log` is set in `VirtualMachine::init` and never cleared.
         self.log
-            .map(|l| unsafe { l.as_ref() }.level >= bun_logger::Level::Info)
+            .map(|l| unsafe { l.as_ref() }.level.at_least(bun_logger::Level::Info))
             .unwrap_or(false)
-    }
-
-    fn close_all_listen_sockets_for_watch_mode(&mut self) {
-        // Zig: `if (this.reloader.ctx.rare_data) |rare| rare.closeAllListenSocketsForWatchMode()`.
-        if let Some(rare) = self.rare_data.as_deref_mut() {
-            rare.close_all_listen_sockets_for_watch_mode();
-        }
     }
 
     fn is_watcher_enabled(&self) -> bool {
@@ -257,10 +252,6 @@ pub trait HotReloaderCtx {
 
     /// Zig: `this.ctx.getLoaders()` — `&transpiler.options.loaders`.
     fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable;
-
-    /// Zig: `if (comptime Ctx == ImportWatcher) ... ctx.rare_data.?.closeAllListenSocketsForWatchMode()`.
-    /// Default no-op; `VirtualMachine` overrides.
-    fn close_all_listen_sockets_for_watch_mode(&mut self) {}
 
     /// Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false`.
     fn log_level_at_least_info(&self) -> bool {
@@ -568,11 +559,16 @@ where
         if RELOAD_IMMEDIATELY {
             Output::flush();
             // Zig: `if (comptime Ctx == ImportWatcher) { if (ctx.rare_data) |rare|
-            // rare.closeAllListenSocketsForWatchMode(); }`. Rust can't compare a
-            // generic type parameter to a concrete type, so this is a trait
-            // method with a default no-op; only `VirtualMachine` overrides.
-            // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*(*self.reloader).ctx).close_all_listen_sockets_for_watch_mode() };
+            // rare.closeAllListenSocketsForWatchMode(); }`. That comptime guard is
+            // *never* true for any actual instantiation (Ctx is VirtualMachine or
+            // BundleV2, never ImportWatcher itself), so the call is dead code in
+            // the spec. Match spec literally: no-op for every Ctx.
+            //
+            // PORT NOTE: this is almost certainly a Zig typo — the intent was
+            // likely `@TypeOf(ctx.bun_watcher) == ImportWatcher`, which would
+            // close listen sockets before exec()-restarting under --watch on a
+            // VirtualMachine. But fixing that here would diverge from observable
+            // Zig behaviour; revisit upstream first.
             flush_changed_paths_for_reload();
             // SAFETY: CLEAR_SCREEN is only mutated during single-threaded init.
             bun_core::reload_process(unsafe { CLEAR_SCREEN }, false);
@@ -909,8 +905,15 @@ where
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
                                     {
-                                        // TODO(port): bun_sys::faccessat takes &ZStr but
-                                        // basename() returns &[u8]; build a stack ZStr.
+                                        // Zig: `if (bun.sys.faccessat(fd, basename) == .result)`.
+                                        // That compares the Maybe(bool) *tag*, ignoring the
+                                        // payload — `.result(true)` and `.result(false)` both
+                                        // match (faccessat only yields `.err` on NAMETOOLONG).
+                                        // Match spec literally: `.is_ok()`. The comment above
+                                        // says "Verify it exists", and this is likely a latent
+                                        // Zig bug, but spec parity wins; in practice the
+                                        // branch is harmless (re-watching a missing entrypoint
+                                        // is a no-op downstream).
                                         let mut name_buf = [0u8; 256];
                                         let basename = bun_paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
@@ -920,13 +923,11 @@ where
                                             let z = unsafe {
                                                 ZStr::from_raw(name_buf.as_ptr(), basename.len())
                                             };
-                                            matches!(
-                                                bun_sys::faccessat(
-                                                    file_descriptors[event.index as usize],
-                                                    z,
-                                                ),
-                                                Ok(true)
+                                            bun_sys::faccessat(
+                                                file_descriptors[event.index as usize],
+                                                z,
                                             )
+                                            .is_ok()
                                         } else {
                                             false
                                         };

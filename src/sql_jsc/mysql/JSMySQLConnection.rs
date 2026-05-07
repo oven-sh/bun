@@ -1130,12 +1130,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            // TODO(port): blocked_on us_bun_verify_error_t::to_js — bun_runtime
-            // dep is gated (see Cargo.toml); `verify_error_to_js` lives in
-            // `bun_runtime::socket::uws_jsc`. Until that crate is green, fail
-            // with a generic ConnectionClosed instead of the per-field SSL error.
-            let _ = &ssl_error;
-            this.fail(b"TLS handshake failed", AnyMySQLErrorT::ConnectionClosed);
+            // ssl_error.toJS(this.#globalObject) catch return
+            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, this.global_object) else {
+                return;
+            };
+            this.fail_with_js_value(v);
         }
     }
 

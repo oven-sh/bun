@@ -3,9 +3,9 @@
 pub mod env_loader;
 
 pub use env_loader::{
-    instance, set_instance, DefineStoreRef, DefineStoreVTable, DotEnvBehavior, DotEnvFileSuffix,
-    HashTable, HashTableValue, Kind, Loader, Map, Mode, NullDelimitedEnvMap, S3Credentials,
-    StdEnvMapWrapper, Value, HAS_NO_CLEAR_SCREEN_CLI_FLAG, INSTANCE,
+    instance, set_instance, DefineStoreRef, DefineStoreVTable, DirEntryProbe, DotEnvBehavior,
+    DotEnvFileSuffix, HashTable, HashTableValue, Kind, Loader, Map, Mode, NullDelimitedEnvMap,
+    S3Credentials, StdEnvMapWrapper, Value, HAS_NO_CLEAR_SCREEN_CLI_FLAG, INSTANCE,
 };
 
 /// `dotenv::map::{HashTable, Entry}` namespace expected by `install_jsc::ini_jsc` et al.

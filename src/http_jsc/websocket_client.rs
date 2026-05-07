@@ -371,19 +371,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let ssl_ptr: *mut boringssl::c::SSL = socket
                     .get_native_handle()
                     .map_or(core::ptr::null_mut(), |p| p.cast());
-                // PORT NOTE: `SSL_get_servername` isn't in `bun_boringssl_sys`'s
-                // hand-rolled FFI surface yet. BoringSSL exports it as plain C ABI,
-                // so declare the symbol locally rather than gate the whole check.
                 // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
-                unsafe extern "C" {
-                    fn SSL_get_servername(
-                        ssl: *const boringssl::c::SSL,
-                        type_: core::ffi::c_int,
-                    ) -> *const core::ffi::c_char;
-                }
+                const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
                 // SAFETY: ssl_ptr is valid for the lifetime of the socket; passing
                 // null is well-defined (BoringSSL returns null).
-                let servername = unsafe { SSL_get_servername(ssl_ptr, 0) };
+                let servername =
+                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
                     let hostname = unsafe { core::ffi::CStr::from_ptr(servername) }.to_bytes();

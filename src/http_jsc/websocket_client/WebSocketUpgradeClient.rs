@@ -599,8 +599,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
         // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
         self.ssl_config = None;
-        // secure: Option<SslCtxRef> — Drop calls SSL_CTX_free.
-        self.secure = None;
+        // secure: raw retained `SSL_CTX*` (no RAII wrapper yet — see field
+        // TODO(port)). Release the ref taken in `connect`.
+        if let Some(s) = self.secure.take() {
+            // SAFETY: `s` was returned by `create_ssl_client_context_for`
+            // (one owned ref) and has not been freed; SSL_CTX_free decrements
+            // BoringSSL's internal refcount.
+            unsafe { boringssl::c::SSL_CTX_free(s) };
+        }
     }
 
     /// # Safety
@@ -1341,7 +1347,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
                                 // SAFETY: live C++ back-reference.
                                 unsafe { (*ws).set_protocol(&mut protocol_str) };
-                                drop(protocol_str);
+                                // `BunString` is `Copy`; explicitly drop the
+                                // ref taken by `clone_latin1` (Zig: `defer
+                                // protocol_str.deref()`).
+                                protocol_str.deref();
                             }
                             true
                         };
@@ -1561,7 +1570,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the field take.
         let mut saved_secure = unsafe { (*this).secure.take() }; // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
-        // drop the ref it took out of `self`; SslCtxRef::Drop calls SSL_CTX_free.
+        // release the ref it took out of `self` (SSL_CTX_free at fn end).
         // SAFETY: short-lived `&mut` for clear_data; ends before any reentrant call.
         unsafe { (*this).clear_data() };
         bun_jsc::mark_binding!();
@@ -1614,7 +1623,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // No `&mut Self` spans this call (handle_close reenters).
             tcp.close(uws::CloseCode::Failure);
         }
-        drop(saved_secure);
+        // Zig: `defer if (saved_secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);`
+        // Any arm above that didn't transfer ownership to `did_connect` left
+        // the retained `SSL_CTX*` in `saved_secure`; release it now.
+        if let Some(s) = saved_secure {
+            // SAFETY: `s` is the owned ref taken out of `self.secure` above;
+            // not aliased after this point.
+            unsafe { boringssl::c::SSL_CTX_free(s) };
+        }
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -2148,7 +2164,11 @@ macro_rules! export_http_client {
                 unix_socket_path: Option<&BunString>,
                 offer_permessage_deflate: bool,
             ) -> *mut HTTPClient<$ssl> {
-                match HTTPClient::<$ssl>::connect(
+                // SAFETY: extern-C contract — caller (WebCore::WebSocket C++)
+                // guarantees `header_names`/`header_values` point to
+                // `header_count` live `BunString`s (and likewise for the proxy
+                // header arrays), and that `websocket` is a live back-ref.
+                match unsafe { HTTPClient::<$ssl>::connect(
                     global,
                     websocket,
                     host,
@@ -2169,7 +2189,7 @@ macro_rules! export_http_client {
                     target_authorization,
                     unix_socket_path,
                     offer_permessage_deflate,
-                ) {
+                ) } {
                     Some(p) => p,
                     None => ptr::null_mut(),
                 }

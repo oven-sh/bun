@@ -5468,9 +5468,6 @@ impl VirtualMachine {
             let _ = formatter.map.remove(&err);
         }
 
-        if let Some(s) = code_string_guard {
-            s.deref();
-        }
         Ok(())
     }
 

@@ -42,6 +42,13 @@ pub trait DirEntryProbe {
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
+impl DirEntryProbe for bun_sys::fs::DirEntry {
+    #[inline]
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        bun_sys::fs::DirEntry::has_comptime_query(self, query_lower)
+    }
+}
+
 /// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
 /// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
 /// transmutes/maps its `api::DotEnvBehavior` into this at the call site.

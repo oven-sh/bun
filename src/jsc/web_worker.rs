@@ -482,9 +482,16 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
-            if let Some(preload) =
-                resolve_entry_point_specifier(parent_ref, utf8_slice.slice(), error_message, temp_log)
-            {
+            // SAFETY: `parent_ref` is the live VM on the calling (parent)
+            // thread — its `transpiler` is uniquely owned here.
+            if let Some(preload) = unsafe {
+                resolve_entry_point_specifier(
+                    *parent_ref,
+                    utf8_slice.slice(),
+                    error_message,
+                    temp_log,
+                )
+            } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
 
@@ -801,16 +808,18 @@ impl WebWorker {
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // TODO(port): ownership — `Loader<'static>` borrows `map` for its
-        // lifetime. In Zig both lived on the worker arena; here both are
-        // `Box::into_raw`'d and reclaimed by the VM teardown path
-        // (`vm.destroy()` → `transpiler.env`). This is FFI-style ownership
-        // transfer, not a process-lifetime leak.
+        // `Loader<'static>` borrows `map` for its lifetime. In Zig both lived
+        // on the worker arena (bulk-freed); here both are `Box::into_raw`'d
+        // and stashed on `self` so `shutdown()` step 5 reclaims them on every
+        // path — including the early-terminate checkpoint below, which calls
+        // `shutdown()` before the VM exists.
         let map_ptr: *mut bun_dotenv::Map = Box::into_raw(map);
         // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
         // erasure for the worker-VM-lifetime borrow (Zig: arena-backed).
         let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
         let loader_ptr: *mut bun_dotenv::Loader<'static> = Box::into_raw(loader);
+        self.worker_env_map.set(map_ptr);
+        self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
         // VM. If terminateAllAndWait() fired while we were cloning the env
@@ -943,15 +952,17 @@ impl WebWorker {
         let mut resolve_error = BunString::empty();
         // SAFETY: `vm.log` set in `init`; valid for VM lifetime.
         let vm_log = unsafe { (*vm).log.unwrap().as_mut() };
-        let path = match resolve_entry_point_specifier(
-            // SAFETY: scoped `&mut` for the resolver call; no concurrent
-            // parent-thread access touches `transpiler` (only `jsc_vm` /
-            // `event_loop()` are read cross-thread under `vm_lock`).
-            unsafe { &mut *vm },
-            &self.unresolved_specifier,
-            &mut resolve_error,
-            vm_log,
-        ) {
+        // SAFETY: `vm` is the live worker-thread VM; the fn takes a raw ptr
+        // (no `&mut`) because `vm` is already published under `vm_lock` — see
+        // `resolve_entry_point_specifier` Safety contract.
+        let path = match unsafe {
+            resolve_entry_point_specifier(
+                vm,
+                &self.unresolved_specifier,
+                &mut resolve_error,
+                vm_log,
+            )
+        } {
             Some(p) => p,
             None => {
                 unsafe { (*vm).exit_handler.exit_code = 1 };
@@ -1097,6 +1108,8 @@ impl WebWorker {
         let cpp_worker = self.cpp_worker;
         // SAFETY: worker-thread only field; no other thread reads `arena`.
         let mut arena = unsafe { (*self.arena.get()).take() };
+        let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
+        let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
@@ -1170,14 +1183,26 @@ impl WebWorker {
         }
         #[cfg(windows)]
         {
-            // TODO(port): `bun.windows.libuv.Loop.shutdown()` — Windows-only
-            // libuv per-thread loop teardown. The libuv binding crate is a
-            // Windows-only forward-dep; no-op on other targets.
+            // SAFETY: per-thread libuv loop teardown; closes any handles still
+            // open on this worker's loop and drops the thread-local pointer.
+            unsafe { bun_sys::windows::libuv::Loop::shutdown() };
         }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner. `destroy()` is the port of
             // Zig `vm.deinit()`.
             unsafe { (*vm_ptr).destroy() };
+        }
+        // Reclaim the cloned env (loader borrows `*map` — drop loader first).
+        // In Zig both lived on the worker arena and were bulk-freed below;
+        // here they were `Box::into_raw`'d in `start_vm()` (see field doc).
+        if !env_loader.is_null() {
+            // SAFETY: `Box::into_raw`'d in `start_vm`; sole owner; the VM is
+            // gone so its raw `transpiler.env` borrow is dead.
+            drop(unsafe { Box::from_raw(env_loader) });
+        }
+        if !env_map.is_null() {
+            // SAFETY: `Box::into_raw`'d in `start_vm`; sole owner.
+            drop(unsafe { Box::from_raw(env_map) });
         }
         bun_core::delete_all_pools_for_thread_exit();
         drop(arena.take());
@@ -1326,13 +1351,24 @@ fn on_unhandled_rejection(
 /// consume. The returned slice is BORROWED — it aliases `str`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
-fn resolve_entry_point_specifier<'s>(
-    parent: &'s mut VirtualMachine,
+///
+/// # Safety
+/// `parent` must point at a live `VirtualMachine`. Passed as a raw pointer
+/// (not `&mut`) because when called from `spin()` the WORKER's VM has already
+/// been published under `vm_lock`; the parent / main thread may concurrently
+/// dereference the same allocation in `notify_need_termination` /
+/// `terminate_all_and_wait` (`(*vm_ptr).jsc_vm`, `(*vm_ptr).event_loop()`).
+/// A live `&mut VirtualMachine` here would be aliased-&mut UB. Per-use
+/// `(*parent)` derefs keep any autoref scoped to the single expression — the
+/// same pattern `spin()` uses post-publish.
+unsafe fn resolve_entry_point_specifier<'s>(
+    parent: *mut VirtualMachine,
     str: &'s [u8],
     error_message: &mut BunString,
     log: &mut bun_logger::Log,
 ) -> Option<&'s [u8]> {
-    if let Some(graph) = parent.standalone_module_graph {
+    // SAFETY: per fn contract; read-only field.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
         if graph.find(str).is_some() {
             return Some(str);
         }
@@ -1413,8 +1449,13 @@ fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    let global = parent.global;
-    let resolved_entry_point = match parent.transpiler.resolve_entry_point(str) {
+    // SAFETY: per fn contract; `global` is a read-only field, and the resolver
+    // (`transpiler`) is mutated only on `parent`'s owning thread — both call
+    // sites (`create()` on the parent thread, `spin()` on the worker thread)
+    // satisfy that. The cross-thread readers under `vm_lock` never touch
+    // `transpiler`.
+    let global = unsafe { (*parent).global };
+    let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,
         Err(_) => {
             // SAFETY: `global` valid for VM lifetime.

@@ -110,14 +110,17 @@ pub fn install_hoisted_packages(
         }
     }
 
-    let _restore_buffers = scopeguard::guard((), move |()| {
-        // SAFETY: `mgr_ptr` is the provenance root for every body access to
-        // `this` (see shadow-reborrow above); guard runs after all body
-        // borrows have ended.
-        let this = unsafe { &mut *mgr_ptr };
-        this.lockfile.buffers.trees = original_trees;
-        this.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids;
-    });
+    let _restore_buffers = scopeguard::guard(
+        (original_trees, original_tree_dep_ids),
+        move |(trees, dep_ids)| {
+            // SAFETY: `mgr_ptr` is the provenance root for every body access to
+            // `this` (see shadow-reborrow above); guard runs after all body
+            // borrows have ended.
+            let this = unsafe { &mut *mgr_ptr };
+            this.lockfile.buffers.trees = trees;
+            this.lockfile.buffers.hoisted_dependencies = dep_ids;
+        },
+    );
 
     let mut root_node: *mut ProgressNode = core::ptr::null_mut();
     let mut download_node: ProgressNode = ProgressNode::default();

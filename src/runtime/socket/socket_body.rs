@@ -1130,7 +1130,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                                 boringssl_sys::SSL_set_alpn_protos(
                                     ssl_ptr,
                                     protos.as_ptr(),
-                                    c_uint::try_from(protos.len()).unwrap(),
+                                    protos.len(),
                                 );
                             }
                         }

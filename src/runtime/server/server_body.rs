@@ -2874,7 +2874,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn init(config: &mut ServerConfig, global: &JSGlobalObject) -> JsResult<*mut Self> {
-        let base_url: Box<[u8]> = strings::trim(config.base_url.href, b"/").into();
+        let base_url: Box<[u8]> = strings::trim(&config.base_uri, b"/").into();
         // errdefer free(base_url) — Box drops on Err automatically
 
         let dev_server: Option<Box<DevServer>> = if let Some(bake_options) = config.bake.take() {

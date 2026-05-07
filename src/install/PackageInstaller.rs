@@ -1095,9 +1095,17 @@ impl<'a> PackageInstaller<'a> {
         pkg_name: String,
         resolution: &Resolution,
     ) {
+        // PORT NOTE: reshaped for borrowck — `string_bytes` is not mutated during install,
+        // so capture a raw slice once to avoid repeatedly re-borrowing `self.lockfile`
+        // across `&mut self` method calls below (Zig accessed `lockfile.buffers.string_bytes`
+        // freely inline). SAFETY: `buffers.string_bytes` is append-only and never freed
+        // for the lifetime of this `PackageInstaller`.
+        let string_buf_ptr: *const [u8] = self.lockfile.buffers.string_bytes.as_slice();
+        macro_rules! string_buf { () => { unsafe { &*string_buf_ptr } }; }
+
         let alias = self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize].name;
         let destination_dir_subpath: &mut ZStr = {
-            let alias_slice = alias.slice(self.lockfile.buffers.string_bytes.as_slice());
+            let alias_slice = alias.slice(string_buf!());
             self.destination_dir_subpath_buf[..alias_slice.len()].copy_from_slice(alias_slice);
             self.destination_dir_subpath_buf[alias_slice.len()] = 0;
             // SAFETY: buf[alias_slice.len()] == 0 written above
@@ -1122,7 +1130,7 @@ impl<'a> PackageInstaller<'a> {
                         &mut resolution_buf,
                         format_args!(
                             "{}",
-                            workspace_version.fmt(self.lockfile.buffers.string_bytes.as_slice())
+                            workspace_version.fmt(string_buf!())
                         ),
                     )
                     .expect("unreachable");
@@ -1137,7 +1145,7 @@ impl<'a> PackageInstaller<'a> {
                 format_args!(
                     "{}",
                     resolution.fmt(
-                        self.lockfile.buffers.string_bytes.as_slice(),
+                        string_buf!(),
                         PathSep::Posix
                     )
                 ),
@@ -1157,7 +1165,7 @@ impl<'a> PackageInstaller<'a> {
             write!(
                 &mut name_and_version,
                 "{}@{}",
-                bstr::BStr::new(pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice())),
+                bstr::BStr::new(pkg_name.slice(string_buf!())),
                 bstr::BStr::new(package_version),
             )
             .expect("unreachable");
@@ -1184,7 +1192,7 @@ impl<'a> PackageInstaller<'a> {
             //     this.manager.enqueuePatchTask(PatchTask.newCalcPatchHash(this, package_id, name_and_version_hash, dependency_id, url: string))
             // }
             break 'brk (
-                Some(patchdep.path.slice(self.lockfile.buffers.string_bytes.as_slice())),
+                Some(patchdep.path.slice(string_buf!())),
                 Some(patchdep.patchfile_hash().unwrap()),
                 Some(name_and_version_hash),
                 false,
@@ -1224,15 +1232,15 @@ impl<'a> PackageInstaller<'a> {
         bun_output::scoped_log!(
             PackageInstaller,
             "Installing {}@{}",
-            bstr::BStr::new(pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice())),
-            resolution.fmt(self.lockfile.buffers.string_bytes.as_slice(), PathSep::Posix),
+            bstr::BStr::new(pkg_name.slice(string_buf!())),
+            resolution.fmt(string_buf!(), PathSep::Posix),
         );
 
         match resolution.tag {
             resolution::Tag::Npm => {
                 installer.cache_dir_subpath = package_manager::cached_npm_package_folder_name(
                     self.manager,
-                    pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                    pkg_name.slice(string_buf!()),
                     // SAFETY: tag == Npm checked by match arm.
                     unsafe { resolution.value.npm }.version,
                     patch_contents_hash,
@@ -1260,7 +1268,7 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Folder => {
                 // SAFETY: tag == Folder checked by match arm.
                 let folder = unsafe { resolution.value.folder }
-                    .slice(self.lockfile.buffers.string_bytes.as_slice());
+                    .slice(string_buf!());
 
                 if self.lockfile.is_workspace_tree_id(self.current_tree_id) {
                     // Handle when a package depends on itself via file:
@@ -1310,7 +1318,7 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Workspace => {
                 // SAFETY: tag == Workspace checked by match arm.
                 let folder = unsafe { resolution.value.workspace }
-                    .slice(self.lockfile.buffers.string_bytes.as_slice());
+                    .slice(string_buf!());
                 // Handle when a package depends on itself
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
@@ -1332,7 +1340,7 @@ impl<'a> PackageInstaller<'a> {
 
                 // SAFETY: tag == Symlink checked by match arm.
                 let folder = unsafe { resolution.value.symlink }
-                    .slice(self.lockfile.buffers.string_bytes.as_slice());
+                    .slice(string_buf!());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
@@ -1396,7 +1404,7 @@ impl<'a> PackageInstaller<'a> {
                         package_manager::enqueue_git_for_checkout(
                             self.manager,
                             dependency_id,
-                            alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            alias.slice(string_buf!()),
                             resolution,
                             context,
                             patch_name_and_version_hash,
@@ -1425,7 +1433,7 @@ impl<'a> PackageInstaller<'a> {
                             self.manager,
                             dependency_id,
                             package_id,
-                            alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            alias.slice(string_buf!()),
                             resolution,
                             context,
                         );
@@ -1437,7 +1445,7 @@ impl<'a> PackageInstaller<'a> {
                             package_id,
                             // SAFETY: tag == RemoteTarball checked by match arm.
                             unsafe { resolution.value.remote_tarball }
-                                .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                .slice(string_buf!()),
                             context,
                             patch_name_and_version_hash,
                         ) {
@@ -1459,10 +1467,10 @@ impl<'a> PackageInstaller<'a> {
                                     "package {}@{} missing tarball_url",
                                     bstr::BStr::new(
                                         pkg_name
-                                            .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                            .slice(string_buf!())
                                     ),
                                     resolution.fmt(
-                                        self.lockfile.buffers.string_bytes.as_slice(),
+                                        string_buf!(),
                                         PathSep::Posix
                                     ),
                                 ));
@@ -1471,11 +1479,11 @@ impl<'a> PackageInstaller<'a> {
 
                         match package_manager::enqueue_package_for_download(
                             self.manager,
-                            pkg_name.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            pkg_name.slice(string_buf!()),
                             dependency_id,
                             package_id,
                             npm.version,
-                            npm.url.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            npm.url.slice(string_buf!()),
                             context,
                             patch_name_and_version_hash,
                         ) {
@@ -1555,7 +1563,7 @@ impl<'a> PackageInstaller<'a> {
                                 (
                                     bstr::BStr::new(
                                         pkg_name
-                                            .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                            .slice(string_buf!()),
                                     ),
                                     bun_core::fmt::fmt_path(
                                         self.node_modules.path.as_slice(),
@@ -1677,7 +1685,7 @@ impl<'a> PackageInstaller<'a> {
                             break 'brk (true, true);
                         }
                         if self.lockfile.has_trusted_dependency(
-                            alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            alias.slice(string_buf!()),
                             resolution,
                         ) {
                             break 'brk (true, false);
@@ -1692,7 +1700,7 @@ impl<'a> PackageInstaller<'a> {
                             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                         // PORT NOTE: `defer folder_path.deinit()` — AbsPath impls Drop.
                         folder_path
-                            .append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()))
+                            .append(alias.slice(string_buf!()))
                             .unwrap_or_oom();
 
                         'enqueue_lifecycle_scripts: {
@@ -1705,7 +1713,7 @@ impl<'a> PackageInstaller<'a> {
                                     } else {
                                         None
                                     },
-                                    version_buf: self.lockfile.buffers.string_bytes.as_slice(),
+                                    version_buf: string_buf!(),
                                 },
                                 self.lockfile.packages.items_resolutions()[package_id as usize]
                                     .get(self.lockfile.buffers.resolutions.as_slice()),
@@ -1719,7 +1727,7 @@ impl<'a> PackageInstaller<'a> {
                                         "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                                         bstr::BStr::new(
                                             pkg_name.slice(
-                                                self.lockfile.buffers.string_bytes.as_slice()
+                                                string_buf!()
                                             )
                                         ),
                                     ));
@@ -1728,7 +1736,7 @@ impl<'a> PackageInstaller<'a> {
                             }
 
                             if self.enqueue_lifecycle_scripts(
-                                alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                alias.slice(string_buf!()),
                                 log_level,
                                 &mut folder_path,
                                 package_id,
@@ -1739,7 +1747,7 @@ impl<'a> PackageInstaller<'a> {
                                     self.manager.trusted_deps_to_add_to_package_json.push(
                                         Box::<[u8]>::from(
                                             alias.slice(
-                                                self.lockfile.buffers.string_bytes.as_slice(),
+                                                string_buf!(),
                                             ),
                                         ),
                                     );
@@ -1773,12 +1781,12 @@ impl<'a> PackageInstaller<'a> {
                                         .unwrap_or_oom();
                                 folder_path
                                     .append(
-                                        alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                        alias.slice(string_buf!()),
                                     )
                                     .unwrap_or_oom();
 
                                 let count = self.get_installed_package_scripts_count(
-                                    alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                    alias.slice(string_buf!()),
                                     package_id,
                                     resolution.tag,
                                     &mut folder_path,
@@ -1790,10 +1798,10 @@ impl<'a> PackageInstaller<'a> {
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(
-                                                self.lockfile.buffers.string_bytes.as_slice()
+                                                string_buf!()
                                             )),
                                             resolution.fmt(
-                                                self.lockfile.buffers.string_bytes.as_slice(),
+                                                string_buf!(),
                                                 PathSep::Posix
                                             ),
                                         ));
@@ -1841,7 +1849,7 @@ impl<'a> PackageInstaller<'a> {
                             cause.err.name(),
                             bstr::BStr::new(
                                 self.names[package_id as usize]
-                                    .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                    .slice(string_buf!())
                             ),
                         ));
                         self.summary.fail += 1;
@@ -1933,7 +1941,7 @@ impl<'a> PackageInstaller<'a> {
                                 "Permission denied while installing <b>{}<r>",
                                 bstr::BStr::new(
                                     self.names[package_id as usize]
-                                        .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                        .slice(string_buf!())
                                 ),
                             ),
                         );
@@ -1947,7 +1955,7 @@ impl<'a> PackageInstaller<'a> {
                                 bstr::BStr::new(cause.step.name()),
                                 bstr::BStr::new(
                                     self.names[package_id as usize]
-                                        .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                        .slice(string_buf!()),
                                 ),
                             ),
                         );
@@ -2005,7 +2013,7 @@ impl<'a> PackageInstaller<'a> {
                 let mut folder_path =
                     AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
                 folder_path
-                    .append(alias.slice(self.lockfile.buffers.string_bytes.as_slice()))
+                    .append(alias.slice(string_buf!()))
                     .unwrap_or_oom();
 
                 'enqueue_lifecycle_scripts: {
@@ -2018,7 +2026,7 @@ impl<'a> PackageInstaller<'a> {
                             } else {
                                 None
                             },
-                            version_buf: self.lockfile.buffers.string_bytes.as_slice(),
+                            version_buf: string_buf!(),
                         },
                         self.lockfile.packages.items_resolutions()[package_id as usize]
                             .get(self.lockfile.buffers.resolutions.as_slice()),
@@ -2032,7 +2040,7 @@ impl<'a> PackageInstaller<'a> {
                                 "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                                 bstr::BStr::new(
                                     pkg_name
-                                        .slice(self.lockfile.buffers.string_bytes.as_slice())
+                                        .slice(string_buf!())
                                 ),
                             ));
                         }
@@ -2040,7 +2048,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     if self.enqueue_lifecycle_scripts(
-                        alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                        alias.slice(string_buf!()),
                         log_level,
                         &mut folder_path,
                         package_id,
@@ -2050,7 +2058,7 @@ impl<'a> PackageInstaller<'a> {
                         if is_trusted_through_update_request {
                             self.manager.trusted_deps_to_add_to_package_json.push(
                                 Box::<[u8]>::from(
-                                    alias.slice(self.lockfile.buffers.string_bytes.as_slice()),
+                                    alias.slice(string_buf!()),
                                 ),
                             );
                         }

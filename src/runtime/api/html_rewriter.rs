@@ -621,7 +621,6 @@ impl BufferOutputSink {
             context,
             response: core::ptr::null_mut(),
             response_value: StrongOptional::empty(),
-             // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
             body_value_bufferer: None,
             tmp_sync_error: None,
         }));
@@ -797,7 +796,6 @@ impl BufferOutputSink {
         Ok(response_js_value)
     }
 
-     // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
     fn on_finished_buffering_trampoline(
         ctx: *mut core::ffi::c_void,
         bytes: &[u8],

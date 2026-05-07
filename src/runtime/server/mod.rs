@@ -1053,7 +1053,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         let base_url: Box<[u8]> =
-            bun_str::strings::trim(config.base_url.href, b"/").to_vec().into_boxed_slice();
+            bun_str::strings::trim(&config.base_uri, b"/").to_vec().into_boxed_slice();
         // errdefer free(base_url) — Box drops on Err automatically
 
         // TODO(b2-blocked): bake::DevServer::init(DevServerInit { … }). The

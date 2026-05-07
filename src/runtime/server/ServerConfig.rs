@@ -1545,7 +1545,10 @@ pub struct UserRouteBuilder {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/ServerConfig.zig (1127 lines)
-//   confidence: medium
-//   todos:      17
-//   notes:      apply_static_route handler shims need real trait; URL/base_uri borrow into Box<[u8]> needs self-referential fix in Phase B; clone_for_reloading_static_routes resets more of self than Zig (see TODO).
+//   confidence: medium-high
+//   todos:      8
+//   notes:      apply_static_route handler shims need real trait;
+//               convert_file_system_router_type bridges two FileSystemRouterType
+//               structs via bake_body::arena_erase until bake_body threads a
+//               real `'bump` (tracked there).
 // ──────────────────────────────────────────────────────────────────────────

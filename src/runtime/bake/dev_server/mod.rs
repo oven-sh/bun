@@ -16,7 +16,9 @@
 
 use core::sync::atomic::Ordering;
 
-use bun_collections::{bit_set::DynamicBitSet, ArrayHashMap, StringArrayHashMap};
+use core::ptr::NonNull;
+
+use bun_collections::{bit_set::DynamicBitSet, HashMap, StringArrayHashMap};
 use bun_safety::ThreadLock;
 
 use super::framework_router::{self, OpaqueFileId};
@@ -358,17 +360,23 @@ impl ResponseLike for bun_uws::AnyResponse {
     }
 }
 
-/// `DevServer.HmrSocket` — per-WebSocket state. Full body (open/close/message
-/// handlers) gated in `HmrSocket.rs` (heavy `bun_uws` + jsc dep).
+/// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
+/// message handlers) live in `hmr_socket_body` (`../DevServer/HmrSocket.rs`).
 pub struct HmrSocket {
-    /// BACKREF: owned by `dev.active_websocket_connections`.
-    pub dev: *const DevServer,
+    /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
+    /// `remove` + `Box::from_raw` in `on_close`.
+    pub dev: NonNull<DevServer>,
     pub underlying: Option<bun_uws::AnyWebSocket>,
-    pub current_route: route_bundle::IndexOptional,
-    pub subscriptions: u8, // packed bitset of HmrTopic
+    pub subscriptions: super::dev_server_body::HmrTopicBits,
+    /// Allows actions which inspect or mutate sensitive DevServer state.
+    pub is_from_localhost: bool,
+    /// By telling DevServer the active route, this enables receiving detailed
+    /// `hot_update` events for when the route is updated.
+    pub active_route: route_bundle::IndexOptional,
     /// Source-map keys this socket has been sent; used to ref-count entries
     /// in `SourceMapStore` so they survive until the socket disconnects.
-    pub referenced_source_maps: ArrayHashMap<source_map_store::Key, ()>,
+    pub referenced_source_maps: HashMap<source_map_store::Key, ()>,
+    pub inspector_connection_id: i32,
 }
 
 impl HmrSocket {
@@ -376,7 +384,7 @@ impl HmrSocket {
     /// given topic.
     #[inline]
     pub fn is_subscribed(&self, topic: HmrTopic) -> bool {
-        (self.subscriptions & topic.as_bit().bits()) != 0
+        self.subscriptions.contains(topic.as_bit())
     }
 }
 
@@ -581,7 +589,7 @@ impl HotReloadEvent {
             return;
         }
 
-        let ends_with_sep = bun_paths::is_sep_any(dir_path[dir_path.len() - 1]);
+        let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
         // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile in Phase B
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
@@ -1090,7 +1098,8 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
         },
         finalize_bundle: |p, bv2, result| {
             // SAFETY: p is a live *mut DevServer; bv2/result are valid for the call
-            // (DevServerHandle invariant).
+            // (DevServerHandle invariant). `result` is `*mut DevServerOutput<'_>`
+            // end-to-end (vtable + handle wrapper) — the body mutates `result.chunks`.
             let dev = unsafe { &mut *p.cast::<DevServer>() };
             // SAFETY: `bv2` borrows the three `Transpiler`s stored inline in
             // `DevServer` (stable heap address); the `'static` is a stand-in for
@@ -1098,7 +1107,7 @@ pub static DEV_SERVER_VTABLE: bun_bundler::dispatch::DevServerVTable =
             super::dev_server_body::finalize_bundle(
                 dev,
                 unsafe { &mut *bv2.cast() },
-                unsafe { &mut *(result as *mut bun_bundler::bundle_v2::DevServerOutput) },
+                unsafe { &mut *result },
             )
         },
         handle_parse_task_failure: |p, err, graph, abs_path, log, bv2| {

@@ -2671,7 +2671,11 @@ impl<'a> BundleV2<'a> {
         alloc: &bun_alloc::Arena,
         event_loop: EventLoop,
         cli_watch_flag: bool,
-        thread_pool: Option<&mut ThreadPoolLib>,
+        // Raw `NonNull` (not `&mut`): the JS-API path threads `WorkPool::get()`
+        // (a `&'static` from `OnceLock`, concurrently read by workers) through
+        // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
+        // `&mut` along the way would violate Stacked Borrows.
+        thread_pool: Option<NonNull<ThreadPoolLib>>,
         heap: ThreadLocalArena,
     ) -> Result<Box<BundleV2<'a>>, Error> {
         // TODO(port): arena-allocate self via bump.alloc — Box::new is wrong allocator (Zig: allocator.create(@This()) on arena)

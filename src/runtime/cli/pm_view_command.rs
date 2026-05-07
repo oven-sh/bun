@@ -464,21 +464,21 @@ pub fn view(
     }
 
     if let Some(dist) = manifest.get_object(b"dist") {
-        Output::prettyln(format_args!("\n<d><r><b>dist<r>"));
+        prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            Output::prettyln(format_args!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t)));
+            prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
-            Output::prettyln(format_args!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s)));
+            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
         }
         if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
-            Output::prettyln(format_args!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i)));
+            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
-            Output::prettyln(format_args!(
+            prettyln!(
                 " <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>",
                 bun_fmt::size(u.0 as usize, Default::default()),
-            ));
+            );
         }
     }
 

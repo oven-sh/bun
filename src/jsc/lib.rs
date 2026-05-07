@@ -196,7 +196,7 @@ pub mod schema_api {
 
 pub use self::js_value::{
     js_value_hash, BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromJsEnum, JSValue,
-    PropertyIteratorFn, ProtectedJSValue, ProxyField, ProxyInternalField, SerializedFlags,
+    PropertyIteratorFn, Protected as ProtectedJSValue, ProxyField, ProxyInternalField, SerializedFlags,
     SerializedScriptValue,
 };
 

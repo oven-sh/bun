@@ -971,7 +971,7 @@ impl Lockfile {
                 continue;
             }
             if dependencies.contains(id) {
-                return PackageID::try_from(pkg_id).unwrap();
+                return PackageID::try_from(pkg_id).expect("int cast");
             }
         }
 
@@ -996,7 +996,7 @@ impl Lockfile {
             let resolutions = packages.items_resolution();
             for (i, (res, name_hash)) in resolutions.iter().zip(name_hashes.iter()).enumerate() {
                 if res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash_ {
-                    return PackageID::try_from(i).unwrap();
+                    return PackageID::try_from(i).expect("int cast");
                 }
             }
 
@@ -2123,7 +2123,7 @@ impl Lockfile {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
 
         if !entry.found_existing {
-            let new_id: PackageID = PackageID::try_from(self.packages.len()).unwrap();
+            let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
             pkg.meta.id = new_id;
             self.packages.append(*pkg)?;
             *entry.value_ptr = PackageIndexEntry::Id(new_id);
@@ -2141,7 +2141,7 @@ impl Lockfile {
                     return Ok(existing_id);
                 }
 
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).unwrap();
+                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
 
@@ -2174,7 +2174,7 @@ impl Lockfile {
                     }
                 }
 
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).unwrap();
+                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
                 self.packages.append(*pkg)?;
 

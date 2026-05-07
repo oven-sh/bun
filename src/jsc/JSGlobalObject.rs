@@ -1125,15 +1125,15 @@ impl JSGlobalObject {
         if value.is_big_int() {
             if T::SIGNED {
                 if value.is_big_int_in_int64_range(
-                    i64::try_from(min_t).unwrap(),
-                    i64::try_from(max_t).unwrap(),
+                    i64::try_from(min_t).expect("int cast"),
+                    i64::try_from(max_t).expect("int cast"),
                 ) {
                     return Ok(T::from_i64(value.to_int64()));
                 }
             } else {
                 if value.is_big_int_in_uint64_range(
-                    u64::try_from(min_t).unwrap(),
-                    u64::try_from(max_t).unwrap(),
+                    u64::try_from(min_t).expect("int cast"),
+                    u64::try_from(max_t).expect("int cast"),
                 ) {
                     return Ok(T::from_u64(value.to_uint64_no_truncate()));
                 }

@@ -563,7 +563,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         unsafe {
             let mut info: bun_sys::c::struct_proc_bsdinfo = core::mem::zeroed();
             let size: c_int =
-                c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>()).unwrap();
+                c_int::try_from(core::mem::size_of::<bun_sys::c::struct_proc_bsdinfo>()).expect("int cast");
             let rc = bun_sys::c::proc_pidinfo(
                 pid,
                 bun_sys::c::PROC_PIDTBSDINFO,
@@ -574,7 +574,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
             if rc != size {
                 return 0;
             }
-            return libc::pid_t::try_from(info.pbi_ppid).unwrap();
+            return libc::pid_t::try_from(info.pbi_ppid).expect("int cast");
         }
     }
     #[cfg(target_os = "linux")]
@@ -624,13 +624,13 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
             bun_sys::c::proc_listchildpids(
                 parent,
                 out.as_mut_ptr().cast(),
-                c_int::try_from(out.len() * core::mem::size_of::<libc::pid_t>()).unwrap(),
+                c_int::try_from(out.len() * core::mem::size_of::<libc::pid_t>()).expect("int cast"),
             )
         };
         if rc <= 0 {
             return None;
         }
-        return Some((usize::try_from(rc).unwrap()).min(out.len()));
+        return Some((usize::try_from(rc).expect("int cast")).min(out.len()));
     }
     #[cfg(target_os = "linux")]
     {

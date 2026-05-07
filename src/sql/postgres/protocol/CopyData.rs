@@ -18,7 +18,7 @@ impl CopyData {
     ) -> Result<Self, bun_core::Error> {
         let length = reader.length()?;
 
-        let data = reader.read(usize::try_from(length.saturating_sub(5)).unwrap())?;
+        let data = reader.read(usize::try_from(length.saturating_sub(5)).expect("int cast"))?;
         Ok(Self { data })
     }
 
@@ -42,7 +42,7 @@ impl CopyData {
     ) -> Result<(), bun_core::Error> {
         let data = self.data.slice();
         let count: u32 =
-            u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).unwrap();
+            u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).expect("int cast");
         // Zig: [_]u8{'d'} ++ toBytes(Int32(count)) — `int32` returns big-endian [u8;4].
         let count_bytes = int32(count);
         let header: [u8; 5] = [b'd', count_bytes[0], count_bytes[1], count_bytes[2], count_bytes[3]];

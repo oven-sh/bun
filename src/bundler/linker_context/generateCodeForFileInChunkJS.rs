@@ -417,7 +417,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // the property to just reference the corresponding variable instead
                 for prop in new_properties.slice_mut() {
                     if prop.key.is_none()
-                        || !matches!(prop.key.as_ref().unwrap().data, ExprData::EString(_))
+                        || !matches!(prop.key.as_ref().expect("infallible: prop has key").data, ExprData::EString(_))
                         || prop.value.is_none()
                     {
                         continue;
@@ -445,7 +445,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 key: prop.key,
                                 value: Some(Expr::init_identifier(
                                     export_ref,
-                                    prop.value.as_ref().unwrap().loc,
+                                    prop.value.as_ref().expect("infallible: prop has value").loc,
                                 )),
                                 ..Default::default()
                             };
@@ -730,7 +730,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 }
 
                                 let class_name_loc = class.class.class_name.unwrap().loc;
-                                let class_name_ref = class.class.class_name.unwrap().ref_.unwrap();
+                                let class_name_ref = class.class.class_name.unwrap().ref_.expect("infallible: ref bound");
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
                                 let class_ref: StoreRef<E::Class> =
                                     StoreRef::from_bump(&mut class.class);

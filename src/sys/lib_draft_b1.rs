@@ -603,7 +603,7 @@ pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Result<usize> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -830,7 +830,7 @@ fn statx_impl(fd: Fd, path: Option<*const c_char>, flags: u32, mask: u32) -> Res
         // SAFETY: FFI call with valid fd, NUL-terminated path (or empty), and zeroed out-buffer.
         let rc = unsafe {
             syscall::statx(
-                i32::try_from(fd.cast()).unwrap(),
+                i32::try_from(fd.cast()).expect("int cast"),
                 path.unwrap_or(b"\0".as_ptr() as *const c_char),
                 flags,
                 mask,
@@ -941,7 +941,7 @@ pub fn mkdirat_a(dir_fd: Fd, file_path: &[u8]) -> Result<()> {
 pub fn mkdirat_z(dir_fd: Fd, file_path: *const c_char, mode: Mode) -> Result<()> {
     Result::<()>::errno_sys_p(
         // SAFETY: FFI call with valid dirfd and NUL-terminated path.
-        unsafe { syscall::mkdirat(dir_fd.cast().try_into().unwrap(), file_path, mode) },
+        unsafe { syscall::mkdirat(dir_fd.cast().try_into().expect("infallible: size matches"), file_path, mode) },
         Tag::mkdir,
         file_path,
     )
@@ -1772,7 +1772,7 @@ pub fn openat_os_path(dirfd: Fd, file_path: bun_paths::OSPathSliceZ<'_>, flags: 
                 log!("openat({}, {}, {}) = {}", dirfd, bstr::BStr::new(file_path.as_bytes()), flags, rc);
             }
             return match get_errno(rc) {
-                E::SUCCESS => Result::Ok(Fd::from_native(rc.try_into().unwrap())),
+                E::SUCCESS => Result::Ok(Fd::from_native(rc.try_into().expect("infallible: size matches"))),
                 E::INTR => continue,
                 err => Result::Err(Error { errno: err as _, syscall: Tag::open, ..Default::default() }),
             };
@@ -1788,7 +1788,7 @@ pub fn openat_os_path(dirfd: Fd, file_path: bun_paths::OSPathSliceZ<'_>, flags: 
         }
 
         return match get_errno(rc) {
-            E::SUCCESS => Result::Ok(Fd::from_native(rc.try_into().unwrap())),
+            E::SUCCESS => Result::Ok(Fd::from_native(rc.try_into().expect("infallible: size matches"))),
             E::INTR => continue,
             err => Result::Err(Error { errno: err as _, syscall: Tag::open, ..Default::default() }),
         };
@@ -1934,7 +1934,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::write, fd) {
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -1947,7 +1947,7 @@ pub fn write(fd: Fd, bytes: &[u8]) -> Result<usize> {
                 if err.get_errno() == E::INTR { continue; }
                 return err;
             }
-            return Result::Ok(usize::try_from(rc).unwrap());
+            return Result::Ok(usize::try_from(rc).expect("int cast"));
         }
     }
     #[cfg(windows)]
@@ -2007,14 +2007,14 @@ pub fn writev(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: FFI call with valid fd and iovec array of `buffers.len()` entries.
-        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr() as *const posix::iovec_const, i32::try_from(buffers.len()).unwrap()) };
+        let rc = unsafe { writev_sym(fd.cast(), buffers.as_ptr() as *const posix::iovec_const, i32::try_from(buffers.len()).expect("int cast")) };
         if cfg!(debug_assertions) {
             log!("writev({}, {}) = {}", fd, veclen(buffers), rc);
         }
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::writev, fd) {
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(not(target_os = "macos"))]
     loop {
@@ -2027,7 +2027,7 @@ pub fn writev(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2039,14 +2039,14 @@ pub fn pwritev(fd: Fd, buffers: &[bun_core::PlatformIOVecConst], position: isize
     #[cfg(target_os = "macos")]
     {
         // SAFETY: FFI call with valid fd and iovec array of `buffers.len()` entries.
-        let rc = unsafe { pwritev_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).unwrap(), position) };
+        let rc = unsafe { pwritev_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).expect("int cast"), position) };
         if cfg!(debug_assertions) {
             log!("pwritev({}, {}) = {}", fd, veclen(buffers), rc);
         }
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::pwritev, fd) {
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(all(not(windows), not(target_os = "macos")))]
     loop {
@@ -2059,7 +2059,7 @@ pub fn pwritev(fd: Fd, buffers: &[bun_core::PlatformIOVecConst], position: isize
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2071,14 +2071,14 @@ pub fn readv(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: FFI call with valid fd and iovec array of `buffers.len()` entries.
-        let rc = unsafe { readv_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).unwrap()) };
+        let rc = unsafe { readv_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).expect("int cast")) };
         if cfg!(debug_assertions) {
             log!("readv({}, {}) = {}", fd, veclen(buffers), rc);
         }
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::readv, fd) {
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(not(target_os = "macos"))]
     loop {
@@ -2091,7 +2091,7 @@ pub fn readv(fd: Fd, buffers: &mut [posix::iovec]) -> Result<usize> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2103,14 +2103,14 @@ pub fn preadv(fd: Fd, buffers: &mut [posix::iovec], position: isize) -> Result<u
     #[cfg(target_os = "macos")]
     {
         // SAFETY: FFI call with valid fd and iovec array of `buffers.len()` entries.
-        let rc = unsafe { preadv_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).unwrap(), position) };
+        let rc = unsafe { preadv_sym(fd.cast(), buffers.as_ptr(), i32::try_from(buffers.len()).expect("int cast"), position) };
         if cfg!(debug_assertions) {
             log!("preadv({}, {}) = {}", fd, veclen(buffers), rc);
         }
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::preadv, fd) {
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(not(target_os = "macos"))]
     loop {
@@ -2123,7 +2123,7 @@ pub fn preadv(fd: Fd, buffers: &mut [posix::iovec], position: isize) -> Result<u
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2148,7 +2148,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], offset: i64) -> Result<usize> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2171,7 +2171,7 @@ pub fn pwrite(fd: Fd, bytes: &[u8], offset: i64) -> Result<usize> {
                 _ => return err,
             }
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2191,7 +2191,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
             return err;
         }
         log!("read({}, {}) = {} ({})", fd, adjusted_len, rc, debug_timer);
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -2204,7 +2204,7 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
                 if err.get_errno() == E::INTR { continue; }
                 return err;
             }
-            return Result::Ok(usize::try_from(rc).unwrap());
+            return Result::Ok(usize::try_from(rc).expect("int cast"));
         }
     }
     #[cfg(windows)]
@@ -2275,7 +2275,7 @@ pub fn poll(fds: &mut [posix::pollfd], timeout: i32) -> Result<usize> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2297,7 +2297,7 @@ pub fn ppoll(fds: &mut [posix::pollfd], timeout: Option<&mut posix::timespec>, s
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2317,7 +2317,7 @@ pub fn recv(fd: Fd, buf: &mut [u8], flag: u32) -> Result<usize> {
             return err;
         }
         log!("recv({}, {}) = {} {}", fd, adjusted_len, rc, debug_timer);
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(not(target_os = "macos"))]
     loop {
@@ -2329,7 +2329,7 @@ pub fn recv(fd: Fd, buf: &mut [u8], flag: u32) -> Result<usize> {
             return err;
         }
         log!("recv({}, {}) = {} {}", fd, adjusted_len, rc, debug_timer);
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2351,7 +2351,7 @@ pub fn kevent(fd: Fd, changelist: &[libc::kevent], eventlist: &mut [libc::kevent
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2370,7 +2370,7 @@ pub fn send(fd: Fd, buf: &[u8], flag: u32) -> Result<usize> {
             return err;
         }
         log!("send({}, {}) = {} ({})", fd, buf.len(), rc, debug_timer);
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2384,7 +2384,7 @@ pub fn send(fd: Fd, buf: &[u8], flag: u32) -> Result<usize> {
                 return err;
             }
             log!("send({}, {}) = {} ({})", fd, buf.len(), rc, debug_timer);
-            return Result::Ok(usize::try_from(rc).unwrap());
+            return Result::Ok(usize::try_from(rc).expect("int cast"));
         }
     }
 }
@@ -2398,7 +2398,7 @@ pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Result<i32> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(i32::try_from(rc).unwrap());
+        return Result::Ok(i32::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2406,12 +2406,12 @@ pub fn pidfd_open(pid: libc::pid_t, flags: u32) -> Result<i32> {
 pub fn lseek(fd: Fd, offset: i64, whence: usize) -> Result<usize> {
     loop {
         // SAFETY: FFI call with valid fd; offset/whence are plain integers.
-        let rc = unsafe { syscall::lseek(fd.cast(), offset, whence.try_into().unwrap()) };
+        let rc = unsafe { syscall::lseek(fd.cast(), offset, whence.try_into().expect("infallible: size matches")) };
         if let Some(err) = Result::<usize>::errno_sys_fd(rc, Tag::lseek, fd) {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        return Result::Ok(usize::try_from(rc).unwrap());
+        return Result::Ok(usize::try_from(rc).expect("int cast"));
     }
 }
 
@@ -2429,7 +2429,7 @@ pub fn readlink<'a>(in_: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut ZStr> {
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        let len = usize::try_from(rc).unwrap();
+        let len = usize::try_from(rc).expect("int cast");
         // POSIX readlink does not NUL-terminate and may truncate to buf.len.
         // If the result filled the buffer, there is no room for the sentinel
         // and the target may have been truncated. Treat this as ENAMETOOLONG
@@ -2457,7 +2457,7 @@ pub fn readlinkat<'a>(fd: Fd, in_: &ZStr, buf: &'a mut [u8]) -> Result<&'a mut Z
             if err.get_errno() == E::INTR { continue; }
             return err;
         }
-        let len = usize::try_from(rc).unwrap();
+        let len = usize::try_from(rc).expect("int cast");
         // See comment in readlink() above.
         if len >= buf.len() {
             return Result::Err(Error {
@@ -3175,7 +3175,7 @@ pub fn mmap_file(path: &ZStr, flags: libc::c_int, wanted_size: Option<usize>, of
     let _close = crate::CloseOnDrop::new(fd);
 
     let stat_size = match fstat(fd) {
-        Result::Ok(result) => usize::try_from(result.size).unwrap(),
+        Result::Ok(result) => usize::try_from(result.size).expect("int cast"),
         Result::Err(err) => return Result::Err(err),
     };
     let mut size = stat_size.checked_sub(offset).unwrap_or(0);
@@ -3221,7 +3221,7 @@ pub fn setsockopt(fd: Fd, level: c_int, optname: u32, value: i32) -> Result<i32>
             return err;
         }
         log!("setsockopt({}, {}, {}) = {}", fd.cast(), level, optname, rc);
-        return Result::Ok(i32::try_from(rc).unwrap());
+        return Result::Ok(i32::try_from(rc).expect("int cast"));
     }
 }
 
@@ -3539,7 +3539,7 @@ pub fn get_max_pipe_size_on_linux() -> usize {
 
         // we set the absolute max to 8 MB because honestly that's a huge pipe
         // my current linux machine only goes up to 1 MB, so that's very unlikely to be hit
-        c_int::try_from(max_pipe_size.saturating_sub(32)).unwrap().min(1024 * 1024 * 8)
+        c_int::try_from(max_pipe_size.saturating_sub(32)).expect("int cast").min(1024 * 1024 * 8)
     }) as usize
 }
 
@@ -3973,7 +3973,7 @@ pub fn set_file_offset(fd: Fd, offset: usize) -> Result<()> {
     {
         return Result::<()>::errno_sys_fd(
             // SAFETY: FFI call with valid fd.
-            unsafe { syscall::lseek(fd.cast(), i64::try_from(offset).unwrap(), posix::SEEK_SET) },
+            unsafe { syscall::lseek(fd.cast(), i64::try_from(offset).expect("int cast"), posix::SEEK_SET) },
             Tag::lseek,
             fd,
         )
@@ -3984,7 +3984,7 @@ pub fn set_file_offset(fd: Fd, offset: usize) -> Result<()> {
     {
         return Result::<()>::errno_sys_fd(
             // SAFETY: FFI call with valid fd.
-            unsafe { libc::lseek(fd.cast(), i64::try_from(offset).unwrap(), posix::SEEK_SET) },
+            unsafe { libc::lseek(fd.cast(), i64::try_from(offset).expect("int cast"), posix::SEEK_SET) },
             Tag::lseek,
             fd,
         )
@@ -4279,7 +4279,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Result<usize> {
                 }
             }
 
-            return Result::Ok(usize::try_from(rc).unwrap());
+            return Result::Ok(usize::try_from(rc).expect("int cast"));
         }
     }
 
@@ -4332,7 +4332,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Result<usize> {
                 }
             }
 
-            return Result::Ok(usize::try_from(rc).unwrap());
+            return Result::Ok(usize::try_from(rc).expect("int cast"));
         }
     }
 
@@ -4550,7 +4550,7 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
         #[cfg(target_os = "linux")]
         {
             // SAFETY: FFI call with valid fd; mode/offset/len are plain integers.
-            let _ = unsafe { syscall::fallocate(out_handle.cast(), 0, 0, i64::try_from(stat_.size).unwrap()) };
+            let _ = unsafe { syscall::fallocate(out_handle.cast(), 0, 0, i64::try_from(stat_.size).expect("int cast")) };
         }
 
         // Seek input to beginning -- the caller may have written to this fd,

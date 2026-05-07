@@ -336,7 +336,7 @@ mod advanced {
         }
 
         let message_type_raw: u8 = data[0];
-        let message_len = u32::from_le_bytes(data[1..1 + size_of::<u32>()].try_into().unwrap());
+        let message_len = u32::from_le_bytes(data[1..1 + size_of::<u32>()].try_into().expect("infallible: size matches"));
 
         log!(
             "Received IPC message type {} ({}) len {}",
@@ -416,7 +416,7 @@ mod advanced {
             })?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
 
-        let size: u32 = u32::try_from(serialized.data().len()).unwrap();
+        let size: u32 = u32::try_from(serialized.data().len()).expect("int cast");
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
@@ -549,11 +549,11 @@ mod json {
 
         match kind {
             Kind::Regular => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).unwrap(),
+                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
                 message: DecodedIPCMessage::Data(deserialized),
             }),
             Kind::Internal => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).unwrap(),
+                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
                 message: DecodedIPCMessage::Internal(deserialized),
             }),
         }
@@ -1321,10 +1321,10 @@ impl SendQueue {
             self.continue_send(global_this, ContinueSendReason::OnWritable);
             self.update_ref(global_this);
             return;
-        } else if n > 0 && n < i32::try_from(first.data.list.len()).unwrap() {
+        } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
             // the item was partially sent; update the cursor and wait for writable to send the rest
             // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
-            first.data.cursor += usize::try_from(n).unwrap();
+            first.data.cursor += usize::try_from(n).expect("int cast");
             self.update_ref(global_this);
             return;
         } else if n == 0 {
@@ -1542,7 +1542,7 @@ impl SendQueue {
         if status.to_error(uv::Op::Write).is_some() {
             this._on_write_complete(-1);
         } else {
-            this._on_write_complete(i32::try_from(write_len).unwrap());
+            this._on_write_complete(i32::try_from(write_len).expect("int cast"));
         }
 
         if this.windows.try_close_after_write {

@@ -33,7 +33,7 @@ impl BuildMessage {
             let cloned = note.clone()?;
             array.put_index(
                 global,
-                u32::try_from(i).unwrap(),
+                u32::try_from(i).expect("int cast"),
                 BuildMessage::create(
                     global,
                     logger::Msg { data: cloned, kind: logger::Kind::Note, ..Default::default() },
@@ -48,7 +48,7 @@ impl BuildMessage {
         // std.fmt.allocPrint → write! into Vec<u8>; Rust aborts on OOM so the
         // `catch { throwOutOfMemoryValue }` branch is unreachable here.
         let mut text: Vec<u8> = Vec::new();
-        write!(&mut text, "BuildMessage: {}", bstr::BStr::new(&self.msg.data.text)).unwrap();
+        write!(&mut text, "BuildMessage: {}", bstr::BStr::new(&self.msg.data.text)).expect("infallible: in-memory write");
 
         let mut str = ZigString::init(&text);
         str.set_output_encoding();

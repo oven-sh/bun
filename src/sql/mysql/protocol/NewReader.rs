@@ -111,7 +111,7 @@ impl<C: ReaderContext> NewReader<C> {
     pub fn encode_len_string(self) -> Result<Data, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
-            return self.read(usize::try_from(result.value).unwrap());
+            return self.read(usize::try_from(result.value).expect("int cast"));
         }
         Err(AnyMySQLError::InvalidEncodedLength)
     }

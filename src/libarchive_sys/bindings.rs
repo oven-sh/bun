@@ -891,7 +891,7 @@ impl Archive {
             let data: &[u8] = unsafe { &*block.bytes };
 
             // Track the furthest point we need to write to (for final truncation)
-            final_offset = final_offset.max(block.offset + i64::try_from(data.len()).unwrap());
+            final_offset = final_offset.max(block.offset + i64::try_from(data.len()).expect("int cast"));
 
             #[cfg(unix)]
             {
@@ -901,7 +901,7 @@ impl Archive {
                     if unsafe { (sink.vtable.pwrite_all)(sink.owner, data, block.offset) } {
                         // pwrite doesn't update file position, but track logical position for fallback
                         actual_offset = actual_offset
-                            .max(block.offset + i64::try_from(data.len()).unwrap());
+                            .max(block.offset + i64::try_from(data.len()).expect("int cast"));
                         continue;
                     } else {
                         *can_use_pwrite = false;
@@ -917,7 +917,7 @@ impl Archive {
                     if *can_use_lseek {
                         // SAFETY: sink.owner is valid for the vtable provider's lifetime.
                         if unsafe {
-                            (sink.vtable.set_offset)(sink.owner, u64::try_from(block.offset).unwrap())
+                            (sink.vtable.set_offset)(sink.owner, u64::try_from(block.offset).expect("int cast"))
                         } {
                             actual_offset = block.offset;
                             break 'seek;
@@ -929,7 +929,7 @@ impl Archive {
                     // lseek failed or not available
                     if block.offset > actual_offset {
                         // Write zeros to fill the gap
-                        let zero_count = usize::try_from(block.offset - actual_offset).unwrap();
+                        let zero_count = usize::try_from(block.offset - actual_offset).expect("int cast");
                         let zero_result = Self::write_zeros_to_file(sink, zero_count);
                         if zero_result != ArchiveResult::Ok {
                             return zero_result;
@@ -946,7 +946,7 @@ impl Archive {
             if !unsafe { (sink.vtable.write_all)(sink.owner, data) } {
                 return ArchiveResult::Failed;
             }
-            actual_offset += i64::try_from(data.len()).unwrap();
+            actual_offset += i64::try_from(data.len()).expect("int cast");
         }
 
         // Handle trailing sparse hole by truncating file to final size
@@ -1337,13 +1337,13 @@ impl NextEntry {
             return Ok(IteratorResult::init_err(p(archive), b"invalid archive entry size"));
         }
 
-        let mut buf = vec![0u8; usize::try_from(size).unwrap()];
+        let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
 
         let read = archive.read_data(&mut buf);
         if read < 0 {
             return Ok(IteratorResult::init_err(p(archive), b"failed to read archive data"));
         }
-        buf.truncate(usize::try_from(read).unwrap());
+        buf.truncate(usize::try_from(read).expect("int cast"));
         Ok(IteratorResult::init_res(buf.into_boxed_slice()))
     }
 }
@@ -1821,7 +1821,7 @@ impl GrowingBuffer {
             return -1;
         }
         this.list.extend_from_slice(data);
-        la_ssize_t::try_from(length).unwrap()
+        la_ssize_t::try_from(length).expect("int cast")
     }
 
     pub unsafe extern "C" fn close_callback(_a: *mut struct_archive, _client_data: *mut c_void) -> c_int {

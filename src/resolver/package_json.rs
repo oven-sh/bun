@@ -476,7 +476,7 @@ impl PackageJSON {
         // TODO(port): narrow error set
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().unwrap().data, js_ast::ExprData::EString(_)) {
+            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
                 continue;
             }
             valid_count += 1;
@@ -486,16 +486,16 @@ impl PackageJSON {
         let _ = env.defaults.reserve(valid_count);
 
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().unwrap().data, js_ast::ExprData::EString(_)) {
+            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
                 continue;
             }
             // PERF(port): was appendAssumeCapacity
             env.defaults.push(options::EnvDefault {
                 key: Box::from(
-                    prop.key.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                    prop.key.as_ref().expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
                 ),
                 value: Box::from(
-                    prop.value.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                    prop.value.as_ref().expect("infallible: prop has value").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
                 ),
             });
         }
@@ -509,7 +509,7 @@ impl PackageJSON {
     ) {
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().unwrap().data, js_ast::ExprData::EString(_)) {
+            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
                 continue;
             }
             valid_count += 1;
@@ -521,14 +521,14 @@ impl PackageJSON {
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let _ = buffer; // unused after reshaping
         for prop in json.properties.slice() {
-            if !matches!(prop.value.as_ref().unwrap().data, js_ast::ExprData::EString(_)) {
+            if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, js_ast::ExprData::EString(_)) {
                 continue;
             }
             keys.push(Box::from(
-                prop.key.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                prop.key.as_ref().expect("infallible: prop has key").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
             ));
             values.push(Box::from(
-                prop.value.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                prop.value.as_ref().expect("infallible: prop has value").data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable"),
             ));
         }
         framework.override_modules = api::StringMap { keys, values };
@@ -540,12 +540,12 @@ impl PackageJSON {
         bump: &Bump,
     ) -> Result<(), bun_core::Error> {
         for prop in json.properties.slice() {
-            match &prop.key.as_ref().unwrap().data {
+            match &prop.key.as_ref().expect("infallible: prop has key").data {
                 js_ast::ExprData::EString(e_str) => {
                     let str = e_str.string(bump).unwrap_or_default();
 
                     if str == b"defaults" {
-                        match &prop.value.as_ref().unwrap().data {
+                        match &prop.value.as_ref().expect("infallible: prop has value").data {
                             js_ast::ExprData::EObject(obj) => {
                                 Self::load_define_defaults(env, obj, bump)?;
                             }
@@ -554,7 +554,7 @@ impl PackageJSON {
                             }
                         }
                     } else if str == b".env" {
-                        match &prop.value.as_ref().unwrap().data {
+                        match &prop.value.as_ref().expect("infallible: prop has value").data {
                             js_ast::ExprData::EString(value_str) => {
                                 env.set_behavior_from_prefix(Box::from(
                                     value_str.string(bump).unwrap_or_default(),
@@ -725,7 +725,7 @@ impl PackageJSON {
                             match count {
                                 0 => {}
                                 1 => {
-                                    let str = items[0].data.e_string().unwrap().string(bump).expect("unreachable");
+                                    let str = items[0].data.e_string().expect("infallible: variant checked").string(bump).expect("unreachable");
                                     if !str.is_empty() {
                                         pair.router.dir = str.into();
                                         pair.router.possible_dirs = Box::default();
@@ -1654,7 +1654,7 @@ impl<'a> Visitor<'a> {
                 first_token.loc = expr.loc;
                 first_token.len = 1;
                 for (i, prop) in e_obj.properties.slice().iter().enumerate() {
-                    let prop_key = prop.key.as_ref().unwrap();
+                    let prop_key = prop.key.as_ref().expect("infallible: prop has key");
                     let key: Box<[u8]> = match prop_key.data.e_string() {
                         Some(s) => Box::from(s.data.slice()),
                         None => Box::from([].as_slice()),
@@ -1690,7 +1690,7 @@ impl<'a> Visitor<'a> {
                         };
                     }
 
-                    let value = self.visit(prop.value.unwrap());
+                    let value = self.visit(prop.value.expect("infallible: prop has value"));
                     map_data.push(MapEntry { key: key.clone(), key_range, value: value.clone() });
 
                     // safe to use "/" on windows. exports in package.json does not use "\\"
@@ -1982,18 +1982,18 @@ impl<'a> Package<'a> {
     pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
-            slash = if slash == -1 { i32::try_from(specifier.len()).unwrap() } else { slash };
-            Some(&specifier[0..usize::try_from(slash).unwrap()])
+            slash = if slash == -1 { i32::try_from(specifier.len()).expect("int cast") } else { slash };
+            Some(&specifier[0..usize::try_from(slash).expect("int cast")])
         } else {
             if slash == -1 {
                 return None;
             }
 
-            let after = usize::try_from(slash).unwrap() + 1;
+            let after = usize::try_from(slash).expect("int cast") + 1;
             let slash2 = strings::index_of_char(&specifier[after..], b'/')
                 .map(|v| v as usize)
-                .unwrap_or(specifier[u32::try_from(slash + 1).unwrap() as usize..].len());
-            Some(&specifier[0..usize::try_from(slash + 1).unwrap() + slash2])
+                .unwrap_or(specifier[u32::try_from(slash + 1).expect("int cast") as usize..].len());
+            Some(&specifier[0..usize::try_from(slash + 1).expect("int cast") + slash2])
         }
     }
 

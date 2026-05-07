@@ -3588,7 +3588,7 @@ pub fn win_sock_error_to_zig_error(err: win32::ws2_32::WinsockError) -> Result<(
 
 pub fn WSAGetLastError() -> Option<SystemErrno> {
     // SAFETY: ws2_32 is loaded
-    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).unwrap())
+    SystemErrno::init(u32::try_from(unsafe { win32::ws2_32::WSAGetLastError() }).expect("int cast"))
 }
 
 // BOOL CreateDirectoryExW(
@@ -3670,7 +3670,7 @@ pub fn get_module_handle_from_address(addr: usize) -> Option<HMODULE> {
 
 pub fn get_module_name_w(module: HMODULE, buf: &mut [u16]) -> Option<&[u16]> {
     // SAFETY: buf valid for buf.len()
-    let rc = unsafe { externs::GetModuleFileNameW(module, buf.as_mut_ptr(), u32::try_from(buf.len()).unwrap()) };
+    let rc = unsafe { externs::GetModuleFileNameW(module, buf.as_mut_ptr(), u32::try_from(buf.len()).expect("int cast")) };
     if rc == 0 {
         return None;
     }
@@ -3716,7 +3716,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         windows::FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT // would we ever want to delete the target instead?
     };
 
-    let path_len_bytes = u16::try_from(sub_path_w.len() * 2).unwrap();
+    let path_len_bytes = u16::try_from(sub_path_w.len() * 2).expect("int cast");
     let mut nt_name = UNICODE_STRING {
         Length: path_len_bytes,
         MaximumLength: path_len_bytes,
@@ -4418,7 +4418,7 @@ pub fn move_opened_file_at(
         ptr::write(rename_info, win32::FILE_RENAME_INFORMATION_EX {
             Flags: flags,
             RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) { ptr::null_mut() } else { new_dir_fd.cast() },
-            FileNameLength: u32::try_from(new_file_name.len() * 2).unwrap(), // already checked error.NameTooLong
+            FileNameLength: u32::try_from(new_file_name.len() * 2).expect("int cast"), // already checked error.NameTooLong
             FileName: [0; 1], // overwritten below
         });
     }
@@ -4438,7 +4438,7 @@ pub fn move_opened_file_at(
             src_fd.cast(),
             &mut io_status_block,
             rename_info.cast::<c_void>(),
-            u32::try_from(struct_len).unwrap(), // already checked for error.NameTooLong
+            u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
             win32::FileInformationClass::FileRenameInformationEx,
         )
     };

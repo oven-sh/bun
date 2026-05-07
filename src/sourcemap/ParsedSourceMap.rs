@@ -163,7 +163,7 @@ impl SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
             SourceProviderKind::Zig,
-            u64::try_from(p as usize).unwrap(),
+            u64::try_from(p as usize).expect("int cast"),
         )
     }
 
@@ -171,7 +171,7 @@ impl SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
             SourceProviderKind::Bake,
-            u64::try_from(p as usize).unwrap(),
+            u64::try_from(p as usize).expect("int cast"),
         )
     }
 
@@ -179,7 +179,7 @@ impl SourceContentPtr {
         Self::new(
             SourceMapLoadHint::None,
             SourceProviderKind::DevServer,
-            u64::try_from(p as usize).unwrap(),
+            u64::try_from(p as usize).expect("int cast"),
         )
     }
 
@@ -303,7 +303,7 @@ impl ParsedSourceMap {
             if current_line != gn.lines.zero_based() {
                 debug_assert!(gn.lines.zero_based() > current_line);
                 let inc = gn.lines.zero_based() - current_line;
-                writer.splat_byte_all(b';', usize::try_from(inc).unwrap())?;
+                writer.splat_byte_all(b';', usize::try_from(inc).expect("int cast"))?;
                 current_line = gn.lines.zero_based();
                 last_col = 0;
             } else if i != 0 {

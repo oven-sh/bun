@@ -117,7 +117,7 @@ impl<T> BabyList<T> {
         Self {
             ptr,
             len: 0,
-            cap: u32::try_from(cap).unwrap(),
+            cap: u32::try_from(cap).expect("int cast"),
             origin: Origin::Borrowed {
                 #[cfg(debug_assertions)]
                 trace: None,
@@ -163,8 +163,8 @@ impl<T> BabyList<T> {
         Self {
             // SAFETY: Vec guarantees a non-null pointer (dangling when cap == 0).
             ptr: unsafe { NonNull::new_unchecked(ptr) },
-            len: u32::try_from(items_len).unwrap(),
-            cap: u32::try_from(capacity).unwrap(),
+            len: u32::try_from(items_len).expect("int cast"),
+            cap: u32::try_from(capacity).expect("int cast"),
             origin: Origin::Owned,
         }
     }
@@ -183,8 +183,8 @@ impl<T> BabyList<T> {
         let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(items) as *mut T) };
         Self {
             ptr,
-            len: u32::try_from(len).unwrap(),
-            cap: u32::try_from(len).unwrap(),
+            len: u32::try_from(len).expect("int cast"),
+            cap: u32::try_from(len).expect("int cast"),
             origin: Origin::Owned,
         }
     }
@@ -204,8 +204,8 @@ impl<T> BabyList<T> {
         Self {
             // SAFETY: slice pointer is non-null (dangling for len==0 via [T]::as_mut_ptr).
             ptr: unsafe { NonNull::new_unchecked(items.as_mut_ptr()) },
-            len: u32::try_from(len).unwrap(),
-            cap: u32::try_from(len).unwrap(),
+            len: u32::try_from(len).expect("int cast"),
+            cap: u32::try_from(len).expect("int cast"),
             origin: Origin::Borrowed {
                 #[cfg(debug_assertions)]
                 trace: None,
@@ -231,7 +231,7 @@ impl<T> BabyList<T> {
             // SAFETY: caller contract.
             ptr: unsafe { NonNull::new_unchecked(buffer) },
             len: 0,
-            cap: u32::try_from(buffer_len).unwrap(),
+            cap: u32::try_from(buffer_len).expect("int cast"),
             origin: Origin::Owned,
         }
     }
@@ -445,13 +445,13 @@ impl<T> BabyList<T> {
     where
         T: Copy,
     {
-        debug_assert!(self.cap >= self.len + u32::try_from(values.len()).unwrap());
+        debug_assert!(self.cap >= self.len + u32::try_from(values.len()).expect("int cast"));
         // SAFETY: capacity asserted above; tail is uninitialized.
         unsafe {
             let tail = self.ptr.as_ptr().add(self.len as usize);
             core::ptr::copy_nonoverlapping(values.as_ptr(), tail, values.len());
         }
-        self.len += u32::try_from(values.len()).unwrap();
+        self.len += u32::try_from(values.len()).expect("int cast");
         debug_assert!(self.cap >= self.len);
     }
 
@@ -735,8 +735,8 @@ impl<T> BabyList<T> {
         let this = Self {
             // SAFETY: slice pointer is non-null.
             ptr: unsafe { NonNull::new_unchecked(items.as_ptr() as *mut T) },
-            len: u32::try_from(items.len()).unwrap(),
-            cap: u32::try_from(items.len()).unwrap(),
+            len: u32::try_from(items.len()).expect("int cast"),
+            cap: u32::try_from(items.len()).expect("int cast"),
             origin: Origin::Borrowed {
                 #[cfg(debug_assertions)]
                 trace: if TRACES_ENABLED {
@@ -812,7 +812,7 @@ impl<T> BabyList<T> {
             );
             owned.set_len(self.len as usize);
         }
-        let cap = u32::try_from(owned.capacity()).unwrap();
+        let cap = u32::try_from(owned.capacity()).expect("int cast");
         let ptr = owned.as_mut_ptr();
         core::mem::forget(owned);
         // SAFETY: Vec guarantees a non-null pointer for cap > 0.
@@ -861,8 +861,8 @@ impl<T> BabyList<T> {
         let mut list_ = ManuallyDrop::into_inner(list_);
         // SAFETY: Vec guarantees a non-null pointer (dangling when cap == 0).
         self.ptr = unsafe { NonNull::new_unchecked(list_.as_mut_ptr()) };
-        self.len = u32::try_from(list_.len()).unwrap();
-        self.cap = u32::try_from(list_.capacity()).unwrap();
+        self.len = u32::try_from(list_.len()).expect("int cast");
+        self.cap = u32::try_from(list_.capacity()).expect("int cast");
         core::mem::forget(list_);
         if cfg!(debug_assertions) {
             debug_assert!(self.len <= self.cap);
@@ -954,7 +954,7 @@ impl BabyList<u8> {
             let dst = self.ptr.as_ptr().add(self.len as usize) as *mut Int;
             dst.write_unaligned(int);
         }
-        self.len += u32::try_from(size).unwrap();
+        self.len += u32::try_from(size).expect("int cast");
     }
 }
 

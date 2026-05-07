@@ -405,7 +405,7 @@ impl Watcher {
         event.fflags = (NOTE_WRITE | NOTE_RENAME | NOTE_DELETE) as _;
 
         // id
-        event.ident = usize::try_from(fd.native()).unwrap();
+        event.ident = usize::try_from(fd.native()).expect("int cast");
 
         // Store the index for fast filtering later
         event.udata = watchlist_id as _;

@@ -173,7 +173,7 @@ pub mod reader {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
         let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).unwrap()
+            usize::try_from(arguments[1].to_int32()).expect("int cast")
         } else {
             0usize
         };
@@ -260,77 +260,77 @@ pub mod reader {
 
     #[bun_jsc::host_call]
     pub extern fn u8_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u8).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u16).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn u32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u32).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn ptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i8_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i8).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i16_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i16).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn i32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i32).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn intptr_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i64).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f32_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const f32).read_unaligned() };
         JSValue::js_number(value as f64)
     }
     #[bun_jsc::host_call]
     pub extern fn f64_without_type_checks(_: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const f64).read_unaligned() };
         JSValue::js_number(value)
     }
     #[bun_jsc::host_call]
     pub extern fn u64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const u64).read_unaligned() };
         // SAFETY: global is non-null, JS thread.
@@ -338,7 +338,7 @@ pub mod reader {
     }
     #[bun_jsc::host_call]
     pub extern fn i64_without_type_checks(global: *mut JSGlobalObject, _: *mut c_void, raw_addr: i64, offset: i32) -> JSValue {
-        let addr = usize::try_from(raw_addr).unwrap() + usize::try_from(offset).unwrap();
+        let addr = usize::try_from(raw_addr).expect("int cast") + usize::try_from(offset).expect("int cast");
         // SAFETY: JIT-validated address.
         let value = unsafe { (addr as *const i64).read_unaligned() };
         // SAFETY: global is non-null, JS thread.
@@ -397,9 +397,9 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(bytei64 * -1).unwrap());
+            addr = addr.saturating_sub(usize::try_from(bytei64 * -1).expect("int cast"));
         } else {
-            addr += usize::try_from(bytei64).unwrap();
+            addr += usize::try_from(bytei64).expect("int cast");
         }
 
         if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
@@ -470,9 +470,9 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(off * -1).unwrap());
+                addr = addr.saturating_sub(usize::try_from(off * -1).expect("int cast"));
             } else {
-                addr = addr.saturating_add(usize::try_from(off).unwrap());
+                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
             }
 
             if addr == 0 {
@@ -522,13 +522,13 @@ fn get_ptr_slice(
                 )));
             }
 
-            if length_i > i64::try_from(MAX_ADDRESSABLE_MEMORY).unwrap() {
+            if length_i > i64::try_from(MAX_ADDRESSABLE_MEMORY).expect("int cast") {
                 return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
                     "length exceeds max addressable memory. This usually means a bug in your code."
                 )));
             }
 
-            let length = usize::try_from(length_i).unwrap();
+            let length = usize::try_from(length_i).expect("int cast");
             return ValueOrError::Slice(addr as *mut u8, length);
         }
     }

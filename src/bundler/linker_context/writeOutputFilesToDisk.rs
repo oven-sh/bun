@@ -582,7 +582,7 @@ pub fn write_output_files_to_disk(
         // bump `total_insertions`, then take the slice.
         let additional_start = output_files.additional_output_files_start as usize;
         let additional_len = output_files.output_files.len() - additional_start;
-        output_files.total_insertions += u32::try_from(additional_len).unwrap();
+        output_files.total_insertions += u32::try_from(additional_len).expect("int cast");
         let additional_output_files =
             &mut output_files.output_files[additional_start..];
         // SAFETY: parse_graph set during init; outlives this call.

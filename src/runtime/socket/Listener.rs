@@ -426,7 +426,7 @@ impl Listener {
                 );
                 if !ls.is_null() {
                     // SAFETY: ls is non-null, just returned from listen.
-                    *port = u16::try_from(unsafe { &mut *ls }.get_local_port()).unwrap();
+                    *port = u16::try_from(unsafe { &mut *ls }.get_local_port()).expect("int cast");
                 }
                 ls
             }

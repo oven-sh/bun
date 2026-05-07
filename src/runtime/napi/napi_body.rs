@@ -2562,7 +2562,7 @@ pub extern "C" fn napi_create_threadsafe_function(
         callback,
         ctx: context,
         queue: TsfnQueue::init(max_queue_size),
-        thread_count: AtomicI64::new(i64::try_from(initial_thread_count).unwrap()),
+        thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
         finalizer_fun: thread_finalize_cb,

@@ -248,7 +248,7 @@ impl LinuxMemFdAllocator {
 
             if !bytes.is_empty() {
                 // Hint at the size of the file
-                let _ = sys::ftruncate(fd, i64::try_from(bytes.len()).unwrap());
+                let _ = sys::ftruncate(fd, i64::try_from(bytes.len()).expect("int cast"));
             }
 
             // Dump all the bytes in there
@@ -272,7 +272,7 @@ impl LinuxMemFdAllocator {
                             fd.close();
                             return Err(sys::Error::from_code(sys::E::ENOMEM, sys::Tag::write));
                         }
-                        written += i64::try_from(result).unwrap();
+                        written += i64::try_from(result).expect("int cast");
                         remain = &remain[result..];
                     }
                 }

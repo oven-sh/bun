@@ -136,7 +136,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 .get(name)
                                 .copied();
                             let ref_ = match existing {
-                                Some(loc_ref) => loc_ref.ref_.unwrap(),
+                                Some(loc_ref) => loc_ref.ref_.expect("infallible: ref bound"),
                                 None => {
                                     // Generate a new import item symbol in the module scope
                                     let new_ref = p
@@ -221,9 +221,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if !(identifier_opts.is_call_target() || identifier_opts.is_delete_target())
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
                                 && matches!(p.stmt_expr_value, js_ast::ExprData::EBinary(_))
-                                && p.stmt_expr_value.e_binary().unwrap().op == js_ast::OpCode::BinAssign
+                                && p.stmt_expr_value.e_binary().expect("infallible: variant checked").op == js_ast::OpCode::BinAssign
                             {
-                                let stmt_bin = p.stmt_expr_value.e_binary().unwrap();
+                                let stmt_bin = p.stmt_expr_value.e_binary().expect("infallible: variant checked");
                                 let deopt =
                                     // if it's not top-level, don't do this
                                     !core::ptr::eq(p.module_scope, p.current_scope)
@@ -237,9 +237,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     // anything which is not module.exports = {} is a de-opt.
                                     || !matches!(stmt_bin.right.data, js_ast::ExprData::EObject(_))
                                     || !matches!(stmt_bin.left.data, js_ast::ExprData::EDot(_))
-                                    || stmt_bin.left.data.e_dot().unwrap().name != b"exports"
+                                    || stmt_bin.left.data.e_dot().expect("infallible: variant checked").name != b"exports"
                                     || !matches!(
-                                        stmt_bin.left.data.e_dot().unwrap().target.data,
+                                        stmt_bin.left.data.e_dot().expect("infallible: variant checked").target.data,
                                         js_ast::ExprData::EIdentifier(_)
                                     )
                                     || !stmt_bin
@@ -258,13 +258,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     return None;
                                 }
 
-                                let right_obj = stmt_bin.right.data.e_object().unwrap();
+                                let right_obj = stmt_bin.right.data.e_object().expect("infallible: variant checked");
                                 let props: &[G::Property] = right_obj.properties.slice();
                                 for prop in props {
                                     // if it's not a trivial object literal, de-opt
                                     if prop.kind != G::PropertyKind::Normal
                                         || prop.key.is_none()
-                                        || !matches!(prop.key.unwrap().data, js_ast::ExprData::EString(_))
+                                        || !matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EString(_))
                                         || prop.flags.contains(Flags::Property::IsMethod)
                                         || prop.flags.contains(Flags::Property::IsComputed)
                                         || prop.flags.contains(Flags::Property::IsSpread)
@@ -274,7 +274,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                         // But we should let you do module.exports = { bar: foo(), baz: 123 }
                                         // just not module.exports = { bar: function() {}  }
                                         // just not module.exports = { bar() {}  }
-                                        || match prop.value.unwrap().data {
+                                        || match prop.value.expect("infallible: prop has value").data {
                                             js_ast::ExprData::ECommonjsExportIdentifier(_)
                                             | js_ast::ExprData::EImportIdentifier(_)
                                             | js_ast::ExprData::EIdentifier(_) => false,
@@ -288,7 +288,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                                     )
                                                 }
                                             },
-                                            _ => !Expr::is_primitive_literal(&prop.value.unwrap()),
+                                            _ => !Expr::is_primitive_literal(&prop.value.expect("infallible: prop has value")),
                                         }
                                     {
                                         p.deoptimize_common_js_named_exports();
@@ -364,7 +364,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
                                 {
-                                    existing.loc_ref.ref_.unwrap()
+                                    existing.loc_ref.ref_.expect("infallible: ref bound")
                                 } else {
                                     let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
@@ -456,14 +456,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 if prop.value.is_some()
                                     && prop.flags.len() == 0
                                     && prop.key.is_some()
-                                    && matches!(prop.key.unwrap().data, js_ast::ExprData::EString(_))
+                                    && matches!(prop.key.expect("infallible: prop has key").data, js_ast::ExprData::EString(_))
                                     && e_string_eql_bytes(
-                                        &prop.key.unwrap().data.e_string().unwrap(),
+                                        &prop.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked"),
                                         name,
                                     )
                                     && name != b"__proto__"
                                 {
-                                    return Some(prop.value.unwrap());
+                                    return Some(prop.value.expect("infallible: prop has value"));
                                 }
                             }
                         }
@@ -588,7 +588,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     let ref_ = if let Some(existing) =
                                         p.commonjs_named_exports.get(name)
                                     {
-                                        existing.loc_ref.ref_.unwrap()
+                                        existing.loc_ref.ref_.expect("infallible: ref bound")
                                     } else {
                                         let sym_name: &'a [u8] = p.allocator.alloc_slice_copy(
                                             format!("${}", bun_core::fmt::fmt_identifier(name))

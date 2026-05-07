@@ -152,9 +152,9 @@ pub fn decode(encoded: &[u8], start: usize) -> VLQResult {
             return VLQResult {
                 start: start + i + 1,
                 value: if (vlq & 1) == 0 {
-                    i32::try_from(vlq >> 1).unwrap()
+                    i32::try_from(vlq >> 1).expect("int cast")
                 } else {
-                    -i32::try_from(vlq >> 1).unwrap()
+                    -i32::try_from(vlq >> 1).expect("int cast")
                 },
             };
         }
@@ -186,9 +186,9 @@ pub fn decode_assume_valid(encoded: &[u8], start: usize) -> VLQResult {
             return VLQResult {
                 start: start + i + 1,
                 value: if (vlq & 1) == 0 {
-                    i32::try_from(vlq >> 1).unwrap()
+                    i32::try_from(vlq >> 1).expect("int cast")
                 } else {
-                    -i32::try_from(vlq >> 1).unwrap()
+                    -i32::try_from(vlq >> 1).expect("int cast")
                 },
             };
         }

@@ -1118,7 +1118,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
     let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
-    secret[0..8].copy_from_slice(&u64::try_from(bun_core::time::milli_timestamp()).unwrap().to_le_bytes());
+    secret[0..8].copy_from_slice(&u64::try_from(bun_core::time::milli_timestamp()).expect("int cast").to_le_bytes());
     let mut base64_bytes = [0u8; 64];
     bun_core::csprng(&mut base64_bytes);
 

@@ -171,10 +171,10 @@ fn eql_ignore_case_t<T: PathChar>(a: &[T], b: &[T]) -> bool {
 #[inline]
 fn to_lower_t<T: PathChar>(a_c: T) -> T {
     if !T::IS_U16 {
-        return T::from_u8(u8::try_from(a_c.as_u32()).unwrap().to_ascii_lowercase());
+        return T::from_u8(u8::try_from(a_c.as_u32()).expect("int cast").to_ascii_lowercase());
     }
     if a_c.as_u32() < 128 {
-        T::from_u8(u8::try_from(a_c.as_u32()).unwrap().to_ascii_lowercase())
+        T::from_u8(u8::try_from(a_c.as_u32()).expect("int cast").to_ascii_lowercase())
     } else {
         a_c
     }
@@ -433,9 +433,9 @@ pub fn basename_posix_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) ->
         let mut ext_idx: Option<usize> = Some(_suffix_len - 1);
         // We use an optional value instead of -1, as in Node code, for easier number type use.
         let mut first_non_slash_end: Option<usize> = None;
-        let mut i_i64 = i64::try_from(len - 1).unwrap();
-        while i_i64 >= i64::try_from(start).unwrap() {
-            let i = usize::try_from(i_i64).unwrap();
+        let mut i_i64 = i64::try_from(len - 1).expect("int cast");
+        while i_i64 >= i64::try_from(start).expect("int cast") {
+            let i = usize::try_from(i_i64).expect("int cast");
             let byte = path[i];
             if byte == T::from_u8(CHAR_FORWARD_SLASH) {
                 // If we reached a path separator that was not part of a set of path
@@ -483,9 +483,9 @@ pub fn basename_posix_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) ->
         return &path[start..len];
     }
 
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
     while i_i64 > -1 {
-        let i = usize::try_from(i_i64).unwrap();
+        let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
         if byte == T::from_u8(CHAR_FORWARD_SLASH) {
             // If we reached a path separator that was not part of a set of path
@@ -544,9 +544,9 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
         let mut ext_idx: Option<usize> = Some(_suffix_len - 1);
         // We use an optional value instead of -1, as in Node code, for easier number type use.
         let mut first_non_slash_end: Option<usize> = None;
-        let mut i_i64 = i64::try_from(len - 1).unwrap();
-        while i_i64 >= i64::try_from(start).unwrap() {
-            let i = usize::try_from(i_i64).unwrap();
+        let mut i_i64 = i64::try_from(len - 1).expect("int cast");
+        while i_i64 >= i64::try_from(start).expect("int cast") {
+            let i = usize::try_from(i_i64).expect("int cast");
             let byte = path[i];
             if is_sep_t(byte) {
                 // If we reached a path separator that was not part of a set of path
@@ -594,9 +594,9 @@ pub fn basename_windows_t<'a, T: PathChar>(path: &'a [T], suffix: Option<&[T]>) 
         return &path[start..len];
     }
 
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
-    while i_i64 >= i64::try_from(start).unwrap() {
-        let i = usize::try_from(i_i64).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
+    while i_i64 >= i64::try_from(start).expect("int cast") {
+        let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
         if is_sep_t(byte) {
             if !matched_slash {
@@ -816,9 +816,9 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
     let mut end: Option<usize> = None;
     let mut matched_slash: bool = true;
 
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
-    while i_i64 >= i64::try_from(offset).unwrap() {
-        let i = usize::try_from(i_i64).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
+    while i_i64 >= i64::try_from(offset).expect("int cast") {
+        let i = usize::try_from(i_i64).expect("int cast");
         if is_sep_t(path[i]) {
             if !matched_slash {
                 end = Some(i);
@@ -911,9 +911,9 @@ pub fn extname_posix_t<T: PathChar>(path: &[T]) -> &[T] {
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut pre_dot_state: Option<usize> = Some(0);
 
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
     while i_i64 > -1 {
-        let i = usize::try_from(i_i64).unwrap();
+        let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
         if byte == T::from_u8(CHAR_FORWARD_SLASH) {
             // If we reached a path separator that was not part of a set of path
@@ -995,9 +995,9 @@ pub fn extname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
         start_part = start;
     }
 
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
-    while i_i64 >= i64::try_from(start).unwrap() {
-        let i = usize::try_from(i_i64).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
+    while i_i64 >= i64::try_from(start).expect("int cast") {
+        let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
         if is_sep_windows_t(byte) {
             // If we reached a path separator that was not part of a set of path
@@ -2123,7 +2123,7 @@ pub fn parse_posix_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut end: Option<usize> = None;
     let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
 
     // Track the state of characters (if any) we see before our first dot and
     // after any path separator we find
@@ -2132,8 +2132,8 @@ pub fn parse_posix_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
     let mut pre_dot_state: Option<usize> = Some(0);
 
     // Get non-dir info
-    while i_i64 >= i64::try_from(start).unwrap() {
-        let i = usize::try_from(i_i64).unwrap();
+    while i_i64 >= i64::try_from(start).expect("int cast") {
+        let i = usize::try_from(i_i64).expect("int cast");
         let byte = path[i];
         if byte == T::from_u8(CHAR_FORWARD_SLASH) {
             // If we reached a path separator that was not part of a set of path
@@ -2298,7 +2298,7 @@ pub fn parse_windows_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut end: Option<usize> = None;
     let mut matched_slash = true;
-    let mut i_i64 = i64::try_from(len - 1).unwrap();
+    let mut i_i64 = i64::try_from(len - 1).expect("int cast");
 
     // Track the state of characters (if any) we see before our first dot and
     // after any path separator we find
@@ -2307,8 +2307,8 @@ pub fn parse_windows_t<T: PathChar>(path: &[T]) -> PathParsed<'_, T> {
     let mut pre_dot_state: Option<usize> = Some(0);
 
     // Get non-dir info
-    while i_i64 >= i64::try_from(root_end).unwrap() {
-        let i = usize::try_from(i_i64).unwrap();
+    while i_i64 >= i64::try_from(root_end).expect("int cast") {
+        let i = usize::try_from(i_i64).expect("int cast");
         byte = path[i];
         if is_sep_t(byte) {
             // If we reached a path separator that was not part of a set of path
@@ -2869,14 +2869,14 @@ pub fn resolve_posix_t<'a, T: PathChar>(
     let mut buf_offset: usize = 0;
     let mut buf_size: usize = 0;
 
-    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).unwrap() };
+    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).expect("int cast") };
     while i_i64 > -2 && !resolved_absolute {
         // PORT NOTE: reshaped for borrowck — `path` may borrow from tmp_buf which lives
         // in this scope; copy into buf2 before reusing.
         // Zig: `[MAX_PATH_SIZE(T):0]T` — sized to the larger of the two T variants.
         let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
         let path: &[T] = if i_i64 >= 0 {
-            paths[usize::try_from(i_i64).unwrap()]
+            paths[usize::try_from(i_i64).expect("int cast")]
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
@@ -2985,7 +2985,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     let mut buf_size: usize = 0;
     let mut env_path_len: Option<usize> = None;
 
-    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).unwrap() };
+    let mut i_i64: i64 = if paths.is_empty() { -1 } else { i64::try_from(paths.len() - 1).expect("int cast") };
     while i_i64 > -2 {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
@@ -3004,7 +3004,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
         // Locals that must outlive `path` borrow:
         let cwd_len: usize;
         if i_i64 >= 0 {
-            let p = paths[usize::try_from(i_i64).unwrap()];
+            let p = paths[usize::try_from(i_i64).expect("int cast")];
             // validateString of `path` is performed in pub fn resolve.
 
             // Skip empty paths.
@@ -3044,7 +3044,7 @@ pub fn resolve_windows_t<'a, T: PathChar>(
                         // Fast path for device roots
                         fast_key = [
                             b'=' as u16,
-                            u16::try_from(tmp_buf[0].as_u32()).unwrap(),
+                            u16::try_from(tmp_buf[0].as_u32()).expect("int cast"),
                             CHAR_COLON as u16,
                         ];
                         break 'brk &fast_key[..];

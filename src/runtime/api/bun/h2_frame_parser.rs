@@ -360,7 +360,7 @@ impl SettingsType {
 #[inline]
 fn u32_from_bytes(src: &[u8]) -> u32 {
     debug_assert!(src.len() == 4);
-    u32::from_be_bytes(src[0..4].try_into().unwrap())
+    u32::from_be_bytes(src[0..4].try_into().expect("infallible: size matches"))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -846,7 +846,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
                     return Err(global_object.throw(format_args!("Expected headerTableSize to be a number between 0 and 2^32-1")));
                 }
-                settings.header_table_size = u32::try_from(v).unwrap();
+                settings.header_table_size = u32::try_from(v).expect("int cast");
             } else if !header_table_size.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected headerTableSize to be a number")));
             }
@@ -866,7 +866,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
                     return Err(global_object.throw(format_args!("Expected initialWindowSize to be a number between 0 and 2^32-1")));
                 }
-                settings.initial_window_size = u32::try_from(v).unwrap();
+                settings.initial_window_size = u32::try_from(v).expect("int cast");
             } else if !initial_window_size.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected initialWindowSize to be a number")));
             }
@@ -878,7 +878,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_FRAME_SIZE || v < 16384 {
                     return Err(global_object.throw(format_args!("Expected maxFrameSize to be a number between 16,384 and 2^24-1")));
                 }
-                settings.max_frame_size = u32::try_from(v).unwrap();
+                settings.max_frame_size = u32::try_from(v).expect("int cast");
             } else if !max_frame_size.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected maxFrameSize to be a number")));
             }
@@ -890,7 +890,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
                     return Err(global_object.throw(format_args!("Expected maxConcurrentStreams to be a number between 0 and 2^32-1")));
                 }
-                settings.max_concurrent_streams = u32::try_from(v).unwrap();
+                settings.max_concurrent_streams = u32::try_from(v).expect("int cast");
             } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected maxConcurrentStreams to be a number")));
             }
@@ -902,7 +902,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
                     return Err(global_object.throw(format_args!("Expected maxHeaderListSize to be a number between 0 and 2^32-1")));
                 }
-                settings.max_header_list_size = u32::try_from(v).unwrap();
+                settings.max_header_list_size = u32::try_from(v).expect("int cast");
             } else if !max_header_list_size.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected maxHeaderListSize to be a number")));
             }
@@ -914,7 +914,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
                     return Err(global_object.throw(format_args!("Expected maxHeaderSize to be a number between 0 and 2^32-1")));
                 }
-                settings.max_header_list_size = u32::try_from(v).unwrap();
+                settings.max_header_list_size = u32::try_from(v).expect("int cast");
             } else if !max_header_size.is_empty_or_undefined_or_null() {
                 return Err(global_object.throw(format_args!("Expected maxHeaderSize to be a number")));
             }
@@ -1540,7 +1540,7 @@ impl Stream {
                 if max_size < frame_slice.len() {
                     is_flow_control_limited = true;
                     // we need to break the frame into smaller chunks
-                    frame.offset += u32::try_from(max_size).unwrap();
+                    frame.offset += u32::try_from(max_size).expect("int cast");
                     let able_to_send = &frame_slice[0..max_size];
                     client.queued_data_size -= able_to_send.len() as u64;
                     *written += able_to_send.len();
@@ -1563,7 +1563,7 @@ impl Stream {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
-                        length: u32::try_from(payload_size).unwrap(),
+                        length: u32::try_from(payload_size).expect("int cast"),
                     };
                     let _ = data_header.write(&mut writer);
                     if padding != 0 {
@@ -1608,7 +1608,7 @@ impl Stream {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
-                        length: u32::try_from(payload_size).unwrap(),
+                        length: u32::try_from(payload_size).expect("int cast"),
                     };
                     let _ = data_header.write(&mut writer);
                     if padding != 0 {
@@ -1701,7 +1701,7 @@ impl Stream {
                 let merge = &bytes[0..consumed_len];
                 last_frame.buffer[last_frame.len as usize..last_frame.len as usize + consumed_len]
                     .copy_from_slice(merge);
-                last_frame.len += u32::try_from(consumed_len).unwrap();
+                last_frame.len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
                 client.queued_data_size += consumed_len as u64;
@@ -1732,7 +1732,7 @@ impl Stream {
 
         let mut frame = PendingFrame {
             end_stream,
-            len: u32::try_from(bytes.len()).unwrap(),
+            len: u32::try_from(bytes.len()).expect("int cast"),
             offset: 0,
             // we need to clone this data to send it later
             buffer: if bytes.is_empty() {
@@ -2134,7 +2134,7 @@ impl H2FrameParser {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
             stream_identifier,
-            length: u32::try_from(8 + debug_data.len()).unwrap(),
+            length: u32::try_from(8 + debug_data.len()).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
         let last_id = UInt31WithReserved::init(last_stream_id, false);
@@ -2185,10 +2185,10 @@ impl H2FrameParser {
             type_: FrameType::HTTP_FRAME_ALTSVC as u8,
             flags: 0,
             stream_identifier,
-            length: u32::try_from(origin_str.len() + alt.len() + 2).unwrap(),
+            length: u32::try_from(origin_str.len() + alt.len() + 2).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
-        let _ = stream.write_int_u16_be(u16::try_from(origin_str.len()).unwrap());
+        let _ = stream.write_int_u16_be(u16::try_from(origin_str.len()).expect("int cast"));
         let _ = self.write(&buffer);
         if !origin_str.is_empty() {
             let _ = self.write(origin_str);
@@ -2346,7 +2346,7 @@ impl H2FrameParser {
         if buffer_len > 0 {
             let buffer = &self.write_buffer.slice()[self.write_buffer_offset..];
             let result: i32 = socket.write_maybe_corked(buffer);
-            let written: u32 = if result < 0 { 0 } else { u32::try_from(result).unwrap() };
+            let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
 
             if (written as usize) < buffer_len {
                 self.write_buffer_offset += written as usize;
@@ -2380,7 +2380,7 @@ impl H2FrameParser {
             {
                 let buffer = &self.write_buffer.slice()[self.write_buffer_offset..];
                 let result: i32 = socket.write_maybe_corked(buffer);
-                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).unwrap() };
+                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
                 if (written as usize) < buffered_len {
                     self.write_buffer_offset += written as usize;
 
@@ -2397,7 +2397,7 @@ impl H2FrameParser {
             self.write_buffer.len = 0;
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
-                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).unwrap() };
+                let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
                 if (written as usize) < bytes.len() {
                     let pending = &bytes[written as usize..];
                     // ops not all data was sent, lets buffer again
@@ -2417,7 +2417,7 @@ impl H2FrameParser {
             return true;
         }
         let result: i32 = socket.write_maybe_corked(bytes);
-        let written: u32 = if result < 0 { 0 } else { u32::try_from(result).unwrap() };
+        let written: u32 = if result < 0 { 0 } else { u32::try_from(result).expect("int cast") };
         if (written as usize) < bytes.len() {
             let pending = &bytes[written as usize..];
             // ops not all data was sent, lets buffer again
@@ -2743,7 +2743,7 @@ impl H2FrameParser {
     pub fn handle_incomming_payload(&mut self, data: &[u8], stream_identifier: u32) -> Option<Payload> {
         let end: usize = (self.remaining_length as usize).min(data.len());
         let payload = &data[0..end];
-        self.remaining_length -= i32::try_from(end).unwrap();
+        self.remaining_length -= i32::try_from(end).expect("int cast");
         if self.remaining_length > 0 {
             // buffer more data
             let _ = self.read_buffer.append_slice(payload);
@@ -2933,7 +2933,7 @@ impl H2FrameParser {
         stream = unsafe { &mut *stream_ptr };
         let previous_remaining_length: isize = self.remaining_length as isize;
 
-        self.remaining_length -= i32::try_from(end).unwrap();
+        self.remaining_length -= i32::try_from(end).expect("int cast");
         let mut padding: u8 = 0;
         let padded = frame.flags & DataFrameFlags::PADDED as u8 != 0;
         if padded {
@@ -2967,7 +2967,7 @@ impl H2FrameParser {
         }
         let mut emitted = false;
 
-        let start_idx = (frame.length as usize) - usize::try_from(previous_remaining_length).unwrap();
+        let start_idx = (frame.length as usize) - usize::try_from(previous_remaining_length).expect("int cast");
         if start_idx < 1 && padded && !payload.is_empty() {
             // Skip the Pad Length octet. Keyed on the PADDED flag rather than
             // `padding > 0` because Pad Length = 0 is valid (RFC 7540 Section 6.1)
@@ -3451,9 +3451,9 @@ impl H2FrameParser {
                             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
                             let stream = unsafe { &mut **item };
                             if delta >= 0 {
-                                stream.window_size = stream.window_size.saturating_add(u64::try_from(delta).unwrap());
+                                stream.window_size = stream.window_size.saturating_add(u64::try_from(delta).expect("int cast"));
                             } else {
-                                stream.window_size = stream.window_size.saturating_sub(u64::try_from(-delta).unwrap());
+                                stream.window_size = stream.window_size.saturating_sub(u64::try_from(-delta).expect("int cast"));
                             }
                         }
                         bun_output::scoped_log!(H2FrameParser, "adjusted stream windows by delta {} (old: {}, new: {})", delta, old_size, new_size);
@@ -3591,7 +3591,7 @@ impl H2FrameParser {
                 self.send_go_away(0, ErrorCode::PROTOCOL_ERROR, b"Invalid preface", self.last_stream_id, true);
                 return Ok(preface_available);
             }
-            self.preface_received_len += u8::try_from(preface_available).unwrap();
+            self.preface_received_len += u8::try_from(preface_available).expect("int cast");
             return Ok(preface_available);
         }
         if let Some(header) = self.current_frame {
@@ -3654,7 +3654,7 @@ impl H2FrameParser {
             return Ok(bytes.len());
         }
 
-        let header = FrameHeader::decode(bytes[..FrameHeader::BYTE_SIZE].try_into().unwrap());
+        let header = FrameHeader::decode(bytes[..FrameHeader::BYTE_SIZE].try_into().expect("infallible: size matches"));
 
         bun_output::scoped_log!(
             H2FrameParser,
@@ -3927,7 +3927,7 @@ impl H2FrameParser {
                 if id < 0 && id as u32 > MAX_STREAM_ID {
                     return Err(global_object.throw(format_args!("Expected lastStreamId to be a number between 1 and 2147483647")));
                 }
-                last_stream_id = u32::try_from(id).unwrap();
+                last_stream_id = u32::try_from(id).expect("int cast");
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
@@ -4000,10 +4000,10 @@ impl H2FrameParser {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
-                length: u32::try_from(slice.len() + 2).unwrap(),
+                length: u32::try_from(slice.len() + 2).expect("int cast"),
             };
             let _ = frame.write(&mut stream);
-            let _ = stream.write_int_u16_be(u16::try_from(slice.len()).unwrap());
+            let _ = stream.write_int_u16_be(u16::try_from(slice.len()).expect("int cast"));
             let _ = this.write(&buffer);
             if !slice.is_empty() {
                 let _ = this.write(slice);
@@ -4021,7 +4021,7 @@ impl H2FrameParser {
                 }
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
-                if stream.write_int_u16_be(u16::try_from(slice.len()).unwrap()).is_err() {
+                if stream.write_int_u16_be(u16::try_from(slice.len()).expect("int cast")).is_err() {
                     let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH, format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"));
                     return Err(global_object.throw_value(exception));
                 }
@@ -4032,7 +4032,7 @@ impl H2FrameParser {
                 }
             }
 
-            let total_length: u32 = u32::try_from(stream.get_pos()).unwrap();
+            let total_length: u32 = u32::try_from(stream.get_pos()).expect("int cast");
             let mut frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
@@ -4223,7 +4223,7 @@ impl H2FrameParser {
                 if weight_u32 > 255 {
                     return Err(global_object.throw(format_args!("Invalid weight")));
                 }
-                weight = u16::try_from(weight_u32).unwrap();
+                weight = u16::try_from(weight_u32).expect("int cast");
             }
         }
 
@@ -4418,7 +4418,7 @@ impl H2FrameParser {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: stream_id,
-                        length: u32::try_from(payload_size).unwrap(),
+                        length: u32::try_from(payload_size).expect("int cast"),
                     };
                     let mut writer = self.to_writer();
                     let _ = data_header.write(&mut writer);
@@ -4723,7 +4723,7 @@ impl H2FrameParser {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags | HeadersFrameFlags::END_HEADERS as u8,
                 stream_identifier: stream.id,
-                length: u32::try_from(encoded_size).unwrap(),
+                length: u32::try_from(encoded_size).expect("int cast"),
             };
             let _ = frame.write(&mut writer);
             let _ = writer.write(encoded_data);
@@ -4736,7 +4736,7 @@ impl H2FrameParser {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags, // END_STREAM but NOT END_HEADERS
                 stream_identifier: stream.id,
-                length: u32::try_from(first_chunk_size).unwrap(),
+                length: u32::try_from(first_chunk_size).expect("int cast"),
             };
             let _ = headers_frame.write(&mut writer);
             let _ = writer.write(&encoded_data[0..first_chunk_size]);
@@ -4751,7 +4751,7 @@ impl H2FrameParser {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last { HeadersFrameFlags::END_HEADERS as u8 } else { 0 },
                     stream_identifier: stream.id,
-                    length: u32::try_from(chunk_size).unwrap(),
+                    length: u32::try_from(chunk_size).expect("int cast"),
                 };
                 let _ = cont_frame.write(&mut writer);
                 let _ = writer.write(&encoded_data[offset..offset + chunk_size]);
@@ -5310,7 +5310,7 @@ impl H2FrameParser {
                         this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
                         return Ok(JSValue::js_number(stream.id as f64));
                     }
-                    stream.stream_dependency = u32::try_from(parent).unwrap();
+                    stream.stream_dependency = u32::try_from(parent).expect("int cast");
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(b"options.parent", b"number", parent_js));
                 }
@@ -5326,7 +5326,7 @@ impl H2FrameParser {
                         this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
-                    stream.weight = u16::try_from(weight).unwrap();
+                    stream.weight = u16::try_from(weight).expect("int cast");
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(b"options.weight", b"number", weight_js));
                 }
@@ -5338,7 +5338,7 @@ impl H2FrameParser {
                     return Ok(JSValue::js_number(stream_id as f64));
                 }
 
-                stream.weight = u16::try_from(weight).unwrap();
+                stream.weight = u16::try_from(weight).expect("int cast");
             }
 
             if let Some(signal_arg) = options.get(global_object, "signal")? {
@@ -5424,16 +5424,16 @@ impl H2FrameParser {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
                 stream_identifier: stream.id,
-                length: u32::try_from(payload_size).unwrap(),
+                length: u32::try_from(payload_size).expect("int cast"),
             };
             let _ = frame.write(&mut writer);
 
             // Write priority data if present
             if has_priority {
-                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).unwrap(), exclusive);
+                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let mut priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).unwrap(),
+                    weight: u8::try_from(weight).expect("int cast"),
                 };
                 let _ = priority_data.write(&mut writer);
             }
@@ -5464,15 +5464,15 @@ impl H2FrameParser {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: headers_flags | (if has_priority { HeadersFrameFlags::PRIORITY as u8 } else { 0 }),
                 stream_identifier: stream.id,
-                length: u32::try_from(first_chunk_size + priority_overhead).unwrap(),
+                length: u32::try_from(first_chunk_size + priority_overhead).expect("int cast"),
             };
             let _ = headers_frame.write(&mut writer);
 
             if has_priority {
-                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).unwrap(), exclusive);
+                let stream_identifier = UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let mut priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).unwrap(),
+                    weight: u8::try_from(weight).expect("int cast"),
                 };
                 let _ = priority_data.write(&mut writer);
             }
@@ -5490,7 +5490,7 @@ impl H2FrameParser {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last { HeadersFrameFlags::END_HEADERS as u8 } else { 0 },
                     stream_identifier: stream.id,
-                    length: u32::try_from(chunk_size).unwrap(),
+                    length: u32::try_from(chunk_size).expect("int cast"),
                 };
                 let _ = cont_frame.write(&mut writer);
                 let _ = writer.write(&encoded_headers[offset..offset + chunk_size]);

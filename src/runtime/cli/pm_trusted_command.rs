@@ -89,7 +89,7 @@ impl UntrustedCommand {
 
         // loop through dependencies and get trusted and untrusted deps with lifecycle scripts
         for (i, dep) in lockfile.buffers.dependencies.as_slice().iter().enumerate() {
-            let dep_id: DependencyID = DependencyID::try_from(i).unwrap();
+            let dep_id: DependencyID = DependencyID::try_from(i).expect("int cast");
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             if package_id == install::INVALID_PACKAGE_ID {
                 continue;
@@ -320,7 +320,7 @@ impl TrustCommand {
             .zip(lockfile.buffers.resolutions.as_slice())
             .enumerate()
         {
-            let dep_id: u32 = u32::try_from(i).unwrap();
+            let dep_id: u32 = u32::try_from(i).expect("int cast");
             if package_id == install::INVALID_PACKAGE_ID {
                 continue;
             }

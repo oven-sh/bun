@@ -31,7 +31,7 @@ pub fn find_all_imported_parts_in_js_order(
                     chunk,
                     &mut part_ranges_shared,
                     &mut parts_prefix_shared,
-                    u32::try_from(index).unwrap(),
+                    u32::try_from(index).expect("int cast"),
                 )?;
             }
             chunk::Content::Css(_) => {} // handled in `find_imported_css_files_in_js_order`

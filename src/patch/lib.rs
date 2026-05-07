@@ -318,7 +318,7 @@ fn apply_patch(
         // Adjust to account for the changes
         for hunk in &patch.hunks {
             count = usize::try_from(
-                i64::try_from(count).unwrap()
+                i64::try_from(count).expect("int cast")
                     + i64::from(hunk.header.patched.len)
                     - i64::from(hunk.header.original.len),
             )
@@ -423,7 +423,7 @@ fn apply_patch(
         patch_dir,
         &file_path,
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        sys::Mode::try_from(stat.st_mode).unwrap(),
+        sys::Mode::try_from(stat.st_mode).expect("int cast"),
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
@@ -625,7 +625,7 @@ pub enum FileMode {
 
 impl FileMode {
     pub fn to_bun_mode(self) -> sys::Mode {
-        sys::Mode::try_from(self as u32).unwrap()
+        sys::Mode::try_from(self as u32).expect("int cast")
     }
 
     pub fn from_u32(mode: u32) -> Option<FileMode> {

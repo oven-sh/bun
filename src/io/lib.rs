@@ -235,7 +235,7 @@ impl Loop {
             // makes it edge-triggered so we never need to read() the eventfd.
             // SAFETY: all-zero is a valid kevent (POD).
             let mut change: KEvent = unsafe { core::mem::zeroed() };
-            change.ident = usize::try_from(loop_.waker.get_fd().native()).unwrap();
+            change.ident = usize::try_from(loop_.waker.get_fd().native()).expect("int cast");
             change.filter = libc::EVFILT_READ;
             change.flags = libc::EV_ADD | libc::EV_CLEAR;
             // SAFETY: valid kqueue fd just created; passing 1 change, 0 events.
@@ -387,7 +387,7 @@ impl Loop {
                 libc::epoll_wait(
                     self.pollfd().native(),
                     events.as_mut_ptr().cast(),
-                    c_int::try_from(events.len()).unwrap(),
+                    c_int::try_from(events.len()).expect("int cast"),
                     i32::MAX,
                 )
             };
@@ -522,13 +522,13 @@ impl Loop {
                 self.pollfd().native(),
                 events_list.as_ptr(),
                 // PERF(port): @intCast
-                c_int::try_from(change_count).unwrap(),
+                c_int::try_from(change_count).expect("int cast"),
                 // The same array may be used for the changelist and eventlist.
                 events_list.as_mut_ptr(),
                 // we set 0 here so that if we get an error on
                 // registration, it becomes errno
                 // PERF(port): @intCast
-                c_int::try_from(capacity).unwrap(),
+                c_int::try_from(capacity).expect("int cast"),
                 core::ptr::null(),
             );
 
@@ -543,7 +543,7 @@ impl Loop {
 
             self.update_now();
 
-            let rc_len = usize::try_from(rc).unwrap();
+            let rc_len = usize::try_from(rc).expect("int cast");
             debug_assert!(rc_len <= capacity);
             // SAFETY: kernel wrote `rc` valid events into the buffer.
             let current_events: &[KEvent] =
@@ -578,8 +578,8 @@ impl Loop {
             // SAFETY: valid out-pointers.
             let rc = unsafe { clock_gettime_monotonic(&mut sec, &mut nsec) };
             debug_assert!(rc == 0);
-            timespec.tv_sec = sec.try_into().unwrap();
-            timespec.tv_nsec = nsec.try_into().unwrap();
+            timespec.tv_sec = sec.try_into().expect("infallible: size matches");
+            timespec.tv_nsec = nsec.try_into().expect("infallible: size matches");
         }
         #[cfg(not(any(target_os = "linux", windows)))]
         {
@@ -927,7 +927,7 @@ impl Poll {
         };
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = unsafe { core::mem::zeroed() };
-        kqueue_event.ident = usize::try_from(fd.native()).unwrap();
+        kqueue_event.ident = usize::try_from(fd.native()).expect("int cast");
         kqueue_event.filter = filter;
         kqueue_event.flags = flags_;
         kqueue_event.udata = udata as _;
@@ -1456,7 +1456,7 @@ pub mod waker {
                     events.as_ptr(),
                     0,
                     events.as_mut_ptr(),
-                    c_int::try_from(events.len()).unwrap(),
+                    c_int::try_from(events.len()).expect("int cast"),
                     0,
                     core::ptr::null(),
                 );

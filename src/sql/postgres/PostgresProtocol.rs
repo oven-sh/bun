@@ -39,7 +39,7 @@ pub fn write_query<Context: WriterContext>(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let count: u32 =
-        core::mem::size_of::<u32>() as u32 + u32::try_from(query.len()).unwrap() + 1;
+        core::mem::size_of::<u32>() as u32 + u32::try_from(query.len()).expect("int cast") + 1;
     let header: [u8; 5] = {
         let b = to_bytes(count);
         [b'Q', b[0], b[1], b[2], b[3]]

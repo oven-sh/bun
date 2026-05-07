@@ -345,7 +345,7 @@ impl<T: Copy> PostgresBinarySingleDimensionArray<T> {
         unsafe {
             let head: *mut T = &mut self.first_value as *mut T;
             let mut current: *mut T = head;
-            let len: usize = usize::try_from(self.len).unwrap();
+            let len: usize = usize::try_from(self.len).expect("int cast");
             for i in 0..len {
                 // Skip every other value as it contains the size of the element
                 current = current.add(1);

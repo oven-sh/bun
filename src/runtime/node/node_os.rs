@@ -454,18 +454,18 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
 
     // SAFETY: pure FFI getter
     let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;
-    let mult: u64 = if ticks > 0 { 1000 / u64::try_from(ticks).unwrap() } else { 1 };
+    let mult: u64 = if ticks > 0 { 1000 / u64::try_from(ticks).expect("int cast") } else { 1 };
 
     let values = JSValue::create_empty_array(global_this, ncpu as usize)?;
     let mut i: u32 = 0;
     while i < ncpu {
         let off = i as usize * CPU_STATES;
         let times = CPUTimes {
-            user: u64::try_from(times_buf[off + 0].max(0)).unwrap() * mult,
-            nice: u64::try_from(times_buf[off + 1].max(0)).unwrap() * mult,
-            sys: u64::try_from(times_buf[off + 2].max(0)).unwrap() * mult,
-            irq: u64::try_from(times_buf[off + 3].max(0)).unwrap() * mult,
-            idle: u64::try_from(times_buf[off + 4].max(0)).unwrap() * mult,
+            user: u64::try_from(times_buf[off + 0].max(0)).expect("int cast") * mult,
+            nice: u64::try_from(times_buf[off + 1].max(0)).expect("int cast") * mult,
+            sys: u64::try_from(times_buf[off + 2].max(0)).expect("int cast") * mult,
+            irq: u64::try_from(times_buf[off + 3].max(0)).expect("int cast") * mult,
+            idle: u64::try_from(times_buf[off + 4].max(0)).expect("int cast") * mult,
         };
         let cpu = JSValue::create_empty_object(global_this, 3);
         cpu.put(global_this, b"model", model);
@@ -541,7 +541,7 @@ fn cpus_impl_darwin(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     // Get the multiplier; this is the number of ms/tick
     // SAFETY: pure FFI getter
     let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;
-    let multiplier: u64 = 1000 / u64::try_from(ticks).unwrap();
+    let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
     // Set up each CPU value in the return
     let values = JSValue::create_empty_array(global_this, num_cpus as usize)?;
@@ -583,10 +583,10 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
         unsafe { libuv::uv_free_cpu_info(cpu_infos, count) };
     };
 
-    let values = JSValue::create_empty_array(global_this, usize::try_from(count).unwrap())?;
+    let values = JSValue::create_empty_array(global_this, usize::try_from(count).expect("int cast"))?;
 
     // SAFETY: cpu_infos points to `count` entries per uv_cpu_info contract
-    let infos = unsafe { core::slice::from_raw_parts(cpu_infos, usize::try_from(count).unwrap()) };
+    let infos = unsafe { core::slice::from_raw_parts(cpu_infos, usize::try_from(count).expect("int cast")) };
     for (i, cpu_info) in infos.iter().enumerate() {
         let times = CPUTimes {
             user: cpu_info.cpu_times.user,
@@ -603,7 +603,7 @@ pub fn cpus_impl_windows(global_this: &JSGlobalObject) -> Result<JSValue, OsErro
         cpu.put(global_this, b"speed", JSValue::js_number(cpu_info.speed as f64));
         cpu.put(global_this, b"times", times.to_value(global_this));
 
-        values.put_index(global_this, u32::try_from(i).unwrap(), cpu)?;
+        values.put_index(global_this, u32::try_from(i).expect("int cast"), cpu)?;
     }
 
     Ok(values)
@@ -1070,7 +1070,7 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         // Does this entry already exist?
         if let Some(array) = ret.get(global_this, interface_name)? {
             // Add this interface entry to the existing array
-            let next_index: u32 = u32::try_from(array.get_length(global_this)?).unwrap();
+            let next_index: u32 = u32::try_from(array.get_length(global_this)?).expect("int cast");
             array.put_index(global_this, next_index, interface)?;
         } else {
             // Add it as an array with this interface as an element
@@ -1114,7 +1114,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
     let mut mac_buf = [0u8; 17];
 
     // SAFETY: ifaces points to `count` entries per uv_interface_addresses contract
-    let iface_slice = unsafe { core::slice::from_raw_parts(ifaces, usize::try_from(count).unwrap()) };
+    let iface_slice = unsafe { core::slice::from_raw_parts(ifaces, usize::try_from(count).expect("int cast")) };
     for iface in iface_slice {
         let interface = JSValue::create_empty_object(global_this, 7);
 
@@ -1217,7 +1217,7 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
         let interface_name = unsafe { core::ffi::CStr::from_ptr(iface.name) }.to_bytes();
         if let Some(array) = ret.get(global_this, interface_name)? {
             // Add this interface entry to the existing array
-            let next_index: u32 = u32::try_from(array.get_length(global_this)?).unwrap();
+            let next_index: u32 = u32::try_from(array.get_length(global_this)?).expect("int cast");
             array.put_index(global_this, next_index, interface)?;
         } else {
             // Add it as an array with this interface as an element
@@ -1545,7 +1545,7 @@ fn netmask_to_cidr_suffix<T: NetmaskInt>(mask: T) -> Option<u8> {
     if first_zero < T::BITS && first_zero < last_one {
         return None;
     }
-    Some(u8::try_from(first_zero).unwrap())
+    Some(u8::try_from(first_zero).expect("int cast"))
 }
 
 // Helper trait for netmask_to_cidr_suffix (u32 / u128)

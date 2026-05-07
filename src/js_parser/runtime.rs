@@ -853,7 +853,7 @@ impl ImportsIterator<'_> {
             self.i += 1; // Zig: `defer this.i += 1;`
             if let Some(val) = self.runtime_imports.field(t) {
                 return Some(ImportsIteratorEntry {
-                    key: u16::try_from(t).unwrap(),
+                    key: u16::try_from(t).expect("int cast"),
                     value: val,
                 });
             }

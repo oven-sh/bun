@@ -735,7 +735,7 @@ pub mod ast {
         pub fn atoms_len(&self) -> u32 {
             match self {
                 Atom::Simple(_) => 1,
-                Atom::Compound(c) => u32::try_from(c.atoms.len()).unwrap(),
+                Atom::Compound(c) => u32::try_from(c.atoms.len()).expect("int cast"),
             }
         }
 
@@ -955,7 +955,7 @@ impl<'bump> Parser<'bump> {
         while if self.inside_subshell.is_none() {
             !self.r#match(TokenTag::Eof)
         } else {
-            !self.match_any(&[TokenTag::Eof, self.inside_subshell.unwrap().closing_tok()])
+            !self.match_any(&[TokenTag::Eof, self.inside_subshell.expect("infallible: checked is_some").closing_tok()])
         } {
             self.skip_newlines();
             stmts.push(self.parse_stmt()?);
@@ -979,7 +979,7 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.unwrap().closing_tok(),
+                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
             ])
         } {
             let expr = self.parse_expr()?;
@@ -1296,7 +1296,7 @@ impl<'bump> Parser<'bump> {
             !self.peek_any_comptime_ifclausetok(until) && !self.peek_any_comptime(&[TokenTag::Eof])
         } else {
             !self.peek_any_ifclausetok(until)
-                && !self.peek_any(&[self.inside_subshell.unwrap().closing_tok(), TokenTag::Eof])
+                && !self.peek_any(&[self.inside_subshell.expect("infallible: checked is_some").closing_tok(), TokenTag::Eof])
         } {
             self.skip_newlines();
             let stmt = self.parse_stmt()?;
@@ -1412,7 +1412,7 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.unwrap().closing_tok(),
+                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
             ])
         } {
             if let Some(assign) = self.parse_assign()? {
@@ -1429,7 +1429,7 @@ impl<'bump> Parser<'bump> {
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell.unwrap().closing_tok(),
+                self.inside_subshell.expect("infallible: checked is_some").closing_tok(),
             ])
         };
         if at_end {
@@ -1590,7 +1590,7 @@ impl<'bump> Parser<'bump> {
                 Token::Eof | Token::Semicolon | Token::Newline => false,
                 t => {
                     if self.inside_subshell.is_some()
-                        && self.inside_subshell.unwrap().closing_tok() == t.tag()
+                        && self.inside_subshell.expect("infallible: checked is_some").closing_tok() == t.tag()
                     {
                         false
                     } else {
@@ -1782,7 +1782,7 @@ impl<'bump> Parser<'bump> {
     fn is_at_end(&self) -> bool {
         self.peek().tag() == TokenTag::Eof
             || (self.inside_subshell.is_some()
-                && self.inside_subshell.unwrap().closing_tok() == self.peek().tag())
+                && self.inside_subshell.expect("infallible: checked is_some").closing_tok() == self.peek().tag())
     }
 
     fn expect(&mut self, toktag: TokenTag) -> Token {
@@ -1811,7 +1811,7 @@ impl<'bump> Parser<'bump> {
             || tag == TokenTag::Eof
             || tag == TokenTag::Newline
             || (self.inside_subshell.is_some()
-                && tag == self.inside_subshell.unwrap().closing_tok())
+                && tag == self.inside_subshell.expect("infallible: checked is_some").closing_tok())
     }
 
     fn expect_delimit(&mut self) -> Token {
@@ -1821,7 +1821,7 @@ impl<'bump> Parser<'bump> {
             || self.check(TokenTag::Newline)
             || self.check(TokenTag::Eof)
             || (self.inside_subshell.is_some()
-                && self.check(self.inside_subshell.unwrap().closing_tok()))
+                && self.check(self.inside_subshell.expect("infallible: checked is_some").closing_tok()))
         {
             return self.advance();
         }
@@ -2355,8 +2355,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let end = self.strpool.len();
         self.errors.push(LexError {
             msg: TextRange {
-                start: u32::try_from(start).unwrap(),
-                end: u32::try_from(end).unwrap(),
+                start: u32::try_from(start).expect("int cast"),
+                end: u32::try_from(end).expect("int cast"),
             },
         });
     }
@@ -2949,12 +2949,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     fn append_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
         if ENCODING == StringEncoding::Ascii {
             // PERF(port): @intCast — ENCODING==Ascii guarantees char < 256
-            self.strpool.push(u8::try_from(char).unwrap());
+            self.strpool.push(u8::try_from(char).expect("int cast"));
             self.j += 1;
         } else {
             if char <= 0x7F {
                 // PERF(port): @intCast — guarded by char <= 0x7F
-                self.strpool.push(u8::try_from(char).unwrap());
+                self.strpool.push(u8::try_from(char).expect("int cast"));
                 self.j += 1;
                 return Ok(());
             } else {
@@ -3175,7 +3175,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 c if (b'0' as u32..=b'9' as u32).contains(&c) => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
                     let mut count: usize = 1;
-                    let mut buf = [u8::try_from(first.char).unwrap(); 32];
+                    let mut buf = [u8::try_from(first.char).expect("int cast"); 32];
 
                     while let Some(peeked) = self.peek() {
                         let char = peeked.char;
@@ -3185,7 +3185,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 if count >= 32 {
                                     return None;
                                 }
-                                buf[count] = u8::try_from(char).unwrap();
+                                buf[count] = u8::try_from(char).expect("int cast");
                                 count += 1;
                                 continue;
                             }
@@ -3293,7 +3293,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     if count >= 32 {
                         return None;
                     }
-                    buf[count] = u8::try_from(char).unwrap();
+                    buf[count] = u8::try_from(char).expect("int cast");
                     count += 1;
                     continue;
                 }
@@ -3381,7 +3381,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         }
         let end = self.strpool.len();
-        self.j += u32::try_from(end - start).unwrap();
+        self.j += u32::try_from(end - start).expect("int cast");
         Ok(())
     }
 
@@ -3483,7 +3483,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
             if digit_buf_count == 0 {
                 let mut e = Vec::new();
-                write!(&mut e, "Invalid {} (no idx)", name).unwrap();
+                write!(&mut e, "Invalid {} (no idx)", name).expect("infallible: in-memory write");
                 self.add_error(&e);
                 return None;
             }
@@ -3494,7 +3494,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 Some(n) => n,
                 None => {
                     let mut e = Vec::new();
-                    write!(&mut e, "Invalid {} ref ", name).unwrap();
+                    write!(&mut e, "Invalid {} ref ", name).expect("infallible: in-memory write");
                     self.add_error(&e);
                     return None;
                 }
@@ -3545,7 +3545,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             "JS object ref",
             Self::validate_js_obj_ref_idx,
         ) {
-            return Some(Token::JSObjRef(u32::try_from(idx).unwrap()));
+            return Some(Token::JSObjRef(u32::try_from(idx).expect("int cast")));
         }
         None
     }
@@ -3751,7 +3751,7 @@ impl<'a> SrcUnicode<'a> {
         let iter = CodepointIterator::init(bytes);
         if !iter.next(cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = u32::try_from(bytes.len() + 1).unwrap();
+            cursor.i = u32::try_from(bytes.len() + 1).expect("int cast");
             cursor.width = 1;
             cursor.c = CodepointIterator::ZERO_VALUE;
         }
@@ -3821,7 +3821,7 @@ impl<'a> Src<'a> {
     fn set_unicode_cursor(&mut self, new_idx: usize) {
         if let Src::Unicode(u) = self {
             u.cursor = CodepointCursor {
-                i: u32::try_from(new_idx).unwrap(),
+                i: u32::try_from(new_idx).expect("int cast"),
                 c: 0,
                 width: 0,
             };
@@ -4353,7 +4353,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 for (i, v) in vals.iter().enumerate() {
                     inlined.items[i].write(v.clone());
                 }
-                inlined.len += u32::try_from(vals.len()).unwrap();
+                inlined.len += u32::try_from(vals.len()).expect("int cast");
             }
             return this;
         }
@@ -4422,7 +4422,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                         new_len,
                     );
                 }
-                inlined.len = u32::try_from(new_len).unwrap();
+                inlined.len = u32::try_from(new_len).expect("int cast");
                 // TODO(port): Zig version copies into [0..starting_idx] which is a bug if
                 // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }

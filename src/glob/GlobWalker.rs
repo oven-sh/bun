@@ -706,7 +706,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let active: ComponentSet = 'set: {
             if work_item.active.count() == 1 {
                 let single: u32 =
-                    u32::try_from(work_item.active.find_first_set().unwrap()).unwrap();
+                    u32::try_from(work_item.active.find_first_set().unwrap()).expect("int cast");
                 let norm = match self.walker.skip_special_components(
                     single,
                     &mut dir_path_len,
@@ -778,7 +778,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // component and it is a Literal, statat() instead of iterating.
         // Skip for multi-index masks since each index has different needs.
         if active.count() == 1 {
-            let idx: u32 = u32::try_from(active.find_first_set().unwrap()).unwrap();
+            let idx: u32 = u32::try_from(active.find_first_set().unwrap()).expect("int cast");
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
@@ -844,7 +844,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             // matchPatternImpl still runs for correctness.
             // TODO(port): @hasDecl(Accessor.DirIter, "setNameFilter") — trait default method covers this
             let filter: Option<&[u16]> = if active.count() == 1 {
-                self.compute_nt_filter(u32::try_from(active.find_first_set().unwrap()).unwrap())
+                self.compute_nt_filter(u32::try_from(active.find_first_set().unwrap()).expect("int cast"))
             } else {
                 None
             };
@@ -1876,10 +1876,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     fn eval_dir(&self, active: &ComponentSet, entry_name: &[u8], add: &mut bool) -> ComponentSet {
         let mut child = self.make_set();
         let comps = &self.pattern_components;
-        let len: u32 = u32::try_from(comps.len()).unwrap();
+        let len: u32 = u32::try_from(comps.len()).expect("int cast");
         let mut it = active.iterator::<true, true>();
         while let Some(i) = it.next() {
-            let idx: u32 = u32::try_from(i).unwrap();
+            let idx: u32 = u32::try_from(i).expect("int cast");
             let pattern = &comps[idx as usize];
             let next_pattern = if idx + 1 < len {
                 Some(&comps[(idx + 1) as usize])
@@ -1907,10 +1907,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn eval_file(&self, active: &ComponentSet, entry_name: &[u8]) -> bool {
         let comps = &self.pattern_components;
-        let len: u32 = u32::try_from(comps.len()).unwrap();
+        let len: u32 = u32::try_from(comps.len()).expect("int cast");
         let mut it = active.iterator::<true, true>();
         while let Some(i) = it.next() {
-            let idx: u32 = u32::try_from(i).unwrap();
+            let idx: u32 = u32::try_from(i).expect("int cast");
             let pattern = &comps[idx as usize];
             let next_pattern = if idx + 1 < len {
                 Some(&comps[(idx + 1) as usize])
@@ -2198,7 +2198,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             saw_special = saw_special || component.syntax_hint.is_special_syntax();
                             if !saw_special {
                                 *basename_excluding_special_syntax_component_idx =
-                                    u32::try_from(pattern_components.len()).unwrap();
+                                    u32::try_from(pattern_components.len()).expect("int cast");
                                 *end_byte_of_basename_excluding_special_syntax = i + width;
                             }
                             pattern_components.push(component);
@@ -2231,7 +2231,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                         saw_special = saw_special || component.syntax_hint.is_special_syntax();
                         if !saw_special {
                             *basename_excluding_special_syntax_component_idx =
-                                u32::try_from(pattern_components.len()).unwrap();
+                                u32::try_from(pattern_components.len()).expect("int cast");
                             *end_byte_of_basename_excluding_special_syntax = i + width;
                         }
                         pattern_components.push(component);
@@ -2250,19 +2250,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if let Some(component) = Self::make_component(
             pattern,
             start_byte,
-            u32::try_from(pattern.len()).unwrap(),
+            u32::try_from(pattern.len()).expect("int cast"),
             has_relative_patterns,
         ) {
             saw_special = saw_special || component.syntax_hint.is_special_syntax();
             if !saw_special {
                 *basename_excluding_special_syntax_component_idx =
-                    u32::try_from(pattern_components.len()).unwrap();
+                    u32::try_from(pattern_components.len()).expect("int cast");
                 *end_byte_of_basename_excluding_special_syntax = i + width;
             }
             pattern_components.push(component);
         } else if !saw_special {
             *basename_excluding_special_syntax_component_idx =
-                u32::try_from(pattern_components.len()).unwrap();
+                u32::try_from(pattern_components.len()).expect("int cast");
             *end_byte_of_basename_excluding_special_syntax = i + width;
         }
 
@@ -2335,7 +2335,7 @@ fn skip_globstars(glob: &[u32], glob_index: &mut u32) {
 
 pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];
-    let needle_len: u32 = u32::try_from(needle.len()).unwrap();
+    let needle_len: u32 = u32::try_from(needle.len()).expect("int cast");
     if path.len() < needle_len as usize {
         return false;
     }

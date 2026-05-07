@@ -194,7 +194,7 @@ impl PerMessageDeflate {
                 Z_DEFAULT_MEM_LEVEL,                            // memLevel
                 Z_DEFAULT_STRATEGY,                             // strategy
                 zlib::zlibVersion() as *const u8,
-                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).unwrap(),
+                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
             )
         };
         if compress_err != zlib::ReturnCode::Ok {
@@ -211,7 +211,7 @@ impl PerMessageDeflate {
                 &mut self_.decompress_stream,
                 -(self_.params.server_max_window_bits as c_int), // windowBits
                 zlib::zlibVersion() as *const u8,
-                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).unwrap(),
+                c_int::try_from(core::mem::size_of::<zlib::z_stream>()).expect("int cast"),
             )
         };
         if decompress_err != zlib::ReturnCode::Ok {

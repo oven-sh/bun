@@ -367,7 +367,7 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(reset(), b"");
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
-                entry.indent = u32::try_from(visible_width(glyph)).unwrap();
+                entry.indent = u32::try_from(visible_width(glyph)).expect("int cast");
                 self.block_stack.push(entry);
             }
             BlockType::Hr => {
@@ -397,7 +397,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::H => {
                 self.ensure_blank_line();
-                self.heading_level = u8::try_from(data).unwrap();
+                self.heading_level = u8::try_from(data).expect("int cast");
                 self.heading_buf.clear();
                 // heading content is buffered; on leaveBlock we print with
                 // full styling + underline.
@@ -778,7 +778,7 @@ impl<'a> AnsiRenderer<'a> {
                             .min(usize::from(strings::wtf8_byte_sequence_length_with_invalid(rest[0])));
                     }
                     self.write_raw(&rest[0..cut]);
-                    self.col += u32::try_from(visible_width(&rest[0..cut])).unwrap();
+                    self.col += u32::try_from(visible_width(&rest[0..cut])).expect("int cast");
                     self.last_was_newline = false;
                     rest = &rest[cut..];
                     if !rest.is_empty() {
@@ -793,7 +793,7 @@ impl<'a> AnsiRenderer<'a> {
                     self.wrap_break();
                 }
                 self.write_raw(word);
-                self.col += u32::try_from(word_width).unwrap();
+                self.col += u32::try_from(word_width).expect("int cast");
                 self.last_was_newline = word.is_empty();
             }
             i = j;
@@ -929,7 +929,7 @@ impl<'a> AnsiRenderer<'a> {
         let max = u32::from(self.theme.columns);
         if max == 0 {
             self.emit_inline(text_);
-            self.col += u32::try_from(visible_width(text_)).unwrap();
+            self.col += u32::try_from(visible_width(text_)).expect("int cast");
             self.last_was_newline = false;
             return;
         }
@@ -942,7 +942,7 @@ impl<'a> AnsiRenderer<'a> {
                     // Pathological: indent >= columns. Emit as-is to
                     // avoid an infinite loop.
                     self.emit_inline(rest);
-                    self.col += u32::try_from(visible_width(rest)).unwrap();
+                    self.col += u32::try_from(visible_width(rest)).expect("int cast");
                     self.last_was_newline = false;
                     return;
                 }
@@ -952,7 +952,7 @@ impl<'a> AnsiRenderer<'a> {
             let cut = visible_index_at(rest, room as usize);
             if cut == rest.len() {
                 self.emit_inline(rest);
-                self.col += u32::try_from(visible_width(rest)).unwrap();
+                self.col += u32::try_from(visible_width(rest)).expect("int cast");
                 self.last_was_newline = false;
                 return;
             }
@@ -971,7 +971,7 @@ impl<'a> AnsiRenderer<'a> {
                         adv
                     };
                     self.emit_inline(&rest[0..one]);
-                    self.col += u32::try_from(visible_width(&rest[0..one])).unwrap();
+                    self.col += u32::try_from(visible_width(&rest[0..one])).expect("int cast");
                     self.last_was_newline = false;
                     rest = &rest[one..];
                     if !rest.is_empty() {
@@ -983,7 +983,7 @@ impl<'a> AnsiRenderer<'a> {
                 continue;
             }
             self.emit_inline(&rest[0..cut]);
-            self.col += u32::try_from(visible_width(&rest[0..cut])).unwrap();
+            self.col += u32::try_from(visible_width(&rest[0..cut])).expect("int cast");
             self.last_was_newline = false;
             rest = &rest[cut..];
             self.wrap_break();
@@ -1029,7 +1029,7 @@ impl<'a> AnsiRenderer<'a> {
         }
         self.emit_inline(text_);
         if !self.in_cell && self.heading_level == 0 && !self.in_code_block && self.image_depth == 0 {
-            self.col += u32::try_from(visible_width(text_)).unwrap();
+            self.col += u32::try_from(visible_width(text_)).expect("int cast");
             self.last_was_newline = false;
         }
     }
@@ -1152,7 +1152,7 @@ impl<'a> AnsiRenderer<'a> {
             i += 1;
         }
         if start < data.len() {
-            self.col += u32::try_from(visible_width(&data[start..])).unwrap();
+            self.col += u32::try_from(visible_width(&data[start..])).expect("int cast");
             self.last_was_newline = false;
         }
     }

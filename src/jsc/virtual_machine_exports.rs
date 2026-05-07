@@ -369,7 +369,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     }
 
     let limit: usize =
-        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).unwrap();
+        usize::try_from(args.ptr[0].coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
     // SAFETY: `static mut` written only from the JS thread (testing hook); all
     // readers are also JS-thread.
     let prev = unsafe {

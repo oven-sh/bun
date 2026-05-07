@@ -837,7 +837,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_.unwrap());
+            self.record_declared_symbol(name.ref_.expect("infallible: ref bound"));
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -864,7 +864,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
             // SAFETY: shadow_ref_ptr is a fresh bump allocation valid for 'a; sole access.
-            unsafe { *shadow_ref_ptr = name.ref_.unwrap() };
+            unsafe { *shadow_ref_ptr = name.ref_.expect("infallible: ref bound") };
             // SAFETY: original_name is arena-owned, valid for 'a.
             let original_name: &'a [u8] = unsafe {
                 &*self.symbols[(*shadow_ref_ptr).inner_index() as usize].original_name
@@ -958,7 +958,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Special-case EPrivateIdentifier to allow it here
 
                 if is_private {
-                    let priv_ref = match property.key.unwrap().data {
+                    let priv_ref = match property.key.expect("infallible: prop has key").data {
                         ExprData::EPrivateIdentifier(pi) => pi.ref_,
                         _ => unreachable!(),
                     };
@@ -1364,7 +1364,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if !unsafe { &*p.current_scope }.kind_stops_hoisting()
                                 && p.symbols
-                                    [data.func.name.unwrap().ref_.unwrap().inner_index() as usize]
+                                    [data.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
                                 .kind
                                     == SymbolKind::HoistedFunction
                             {
@@ -1412,7 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // means neither identifier can be renamed to something else. So in that
                             // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
-                            let name_ref = name.ref_.unwrap();
+                            let name_ref = name.ref_.expect("infallible: ref bound");
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if unsafe { &*p.current_scope }.contains_direct_eval {
                                 if let Some(hoisted_ref) =
@@ -1428,7 +1428,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
                             let mut index = *gpe.value_ptr;
                             if !gpe.found_existing {
-                                index = u32::try_from(let_decls.len()).unwrap();
+                                index = u32::try_from(let_decls.len()).expect("int cast");
                                 *gpe.value_ptr = index;
                                 let_decls.push(G::Decl {
                                     binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),

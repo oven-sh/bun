@@ -124,7 +124,7 @@ impl AlgorithmValue {
                             }
 
                             algorithm =
-                                AlgorithmValue::Bcrypt(u8::try_from(rounds).unwrap() & 0x3F);
+                                AlgorithmValue::Bcrypt(u8::try_from(rounds).expect("int cast") & 0x3F);
                             // Zig: @as(u6, @intCast(rounds))
                         }
 
@@ -147,7 +147,7 @@ impl AlgorithmValue {
                                 )));
                             }
 
-                            argon.time_cost = u32::try_from(time_cost).unwrap();
+                            argon.time_cost = u32::try_from(time_cost).expect("int cast");
                         }
 
                         if let Some(memory_value) =
@@ -169,7 +169,7 @@ impl AlgorithmValue {
                                 )));
                             }
 
-                            argon.memory_cost = u32::try_from(memory_cost).unwrap();
+                            argon.memory_cost = u32::try_from(memory_cost).expect("int cast");
                         }
 
                         // Zig: @unionInit(Algorithm.Value, @tagName(tag), argon)

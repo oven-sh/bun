@@ -77,14 +77,14 @@ impl HashAlgorithm for Crc32 {
             let chunk_len: u32 = if remaining > max_len {
                 u32::MAX
             } else {
-                u32::try_from(remaining).unwrap()
+                u32::try_from(remaining).expect("int cast")
             };
             // SAFETY: offset < input.len() and chunk_len <= remaining, so the
             // pointer range [ptr+offset, ptr+offset+chunk_len) is in-bounds.
             crc = unsafe { bun_zlib::crc32(crc, input.as_ptr().add(offset), chunk_len) };
             offset += chunk_len as usize;
         }
-        u32::try_from(crc).unwrap()
+        u32::try_from(crc).expect("int cast")
     }
 }
 

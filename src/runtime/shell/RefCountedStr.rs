@@ -15,7 +15,7 @@ impl RefCountedStr {
     // `Box<[u8]>` (global mimalloc) and decompose it into raw ptr+len to match field layout.
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
-        let len = u32::try_from(slice.len()).unwrap();
+        let len = u32::try_from(slice.len()).expect("int cast");
         let ptr = Box::into_raw(slice) as *const u8;
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
         Box::into_raw(Box::new(RefCountedStr {

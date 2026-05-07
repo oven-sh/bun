@@ -74,7 +74,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.count("accept", "*/*");
         headers.count("accept-encoding", "gzip,deflate");
 
-        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).unwrap();
+        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).expect("infallible: in-memory write");
         headers.count("authorization", &print_buf);
         print_buf.clear();
 
@@ -107,7 +107,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.append("accept", "*/*");
         headers.append("accept-encoding", "gzip/deflate");
 
-        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).unwrap();
+        write!(&mut print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).expect("infallible: in-memory write");
         headers.append("authorization", &print_buf);
         print_buf.clear();
 
@@ -569,7 +569,7 @@ pub mod registry {
             package_name,
             newly_last_modified,
             new_etag,
-            (u64::try_from(bun_core::time::timestamp().max(0)).unwrap() as u32) + 300,
+            (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32) + 300,
             is_extended_manifest,
         )? {
             if package_manager.options.enable.manifest_cache() {
@@ -1240,7 +1240,7 @@ pub mod package_manifest {
             let mut out_path_buf = [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
             let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let hex_timestamp: usize = usize::try_from(bun_core::time::milli_timestamp().max(0)).unwrap();
+            let hex_timestamp: usize = usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
             let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
             write!(dest_path_stream, "{}.npm-{}", file_id_hex_fmt, hex_timestamp_fmt)?;
             dest_path_stream.write_byte(0)?;
@@ -1913,7 +1913,7 @@ impl PackageManifest {
 
             let versions = versions_obj.properties.slice();
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().unwrap().as_string(&bump) else {
+                let Some(version_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                     continue;
                 };
                 let sliced_version = SlicedString::init(version_name, version_name);
@@ -1925,7 +1925,7 @@ impl PackageManifest {
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
-                        prop.value.as_ref().unwrap().loc,
+                        prop.value.as_ref().expect("infallible: prop has value").loc,
                         format_args!("Failed to parse dependency {}", bstr::BStr::new(version_name)),
                     )
                     .expect("unreachable");
@@ -1942,7 +1942,7 @@ impl PackageManifest {
 
                 string_builder.count(version_name);
 
-                if let Some(dist_q) = prop.value.as_ref().unwrap().as_property(b"dist") {
+                if let Some(dist_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"dist") {
                     if let Some(tarball_prop) = dist_q.expr.get(b"tarball") {
                         if let JSON::ExprData::EString(s) = &tarball_prop.data {
                             let tarball = s.data;
@@ -1953,7 +1953,7 @@ impl PackageManifest {
                 }
 
                 'bin: {
-                    if let Some(bin) = prop.value.as_ref().unwrap().as_property(b"bin") {
+                    if let Some(bin) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
@@ -1965,11 +1965,11 @@ impl PackageManifest {
                                 }
 
                                 for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop.key.as_ref().unwrap().as_string(&bump) else {
+                                    let Some(k) = bin_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                                         break 'bin;
                                     };
                                     string_builder.count(k);
-                                    let Some(v) = bin_prop.value.as_ref().unwrap().as_string(&bump) else {
+                                    let Some(v) = bin_prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
                                         break 'bin;
                                     };
                                     string_builder.count(v);
@@ -1985,7 +1985,7 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property(b"directories") {
+                    if let Some(dirs) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"directories") {
                         if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                             if let Some(str_) = bin_prop.expr.as_string(&bump) {
                                 string_builder.count(str_);
@@ -2002,7 +2002,7 @@ impl PackageManifest {
                     .as_ref()
                     .unwrap()
                     .get(b"bundleDependencies")
-                    .or_else(|| prop.value.as_ref().unwrap().get(b"bundledDependencies"))
+                    .or_else(|| prop.value.as_ref().expect("infallible: prop has value").get(b"bundledDependencies"))
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2020,12 +2020,12 @@ impl PackageManifest {
 
                 for pair in &DEPENDENCY_GROUPS {
                     // PERF(port): was comptime monomorphization — profile in Phase B
-                    if let Some(versioned_deps) = prop.value.as_ref().unwrap().as_property(pair.prop) {
+                    if let Some(versioned_deps) = prop.value.as_ref().expect("infallible: prop has value").as_property(pair.prop) {
                         if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
                             dependency_sum += obj.properties.slice().len();
                             let properties = obj.properties.slice();
                             for property in properties {
-                                if let Some(key) = property.key.as_ref().unwrap().as_string(&bump) {
+                                if let Some(key) = property.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
                                     if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
                                         // swap remove the dependency name because it could exist in
                                         // multiple behavior groups.
@@ -2033,7 +2033,7 @@ impl PackageManifest {
                                     }
                                     string_builder.count(key);
                                     string_builder.count(
-                                        property.value.as_ref().unwrap().as_string(&bump).unwrap_or(b""),
+                                        property.value.as_ref().expect("infallible: prop has value").as_string(&bump).unwrap_or(b""),
                                     );
                                 }
                             }
@@ -2045,17 +2045,17 @@ impl PackageManifest {
                 // entries that appear in `peerDependenciesMeta` but not in
                 // `peerDependencies`. Reserve space for them; the build
                 // pass below appends them after the declared peer deps.
-                if let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") {
+                if let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") {
                     if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                         for meta_prop in obj.properties.slice() {
-                            let Some(optional) = meta_prop.value.as_ref().unwrap().as_property(b"optional") else {
+                            let Some(optional) = meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional") else {
                                 continue;
                             };
                             let JSON::ExprData::EBoolean(b) = &optional.expr.data else { continue };
                             if !b.value {
                                 continue;
                             }
-                            let Some(key) = meta_prop.key.as_ref().unwrap().as_string(&bump) else {
+                            let Some(key) = meta_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                                 continue;
                             };
                             dependency_sum += 1;
@@ -2074,11 +2074,11 @@ impl PackageManifest {
             if let JSON::ExprData::EObject(obj) = &dist.expr.data {
                 let tags = obj.properties.slice();
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().unwrap().as_string(&bump) {
+                    if let Some(key) = tag.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
                         string_builder.count(key);
                         extern_string_count += 2;
 
-                        string_builder.count(tag.value.as_ref().unwrap().as_string(&bump).unwrap_or(b""));
+                        string_builder.count(tag.value.as_ref().expect("infallible: prop has value").as_string(&bump).unwrap_or(b""));
                         dist_tags_count += 1;
                     }
                 }
@@ -2181,7 +2181,7 @@ impl PackageManifest {
             // TODO(port): bun.serializable() on empty_version
 
             for prop in versions {
-                let Some(version_name) = prop.key.as_ref().unwrap().as_string(&bump) else {
+                let Some(version_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                     continue;
                 };
                 let mut sliced_version = SlicedString::init(version_name, version_name);
@@ -2213,7 +2213,7 @@ impl PackageManifest {
                     .as_ref()
                     .unwrap()
                     .get(b"bundleDependencies")
-                    .or_else(|| prop.value.as_ref().unwrap().get(b"bundledDependencies"))
+                    .or_else(|| prop.value.as_ref().expect("infallible: prop has value").get(b"bundledDependencies"))
                 {
                     match &bundled_deps_expr.data {
                         JSON::ExprData::EBoolean(boolean) => {
@@ -2231,19 +2231,19 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                if let Some(cpu_q) = prop.value.as_ref().unwrap().as_property(b"cpu") {
+                if let Some(cpu_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"cpu") {
                     package_version.cpu = negatable_from_json::<Architecture, _>(&cpu_q.expr)?;
                 }
 
-                if let Some(os_q) = prop.value.as_ref().unwrap().as_property(b"os") {
+                if let Some(os_q) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"os") {
                     package_version.os = negatable_from_json::<OperatingSystem, _>(&os_q.expr)?;
                 }
 
-                if let Some(libc) = prop.value.as_ref().unwrap().as_property(b"libc") {
+                if let Some(libc) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"libc") {
                     package_version.libc = negatable_from_json::<Libc, _>(&libc.expr)?;
                 }
 
-                if let Some(has_install_script) = prop.value.as_ref().unwrap().as_property(b"hasInstallScript") {
+                if let Some(has_install_script) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"hasInstallScript") {
                     if let JSON::ExprData::EBoolean(val) = &has_install_script.expr.data {
                         package_version.has_install_script = val.value;
                     }
@@ -2252,7 +2252,7 @@ impl PackageManifest {
                 'bin: {
                     // bins are extremely repetitive
                     // We try to avoid storing copies the string
-                    if let Some(bin) = prop.value.as_ref().unwrap().as_property(b"bin") {
+                    if let Some(bin) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"bin") {
                         match &bin.expr.data {
                             JSON::ExprData::EObject(obj) => {
                                 match obj.properties.slice().len() {
@@ -2293,7 +2293,7 @@ impl PackageManifest {
                                         let mut group_i: u32 = 0;
 
                                         for bin_prop in obj.properties.slice() {
-                                            let Some(k) = bin_prop.key.as_ref().unwrap().as_string(&bump) else {
+                                            let Some(k) = bin_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else {
                                                 break 'bin;
                                             };
                                             // SAFETY: group_i < group_len by construction
@@ -2321,7 +2321,7 @@ impl PackageManifest {
                                             }
                                             group_i += 1;
 
-                                            let Some(v) = bin_prop.value.as_ref().unwrap().as_string(&bump) else {
+                                            let Some(v) = bin_prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
                                                 break 'bin;
                                             };
                                             // SAFETY: group_i < group_len
@@ -2388,7 +2388,7 @@ impl PackageManifest {
                         }
                     }
 
-                    if let Some(dirs) = prop.value.as_ref().unwrap().as_property(b"directories") {
+                    if let Some(dirs) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"directories") {
                         // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
                         // Because of the way the bin directive works,
                         // specifying both a bin path and setting
@@ -2414,7 +2414,7 @@ impl PackageManifest {
                 }
 
                 'integrity: {
-                    if let Some(dist) = prop.value.as_ref().unwrap().as_property(b"dist") {
+                    if let Some(dist) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"dist") {
                         if let JSON::ExprData::EObject(_) = &dist.expr.data {
                             if let Some(tarball_q) = dist.expr.as_property(b"tarball") {
                                 if let JSON::ExprData::EString(s) = &tarball_q.expr.data {
@@ -2476,7 +2476,7 @@ impl PackageManifest {
                     // `dependencies` iteration just produced.
                     // PORT NOTE: hoist `versioned_deps` so the borrowed
                     // `obj.properties.slice()` outlives the labelled block.
-                    let versioned_deps = prop.value.as_ref().unwrap().as_property(pair.prop);
+                    let versioned_deps = prop.value.as_ref().expect("infallible: prop has value").as_property(pair.prop);
                     let items: &[JSON::Property] = 'items: {
                         if let Some(versioned_deps) = &versioned_deps {
                             if let JSON::ExprData::EObject(obj) = &versioned_deps.expr.data {
@@ -2486,7 +2486,7 @@ impl PackageManifest {
                         &[]
                     };
                     let has_meta_only_peers = is_peer && 'blk: {
-                        let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") else {
+                        let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") else {
                             break 'blk false;
                         };
                         match &meta.expr.data {
@@ -2507,14 +2507,14 @@ impl PackageManifest {
                         if is_peer {
                             optional_peer_dep_names.clear();
 
-                            if let Some(meta) = prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta") {
+                            if let Some(meta) = prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta") {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     let meta_props = obj.properties.slice();
                                     optional_peer_dep_names.reserve(meta_props.len());
                                     // PERF(port): was assume_capacity
                                     for meta_prop in meta_props {
                                         if let Some(optional) =
-                                            meta_prop.value.as_ref().unwrap().as_property(b"optional")
+                                            meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional")
                                         {
                                             let JSON::ExprData::EBoolean(b) = &optional.expr.data else {
                                                 continue;
@@ -2547,7 +2547,7 @@ impl PackageManifest {
                         let mut i: usize = 0;
 
                         for item in items {
-                            let name_str = match item.key.as_ref().unwrap().as_string(&bump) {
+                            let name_str = match item.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2557,7 +2557,7 @@ impl PackageManifest {
                                     }
                                 }
                             };
-                            let version_str = match item.value.as_ref().unwrap().as_string(&bump) {
+                            let version_str = match item.value.as_ref().expect("infallible: prop has value").as_string(&bump) {
                                 Some(s) => s,
                                 None => {
                                     if cfg!(debug_assertions) {
@@ -2628,12 +2628,12 @@ impl PackageManifest {
                             // pnpm/yarn do this; webpack relies on it
                             // to make `webpack-cli` reachable.
                             if let Some(meta) =
-                                prop.value.as_ref().unwrap().as_property(b"peerDependenciesMeta")
+                                prop.value.as_ref().expect("infallible: prop has value").as_property(b"peerDependenciesMeta")
                             {
                                 if let JSON::ExprData::EObject(obj) = &meta.expr.data {
                                     'outer: for meta_prop in obj.properties.slice() {
                                         let Some(optional) =
-                                            meta_prop.value.as_ref().unwrap().as_property(b"optional")
+                                            meta_prop.value.as_ref().expect("infallible: prop has value").as_property(b"optional")
                                         else {
                                             continue;
                                         };
@@ -2643,7 +2643,7 @@ impl PackageManifest {
                                         if !b.value {
                                             continue;
                                         }
-                                        let Some(meta_key) = meta_prop.key.as_ref().unwrap().as_string(&bump)
+                                        let Some(meta_key) = meta_prop.key.as_ref().expect("infallible: prop has key").as_string(&bump)
                                         else {
                                             continue;
                                         };
@@ -2802,11 +2802,11 @@ impl PackageManifest {
                 let mut dist_tag_i: usize = 0;
 
                 for tag in tags {
-                    if let Some(key) = tag.key.as_ref().unwrap().as_string(&bump) {
+                    if let Some(key) = tag.key.as_ref().expect("infallible: prop has key").as_string(&bump) {
                         all_extern_strings[extern_strings_slice_start + dist_tag_i] =
                             string_builder.append::<ExternalString>(key);
 
-                        let Some(version_name) = tag.value.as_ref().unwrap().as_string(&bump) else {
+                        let Some(version_name) = tag.value.as_ref().expect("infallible: prop has value").as_string(&bump) else {
                             continue;
                         };
 

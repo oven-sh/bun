@@ -396,7 +396,7 @@ impl BlobExt for Blob {
             read_file::ReadFileUV::start(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
                 global.bun_vm().event_loop(),
-                self.store.as_ref().unwrap().clone(),
+                self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
                 handler,
@@ -407,7 +407,7 @@ impl BlobExt for Blob {
         #[cfg(not(windows))]
         {
             let file_read = read_file::ReadFile::create(
-                self.store.as_ref().unwrap().clone(),
+                self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
                 handler,
@@ -540,7 +540,7 @@ impl BlobExt for Blob {
             // kept alive by the same `t.blob` now owned by the heap task.
             let (cred, path, payer);
             {
-                let s3 = t.blob.store.as_ref().unwrap().data.as_s3();
+                let s3 = t.blob.store.as_ref().expect("infallible: store present").data.as_s3();
                 cred = s3.get_credentials().clone();
                 path = s3.path() as *const [u8];
                 payer = s3.request_payer;
@@ -590,7 +590,7 @@ impl BlobExt for Blob {
             return read_file::ReadFileUV::start(
                 // SAFETY: `bun_vm()` returns the live VM for this global.
                 global.bun_vm().event_loop(),
-                self.store.as_ref().unwrap().clone(),
+                self.store.as_ref().expect("infallible: store present").clone(),
                 self.offset,
                 self.size,
                 NewInternalReadFileHandler::<C, F>::run,
@@ -600,7 +600,7 @@ impl BlobExt for Blob {
         #[cfg(not(windows))]
         {
             let file_read = read_file::ReadFile::create_with_ctx(
-                self.store.as_ref().unwrap().clone(),
+                self.store.as_ref().expect("infallible: store present").clone(),
                 ctx.cast::<c_void>(),
                 NewInternalReadFileHandler::<C, F>::run,
                 self.offset,
@@ -621,7 +621,7 @@ impl BlobExt for Blob {
     }
     fn _on_structured_clone_serialize<W: bun_io::Write>(&mut self, writer: &mut W) -> Result<(), bun_core::Error> {
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(u64::try_from(self.offset).unwrap())?;
+        writer.write_int_le::<u64>(u64::try_from(self.offset).expect("int cast"))?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -762,7 +762,7 @@ impl BlobExt for Blob {
             // so write the prefix then encode bytes one at a time.
             cursor.write_all(b"----WebKitFormBoundary").unwrap();
             for b in random {
-                write!(&mut cursor, "{b:02x}").unwrap();
+                write!(&mut cursor, "{b:02x}").expect("infallible: in-memory write");
             }
             let written = 70 - cursor.len();
             &hex_buf[..written]
@@ -896,7 +896,7 @@ impl BlobExt for Blob {
         } else {
             let content_type = self.content_type_slice();
             let offset = self.offset;
-            let store = self.store.as_ref().unwrap();
+            let store = self.store.as_ref().expect("infallible: store present");
             match store.data_mut() {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
@@ -963,7 +963,7 @@ impl BlobExt for Blob {
         let show_name = (self.is_jsdom_file && self.get_name_string().is_some())
             || (!self.name.is_empty()
                 && self.store.is_some()
-                && matches!(self.store.as_ref().unwrap().data, store::Data::Bytes(_)));
+                && matches!(self.store.as_ref().expect("infallible: store present").data, store::Data::Bytes(_)));
         if !self.is_s3()
             && (!self.content_type_slice().is_empty()
                 || self.offset > 0
@@ -1229,7 +1229,7 @@ impl BlobExt for Blob {
 
         validate_writable_blob(global_this, self)?;
 
-        let store = self.store.as_ref().unwrap();
+        let store = self.store.as_ref().expect("infallible: store present");
         match &store.data {
             store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
             store::Data::File(file) => file.unlink(global_this),
@@ -1532,7 +1532,7 @@ impl BlobExt for Blob {
 
         validate_writable_blob(global_this, self)?;
 
-        let store = self.store.as_ref().unwrap().clone();
+        let store = self.store.as_ref().expect("infallible: store present").clone();
         if self.is_s3() {
             // PORT NOTE: reshaped for borrowck — Zig holds `*const S3` while
             // also mutating `this.content_type*`. Borrow `s3` through the
@@ -1754,7 +1754,7 @@ impl BlobExt for Blob {
         content_type: &[u8],
         content_type_was_allocated: bool,
     ) -> JSValue {
-        let offset = self.offset.saturating_add(SizeType::try_from(relative_start).unwrap());
+        let offset = self.offset.saturating_add(SizeType::try_from(relative_start).expect("int cast"));
         let len = SizeType::try_from((relative_end.saturating_sub(relative_start)).max(0)).unwrap();
 
         // This copies over the charset field
@@ -1808,7 +1808,7 @@ impl BlobExt for Blob {
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size).unwrap();
+        let mut relative_end: i64 = i64::try_from(self.size).expect("int cast");
 
         // PORT NOTE: Zig mutates the fixed-3 args array in place to shift string arg into [2].
         if args[0].is_string() {
@@ -1825,9 +1825,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start.wrapping_add(i64::try_from(self.size).unwrap())).max(0);
+                    relative_start = (start.wrapping_add(i64::try_from(self.size).expect("int cast"))).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size).unwrap());
+                    relative_start = start.min(i64::try_from(self.size).expect("int cast"));
                 }
             }
         }
@@ -1836,9 +1836,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end.wrapping_add(i64::try_from(self.size).unwrap())).max(0);
+                    relative_end = (end.wrapping_add(i64::try_from(self.size).expect("int cast"))).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size).unwrap());
+                    relative_end = end.min(i64::try_from(self.size).expect("int cast"));
                 }
             }
         }
@@ -2030,7 +2030,7 @@ impl BlobExt for Blob {
         };
         match tag {
             store::DataTag::File => {
-                let file = self.store.as_ref().unwrap().data.as_file();
+                let file = self.store.as_ref().expect("infallible: store present").data.as_file();
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
@@ -2083,7 +2083,7 @@ impl BlobExt for Blob {
             if self.size == MAX_SIZE && self.store.is_some() {
                 return JSValue::js_number(f64::INFINITY);
             } else if self.size == 0 && self.store.is_some() {
-                if let store::Data::File(file) = &self.store.as_ref().unwrap().data {
+                if let store::Data::File(file) = &self.store.as_ref().expect("infallible: store present").data {
                     if file.seekable.unwrap_or(true) == false && file.max_size == MAX_SIZE {
                         return JSValue::js_number(f64::INFINITY);
                     }
@@ -2486,7 +2486,7 @@ impl BlobExt for Blob {
             // strings are immutable
             // we don't need to clone
             Lifetime::Clone => {
-                let store = self.store.as_ref().unwrap().clone();
+                let store = self.store.as_ref().expect("infallible: store present").clone();
                 // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
@@ -2501,7 +2501,7 @@ impl BlobExt for Blob {
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Share => {
-                let store = self.store.as_ref().unwrap().clone();
+                let store = self.store.as_ref().expect("infallible: store present").clone();
                 Ok(ZigString::init(buf).external(global, store.into_raw() as *mut c_void, Store::external))
             }
             Lifetime::Temporary => {
@@ -2750,7 +2750,7 @@ impl BlobExt for Blob {
                 if buf_len > unsafe { jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT } && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     return Err(global.throw_out_of_memory());
                 }
-                let store = self.store.as_ref().unwrap().clone();
+                let store = self.store.as_ref().expect("infallible: store present").clone();
                 // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
                 // pointer is then handed to JSC as an external buffer backing whose
                 // lifetime is the cloned `store` ref above. No Rust-side `&` to the
@@ -3499,7 +3499,7 @@ impl FormDataContext {
                     if blob.size == MAX_SIZE {
                         blob.resolve_size();
                     }
-                    let store = blob.store.as_deref().unwrap();
+                    let store = blob.store.as_deref().expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
                             // TODO: s3
@@ -3926,7 +3926,7 @@ fn write_file_with_empty_source_to_destination(
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
     // SAFETY: null-checked by caller
-    let destination_store = destination_blob.store.as_ref().unwrap().clone();
+    let destination_store = destination_blob.store.as_ref().expect("infallible: store present").clone();
     // PORT NOTE: `scopeguard::guard(&mut *destination_blob, …)` would hold an
     // exclusive borrow for the entire function, blocking the immut reads below
     // (`content_type_or_mime_type`). Capture a raw pointer instead — the
@@ -4436,7 +4436,7 @@ pub fn write_file_internal(
         if mkdir
             && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.store.is_some()
-                    && matches!(b.store.as_ref().unwrap().data, store::Data::File(ref f)
+                    && matches!(b.store.as_ref().expect("infallible: store present").data, store::Data::File(ref f)
                         if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))))
         {
             return Err(global_this
@@ -4454,7 +4454,7 @@ pub fn write_file_internal(
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset == 0 && !b.is_s3()
                     && !(b.store.is_some()
-                        && matches!(b.store.as_ref().unwrap().data, store::Data::File(ref f)
+                        && matches!(b.store.as_ref().expect("infallible: store present").data, store::Data::File(ref f)
                             if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
         if fast_path_ok {
             if data.is_string() {
@@ -4465,7 +4465,7 @@ pub fn write_file_internal(
                     let str = OwnedString::new(data.to_bun_string(global_this)?);
                     let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
-                        PathOrBlob::Blob(b) => b.store.as_ref().unwrap().data.as_file().pathlike.clone(),
+                        PathOrBlob::Blob(b) => b.store.as_ref().expect("infallible: store present").data.as_file().pathlike.clone(),
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_string_to_file_fast::<true>(global_this, pathlike, str.get(), &mut needs_async)
@@ -4480,7 +4480,7 @@ pub fn write_file_internal(
                 if buffer_view.byte_len < 256 * 1024 {
                     let pathlike: PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p.clone(),
-                        PathOrBlob::Blob(b) => b.store.as_ref().unwrap().data.as_file().pathlike.clone(),
+                        PathOrBlob::Blob(b) => b.store.as_ref().expect("infallible: store present").data.as_file().pathlike.clone(),
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_bytes_to_file_fast::<true>(global_this, pathlike, buffer_view.byte_slice(), &mut needs_async)
@@ -4547,7 +4547,7 @@ pub fn write_file_internal(
                 }
                 BodyValue::Locked(_) => {
                     if destination_blob.is_s3() {
-                        let dest_store = destination_blob.store.as_ref().unwrap().clone();
+                        let dest_store = destination_blob.store.as_ref().expect("infallible: store present").clone();
                         let s3 = dest_store.data.as_s3();
                         let aws_options =
                             s3.get_credentials_with_options(options.extra_options, global_this)?;
@@ -4778,7 +4778,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // if it's a file descriptor, we assume they want manual control over that behavior
     scopeguard::defer! {
         if truncate.get() {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).unwrap());
+            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
         }
     }
 
@@ -4884,7 +4884,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         // SAFETY: fd is a valid open handle on this code path; FFI call.
         unsafe { bun_sys::windows::kernel32::SetEndOfFile(fd.cast()) };
         #[cfg(not(windows))]
-        let _ = bun_sys::ftruncate(fd, i64::try_from(written).unwrap());
+        let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
@@ -5114,7 +5114,7 @@ pub fn to_stream_with_offset(
         global_this,
         // SAFETY: as_::<Blob>() returned a non-null *mut Blob.
         unsafe { &*this },
-        usize::try_from(args.slice()[0].to_int64()).unwrap(),
+        usize::try_from(args.slice()[0].to_int64()).expect("int cast"),
     )
 }
 
@@ -5194,7 +5194,7 @@ impl S3BlobDownloadTask {
         // SAFETY: just allocated.
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        let store::Data::S3(s3_store) = &this_ref.blob.store.as_ref().unwrap().data else {
+        let store::Data::S3(s3_store) = &this_ref.blob.store.as_ref().expect("infallible: store present").data else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
         let credentials = s3_store.get_credentials();
@@ -5214,8 +5214,8 @@ impl S3BlobDownloadTask {
         }
 
         if blob.offset > 0 {
-            let len: Option<usize> = if blob.size != MAX_SIZE { Some(usize::try_from(blob.size).unwrap()) } else { None };
-            let offset: usize = usize::try_from(blob.offset).unwrap();
+            let len: Option<usize> = if blob.size != MAX_SIZE { Some(usize::try_from(blob.size).expect("int cast")) } else { None };
+            let offset: usize = usize::try_from(blob.offset).expect("int cast");
             crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, len,
                 s3_cb, this as *mut c_void,
@@ -5228,8 +5228,8 @@ impl S3BlobDownloadTask {
                 proxy, s3_store.request_payer,
             )?;
         } else {
-            let len: usize = usize::try_from(blob.size).unwrap();
-            let offset: usize = usize::try_from(blob.offset).unwrap();
+            let len: usize = usize::try_from(blob.size).expect("int cast");
+            let offset: usize = usize::try_from(blob.offset).expect("int cast");
             crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, Some(len),
                 s3_cb, this as *mut c_void,

@@ -248,7 +248,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 StmtData::SFunction(func) => {
                     if func.func.flags.contains(flags::Function::IsExport) {
                         let locref = func.func.name.unwrap();
-                        let ref_ = locref.ref_.unwrap();
+                        let ref_ = locref.ref_.expect("infallible: ref bound");
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let fn_name: &[u8] =
                             unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
@@ -268,7 +268,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 StmtData::SClass(class) => {
                     if class.is_export {
                         let locref = class.class.class_name.unwrap();
-                        let ref_ = locref.ref_.unwrap();
+                        let ref_ = locref.ref_.expect("infallible: ref bound");
                         // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
                             unsafe { &*p.symbols[ref_.inner_index() as usize].original_name };
@@ -287,7 +287,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Zig: `inline .s_namespace, .s_enum => |ns|` — written out per-variant.
                 StmtData::SNamespace(ns) => {
                     if ns.is_export {
-                        let ref_ = ns.name.ref_.unwrap();
+                        let ref_ = ns.name.ref_.expect("infallible: ref bound");
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
@@ -304,7 +304,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
                 StmtData::SEnum(ns) => {
                     if ns.is_export {
-                        let ref_ = ns.name.ref_.unwrap();
+                        let ref_ = ns.name.ref_.expect("infallible: ref bound");
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
                             // SAFETY: original_name is arena-owned, valid for 'a.
@@ -416,7 +416,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if !opts.is_typescript_declare {
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsNamespace, name_loc, name_text)?);
             p.ref_to_ts_namespace_member
-                .insert(name.ref_.unwrap(), ns_member_data);
+                .insert(name.ref_.expect("infallible: ref bound"), ns_member_data);
         }
 
         // PORT NOTE: S::Namespace.stmts is `*mut [Stmt]` (arena slice). BumpVec → bump slice.
@@ -558,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Zig: putNoClobber — debug-assert no prior entry.
             let prev = p
                 .ref_to_ts_namespace_member
-                .insert(name.ref_.unwrap(), TSNamespaceMemberData::Namespace(exported_members));
+                .insert(name.ref_.expect("infallible: ref bound"), TSNamespaceMemberData::Namespace(exported_members));
             debug_assert!(prev.is_none());
         }
 

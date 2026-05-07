@@ -202,7 +202,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
                     return Ok(ArgsSlice {
                         array: argv,
                         start: 1,
-                        end: u32::try_from(argv.get_length(global)?).unwrap(),
+                        end: u32::try_from(argv.get_length(global)?).expect("int cast"),
                     });
                 }
             }
@@ -210,7 +210,7 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
         return Ok(ArgsSlice {
             array: argv,
             start: 2,
-            end: u32::try_from(argv.get_length(global)?).unwrap(),
+            end: u32::try_from(argv.get_length(global)?).expect("int cast"),
         });
     }
 
@@ -598,7 +598,7 @@ fn tokenize_args(
                         }
                         ctx.handle_token(Token::Option(OptionToken {
                             index: original_arg_idx,
-                            optgroup_idx: Some(u32::try_from(idx_in_optgroup).unwrap()),
+                            optgroup_idx: Some(u32::try_from(idx_in_optgroup).expect("int cast")),
                             value,
                             inline_value: has_inline_value,
                             name: ValueRef::Bunstr(match option_idx {
@@ -621,7 +621,7 @@ fn tokenize_args(
                         // Immediately process as a short_option_and_value
                         ctx.handle_token(Token::Option(OptionToken {
                             index: original_arg_idx,
-                            optgroup_idx: Some(u32::try_from(idx_in_optgroup).unwrap()),
+                            optgroup_idx: Some(u32::try_from(idx_in_optgroup).expect("int cast")),
                             value: ValueRef::Bunstr(arg.substring(idx_in_optgroup + 1)),
                             inline_value: true,
                             name: ValueRef::Bunstr(match option_idx {
@@ -875,7 +875,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         ArgsSlice {
             array: config_args,
             start: 0,
-            end: u32::try_from(config_args.get_length(global)?).unwrap(),
+            end: u32::try_from(config_args.get_length(global)?).expect("int cast"),
         }
     } else {
         get_default_args(global)?

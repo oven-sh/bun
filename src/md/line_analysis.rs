@@ -325,7 +325,7 @@ impl Parser<'_> {
         ) {
             return false;
         }
-        pos += u32::try_from(tag.len()).unwrap();
+        pos += u32::try_from(tag.len()).expect("int cast");
         // TODO(port): if OFF != u32, adjust the cast above.
         if pos >= self.size {
             return true;
@@ -718,7 +718,7 @@ impl Parser<'_> {
                             ch: delim,
                             start: num,
                             mark_indent: indent,
-                            contents_indent: indent + u32::try_from(mark_width).unwrap(),
+                            contents_indent: indent + u32::try_from(mark_width).expect("int cast"),
                             ..Container::default()
                         },
                         off: pos,
@@ -733,7 +733,7 @@ impl Parser<'_> {
                             ch: delim,
                             start: num,
                             mark_indent: indent,
-                            contents_indent: indent + u32::try_from(mark_width).unwrap(),
+                            contents_indent: indent + u32::try_from(mark_width).expect("int cast"),
                             ..Container::default()
                         },
                         off: pos,

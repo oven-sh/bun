@@ -627,7 +627,7 @@ pub fn install_with_manager(
                     if manager.summary.catalogs_changed {
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                             let dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
                             if dep.version.tag != DependencyVersionTag::Catalog {
                                 continue;

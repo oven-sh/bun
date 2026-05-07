@@ -1297,7 +1297,7 @@ pub mod visible {
             if replacement.fail || replacement.is_lead {
                 continue;
             }
-            let cp: u32 = u32::try_from(replacement.code_point).unwrap();
+            let cp: u32 = u32::try_from(replacement.code_point).expect("int cast");
             // PORT NOTE: Zig `defer prev = cp;` — body never reads `prev` after
             // this point, so hoisted; equivalent.
             prev = Some(cp);
@@ -1532,7 +1532,7 @@ pub extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len: usize
 /// Calculate visible width of a single codepoint
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -> u8 {
-    u8::try_from(visible_codepoint_width(cp, ambiguous_as_wide)).unwrap()
+    u8::try_from(visible_codepoint_width(cp, ambiguous_as_wide)).expect("int cast")
 }
 
 /// Grapheme break detection for C++ callers.

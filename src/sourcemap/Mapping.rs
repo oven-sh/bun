@@ -394,7 +394,7 @@ impl List {
         if index < 0 {
             return None;
         }
-        let i = usize::try_from(index).unwrap();
+        let i = usize::try_from(index).expect("int cast");
 
         if i >= self.names.len() {
             return None;
@@ -540,7 +540,7 @@ impl<'a> Lookup<'a> {
             if let Some(parsed) = provider.get_source_map(
                 base_filename,
                 source_map.underlying_provider.load_hint(),
-                crate::ParseUrlResultHint::SourceOnly(u32::try_from(index).unwrap()),
+                crate::ParseUrlResultHint::SourceOnly(u32::try_from(index).expect("int cast")),
             ) {
                 if let Some(contents) = parsed.source_contents {
                     break 'bytes contents.into_vec();
@@ -669,7 +669,7 @@ pub fn parse(
                 msg: b"Missing generated column value",
                 err: err!("MissingGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
 
@@ -681,7 +681,7 @@ pub fn parse(
                 msg: b"Invalid generated column value",
                 err: err!("InvalidGeneratedColumnValue"),
                 value: generated.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
 
@@ -712,7 +712,7 @@ pub fn parse(
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Invalid source index delta",
                 err: err!("InvalidSourceIndexDelta"),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
                 ..Default::default()
             });
         }
@@ -723,7 +723,7 @@ pub fn parse(
                 msg: b"Invalid source index value",
                 err: err!("InvalidSourceIndexValue"),
                 value: source_index,
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
         remain = &remain[source_index_delta.start..];
@@ -734,7 +734,7 @@ pub fn parse(
             return ParseResult::Fail(ParseResultFail {
                 msg: b"Missing original line",
                 err: err!("MissingOriginalLine"),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
                 ..Default::default()
             });
         }
@@ -745,7 +745,7 @@ pub fn parse(
                 msg: b"Invalid original line value",
                 err: err!("InvalidOriginalLineValue"),
                 value: original.lines.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
         remain = &remain[original_line_delta.start..];
@@ -757,7 +757,7 @@ pub fn parse(
                 msg: b"Missing original column value",
                 err: err!("MissingOriginalColumnValue"),
                 value: original.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
 
@@ -767,7 +767,7 @@ pub fn parse(
                 msg: b"Invalid original column value",
                 err: err!("InvalidOriginalColumnValue"),
                 value: original.columns.zero_based(),
-                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).unwrap() },
+                loc: Loc { start: i32::try_from(bytes.len() - remain.len()).expect("int cast") },
             });
         }
         remain = &remain[original_column_delta.start..];
@@ -791,7 +791,7 @@ pub fn parse(
                             err: err!("InvalidNameIndexDelta"),
                             value: i32::from(c),
                             loc: Loc {
-                                start: i32::try_from(bytes.len() - remain.len()).unwrap(),
+                                start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
                             },
                         });
                     }
@@ -805,7 +805,7 @@ pub fn parse(
                                     msg: b"Out of memory",
                                     err: err!("OutOfMemory"),
                                     loc: Loc {
-                                        start: i32::try_from(bytes.len() - remain.len()).unwrap(),
+                                        start: i32::try_from(bytes.len() - remain.len()).expect("int cast"),
                                     },
                                     ..Default::default()
                                 });

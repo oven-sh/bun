@@ -30,7 +30,7 @@ fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
     if !bun_sys::is_executable_file_path(filepath) {
         return None;
     }
-    Some(u16::try_from(filepath.len()).unwrap())
+    Some(u16::try_from(filepath.len()).expect("int cast"))
 }
 
 // Like /usr/bin/which but without needing to exec a child process

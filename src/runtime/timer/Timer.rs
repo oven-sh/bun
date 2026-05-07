@@ -384,7 +384,7 @@ impl All {
                                     None => return Ok(()),
                                 };
                                 accumulator = match accumulator
-                                    .checked_add(i32::try_from(c - '0' as u32).unwrap())
+                                    .checked_add(i32::try_from(c - '0' as u32).expect("int cast"))
                                 {
                                     Some(v) => v,
                                     None => return Ok(()),

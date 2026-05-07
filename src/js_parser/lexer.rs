@@ -769,12 +769,12 @@ lexer_impl_header! {
                                 }
                             }
 
-                            iter.c = i32::try_from(value).unwrap();
+                            iter.c = i32::try_from(value).expect("int cast");
                             if is_bad {
                                 self.add_range_error(
                                     Range {
                                         loc: Loc {
-                                            start: i32::try_from(octal_start).unwrap(),
+                                            start: i32::try_from(octal_start).expect("int cast"),
                                         },
                                         len: i32::try_from(
                                             iter.i as usize - octal_start,
@@ -1018,7 +1018,7 @@ lexer_impl_header! {
             match iter.c {
                 -1 => return self.add_default_error(b"Unexpected end of file"),
                 0..=0xFFFF => {
-                    buf.push(u16::try_from(iter.c).unwrap());
+                    buf.push(u16::try_from(iter.c).expect("int cast"));
                 }
                 _ => {
                     iter.c -= 0x10000;
@@ -1027,7 +1027,7 @@ lexer_impl_header! {
                     buf.push(
                         u16::try_from(0xD800 + ((iter.c >> 10) & 0x3FF)).unwrap(),
                     );
-                    buf.push(u16::try_from(0xDC00 + (iter.c & 0x3FF)).unwrap());
+                    buf.push(u16::try_from(0xDC00 + (iter.c & 0x3FF)).expect("int cast"));
                 }
             }
         }
@@ -1260,7 +1260,7 @@ lexer_impl_header! {
                 quad[..slice.len()].copy_from_slice(slice);
                 strings::decode_wtf8_rune_t_multibyte(
                     &quad,
-                    u8::try_from(slice.len()).unwrap(),
+                    u8::try_from(slice.len()).expect("int cast"),
                     strings::UNICODE_REPLACEMENT as CodePoint,
                 )
             }
@@ -1418,7 +1418,7 @@ lexer_impl_header! {
             self.add_range_error(
                 Range {
                     loc: logger::usize2loc(self.start),
-                    len: i32::try_from(self.end - self.start).unwrap(),
+                    len: i32::try_from(self.end - self.start).expect("int cast"),
                 },
                 format_args!(
                     "Invalid identifier: \"{}\"",
@@ -2614,7 +2614,7 @@ lexer_impl_header! {
                 self.jsx_pragma._jsx = span;
                 return "jsx".len()
                     + if span.range.len > 0 {
-                        usize::try_from(span.range.len).unwrap()
+                        usize::try_from(span.range.len).expect("int cast")
                     } else {
                         0
                     };
@@ -2630,7 +2630,7 @@ lexer_impl_header! {
                 self.jsx_pragma._jsx_frag = span;
                 return "jsxFrag".len()
                     + if span.range.len > 0 {
-                        usize::try_from(span.range.len).unwrap()
+                        usize::try_from(span.range.len).expect("int cast")
                     } else {
                         0
                     };
@@ -2646,7 +2646,7 @@ lexer_impl_header! {
                 self.jsx_pragma._jsx_runtime = span;
                 return "jsxRuntime".len()
                     + if span.range.len > 0 {
-                        usize::try_from(span.range.len).unwrap()
+                        usize::try_from(span.range.len).expect("int cast")
                     } else {
                         0
                     };
@@ -2662,7 +2662,7 @@ lexer_impl_header! {
                 self.jsx_pragma._jsx_import_source = span;
                 return "jsxImportSource".len()
                     + if span.range.len > 0 {
-                        usize::try_from(span.range.len).unwrap()
+                        usize::try_from(span.range.len).expect("int cast")
                     } else {
                         0
                     };
@@ -2866,7 +2866,7 @@ lexer_impl_header! {
                                     has_set_flags_start = true;
                                 }
                                 let flag = usize::from(
-                                    MAX_FLAG - u8::try_from(self.code_point).unwrap(),
+                                    MAX_FLAG - u8::try_from(self.code_point).expect("int cast"),
                                 );
                                 if flags.is_set(flag) {
                                     self.add_error(
@@ -3118,7 +3118,7 @@ lexer_impl_header! {
                 c if c == 0x5C => {
                     backslash = Range {
                         loc: Loc {
-                            start: i32::try_from(self.end).unwrap(),
+                            start: i32::try_from(self.end).expect("int cast"),
                         },
                         len: 1,
                     };
@@ -3425,11 +3425,11 @@ lexer_impl_header! {
                     }
                 };
 
-                cursor.i += u32::try_from(length).unwrap() + 1;
+                cursor.i += u32::try_from(length).expect("int cast") + 1;
                 cursor.width = 1;
             } else if let Some(ent) = tables::JSX_ENTITY.get(entity) {
                 cursor.c = *ent;
-                cursor.i += u32::try_from(length).unwrap() + 1;
+                cursor.i += u32::try_from(length).expect("int cast") + 1;
             }
         }
     }
@@ -3450,7 +3450,7 @@ lexer_impl_header! {
             }
 
             if cursor.c <= 0xFFFF {
-                out.push(u16::try_from(cursor.c).unwrap());
+                out.push(u16::try_from(cursor.c).expect("int cast"));
             } else {
                 cursor.c -= 0x10000;
                 out.reserve(2);
@@ -4042,7 +4042,7 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
 
 pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     let contents = &source.contents;
-    if loc.start == -1 || usize::try_from(loc.start).unwrap() >= contents.len() {
+    if loc.start == -1 || usize::try_from(loc.start).expect("int cast") >= contents.len() {
         return Range::NONE;
     }
 
@@ -4054,7 +4054,7 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
         return r;
     }
     let text = iter.bytes;
-    let end = u32::try_from(text.len()).unwrap();
+    let end = u32::try_from(text.len()).expect("int cast");
 
     if !iter.next(&mut cursor) {
         return r;
@@ -4088,12 +4088,12 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
                     }
                 }
             } else if !is_identifier_continue(cursor.c) {
-                r.len = i32::try_from(cursor.i).unwrap();
+                r.len = i32::try_from(cursor.i).expect("int cast");
                 return r;
             }
         }
 
-        r.len = i32::try_from(cursor.i).unwrap();
+        r.len = i32::try_from(cursor.i).expect("int cast");
     }
 
     // const offset = @intCast(usize, loc.start);
@@ -4236,9 +4236,9 @@ impl PragmaArg {
 
         *result = Some(js_ast::Span {
             range: Range {
-                len: i32::try_from(url_len).unwrap(), // Correct length
+                len: i32::try_from(url_len).expect("int cast"), // Correct length
                 loc: Loc {
-                    start: i32::try_from(absolute_arg_start).unwrap(),
+                    start: i32::try_from(absolute_arg_start).expect("int cast"),
                 }, // Correct start
             },
             text: url,
@@ -4300,12 +4300,12 @@ impl PragmaArg {
 
         Some(js_ast::Span {
             range: Range {
-                len: i32::try_from(i).unwrap(),
+                len: i32::try_from(i).expect("int cast"),
                 loc: Loc {
                     start: i32::try_from(
                         start
-                            + u32::try_from(offset_).unwrap()
-                            + u32::try_from(pragma.len()).unwrap(),
+                            + u32::try_from(offset_).expect("int cast")
+                            + u32::try_from(pragma.len()).expect("int cast"),
                     )
                     .unwrap(),
                 },

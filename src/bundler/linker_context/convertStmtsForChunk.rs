@@ -483,7 +483,7 @@ pub fn convert_stmts_for_chunk(
                                                         binding: Binding::alloc(
                                                             bump,
                                                             B::Identifier {
-                                                                r#ref: s.default_name.ref_.unwrap(),
+                                                                r#ref: s.default_name.ref_.expect("infallible: ref bound"),
                                                             },
                                                             s2.value.loc,
                                                         ),
@@ -548,7 +548,7 @@ pub fn convert_stmts_for_chunk(
                                                 binding: Binding::alloc(
                                                     bump,
                                                     B::Identifier {
-                                                        r#ref: s.default_name.ref_.unwrap(),
+                                                        r#ref: s.default_name.ref_.expect("infallible: ref bound"),
                                                     },
                                                     e.loc,
                                                 ),

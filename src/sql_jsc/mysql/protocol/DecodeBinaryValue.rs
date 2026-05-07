@@ -82,7 +82,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if unsigned {
                 let val = reader.int::<u64>()?;
                 if val <= u32::MAX as u64 {
-                    return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: u32::try_from(val).unwrap() }, ..Default::default() });
+                    return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: u32::try_from(val).expect("int cast") }, ..Default::default() });
                 }
                 if bigint {
                     return Ok(SQLDataCell { tag: CellTag::Uint8, value: CellValue { uint8: val }, ..Default::default() });
@@ -104,7 +104,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             let val = reader.int::<i64>()?;
             if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
-                return Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: i32::try_from(val).unwrap() }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: i32::try_from(val).expect("int cast") }, ..Default::default() });
             }
             if bigint {
                 return Ok(SQLDataCell { tag: CellTag::Int8, value: CellValue { int8: val }, ..Default::default() });

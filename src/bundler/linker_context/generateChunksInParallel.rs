@@ -217,7 +217,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                             remaining_part_ranges[0] = PendingPartRange {
                                 part_range: *part_range,
-                                i: u32::try_from(i).unwrap(),
+                                i: u32::try_from(i).expect("int cast"),
                                 task: ThreadPoolLib::Task {
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_js_chunk,
@@ -239,7 +239,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         for i in 0..css.imports_in_chunk_in_order.len() as usize {
                             remaining_part_ranges[0] = PendingPartRange {
                                 part_range: Default::default(),
-                                i: u32::try_from(i).unwrap(),
+                                i: u32::try_from(i).expect("int cast"),
                                 task: ThreadPoolLib::Task {
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_css_chunk,
@@ -341,7 +341,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             c.append_isolated_hashes_for_imported_chunks(
                 &mut hash,
                 chunks,
-                u32::try_from(index).unwrap(),
+                u32::try_from(index).expect("int cast"),
                 &mut chunk_visit_map,
             );
             chunk_visit_map.set_all(false);
@@ -497,12 +497,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             };
             let mut offset: usize = 0;
             for (string_index, &slen) in strings_lens.iter().enumerate() {
-                let len: usize = usize::try_from(slen).unwrap();
+                let len: usize = usize::try_from(slen).expect("int cast");
                 let s = &strings_buf[offset..][..len];
                 if let Some(resolved_path) = unique_key_to_path.get(s) {
                     replacements.push(Replacement {
                         old_id: analyze_transpiled_module::StringID::from_raw(
-                            u32::try_from(string_index).unwrap(),
+                            u32::try_from(string_index).expect("int cast"),
                         ),
                         resolved_path: resolved_path.clone(),
                     });

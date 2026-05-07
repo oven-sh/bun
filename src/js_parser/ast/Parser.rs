@@ -1179,14 +1179,14 @@ impl<'a> Parser<'a> {
                     // SAFETY: `module_scope` is a non-null arena pointer set by `prepare_for_visit_pass`.
                     unsafe { &mut *p.module_scope }
                         .generated
-                        .append(deferred_import.namespace.ref_.unwrap())
+                        .append(deferred_import.namespace.ref_.expect("infallible: ref bound"))
                         .expect("oom");
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
                             star_name_loc: Some(deferred_import.namespace.loc),
                             import_record_index: deferred_import.import_record_id,
-                            namespace_ref: deferred_import.namespace.ref_.unwrap(),
+                            namespace_ref: deferred_import.namespace.ref_.expect("infallible: ref bound"),
                             default_name: None,
                             items: core::ptr::slice_from_raw_parts_mut(
                                 core::ptr::NonNull::<js_ast::ClauseItem>::dangling().as_ptr(),
@@ -1199,7 +1199,7 @@ impl<'a> Parser<'a> {
                     let mut declared_symbols =
                         crate::DeclaredSymbolList::init_capacity(1).expect("unreachable");
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: deferred_import.namespace.ref_.unwrap(),
+                        ref_: deferred_import.namespace.ref_.expect("infallible: ref bound"),
                         is_top_level: true,
                     });
                     // PERF(port): was assume_capacity
@@ -1979,7 +1979,7 @@ impl<'a> Parser<'a> {
             let mut iter = p.runtime_imports.iter();
             let mut i: usize = 0;
             while let Some(entry) = iter.next() {
-                runtime_imports[i] = u8::try_from(entry.key).unwrap();
+                runtime_imports[i] = u8::try_from(entry.key).expect("int cast");
                 i += 1;
             }
 

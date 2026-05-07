@@ -670,7 +670,7 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        return Some(u32::try_from(i + 3).unwrap());
+                        return Some(u32::try_from(i + 3).expect("int cast"));
                     }
                 }
                 _ => {}
@@ -692,7 +692,7 @@ impl<'a> URL<'a> {
                 b':' | b'@' => {
                     // we found a username, everything before this point in the slice is a username
                     self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).unwrap());
+                    return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no username
                 b'?' | b'/' => {
@@ -723,7 +723,7 @@ impl<'a> URL<'a> {
                                     != u16::from_le_bytes(*b"//")
                         );
                     }
-                    return Some(u32::try_from(i + 1).unwrap());
+                    return Some(u32::try_from(i + 1).expect("int cast"));
                 }
                 // if we reach a slash or "?", there's no password
                 b'?' | b'/' => {

@@ -436,9 +436,9 @@ impl CssColor {
             return self.clone();
         }
         match kind.bits() {
-            x if x == ColorFallbackKind::RGB.bits() => self.to_rgb().unwrap(),
-            x if x == ColorFallbackKind::P3.bits() => self.to_p3().unwrap(),
-            x if x == ColorFallbackKind::LAB.bits() => self.to_lab().unwrap(),
+            x if x == ColorFallbackKind::RGB.bits() => self.to_rgb().expect("infallible: fallback implies convertible"),
+            x if x == ColorFallbackKind::P3.bits() => self.to_p3().expect("infallible: fallback implies convertible"),
+            x if x == ColorFallbackKind::LAB.bits() => self.to_lab().expect("infallible: fallback implies convertible"),
             _ => unreachable!("Expected RGBA, P3, LAB fallback. This is a bug in Bun."),
         }
     }
@@ -454,16 +454,16 @@ impl CssColor {
 
         if fallbacks.contains(ColorFallbackKind::RGB) {
             // PERF(port): was assume_capacity
-            res.append(self.to_rgb().unwrap());
+            res.append(self.to_rgb().expect("infallible: fallback implies convertible"));
         }
 
         if fallbacks.contains(ColorFallbackKind::P3) {
             // PERF(port): was assume_capacity
-            res.append(self.to_p3().unwrap());
+            res.append(self.to_p3().expect("infallible: fallback implies convertible"));
         }
 
         if fallbacks.contains(ColorFallbackKind::LAB) {
-            *self = self.to_lab().unwrap();
+            *self = self.to_lab().expect("infallible: fallback implies convertible");
         }
 
         res

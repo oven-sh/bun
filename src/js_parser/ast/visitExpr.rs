@@ -177,9 +177,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_identifier(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_identifier().unwrap();
+        let mut e_ = expr.data.e_identifier().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target.tag(), Tag::EIdentifier)
-            && e_.ref_.eql(p.delete_target.e_identifier().unwrap().ref_);
+            && e_.ref_.eql(p.delete_target.e_identifier().expect("infallible: variant checked").ref_);
 
         let name = p.load_name_from_ref(e_.ref_);
         if p.is_strict_mode() && js_lexer::StrictModeReservedWords.contains(name) {
@@ -315,7 +315,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .e_identifier()
                         .unwrap()
                         .ref_
-                        .eql(p.call_target.e_identifier().unwrap().ref_))
+                        .eql(p.call_target.e_identifier().expect("infallible: variant checked").ref_))
                     && p.options.features.allow_runtime
                 {
                     p.record_usage_of_runtime_require();
@@ -339,7 +339,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             .e_identifier()
                             .unwrap()
                             .ref_
-                            .eql(p.call_target.e_identifier().unwrap().ref_),
+                            .eql(p.call_target.e_identifier().expect("infallible: variant checked").ref_),
                 )
                 .with_was_originally_identifier(true),
         )
@@ -347,7 +347,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     fn e_jsx_element(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         use crate::parser::{options, JSXImport, JSXTransformType};
         let _ = in_;
-        let mut e_ = expr.data.e_jsx_element().unwrap();
+        let mut e_ = expr.data.e_jsx_element().expect("infallible: variant checked");
         // Zig: `switch (comptime jsx_transform_type)` — const-generic enum dispatch.
         match J::KIND {
             JSXTransformType::React => {
@@ -375,11 +375,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 for property in e_.properties.slice_mut() {
                     if property.kind != G::PropertyKind::Spread {
-                        property.key = Some(p.visit_expr(property.key.unwrap()));
+                        property.key = Some(p.visit_expr(property.key.expect("infallible: prop has key")));
                     }
 
                     if property.value.is_some() {
-                        property.value = Some(p.visit_expr(property.value.unwrap()));
+                        property.value = Some(p.visit_expr(property.value.expect("infallible: prop has value")));
                     }
 
                     if property.initializer.is_some() {
@@ -661,7 +661,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_template(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;
-        let mut e_ = expr.data.e_template().unwrap();
+        let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag {
             e_.tag = Some(p.visit_expr(tag));
 
@@ -704,7 +704,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         p.macro_call_count += 1;
                         let name: &[u8] = macro_ref_data
                             .name
-                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().unwrap().name.slice());
+                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().expect("infallible: variant checked").name.slice());
                         let (record_path_text, record_range) = {
                             let record = &p.import_records.items()
                                 [macro_ref_data.import_record_id as usize];
@@ -761,7 +761,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_binary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         use crate::ast::visit_binary_expression::BinaryExpressionVisitor;
-        let mut e_ = expr.data.e_binary().unwrap();
+        let mut e_ = expr.data.e_binary().expect("infallible: variant checked");
 
         // The handling of binary expressions is convoluted because we're using
         // iteration on the heap instead of recursion on the call stack to avoid
@@ -848,7 +848,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_index(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_index().unwrap();
+        let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
 
@@ -900,7 +900,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if !Symbol::is_kind_private(kind) {
                     let r = logger::Range {
                         loc: e_.index.loc,
-                        len: i32::try_from(name.len()).unwrap(),
+                        len: i32::try_from(name.len()).expect("int cast"),
                     };
                     p.log()
                         .add_range_error_fmt(
@@ -919,7 +919,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     {
                         let r = logger::Range {
                             loc: e_.index.loc,
-                            len: i32::try_from(name.len()).unwrap(),
+                            len: i32::try_from(name.len()).expect("int cast"),
                         };
                         p.log()
                             .add_range_warning_fmt(
@@ -937,7 +937,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     {
                         let r = logger::Range {
                             loc: e_.index.loc,
-                            len: i32::try_from(name.len()).unwrap(),
+                            len: i32::try_from(name.len()).expect("int cast"),
                         };
                         p.log()
                             .add_range_warning_fmt(
@@ -955,7 +955,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     {
                         let r = logger::Range {
                             loc: e_.index.loc,
-                            len: i32::try_from(name.len()).unwrap(),
+                            len: i32::try_from(name.len()).expect("int cast"),
                         };
                         p.log()
                             .add_range_warning_fmt(
@@ -1039,7 +1039,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(mut str_) = target.data.as_e_string() {
                         if !str_.is_utf16 {
                             let literal = str_.data;
-                            let num: usize = index.data.e_number().unwrap().to_usize();
+                            let num: usize = index.data.e_number().expect("infallible: variant checked").to_usize();
                             if cfg!(debug_assertions) {
                                 debug_assert!(strings::is_all_ascii(&literal));
                             }
@@ -1087,7 +1087,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // errors.
         if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
-            && p.symbols[e_.target.data.e_identifier().unwrap().ref_.inner_index() as usize].kind
+            && p.symbols[e_.target.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize].kind
                 == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
@@ -1099,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         "Cannot assign to property on import \"{}\"",
                         BStr::new(unsafe {
                             &*p.symbols
-                                [e_.target.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                                [e_.target.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
                                 .original_name
                         })
                     ),
@@ -1114,7 +1114,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_unary(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_unary().unwrap();
+        let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
         match e_.op {
             Op::UnTypeof => {
                 let id_before = matches!(e_.value.data, Data::EIdentifier(..));
@@ -1128,7 +1128,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // is unbound because that could suppress a ReferenceError from "x"
                 if !id_before
                     && id_after
-                    && p.symbols[e_.value.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                    && p.symbols[e_.value.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
                         .kind
                         == js_ast::symbol::Kind::Unbound
                 {
@@ -1246,7 +1246,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         expr
     }
     fn e_dot(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_dot().unwrap();
+        let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&*e_ as *const _, &*dt as *const _));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
 
@@ -1348,7 +1348,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if !p.options.features.is_macro_runtime {
                     if p.macro_call_count > 0
                         && matches!(e_.target.data, Data::EObject(..))
-                        && e_.target.data.e_object().unwrap().was_originally_macro
+                        && e_.target.data.e_object().expect("infallible: variant checked").was_originally_macro
                     {
                         if let Some(obj) = e_.target.get(&e_.name) {
                             return obj;
@@ -1361,7 +1361,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_if(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_if().unwrap();
+        let mut e_ = expr.data.e_if().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
 
         let prev_in_branch = p.in_branch_condition;
@@ -1432,7 +1432,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_array(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_array().unwrap();
+        let mut e_ = expr.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
@@ -1461,11 +1461,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         // Propagate name for anonymous decorated class expressions
                         if was_anonymous_named_expr
                             && matches!(e2.right.data, Data::EClass(..))
-                            && e2.right.data.e_class().unwrap().should_lower_standard_decorators
+                            && e2.right.data.e_class().expect("infallible: variant checked").should_lower_standard_decorators
                             && matches!(e2.left.data.tag(), Tag::EIdentifier)
                         {
                             p.decorator_class_name =
-                                Some(p.load_name_from_ref(e2.left.data.e_identifier().unwrap().ref_));
+                                Some(p.load_name_from_ref(e2.left.data.e_identifier().expect("infallible: variant checked").ref_));
                         }
                         e2.left = p.visit_expr_in_out(
                             e2.left,
@@ -1482,7 +1482,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 e2.right,
                                 unsafe {
                                     &*p.symbols
-                                        [e2.left.data.e_identifier().unwrap().ref_.inner_index()
+                                        [e2.left.data.e_identifier().expect("infallible: variant checked").ref_.inner_index()
                                             as usize]
                                         .original_name
                                 },
@@ -1518,7 +1518,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_object(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_object().unwrap();
+        let mut e_ = expr.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
@@ -1532,14 +1532,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .key
                         .unwrap_or_else(|| panic!("Expected property key")),
                 ));
-                let key = property.key.unwrap();
+                let key = property.key.expect("infallible: prop has key");
                 // Forbid duplicate "__proto__" properties according to the specification
                 if !property.flags.contains(Flags::Property::IsComputed)
                     && !property.flags.contains(Flags::Property::WasShorthand)
                     && !property.flags.contains(Flags::Property::IsMethod)
                     && in_.assign_target == js_ast::AssignTarget::None
                     && key.data.is_string_value()
-                    && key.data.e_string().unwrap().data == b"__proto__"
+                    && key.data.e_string().expect("infallible: variant checked").data == b"__proto__"
                 // __proto__ is utf8, assume it lives in refs
                 {
                     if has_proto {
@@ -1563,7 +1563,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 && property.initializer.is_none()
                 && property.value.is_some()
             {
-                if let Data::EBinary(bin) = &property.value.unwrap().data {
+                if let Data::EBinary(bin) = &property.value.expect("infallible: prop has value").data {
                     if bin.op == Op::BinAssign {
                         property.initializer = Some(bin.right);
                         property.value = Some(bin.left);
@@ -1575,7 +1575,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
                 if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(property.value.unwrap().data, Data::EClass(..))
+                    && matches!(property.value.expect("infallible: prop has value").data, Data::EClass(..))
                     && property
                         .value
                         .unwrap()
@@ -1583,18 +1583,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .e_class()
                         .unwrap()
                         .should_lower_standard_decorators
-                    && property.value.unwrap().data.e_class().unwrap().class_name.is_none()
+                    && property.value.expect("infallible: prop has value").data.e_class().expect("infallible: variant checked").class_name.is_none()
                     && property.key.is_some()
-                    && matches!(property.key.unwrap().data, Data::EString(..))
+                    && matches!(property.key.expect("infallible: prop has key").data, Data::EString(..))
                 {
-                    let key_str = property.key.unwrap().data.e_string().unwrap();
+                    let key_str = property.key.expect("infallible: prop has key").data.e_string().expect("infallible: variant checked");
                     // PORT NOTE: Zig `string(allocator)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 { Some(key_str.data.slice()) } else { None };
                 }
                 property.value = Some(p.visit_expr_in_out(
-                    property.value.unwrap(),
+                    property.value.expect("infallible: prop has value"),
                     ExprIn { assign_target: in_.assign_target, ..Default::default() },
                 ));
                 p.decorator_class_name = None;
@@ -1615,7 +1615,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if let Some(val) = property.value {
                         if matches!(val.data.tag(), Tag::EIdentifier) {
                             p.decorator_class_name =
-                                Some(p.load_name_from_ref(val.data.e_identifier().unwrap().ref_));
+                                Some(p.load_name_from_ref(val.data.e_identifier().expect("infallible: variant checked").ref_));
                         }
                     }
                 }
@@ -1628,7 +1628,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             property.initializer.expect("unreachable"),
                             unsafe {
                                 &*p.symbols
-                                    [val.data.e_identifier().unwrap().ref_.inner_index() as usize]
+                                    [val.data.e_identifier().expect("infallible: variant checked").ref_.inner_index() as usize]
                                     .original_name
                             },
                             was_anonymous_named_expr,
@@ -1642,7 +1642,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_import(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;
-        let mut e_ = expr.data.e_import().unwrap();
+        let mut e_ = expr.data.e_import().expect("infallible: variant checked");
         // We want to forcefully fold constants inside of imports
         // even when minification is disabled, so that if we have an
         // import based on a string template, it does not cause a
@@ -1689,7 +1689,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         expr
     }
     fn e_call(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_call().unwrap();
+        let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1962,7 +1962,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if is_macro_ref && !p.options.features.is_macro_runtime {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
-                    Data::EDot(dot) => dot.target.data.e_identifier().unwrap().ref_,
+                    Data::EDot(dot) => dot.target.data.e_identifier().expect("infallible: variant checked").ref_,
                     _ => unreachable!(),
                 };
 
@@ -1992,7 +1992,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 let name: &[u8] = macro_ref_data
                     .name
-                    .unwrap_or_else(|| e_.target.data.e_dot().unwrap().name.slice());
+                    .unwrap_or_else(|| e_.target.data.e_dot().expect("infallible: variant checked").name.slice());
                 let (record_path_text, record_range) = {
                     let record =
                         &p.import_records.items()[macro_ref_data.import_record_id as usize];
@@ -2149,7 +2149,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_new(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        let mut e_ = expr.data.e_new().unwrap();
+        let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         e_.target = p.visit_expr(e_.target);
 
         for arg in e_.args.slice_mut() {
@@ -2222,7 +2222,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Check if the feature flag is enabled
         // Use the underlying string data directly without allocation.
         // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
-        let flag_string = arg.data.e_string().unwrap();
+        let flag_string = arg.data.e_string().expect("infallible: variant checked");
         if flag_string.is_utf16 {
             p.log()
                 .add_error(
@@ -2259,7 +2259,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_arrow(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;
-        let mut e_ = expr.data.e_arrow().unwrap();
+        let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return expr;
         }
@@ -2357,7 +2357,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;
-        let mut e_ = expr.data.e_function().unwrap();
+        let mut e_ = expr.data.e_function().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return expr;
         }
@@ -2386,7 +2386,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !unsafe { &*p.current_scope }.contains_direct_eval
             && e_.func.name.is_some()
             && e_.func.name.unwrap().ref_.is_some()
-            && p.symbols[e_.func.name.unwrap().ref_.unwrap().inner_index() as usize]
+            && p.symbols[e_.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
                 .use_count_estimate
                 == 0
         {
@@ -2411,7 +2411,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                unsafe { &*p.symbols[name.ref_.unwrap().inner_index() as usize].original_name },
+                unsafe { &*p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize].original_name },
             );
         }
 
@@ -2419,7 +2419,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
     fn e_class(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = in_;
-        let mut e_ = expr.data.e_class().unwrap();
+        let mut e_ = expr.data.e_class().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return expr;
         }
@@ -2445,7 +2445,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !unsafe { &*p.current_scope }.contains_direct_eval
             && e_.class_name.is_some()
             && e_.class_name.unwrap().ref_.is_some()
-            && p.symbols[e_.class_name.unwrap().ref_.unwrap().inner_index() as usize]
+            && p.symbols[e_.class_name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
                 .use_count_estimate
                 == 0
         {

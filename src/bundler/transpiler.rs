@@ -1845,7 +1845,7 @@ impl<'a> Transpiler<'a> {
                                 let key = prop.key.as_mut().unwrap();
                                 let key_loc = key.loc;
                                 let name: &[u8] =
-                                    key.data.e_string_mut().unwrap().slice(allocator);
+                                    key.data.e_string_mut().expect("infallible: variant checked").slice(allocator);
                                 // Do not make named exports for "default" exports
                                 if name == b"default" {
                                     continue;
@@ -1857,7 +1857,7 @@ impl<'a> Transpiler<'a> {
                                 };
                                 if visited.found_existing {
                                     decls[*visited.value_ptr as usize].value =
-                                        Some(prop.value.unwrap());
+                                        Some(prop.value.expect("infallible: prop has value"));
                                     continue;
                                 }
                                 // PORT NOTE: spec transpiler.zig:1030-1071
@@ -1896,7 +1896,7 @@ impl<'a> Transpiler<'a> {
                                         js_ast::ast::b::Identifier { r#ref: ref_ },
                                         key_loc,
                                     ),
-                                    value: Some(prop.value.unwrap()),
+                                    value: Some(prop.value.expect("infallible: prop has value")),
                                 };
                                 export_clauses[count] = js_ast::ClauseItem {
                                     name: js_ast::LocRef { ref_: Some(ref_), loc: key_loc },
@@ -1904,7 +1904,7 @@ impl<'a> Transpiler<'a> {
                                     alias_loc: key_loc,
                                     ..Default::default()
                                 };
-                                let value_loc = prop.value.unwrap().loc;
+                                let value_loc = prop.value.expect("infallible: prop has value").loc;
                                 prop.value =
                                     Some(js_ast::Expr::init_identifier(ref_, value_loc));
                                 count += 1;

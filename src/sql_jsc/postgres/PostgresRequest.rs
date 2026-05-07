@@ -70,7 +70,7 @@ pub fn write_bind<Context: WriterContext>(
         return Err(AnyPostgresError::TooManyParameters);
     }
 
-    let len: u16 = u16::try_from(parameter_fields.len()).unwrap();
+    let len: u16 = u16::try_from(parameter_fields.len()).expect("int cast");
 
     // The number of parameter format codes that follow (denoted C
     // below). This can be zero to indicate that there are no
@@ -479,7 +479,7 @@ pub fn on_data<Context: ReaderContext>(
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
                 let to_skip = reader.length()?.saturating_sub(1);
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
-                reader.skip(usize::try_from(to_skip).unwrap())?;
+                reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }
         }
     }

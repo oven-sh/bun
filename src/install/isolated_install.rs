@@ -285,7 +285,7 @@ pub fn install_isolated_packages(
                 peer_name_idx.put(dep.name_hash, ())?;
             }
         }
-        let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).unwrap();
+        let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
         let mut leaking_peers: DynamicBitSetList = DynamicBitSetList::init_empty(
             lockfile.packages.len(),
@@ -323,10 +323,10 @@ pub fn install_isolated_packages(
                 peer_name_count as usize,
             )?;
             for pkg_idx in 0..lockfile.packages.len() {
-                let pkg_id: PackageID = u32::try_from(pkg_idx).unwrap();
+                let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                     let dep = &dependencies[dep_id as usize];
                     let Some(bit) = peer_name_idx.get_index(&dep.name_hash) else {
                         continue;
@@ -353,13 +353,13 @@ pub fn install_isolated_packages(
             while changed {
                 changed = false;
                 for pkg_idx in 0..lockfile.packages.len() {
-                    let pkg_id: PackageID = u32::try_from(pkg_idx).unwrap();
+                    let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                     let deps = pkg_dependency_slices[pkg_id as usize];
 
                     scratch.copy_into(&own_peers.at(pkg_id as usize));
 
                     for _dep_id in deps.begin()..deps.end() {
-                        let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                        let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                         let dep = &dependencies[dep_id as usize];
                         if dep.behavior.is_peer() {
                             if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
@@ -392,7 +392,7 @@ pub fn install_isolated_packages(
 
         let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
         for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
-            let dep_idx: DependencyID = u32::try_from(_dep_idx).unwrap();
+            let dep_idx: DependencyID = u32::try_from(_dep_idx).expect("int cast");
             if !dependencies[dep_idx as usize].behavior.is_workspace() {
                 continue;
             }
@@ -483,7 +483,7 @@ pub fn install_isolated_packages(
                 }
             }
 
-            let node_id: store::node::Id = store::node::Id::from(u32::try_from(nodes.len()).unwrap());
+            let node_id: store::node::Id = store::node::Id::from(u32::try_from(nodes.len()).expect("int cast"));
             let pkg_deps = pkg_dependency_slices[entry.pkg_id as usize];
 
             // for skipping dependnecies of workspace packages and the root package. the dependencies
@@ -690,7 +690,7 @@ pub fn install_isolated_packages(
             dep_ids_sort_buf.clear();
             dep_ids_sort_buf.reserve(pkg_deps.len as usize);
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                 dep_ids_sort_buf.push(dep_id);
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
             }
@@ -1097,7 +1097,7 @@ pub fn install_isolated_packages(
                 scripts: core::cell::UnsafeCell::new(None),
             };
 
-            let new_entry_id: store::entry::Id = store::entry::Id::from(u32::try_from(store_entries.len()).unwrap());
+            let new_entry_id: store::entry::Id = store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
             store_entries.append(new_entry)?;
 
             if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
@@ -1224,7 +1224,7 @@ pub fn install_isolated_packages(
                     continue;
                 }
                 stack.push(StackFrame {
-                    id: store::entry::Id::from(u32::try_from(_root_id).unwrap()),
+                    id: store::entry::Id::from(u32::try_from(_root_id).expect("int cast")),
                     dep_idx: 0,
                     // Placeholder; reinitialized below before first use when state == Unvisited.
                     hasher: Wyhash::init(0),
@@ -1442,7 +1442,7 @@ pub fn install_isolated_packages(
             // the same hash suffix, so they resolve in any project that produces
             // the same SCC closure.
             {
-                let n: u32 = u32::try_from(store.entries.len()).unwrap();
+                let n: u32 = u32::try_from(store.entries.len()).expect("int cast");
                 let mut tarjan_index = vec![u32::MAX; n as usize].into_boxed_slice();
                 let mut lowlink = vec![0u32; n as usize].into_boxed_slice();
                 let mut on_stack = vec![false; n as usize].into_boxed_slice();
@@ -1456,7 +1456,7 @@ pub fn install_isolated_packages(
                     if tarjan_index[root] != u32::MAX {
                         continue;
                     }
-                    work.push(WorkFrame { v: u32::try_from(root).unwrap(), child: 0 });
+                    work.push(WorkFrame { v: u32::try_from(root).expect("int cast"), child: 0 });
                     while !work.is_empty() {
                         let frame_idx = work.len() - 1;
                         let v = work[frame_idx].v;
@@ -1473,7 +1473,7 @@ pub fn install_isolated_packages(
                             let w = deps[work[frame_idx].child as usize].entry_id.get() as usize;
                             if tarjan_index[w] == u32::MAX {
                                 work[frame_idx].child += 1;
-                                work.push(WorkFrame { v: u32::try_from(w).unwrap(), child: 0 });
+                                work.push(WorkFrame { v: u32::try_from(w).expect("int cast"), child: 0 });
                                 recursed = true;
                                 break;
                             } else if on_stack[w] {
@@ -1586,7 +1586,7 @@ pub fn install_isolated_packages(
                                         let di = dep.entry_id.get() as usize;
                                         // Skip intra-SCC edges; those are captured
                                         // by member_sub.
-                                        if members.contains(&u32::try_from(di).unwrap()) {
+                                        if members.contains(&u32::try_from(di).expect("int cast")) {
                                             continue;
                                         }
                                         if entry_hashes[di] == 0 {
@@ -1959,7 +1959,7 @@ pub fn install_isolated_packages(
                 Box::new_uninit_slice(store.entries.len());
             for (i, slot) in uninit.iter_mut().enumerate() {
                 slot.write(installer::Task {
-                    entry_id: store::entry::Id::from(u32::try_from(i).unwrap()),
+                    entry_id: store::entry::Id::from(u32::try_from(i).expect("int cast")),
                     // patched below once `installer` has an address
                     installer: core::ptr::null_mut(),
                     result: installer::Result::None,
@@ -2030,9 +2030,9 @@ pub fn install_isolated_packages(
         }
 
         // add the pending task count upfront
-        manager.increment_pending_tasks(u32::try_from(store.entries.len()).unwrap());
+        manager.increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         for _entry_id in 0..store.entries.len() {
-            let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
+            let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
             let node_id = entry_node_ids[entry_id.get() as usize];
             let pkg_id = node_pkg_ids[node_id.get() as usize];
@@ -2125,7 +2125,7 @@ pub fn install_isolated_packages(
                         #[cfg(not(windows))]
                         {
                             break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
-                                sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
+                                sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
                             } else {
                                 false
                             };
@@ -2446,7 +2446,7 @@ pub fn install_isolated_packages(
         if Environment::CI_ASSERT {
             let mut done = true;
             'next_entry: for (_entry_id, entry_step) in store.entries.items_step().iter().enumerate() {
-                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
+                let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
                 // .monotonic is okay because `Wait.isDone` should have already synchronized with
                 // the completed task threads, via popping from the `UnboundedQueue` in `runTasks`,
                 // and the .acquire load `pendingTaskCount`.

@@ -240,11 +240,11 @@ impl UpgradeCommand {
         let accept = headers::Entry {
             name: HTTP::ETag::StringPointer {
                 offset: 0,
-                length: u32::try_from(b"Accept".len()).unwrap(),
+                length: u32::try_from(b"Accept".len()).expect("int cast"),
             },
             value: HTTP::ETag::StringPointer {
-                offset: u32::try_from(b"Accept".len()).unwrap(),
-                length: u32::try_from(b"application/vnd.github.v3+json".len()).unwrap(),
+                offset: u32::try_from(b"Accept".len()).expect("int cast"),
+                length: u32::try_from(b"application/vnd.github.v3+json".len()).expect("int cast"),
             },
         };
         header_entries.append(accept).expect("oom");
@@ -289,7 +289,7 @@ impl UpgradeCommand {
                     .append(headers::Entry {
                         name: HTTP::ETag::StringPointer {
                             offset: accept.value.offset + accept.value.length,
-                            length: u32::try_from(b"Authorization".len()).unwrap(),
+                            length: u32::try_from(b"Authorization".len()).expect("int cast"),
                         },
                         value: HTTP::ETag::StringPointer {
                             offset: u32::try_from(
@@ -297,7 +297,7 @@ impl UpgradeCommand {
                                     + b"Authorization".len(),
                             )
                             .unwrap(),
-                            length: u32::try_from(b"Bearer ".len() + access_token.len()).unwrap(),
+                            length: u32::try_from(b"Bearer ".len() + access_token.len()).expect("int cast"),
                         },
                     })
                     .expect("oom");
@@ -361,8 +361,8 @@ impl UpgradeCommand {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
-                    progress.unwrap().end();
-                    refresher.unwrap().refresh();
+                    progress.expect("infallible: progress active").end();
+                    refresher.expect("infallible: progress active").refresh();
 
                     if log.errors > 0 {
                         let _ = log.print(Output::error_writer() as *mut _);
@@ -384,8 +384,8 @@ impl UpgradeCommand {
 
         if log.errors > 0 {
             if !SILENT {
-                progress.unwrap().end();
-                refresher.unwrap().refresh();
+                progress.expect("infallible: progress active").end();
+                refresher.expect("infallible: progress active").refresh();
 
                 let _ = log.print(Output::error_writer() as *mut _);
                 Global::exit(1);
@@ -403,8 +403,8 @@ impl UpgradeCommand {
 
         if !expr.is_object() {
             if !SILENT {
-                progress.unwrap().end();
-                refresher.unwrap().refresh();
+                progress.expect("infallible: progress active").end();
+                refresher.expect("infallible: progress active").refresh();
 
                 Output::pretty_errorln(format_args!(
                     "JSON error - expected an object but received {:?}",
@@ -424,8 +424,8 @@ impl UpgradeCommand {
 
         if version.tag.is_empty() {
             if !SILENT {
-                progress.unwrap().end();
-                refresher.unwrap().refresh();
+                progress.expect("infallible: progress active").end();
+                refresher.expect("infallible: progress active").refresh();
 
                 Output::pretty_errorln(format_args!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
@@ -519,8 +519,8 @@ impl UpgradeCommand {
         }
 
         if !SILENT {
-            progress.unwrap().end();
-            refresher.unwrap().refresh();
+            progress.expect("infallible: progress active").end();
+            refresher.expect("infallible: progress active").refresh();
             if let Some(name) = version.name() {
                 Output::pretty_errorln(format_args!(
                     "Bun v{} is out, but not for this platform ({}) yet.",

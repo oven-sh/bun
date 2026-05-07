@@ -277,7 +277,7 @@ impl Stringifier {
                 let mut workspace_sort_buf: Vec<PackageID> = Vec::new();
 
                 for _pkg_id in 0..pkgs.len() {
-                    let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
+                    let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
                     let res = &pkg_resolutions[pkg_id as usize];
                     if res.tag != ResolutionTag::Workspace {
                         continue;
@@ -301,7 +301,7 @@ impl Stringifier {
                     Self::write_workspace_deps(
                         writer,
                         indent,
-                        u32::try_from(workspace_pkg_id).unwrap(),
+                        u32::try_from(workspace_pkg_id).expect("int cast"),
                         // SAFETY: `workspace_sort_buf` only contains pkgs whose
                         // resolution `tag == Workspace`.
                         unsafe { res.value.workspace },
@@ -586,7 +586,7 @@ impl Stringifier {
                     pkg_deps_sort_buf.clear();
                     pkg_deps_sort_buf.reserve(pkg_deps_list.len as usize);
                     for pkg_dep_id in pkg_deps_list.begin()..pkg_deps_list.end() {
-                        pkg_deps_sort_buf.push(u32::try_from(pkg_dep_id).unwrap());
+                        pkg_deps_sort_buf.push(u32::try_from(pkg_dep_id).expect("int cast"));
                         // PERF(port): was assume_capacity
                     }
 
@@ -1467,7 +1467,7 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidTrustedDependenciesSet);
         }
 
-        for dep in trusted_dependencies_expr.data.e_array().unwrap().items.slice() {
+        for dep in trusted_dependencies_expr.data.e_array().expect("infallible: variant checked").items.slice() {
             if !dep.is_string() {
                 log.add_error(Some(source), dep.loc, b"Expected a string")?;
                 return Err(ParseError::InvalidTrustedDependenciesSet);
@@ -1486,9 +1486,9 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidPatchedDependencies);
         }
 
-        for prop in patched_dependencies_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
-            let value = prop.value.unwrap();
+        for prop in patched_dependencies_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
+            let value = prop.value.expect("infallible: prop has value");
             if !key.is_string() {
                 log.add_error(Some(source), key.loc, b"Expected a string")?;
                 return Err(ParseError::InvalidPatchedDependencies);
@@ -1502,7 +1502,7 @@ pub fn parse_into_binary_lockfile(
             let key_hash = key.as_string_hash(StringBuilder::string_hash)?.unwrap();
             lockfile.patched_dependencies.insert(
                 key_hash,
-                PatchedDep { path: sbuf!(lockfile).append(value.as_utf8_string_literal().unwrap())?, ..Default::default() },
+                PatchedDep { path: sbuf!(lockfile).append(value.as_utf8_string_literal().expect("infallible: is_string checked"))?, ..Default::default() },
             );
         }
     }
@@ -1513,16 +1513,16 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidOverridesObject);
         }
 
-        for prop in overrides_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
-            let value = prop.value.unwrap();
+        for prop in overrides_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
+            let value = prop.value.expect("infallible: prop has value");
 
-            if !key.is_string() || key.data.e_string().unwrap().len() == 0 {
+            if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
                 log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let name_str = key.as_utf8_string_literal().unwrap();
+            let name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append_with_hash(name_str, name_hash)?;
 
@@ -1532,7 +1532,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidOverridesObject);
             }
 
-            let version_str = value.as_utf8_string_literal().unwrap();
+            let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1567,16 +1567,16 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidCatalogObject);
         }
 
-        for prop in catalog_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
-            let value = prop.value.unwrap();
+        for prop in catalog_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
+            let value = prop.value.expect("infallible: prop has value");
 
-            if !key.is_string() || key.data.e_string().unwrap().len() == 0 {
+            if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
                 log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
                 return Err(ParseError::InvalidCatalogObject);
             }
 
-            let dep_name_str = key.as_utf8_string_literal().unwrap();
+            let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
             let dep_name_hash = StringBuilder::string_hash(dep_name_str);
             let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
@@ -1585,7 +1585,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidCatalogObject);
             }
 
-            let version_str = value.as_utf8_string_literal().unwrap();
+            let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
             let version_hash = StringBuilder::string_hash(version_str);
             let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
             let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1631,11 +1631,11 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidCatalogsObject);
         }
 
-        for catalog_prop in catalogs_expr.data.e_object().unwrap().properties.slice() {
-            let catalog_key = catalog_prop.key.unwrap();
-            let catalog_value = catalog_prop.value.unwrap();
+        for catalog_prop in catalogs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let catalog_key = catalog_prop.key.expect("infallible: prop has key");
+            let catalog_value = catalog_prop.value.expect("infallible: prop has value");
 
-            if !catalog_key.is_string() || catalog_key.data.e_string().unwrap().len() == 0 {
+            if !catalog_key.is_string() || catalog_key.data.e_string().expect("infallible: variant checked").len() == 0 {
                 log.add_error(Some(source), catalog_key.loc, b"Expected a non-empty string")?;
                 return Err(ParseError::InvalidCatalogsObject);
             }
@@ -1645,21 +1645,21 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidCatalogsObject);
             }
 
-            let catalog_name_str = catalog_key.as_utf8_string_literal().unwrap();
+            let catalog_name_str = catalog_key.as_utf8_string_literal().expect("infallible: is_string checked");
             let catalog_name = sbuf!(lockfile).append(catalog_name_str)?;
 
             let group = lockfile.catalogs.get_or_put_group(lockfile.buffers.string_bytes.as_slice(), catalog_name)?;
 
-            for prop in catalog_value.data.e_object().unwrap().properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
+            for prop in catalog_value.data.e_object().expect("infallible: variant checked").properties.slice() {
+                let key = prop.key.expect("infallible: prop has key");
+                let value = prop.value.expect("infallible: prop has value");
 
-                if !key.is_string() || key.data.e_string().unwrap().len() == 0 {
+                if !key.is_string() || key.data.e_string().expect("infallible: variant checked").len() == 0 {
                     log.add_error(Some(source), key.loc, b"Expected a non-empty string")?;
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
-                let dep_name_str = key.as_utf8_string_literal().unwrap();
+                let dep_name_str = key.as_utf8_string_literal().expect("infallible: is_string checked");
                 let dep_name_hash = StringBuilder::string_hash(dep_name_str);
                 let dep_name = sbuf!(lockfile).append_with_hash(dep_name_str, dep_name_hash)?;
 
@@ -1668,7 +1668,7 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidCatalogsObject);
                 }
 
-                let version_str = value.as_utf8_string_literal().unwrap();
+                let version_str = value.as_utf8_string_literal().expect("infallible: is_string checked");
                 let version_hash = StringBuilder::string_hash(version_str);
                 let version = sbuf!(lockfile).append_with_hash(version_str, version_hash)?;
                 let version_sliced = version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -1716,9 +1716,9 @@ pub fn parse_into_binary_lockfile(
 
     let mut maybe_root_pkg: Option<Expr> = None;
 
-    for prop in workspaces_obj.data.e_object().unwrap().properties.slice() {
-        let key = prop.key.unwrap();
-        let value: Expr = prop.value.unwrap();
+    for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+        let key = prop.key.expect("infallible: prop has key");
+        let value: Expr = prop.value.expect("infallible: prop has value");
         if !key.is_string() {
             log.add_error(Some(source), key.loc, b"Expected a string")?;
             return Err(ParseError::InvalidWorkspaceObject);
@@ -1728,7 +1728,7 @@ pub fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         }
 
-        let path = key.as_utf8_string_literal().unwrap();
+        let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
 
         if path.is_empty() {
             if maybe_root_pkg.is_some() {
@@ -1759,7 +1759,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidWorkspaceObject);
             }
 
-            let version_str = sbuf!(lockfile).append(version_expr.as_utf8_string_literal().unwrap())?;
+            let version_str = sbuf!(lockfile).append(version_expr.as_utf8_string_literal().expect("infallible: is_string checked"))?;
 
             let parsed = Semver::Version::parse(version_str.sliced(lockfile.buffers.string_bytes.as_slice()));
             if !parsed.valid {
@@ -1839,10 +1839,10 @@ pub fn parse_into_binary_lockfile(
         let workspace_path_snapshot: Vec<String> =
             lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_path_snapshot {
-            for prop in workspaces_obj.data.e_object().unwrap().properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
-                let path = key.as_utf8_string_literal().unwrap();
+            for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+                let key = prop.key.expect("infallible: prop has key");
+                let value = prop.value.expect("infallible: prop has value");
+                let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
                 if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
                     continue;
                 }
@@ -1854,7 +1854,7 @@ pub fn parse_into_binary_lockfile(
                 );
 
                 let name_expr = value.get(b"name").unwrap();
-                let name = name_expr.as_utf8_string_literal().unwrap();
+                let name = name_expr.as_utf8_string_literal().expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
@@ -1923,9 +1923,9 @@ pub fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for prop in pkgs_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
-            let value = prop.value.unwrap();
+        for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
+            let value = prop.value.expect("infallible: prop has value");
 
             let Some(pkg_path) = key.as_utf8_string_literal() else {
                 log.add_error(Some(source), key.loc, b"Expected a string")?;
@@ -1937,7 +1937,7 @@ pub fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPackageInfo);
             }
 
-            let pkg_info = &value.data.e_array().unwrap().items;
+            let pkg_info = &value.data.e_array().expect("infallible: variant checked").items;
             if (pkg_info.len as usize) < 3 {
                 continue;
             }
@@ -1950,9 +1950,9 @@ pub fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for prop in pkgs_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
-            let value = prop.value.unwrap();
+        'next_pkg_key: for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
+            let value = prop.value.expect("infallible: prop has value");
 
             let Some(pkg_path) = key.as_utf8_string_literal() else {
                 log.add_error(Some(source), key.loc, b"Expected a string")?;
@@ -1965,7 +1965,7 @@ pub fn parse_into_binary_lockfile(
             }
 
             let mut i: usize = 0;
-            let pkg_info = &value.data.e_array().unwrap().items;
+            let pkg_info = &value.data.e_array().expect("infallible: variant checked").items;
 
             if (pkg_info.len as usize) == 0 {
                 log.add_error(Some(source), value.loc, b"Missing package info")?;
@@ -2064,7 +2064,7 @@ pub fn parse_into_binary_lockfile(
 
                     // new entry, a matching workspace MUST exist
                     for _workspace_pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
-                        let workspace_pkg_id: PackageID = u32::try_from(_workspace_pkg_id).unwrap();
+                        let workspace_pkg_id: PackageID = u32::try_from(_workspace_pkg_id).expect("int cast");
                         if res.eql(&pkg_resolutions[workspace_pkg_id as usize], lockfile.buffers.string_bytes.as_slice(), lockfile.buffers.string_bytes.as_slice()) {
                             #[cfg(debug_assertions)]
                             {
@@ -2304,7 +2304,7 @@ pub fn parse_into_binary_lockfile(
         {
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                 let dep = &mut dependencies[dep_id as usize];
 
                 let Some(&res_id) = pkg_map.get(dep.name.slice(string_buf)) else {
@@ -2331,14 +2331,14 @@ pub fn parse_into_binary_lockfile(
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
-                let pkg_id: PackageID = u32::try_from(_pkg_id).unwrap();
+                let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
                 seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
@@ -2382,10 +2382,10 @@ pub fn parse_into_binary_lockfile(
         }
 
         // then each package dependency
-        for prop in pkgs_expr.data.e_object().unwrap().properties.slice() {
-            let key = prop.key.unwrap();
+        for prop in pkgs_expr.data.e_object().expect("infallible: variant checked").properties.slice() {
+            let key = prop.key.expect("infallible: prop has key");
 
-            let pkg_path = key.as_utf8_string_literal().unwrap();
+            let pkg_path = key.as_utf8_string_literal().expect("infallible: is_string checked");
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {
                 return Err(ParseError::InvalidPackagesObject);
@@ -2401,7 +2401,7 @@ pub fn parse_into_binary_lockfile(
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
                 let dep = &mut dependencies[dep_id as usize];
 
                 let res_id = match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
@@ -2532,7 +2532,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
             return Err(ParseError::InvalidPackageInfo);
         }
 
-        for item in optional_peers.data.e_array().unwrap().items.slice() {
+        for item in optional_peers.data.e_array().expect("infallible: variant checked").items.slice() {
             let Some(name_hash) = item.as_string_hash(StringBuilder::string_hash)? else {
                 log.add_error(Some(source), item.loc, b"Expected a string")?;
                 return Err(ParseError::InvalidPackageInfo);
@@ -2557,9 +2557,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 return Err(ParseError::InvalidPackagesTree);
             }
 
-            for prop in deps.data.e_object().unwrap().properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
+            for prop in deps.data.e_object().expect("infallible: variant checked").properties.slice() {
+                let key = prop.key.expect("infallible: prop has key");
+                let value = prop.value.expect("infallible: prop has value");
 
                 let Some(name_str) = key.as_utf8_string_literal() else {
                     log.add_error(Some(source), key.loc, b"Expected a string")?;
@@ -2625,16 +2625,16 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     if IS_ROOT {
         let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
         'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for prop in workspaces_obj.data.e_object().unwrap().properties.slice() {
-                let key = prop.key.unwrap();
-                let value = prop.value.unwrap();
-                let path = key.as_utf8_string_literal().unwrap();
+            for prop in workspaces_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
+                let key = prop.key.expect("infallible: prop has key");
+                let value = prop.value.expect("infallible: prop has value");
+                let path = key.as_utf8_string_literal().expect("infallible: is_string checked");
                 if !strings::eql_long(path, workspace_path.slice(lockfile.buffers.string_bytes.as_slice()), true) {
                     continue;
                 }
 
                 let name_expr = value.get(b"name").unwrap();
-                let name = name_expr.as_utf8_string_literal().unwrap();
+                let name = name_expr.as_utf8_string_literal().expect("infallible: is_string checked");
                 let name_hash = StringBuilder::string_hash(name);
 
                 let dep = Dependency {
@@ -2671,7 +2671,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     optional_peers_buf.clear();
 
-    Ok((u32::try_from(off).unwrap(), u32::try_from(end - off).unwrap()))
+    Ok((u32::try_from(off).expect("int cast"), u32::try_from(end - off).expect("int cast")))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

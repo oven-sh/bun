@@ -861,7 +861,7 @@ impl Subprocess<'_> {
     }
 
     pub fn pid(&self) -> i32 {
-        i32::try_from(self.process().pid).unwrap()
+        i32::try_from(self.process().pid).expect("int cast")
     }
 
     #[bun_jsc::host_fn(getter)]

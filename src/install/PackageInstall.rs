@@ -1133,7 +1133,7 @@ impl<'a> PackageInstall<'a> {
                 windows::GetFinalPathNameByHandleW(
                     destbase.fd(),
                     state.buf.as_mut_ptr(),
-                    u32::try_from(state.buf.len()).unwrap(),
+                    u32::try_from(state.buf.len()).expect("int cast"),
                     0,
                 )
             } as usize;
@@ -1179,7 +1179,7 @@ impl<'a> PackageInstall<'a> {
                 windows::GetFinalPathNameByHandleW(
                     state.cached_package_dir.fd(),
                     state.buf2.as_mut_ptr(),
-                    u32::try_from(state.buf2.len()).unwrap(),
+                    u32::try_from(state.buf2.len()).expect("int cast"),
                     0,
                 )
             } as usize;
@@ -1845,9 +1845,9 @@ impl<'a> PackageInstall<'a> {
         let temp_path = {
             use std::io::Write;
             let mut cursor = &mut rand_path_buf[..];
-            write!(cursor, ".old-").unwrap();
+            write!(cursor, ".old-").expect("infallible: in-memory write");
             for b in rand_bytes {
-                write!(cursor, "{:02X}", b).unwrap();
+                write!(cursor, "{:02X}", b).expect("infallible: in-memory write");
             }
             let written = 48 - cursor.len();
             rand_path_buf[written] = 0;
@@ -2023,7 +2023,7 @@ impl<'a> PackageInstall<'a> {
                 windows::GetFinalPathNameByHandleW(
                     destination_dir.fd(),
                     wbuf.as_mut_ptr(),
-                    u32::try_from(wbuf.len()).unwrap(),
+                    u32::try_from(wbuf.len()).expect("int cast"),
                     0,
                 )
             } as usize;

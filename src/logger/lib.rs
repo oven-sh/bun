@@ -1150,7 +1150,7 @@ impl Loc {
 
     #[inline]
     pub fn i(&self) -> usize {
-        usize::try_from(self.start.max(0)).unwrap()
+        usize::try_from(self.start.max(0)).expect("int cast")
     }
 
     #[inline]
@@ -1326,13 +1326,13 @@ impl Location {
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
-                    u32::try_from(r.len).unwrap() as usize
+                    u32::try_from(r.len).expect("int cast") as usize
                 } else {
                     1
                 },
                 // TODO(port): lifetime — `line_text` here borrows from `source.contents`
                 line_text: Some(bun_string::strings::trim_left(full_line, b"\n\r").into_str()),
-                offset: usize::try_from(r.loc.start.max(0)).unwrap(),
+                offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
         None
@@ -1481,7 +1481,7 @@ impl Data {
                     bun_string::strings::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).unwrap();
+                        usize::try_from(location.column - 1).expect("int cast");
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -1885,7 +1885,7 @@ pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
             i += 1;
         }
     }
-    Range { loc, len: i32::try_from(i).unwrap() }
+    Range { loc, len: i32::try_from(i).expect("int cast") }
 }
 
 impl Range {
@@ -1898,8 +1898,8 @@ impl Range {
         if self.loc.start < 0 || self.len <= 0 {
             return b"";
         }
-        let slice = &buf[usize::try_from(self.loc.start).unwrap()..];
-        &slice[0..(usize::try_from(self.len).unwrap()).min(buf.len())]
+        let slice = &buf[usize::try_from(self.loc.start).expect("int cast")..];
+        &slice[0..(usize::try_from(self.len).expect("int cast")).min(buf.len())]
     }
 
     pub fn contains(self, k: i32) -> bool {
@@ -2577,8 +2577,8 @@ impl Log {
                 // TODO(port): lifetime — Phase A keeps `Location.file` as `&'static [u8]`
                 // matching `Str`; Phase B threads real ownership (see module doc).
                 file: filepath,
-                line: i32::try_from(line).unwrap(),
-                column: i32::try_from(col).unwrap(),
+                line: i32::try_from(line).expect("int cast"),
+                column: i32::try_from(col).expect("int cast"),
                 ..Default::default()
             }),
         }
@@ -2980,7 +2980,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Result<Cow<'static, [u8]>, Alloc
 
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
-    Loc { start: i32::try_from(loc).unwrap() }
+    Loc { start: i32::try_from(loc).expect("int cast") }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3078,7 +3078,7 @@ impl Source {
             return false;
         }
 
-        let bytes = u32::from_ne_bytes(self.contents[0..4].try_into().unwrap());
+        let bytes = u32::from_ne_bytes(self.contents[0..4].try_into().expect("infallible: size matches"));
         bytes == 0x6d73_6100 // "\0asm"
     }
 
@@ -3130,7 +3130,7 @@ impl Source {
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
-                len: i32::try_from(op.len()).unwrap(),
+                len: i32::try_from(op.len()).expect("int cast"),
             };
         }
 
@@ -3157,7 +3157,7 @@ impl Source {
                 c = text[i];
 
                 if c == quote {
-                    return Range { loc, len: i32::try_from(i + 1).unwrap() };
+                    return Range { loc, len: i32::try_from(i + 1).expect("int cast") };
                 } else if c == b'\\' {
                     i += 1;
                 }
@@ -3174,7 +3174,7 @@ impl Source {
         if index >= 0 {
             return Range {
                 loc: Loc { start: loc.start + index },
-                len: i32::try_from(op.len()).unwrap(),
+                len: i32::try_from(op.len()).expect("int cast"),
             };
         }
 
@@ -3186,7 +3186,7 @@ impl Source {
         debug_assert!(!offset_loc.is_empty());
         let mut prev_code_point: i32 = 0;
         let offset: usize =
-            (usize::try_from(offset_loc.start).unwrap()).min(self.contents.len().max(1) - 1);
+            (usize::try_from(offset_loc.start).expect("int cast")).min(self.contents.len().max(1) - 1);
 
         let contents: &[u8] = &self.contents;
 

@@ -127,7 +127,7 @@ pub mod js_bindings {
         for (i, feature) in list.iter().enumerate() {
             array.put_index(
                 global,
-                u32::try_from(i).unwrap(),
+                u32::try_from(i).expect("int cast"),
                 BunString::static_(feature).to_js(global)?,
             )?;
         }

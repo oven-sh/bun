@@ -194,7 +194,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             original_path: b"",
             flags: Default::default(),
         });
-        Ok(u32::try_from(index).unwrap())
+        Ok(u32::try_from(index).expect("int cast"))
     }
 
     pub fn add_import_stmt<const N: usize>(

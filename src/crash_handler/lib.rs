@@ -535,8 +535,8 @@ fn capture_libc_backtrace(begin_addr: usize, addrs: &mut [usize], stack_trace: &
     }
 
     // SAFETY: addrs is a valid mutable slice of usize, which is layout-compatible with *mut c_void
-    let count = unsafe { backtrace(addrs.as_mut_ptr().cast(), i32::try_from(addrs.len()).unwrap()) };
-    stack_trace.index = usize::try_from(count).unwrap();
+    let count = unsafe { backtrace(addrs.as_mut_ptr().cast(), i32::try_from(addrs.len()).expect("int cast")) };
+    stack_trace.index = usize::try_from(count).expect("int cast");
 
     // Skip frames until we find begin_addr (or close to it)
     // backtrace() captures everything including crash handler frames
@@ -1594,7 +1594,7 @@ impl StackLine {
 
             return Some(StackLine {
                 // To remap this, `pdb-addr2line --exe bun.pdb 0x123456`
-                address: i32::try_from(addr - base_address).unwrap(),
+                address: i32::try_from(addr - base_address).expect("int cast"),
 
                 object: if name != image_path {
                     let basename_start = name.iter().rposition(|&c| c == b'\\' as u16 || c == b'/' as u16)
@@ -1666,7 +1666,7 @@ impl StackLine {
                                     // fit it within a signed 32-bit integer. The VLQs will be shorter too.
                                     return Some(StackLine {
                                         object: None,
-                                        address: i32::try_from(image_relative_address).unwrap(),
+                                        address: i32::try_from(image_relative_address).expect("int cast"),
                                     });
                                 } else {
                                     // these libraries are not interesting, mark as unknown
@@ -1719,7 +1719,7 @@ impl StackLine {
                         // const name = bun.sliceTo(info.name, 0) orelse "";
                         let _ = i;
                         context.result = Some(StackLine {
-                            address: i32::try_from(context.address - info.dlpi_addr as usize).unwrap(),
+                            address: i32::try_from(context.address - info.dlpi_addr as usize).expect("int cast"),
                             object: None,
                         });
                         return 1; // error.Found → stop iteration
@@ -1746,7 +1746,7 @@ impl StackLine {
 
         if let Some(object) = &known.object {
             writer.write_all(VLQ::encode(1).slice())?;
-            writer.write_all(VLQ::encode(i32::try_from(object.len()).unwrap()).slice())?;
+            writer.write_all(VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice())?;
             writer.write_all(object)?;
         }
 
@@ -1839,12 +1839,12 @@ fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> Resul
                     compressed_bytes.as_mut_ptr(),
                     &mut len,
                     message.as_ptr(),
-                    u32::try_from(message.len()).unwrap() as bun_zlib::uLong,
+                    u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
                     9,
                 ))
             };
             let compressed = match ret {
-                bun_zlib::ReturnCode::Ok => &compressed_bytes[0..usize::try_from(len).unwrap()],
+                bun_zlib::ReturnCode::Ok => &compressed_bytes[0..usize::try_from(len).expect("int cast")],
                 // Insufficient memory.
                 bun_zlib::ReturnCode::MemError => return Err(bun_core::err!("OutOfMemory")),
                 // The buffer dest was not large enough to hold the compressed data.
@@ -1995,7 +1995,7 @@ fn report(url: &[u8]) {
         // PERF(port): was assume_capacity
         {
             let encoded = strings::convert_utf8_to_utf16_in_buffer(cmd_line.unused_capacity_slice_mut(), url);
-            cmd_line.len += u32::try_from(encoded.len()).unwrap();
+            cmd_line.len += u32::try_from(encoded.len()).expect("int cast");
         }
         if cmd_line.append_slice(bun_str::w!("/ack'|out-null}catch{}\"")).is_err() { return; }
         if cmd_line.append(0).is_err() { return; }

@@ -993,7 +993,7 @@ fn print_line_info(
             Ok(()) => {
                 if sl.column > 0 {
                     // The caret already takes one char
-                    let space_needed = usize::try_from(sl.column - 1).unwrap();
+                    let space_needed = usize::try_from(sl.column - 1).expect("int cast");
 
                     // splatByteAll(' ', n)
                     out_stream.extend(core::iter::repeat_n(b' ', space_needed));

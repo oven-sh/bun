@@ -605,7 +605,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 match c.options.output_format {
                     OutputFormat::Esm => {
                         let import_record_index =
-                            u32::try_from(cross_chunk_imports.len() as usize).unwrap();
+                            u32::try_from(cross_chunk_imports.len() as usize).expect("int cast");
 
                         let mut clauses = bun_alloc::ArenaVec::<js_ast::ClauseItem>::with_capacity_in(
                             cross_chunk_import.sorted_import_items.len() as usize,

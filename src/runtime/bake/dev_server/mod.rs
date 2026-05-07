@@ -1451,7 +1451,7 @@ impl DirectoryWatchStore {
             self.dependencies[index as usize] = dep;
             index
         } else {
-            let index = u32::try_from(self.dependencies.len()).unwrap();
+            let index = u32::try_from(self.dependencies.len()).expect("int cast");
             // PERF(port): was appendAssumeCapacity — profile in Phase B
             self.dependencies.push(dep);
             index

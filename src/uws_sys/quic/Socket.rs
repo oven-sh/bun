@@ -41,7 +41,7 @@ impl Socket {
             us_quic_socket_status(
                 self,
                 buf.as_mut_ptr(),
-                c_uint::try_from(buf.len()).unwrap(),
+                c_uint::try_from(buf.len()).expect("int cast"),
             )
         }
     }

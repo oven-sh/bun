@@ -458,10 +458,10 @@ impl FileRoute {
                 Err(_) => break 'brk (false, 0, FileType::File, false),
             };
 
-            let stat_size: u64 = u64::try_from(stat.st_size.max(0)).unwrap();
+            let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
             let _size: u64 = stat_size.min(this.blob.size);
 
-            let mode = u32::try_from(stat.st_mode).unwrap();
+            let mode = u32::try_from(stat.st_mode).expect("int cast");
             if bun_sys::S::ISDIR(mode) {
                 break 'brk (false, 0, FileType::File, false);
             }

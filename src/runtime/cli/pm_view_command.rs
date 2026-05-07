@@ -242,7 +242,7 @@ pub fn view(
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
                 // Find the version string from JSON that matches the resolved version
-                let versions_e_obj = versions_obj.data.e_object().unwrap();
+                let versions_e_obj = versions_obj.data.e_object().expect("infallible: variant checked");
                 let versions = versions_e_obj.properties.slice();
                 versions_len = versions.len();
 
@@ -271,7 +271,7 @@ pub fn view(
                     let parsed_version = Semver::Version::parse(sliced_version);
                     if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
                         version = version_str;
-                        manifest = prop.value.unwrap();
+                        manifest = prop.value.expect("infallible: prop has value");
                         break 'brk;
                     }
                 }
@@ -311,12 +311,12 @@ pub fn view(
 
     // Treat versions specially because npm does some normalization on there.
     if let Some(versions_object) = json.get_object(b"versions") {
-        let versions_e_obj = versions_object.data.e_object().unwrap();
+        let versions_e_obj = versions_object.data.e_object().expect("infallible: variant checked");
         let props = versions_e_obj.properties.slice();
         let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
         debug_assert_eq!(props.len(), keys.capacity());
         for prop in props {
-            keys.push(prop.key.unwrap());
+            keys.push(prop.key.expect("infallible: prop has key"));
         }
         let versions_array = ast::Expr::init(
             ast::E::Array {
@@ -403,7 +403,7 @@ pub fn view(
     let mut dep_count: usize = 0;
     let dependencies_object = manifest.get_object(b"dependencies");
     if let Some(deps) = &dependencies_object {
-        dep_count = deps.data.e_object().unwrap().properties.len as usize;
+        dep_count = deps.data.e_object().expect("infallible: variant checked").properties.len as usize;
     }
 
     prettyln!(
@@ -443,7 +443,7 @@ pub fn view(
 
     // Display dependencies if they exist
     if let Some(deps) = &dependencies_object {
-        let deps_e_obj = deps.data.e_object().unwrap();
+        let deps_e_obj = deps.data.e_object().expect("infallible: variant checked");
         let dependencies = deps_e_obj.properties.slice();
         if !dependencies.is_empty() {
             prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
@@ -453,8 +453,8 @@ pub fn view(
             if prop.key.is_none() || prop.value.is_none() {
                 continue;
             }
-            let Some(dep_name) = prop.key.as_ref().unwrap().as_string(&bump) else { continue };
-            let Some(dep_version) = prop.value.as_ref().unwrap().as_string(&bump) else { continue };
+            let Some(dep_name) = prop.key.as_ref().expect("infallible: prop has key").as_string(&bump) else { continue };
+            let Some(dep_version) = prop.value.as_ref().expect("infallible: prop has value").as_string(&bump) else { continue };
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
                 BStr::new(dep_name),
@@ -484,12 +484,12 @@ pub fn view(
 
     if let Some(tags_obj) = json.get_object(b"dist-tags") {
         prettyln!("\n<b>dist-tags<r><d>:<r>");
-        for prop in tags_obj.data.e_object().unwrap().properties.slice() {
+        for prop in tags_obj.data.e_object().expect("infallible: variant checked").properties.slice() {
             if prop.key.is_none() || prop.value.is_none() {
                 continue;
             }
-            let tagname_expr = prop.key.as_ref().unwrap();
-            let val_expr = prop.value.as_ref().unwrap();
+            let tagname_expr = prop.key.as_ref().expect("infallible: prop has key");
+            let val_expr = prop.value.as_ref().expect("infallible: prop has value");
             if let Some(tag) = tagname_expr.as_string(&bump) {
                 if let Some(val) = val_expr.as_string(&bump) {
                     if tag == b"latest" {

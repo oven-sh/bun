@@ -254,7 +254,7 @@ fn timestamp() -> i64 {
     // source if one exists; SystemTime is not in the banned std modules.
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_secs()).unwrap())
+        .map(|d| i64::try_from(d.as_secs()).expect("int cast"))
         .unwrap_or(0)
 }
 

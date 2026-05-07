@@ -499,7 +499,7 @@ impl hostent_with_ttls {
         }
         let mut with_ttls = Box::new(hostent_with_ttls::default());
         with_ttls.hostent = start;
-        for (i, ttl) in addrttls[..usize::try_from(naddrttls).unwrap()].iter().enumerate() {
+        for (i, ttl) in addrttls[..usize::try_from(naddrttls).expect("int cast")].iter().enumerate() {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)
@@ -519,7 +519,7 @@ impl hostent_with_ttls {
         }
         let mut with_ttls = Box::new(hostent_with_ttls::default());
         with_ttls.hostent = start;
-        for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).unwrap()].iter().enumerate() {
+        for (i, ttl) in addr6ttls[..usize::try_from(naddr6ttls).expect("int cast")].iter().enumerate() {
             with_ttls.ttls[i] = ttl.ttl;
         }
         Ok(with_ttls)

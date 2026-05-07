@@ -237,8 +237,8 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
     type ExternType = ExternArrayList<Child::ExternType>;
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
-        let length = usize::try_from(extern_value.length).unwrap();
-        let capacity = usize::try_from(extern_value.capacity).unwrap();
+        let length = usize::try_from(extern_value.length).expect("int cast");
+        let capacity = usize::try_from(extern_value.capacity).expect("int cast");
 
         if extern_value.data.is_null() {
             return Self::ZigType::init();

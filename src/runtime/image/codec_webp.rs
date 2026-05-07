@@ -105,8 +105,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &mut cw, &mut ch) } == 0 || cw <= 0 || ch <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let w: u32 = u32::try_from(cw).unwrap();
-    let h: u32 = u32::try_from(ch).unwrap();
+    let w: u32 = u32::try_from(cw).expect("int cast");
+    let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
     // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
     let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &mut cw, &mut ch) };
@@ -181,12 +181,12 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
 
 pub fn encode(rgba: &[u8], w: u32, h: u32, quality: u8, lossless: bool, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
     let mut out: *mut u8 = core::ptr::null_mut();
-    let stride: c_int = c_int::try_from(w * 4).unwrap();
+    let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
-        unsafe { WebPEncodeLosslessRGBA(rgba.as_ptr(), c_int::try_from(w).unwrap(), c_int::try_from(h).unwrap(), stride, &mut out) }
+        unsafe { WebPEncodeLosslessRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, &mut out) }
     } else {
-        unsafe { WebPEncodeRGBA(rgba.as_ptr(), c_int::try_from(w).unwrap(), c_int::try_from(h).unwrap(), stride, quality as f32, &mut out) }
+        unsafe { WebPEncodeRGBA(rgba.as_ptr(), c_int::try_from(w).expect("int cast"), c_int::try_from(h).expect("int cast"), stride, quality as f32, &mut out) }
     };
     if len == 0 || out.is_null() {
         return Err(codecs::Error::EncodeFailed);

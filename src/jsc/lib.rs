@@ -1806,7 +1806,7 @@ impl LogJsc for bun_logger::Log {
         let msgs = &self.msgs;
         let arr = JSValue::create_empty_array(global, msgs.len())?;
         for (i, msg) in msgs.iter().enumerate() {
-            arr.put_index(global, u32::try_from(i).unwrap(), msg_to_js(msg, global)?)?;
+            arr.put_index(global, u32::try_from(i).expect("int cast"), msg_to_js(msg, global)?)?;
         }
         Ok(arr)
     }

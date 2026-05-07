@@ -202,8 +202,8 @@ impl ErrorLocation {
         Ok(logger::Location {
             file: source.path.text,
             namespace: source.path.namespace,
-            line: i32::try_from(self.line + 1).unwrap(),
-            column: i32::try_from(self.column).unwrap(),
+            line: i32::try_from(self.line + 1).expect("int cast"),
+            column: i32::try_from(self.column).expect("int cast"),
             line_text,
             ..Default::default()
         })

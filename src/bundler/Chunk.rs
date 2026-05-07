@@ -930,7 +930,7 @@ impl OutputPiece {
     pub fn init(data_slice: &[u8], query: Query) -> OutputPiece {
         OutputPiece {
             data_ptr: data_slice.as_ptr(),
-            data_len: u32::try_from(data_slice.len()).unwrap(),
+            data_len: u32::try_from(data_slice.len()).expect("int cast"),
             query,
         }
     }

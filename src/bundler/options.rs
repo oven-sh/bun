@@ -140,7 +140,7 @@ where
     let mut hash_map = M::default();
     if !keys.is_empty() {
         // TODO(port): ensureTotalCapacity / putAssumeCapacity — needs concrete map API
-        let _ = u32::try_from(total_capacity).unwrap();
+        let _ = u32::try_from(total_capacity).expect("int cast");
         for (i, key) in keys.iter().enumerate() {
             // hash_map.put_assume_capacity(key.clone(), values[i].clone());
             let _ = (key, &values[i]);
@@ -1546,7 +1546,7 @@ pub fn defines_from_transform_options(
                     } else {
                         use std::io::Write;
                         let mut v = Vec::new();
-                        write!(&mut v, "\"{}\"", bstr::BStr::new(node_env)).unwrap();
+                        write!(&mut v, "\"{}\"", bstr::BStr::new(node_env)).expect("infallible: in-memory write");
                         break 'brk v.into_boxed_slice();
                     }
                 }
@@ -1711,7 +1711,7 @@ pub fn loaders_from_transform_options(
         + DEFAULT_LOADER_EXT.len();
 
     let mut loaders = StringArrayHashMap::<Loader>::default();
-    loaders.reserve(u32::try_from(total_capacity).unwrap() as usize);
+    loaders.reserve(u32::try_from(total_capacity).expect("int cast") as usize);
     for (i, ext) in input_loaders.extensions.iter().enumerate() {
         // PERF(port): was assume_capacity
         loaders.insert(ext, loader_values[i]);

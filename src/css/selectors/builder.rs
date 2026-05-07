@@ -158,7 +158,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         let mut components: Vec<GenericComponent<Impl>> = Vec::new();
 
         let mut current_simple_selectors_i: usize = 0;
-        let mut combinator_i: i64 = i64::try_from(combinators_len).unwrap() - 1;
+        let mut combinator_i: i64 = i64::try_from(combinators_len).expect("int cast") - 1;
         let mut rest_of_simple_selectors = rest;
         let mut current_simple_selectors = current;
 
@@ -180,7 +180,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
                 current_simple_selectors_i += 1;
             } else {
                 if combinator_i >= 0 {
-                    let (combo, len) = combinators[usize::try_from(combinator_i).unwrap()];
+                    let (combo, len) = combinators[usize::try_from(combinator_i).expect("int cast")];
                     let (rest2, current2) =
                         split_from_end::<GenericComponent<Impl>>(rest_of_simple_selectors, len);
                     rest_of_simple_selectors = rest2;

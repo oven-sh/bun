@@ -180,8 +180,8 @@ pub mod bun_spawn {
             self.actions.push(Action {
                 kind: FileActionType::Open,
                 path: path_ptr,
-                flags: i32::try_from(flags).unwrap(),
-                mode: i32::try_from(mode).unwrap(),
+                flags: i32::try_from(flags).expect("int cast"),
+                mode: i32::try_from(mode).expect("int cast"),
                 fds: [fd.native(), 0],
             });
             Ok(())
@@ -587,7 +587,7 @@ pub mod posix_spawn {
             }
 
             if rc == 0 {
-                return sys::Result::Ok(pid_t::try_from(pid).unwrap());
+                return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
             }
 
             // SAFETY: argv has at least one element (the NULL terminator)
@@ -740,7 +740,7 @@ pub mod posix_spawn {
                             if let Err(e) = posix_actions.open_z(
                                 Fd::from_native(action.fds[0]),
                                 p,
-                                u32::try_from(action.flags).unwrap(),
+                                u32::try_from(action.flags).expect("int cast"),
                                 mode_t::try_from(action.mode).unwrap(),
                             ) {
                                 if cfg!(debug_assertions) {
@@ -868,12 +868,12 @@ pub mod posix_spawn {
         loop {
             // SAFETY: status is a valid out-pointer
             let rc = unsafe {
-                system::waitpid(pid, &mut status, c_int::try_from(flags).unwrap())
+                system::waitpid(pid, &mut status, c_int::try_from(flags).expect("int cast"))
             };
             match errno(rc) {
                 Errno::SUCCESS => {
                     return sys::Result::Ok(WaitPidResult {
-                        pid: pid_t::try_from(rc).unwrap(),
+                        pid: pid_t::try_from(rc).expect("int cast"),
                         status: status as u32,
                     });
                 }
@@ -908,14 +908,14 @@ pub mod posix_spawn {
                 system::wait4(
                     pid,
                     &mut status,
-                    c_int::try_from(flags).unwrap(),
+                    c_int::try_from(flags).expect("int cast"),
                     usage_ptr,
                 )
             };
             match errno(rc) {
                 Errno::SUCCESS => {
                     return sys::Result::Ok(WaitPidResult {
-                        pid: pid_t::try_from(rc).unwrap(),
+                        pid: pid_t::try_from(rc).expect("int cast"),
                         status: status as u32,
                     });
                 }

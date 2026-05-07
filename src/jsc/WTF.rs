@@ -25,7 +25,7 @@ unsafe extern "C" {
 pub fn number_of_processor_cores() -> u32 {
     // SAFETY: FFI call with no preconditions.
     let n = unsafe { WTF__numberOfProcessorCores() };
-    u32::try_from(n.max(1)).unwrap()
+    u32::try_from(n.max(1)).expect("int cast")
 }
 
 pub fn release_fast_malloc_free_memory_for_this_thread() {
@@ -96,7 +96,7 @@ pub fn write_http_date(buffer: &mut [u8; 32], timestamp_ms: u64) -> &mut [u8] {
         return &mut buffer[..0];
     }
 
-    &mut buffer[..usize::try_from(res).unwrap()]
+    &mut buffer[..usize::try_from(res).expect("int cast")]
 }
 
 pub use crate::string_builder::StringBuilder;

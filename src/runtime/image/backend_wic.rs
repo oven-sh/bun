@@ -86,7 +86,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     scopeguard::defer! { release(stream); }
     // SAFETY: stream is non-null (checked above); bytes outlives this call.
     if unsafe {
-        ((*(*stream).vt).InitializeFromMemory)(stream, bytes.as_ptr(), u32::try_from(bytes.len()).unwrap())
+        ((*(*stream).vt).InitializeFromMemory)(stream, bytes.as_ptr(), u32::try_from(bytes.len()).expect("int cast"))
     } < 0
     {
         return Err(DecodeFailed);
@@ -143,15 +143,15 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         return Err(TooManyPixels);
     }
     // PERF(port): was uninitialized alloc — profile in Phase B
-    let mut out = vec![0u8; usize::try_from(out_len).unwrap()];
+    let mut out = vec![0u8; usize::try_from(out_len).expect("int cast")];
     // (errdefer free(out) deleted — Vec drops on `?`/early return)
     // SAFETY: conv is non-null; out has out_len bytes of capacity.
     if unsafe {
         ((*(*conv).vt).CopyPixels)(
             conv,
             ptr::null(),
-            u32::try_from(stride).unwrap(),
-            u32::try_from(out_len).unwrap(),
+            u32::try_from(stride).expect("int cast"),
+            u32::try_from(out_len).expect("int cast"),
             out.as_mut_ptr(),
         )
     } < 0
@@ -272,7 +272,7 @@ pub fn encode(
     if pf == GUID_WICPixelFormat32bppRGBA {
         // SAFETY: frame is non-null; rgba.len() fits u32 (checked above).
         if unsafe {
-            ((*(*frame).vt).WritePixels)(frame, height, stride, u32::try_from(rgba.len()).unwrap(), rgba.as_ptr())
+            ((*(*frame).vt).WritePixels)(frame, height, stride, u32::try_from(rgba.len()).expect("int cast"), rgba.as_ptr())
         } < 0
         {
             return Err(EncodeFailed);
@@ -287,7 +287,7 @@ pub fn encode(
                 height,
                 &GUID_WICPixelFormat32bppRGBA,
                 stride,
-                u32::try_from(rgba.len()).unwrap(),
+                u32::try_from(rgba.len()).expect("int cast"),
                 rgba.as_ptr(),
                 &mut src,
             )
@@ -348,7 +348,7 @@ pub fn encode(
         let _ = unsafe { GlobalUnlock(hg) };
     }
     // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { core::slice::from_raw_parts(ptr_, usize::try_from(pos).unwrap()) };
+    let slice = unsafe { core::slice::from_raw_parts(ptr_, usize::try_from(pos).expect("int cast")) };
     Ok(slice.to_vec())
 }
 
@@ -861,9 +861,9 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
         // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
         // 24/32-bit DIBs clipboards emit there's no colour table, but a
         // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
-        let ih_size: u64 = u32::from_le_bytes(buf[14..18].try_into().unwrap()) as u64;
+        let ih_size: u64 = u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
         let compression =
-            u32::from_le_bytes(buf[14 + 16..14 + 16 + 4].try_into().unwrap());
+            u32::from_le_bytes(buf[14 + 16..14 + 16 + 4].try_into().expect("infallible: size matches"));
         let masks: u64 = if ih_size == 40 && compression == 3 { 12 } else { 0 };
         let off = 14 + ih_size + masks;
         if ih_size < 40 || off > buf.len() as u64 {
@@ -871,9 +871,9 @@ pub fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
         }
         buf[0] = b'B';
         buf[1] = b'M';
-        buf[2..6].copy_from_slice(&u32::try_from(buf.len()).unwrap().to_le_bytes());
+        buf[2..6].copy_from_slice(&u32::try_from(buf.len()).expect("int cast").to_le_bytes());
         buf[6..10].copy_from_slice(&0u32.to_le_bytes());
-        buf[10..14].copy_from_slice(&u32::try_from(off).unwrap().to_le_bytes());
+        buf[10..14].copy_from_slice(&u32::try_from(off).expect("int cast").to_le_bytes());
         return Ok(Some(buf));
     }
     Ok(None)

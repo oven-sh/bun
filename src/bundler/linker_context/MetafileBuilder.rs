@@ -409,7 +409,7 @@ pub fn generate(
     // Break output into pieces and resolve chunk references to final paths
     let alloc = c.allocator();
     let mut intermediate =
-        c.break_output_into_pieces(alloc, &mut j, u32::try_from(chunks.len()).unwrap())?;
+        c.break_output_into_pieces(alloc, &mut j, u32::try_from(chunks.len()).expect("int cast"))?;
 
     // Get final output with all chunk references resolved.
     // PORT NOTE: Zig passes `&chunks[0]` as the dummy chunk and `chunks` as the
@@ -809,7 +809,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                     if let JsonValue::Object(mi_obj) = module_info {
                         if let Some(bio) = mi_obj.get(b"bytesInOutput") {
                             if let JsonValue::Integer(bio_int) = bio {
-                                let bytes_val: u64 = u64::try_from(*bio_int).unwrap();
+                                let bytes_val: u64 = u64::try_from(*bio_int).expect("int cast");
                                 let gop = bytes_in_output.get_or_put(module_path)?;
                                 if gop.found_existing {
                                     *gop.value_ptr += bytes_val;
@@ -867,7 +867,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         // Build reverse dependency map
         if let Some(imps) = input_obj.get(b"imports") {
             if let JsonValue::Array(imps_arr) = imps {
-                info.import_count = u32::try_from(imps_arr.len()).unwrap();
+                info.import_count = u32::try_from(imps_arr.len()).expect("int cast");
                 for imp in imps_arr.iter() {
                     if let JsonValue::Object(imp_obj) = imp {
                         if let Some(ext) = imp_obj.get(b"external") {
@@ -944,7 +944,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         if let JsonValue::Object(out_obj) = out_value {
             if let Some(bytes) = out_obj.get(b"bytes") {
                 if let JsonValue::Integer(bytes_int) = bytes {
-                    total_output_bytes += u64::try_from(*bytes_int).unwrap();
+                    total_output_bytes += u64::try_from(*bytes_int).expect("int cast");
                 }
             }
             if out_obj.get(b"entryPoint").is_some() {
@@ -1050,7 +1050,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
         if let Some(bytes) = output.get(b"bytes") {
             if let JsonValue::Integer(bytes_int) = bytes {
-                write!(md, "**Bundle size**: {}\n", fmt_size(u64::try_from(*bytes_int).unwrap()))?;
+                write!(md, "**Bundle size**: {}\n", fmt_size(u64::try_from(*bytes_int).expect("int cast")))?;
             }
         }
 
@@ -1105,7 +1105,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                                     md,
                                                     "- `{}` ({}, {})\n",
                                                     BStr::new(path_str),
-                                                    fmt_size(u64::try_from(*bytes_int).unwrap()),
+                                                    fmt_size(u64::try_from(*bytes_int).expect("int cast")),
                                                     BStr::new(kind_str),
                                                 )?;
                                                 continue;
@@ -1138,7 +1138,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                 if let JsonValue::Integer(bio_int) = bio {
                                     module_sizes.push(ModuleSize {
                                         path: module_path,
-                                        bytes: u64::try_from(*bio_int).unwrap(),
+                                        bytes: u64::try_from(*bio_int).expect("int cast"),
                                     });
                                 }
                             }
@@ -1480,7 +1480,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                 let mut size: u64 = 0;
                 if let Some(bytes) = output2_obj.get(b"bytes") {
                     if let JsonValue::Integer(bytes_int) = bytes {
-                        size = u64::try_from(*bytes_int).unwrap();
+                        size = u64::try_from(*bytes_int).expect("int cast");
                     }
                 }
                 write!(

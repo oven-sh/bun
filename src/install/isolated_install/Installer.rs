@@ -518,7 +518,7 @@ impl<'a> Installer<'a> {
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
         for id_int in 0..self.store.entries.len() {
-            let entry_id = StoreEntryId::from(u32::try_from(id_int).unwrap());
+            let entry_id = StoreEntryId::from(u32::try_from(id_int).expect("int cast"));
 
             // .monotonic is okay because only the main thread sets this to `.blocked`.
             let entry_step = entry_steps[entry_id.get() as usize].load(Ordering::Relaxed);
@@ -878,7 +878,7 @@ impl Task {
                                                 bun_sys::windows::GetFinalPathNameByHandleW(
                                                     folder_dir.cast(),
                                                     src_path.buf().as_mut_ptr(),
-                                                    u32::try_from(src_path.buf().len()).unwrap(),
+                                                    u32::try_from(src_path.buf().len()).expect("int cast"),
                                                     0,
                                                 );
 
@@ -1032,7 +1032,7 @@ impl Task {
                             #[cfg(not(windows))]
                             {
                                 if let Some(st) = sys::lstat(local.slice_z()).ok() {
-                                    sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
+                                    sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
                                 } else {
                                     false
                                 }
@@ -1751,7 +1751,7 @@ impl Task {
                         for (i, item) in list.items[1..].iter().enumerate() {
                             let i = i + 1;
                             if item.is_some() {
-                                list.first_index = u8::try_from(i).unwrap();
+                                list.first_index = u8::try_from(i).expect("int cast");
                                 break;
                             }
                         }
@@ -2061,7 +2061,7 @@ impl<'a> Installer<'a> {
                                     pkg_id, replacement_pkg_id
                                 );
                                 return Some(StoreEntryId::from(
-                                    u32::try_from(new_entry_id).unwrap(),
+                                    u32::try_from(new_entry_id).expect("int cast"),
                                 ));
                             }
                         }
@@ -2376,7 +2376,7 @@ impl<'a> Installer<'a> {
                         #[cfg(not(windows))]
                         {
                             if let Some(st) = sys::lstat(dest.slice_z()).ok() {
-                                sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
+                                sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
                             } else {
                                 true
                             }

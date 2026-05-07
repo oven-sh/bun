@@ -156,7 +156,7 @@ impl JSSourceMap {
         let parse_result = mapping::parse(
             mappings_str.slice(),
             None, // estimated_mapping_count
-            i32::try_from(sources.len()).unwrap(), // sources_count
+            i32::try_from(sources.len()).expect("int cast"), // sources_count
             i32::MAX as usize,
             mapping::ParseOptions { allow_names: true, sort: true },
         );
@@ -245,7 +245,7 @@ impl JSSourceMap {
             if let Some(name) = self.sourcemap.mappings.get_name(name_index) {
                 return bun_string_jsc::create_utf8_for_js(global, name);
             } else {
-                let index = usize::try_from(name_index).unwrap();
+                let index = usize::try_from(name_index).expect("int cast");
                 if index < self.names.len() {
                     return self.names[index].to_js(global);
                 }
@@ -256,8 +256,8 @@ impl JSSourceMap {
 
     fn source_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
         let source_index = mapping.source_index;
-        if source_index >= 0 && source_index < i32::try_from(self.sources.len()).unwrap() {
-            return self.sources[usize::try_from(source_index).unwrap()].to_js(global);
+        if source_index >= 0 && source_index < i32::try_from(self.sources.len()).expect("int cast") {
+            return self.sources[usize::try_from(source_index).expect("int cast")].to_js(global);
         }
         Ok(JSValue::UNDEFINED)
     }

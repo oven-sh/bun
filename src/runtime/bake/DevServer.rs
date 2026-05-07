@@ -1008,7 +1008,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(
-                    framework_router::RouteIndex::init(u32::try_from(i).unwrap()),
+                    framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
                     true,
                 ),
             )?;
@@ -1580,8 +1580,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return;
     }
 
-    let route_bundle_index = route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).unwrap());
-    let generation: u32 = u32::try_from(id >> 32).unwrap();
+    let route_bundle_index = route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).expect("int cast"));
+    let generation: u32 = u32::try_from(id >> 32).expect("int cast");
 
     if route_bundle_index.get() as usize >= dev.route_bundles.len() {
         return not_found(resp);
@@ -1742,7 +1742,7 @@ impl RequestEnsureRouteBundledCtx {
         let resp = self.resp;
         let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List = match bundle_field {
-            BundleQueueType::CurrentBundle => &mut dev.current_bundle.as_mut().unwrap().requests,
+            BundleQueueType::CurrentBundle => &mut dev.current_bundle.as_mut().expect("infallible: bundle active").requests,
             BundleQueueType::NextBundle => &mut dev.next_bundle.requests,
         };
         // SAFETY: requests_array points into self.dev which is still valid
@@ -1887,7 +1887,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     };
 
                                 let load_result: crate::server::GetOrStartLoadResult =
-                                    dev.server.as_ref().unwrap().get_or_load_plugins(
+                                    dev.server.as_ref().expect("infallible: server bound").get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
@@ -2383,7 +2383,7 @@ impl DevServer {
                                         as usize],
                                 )
                             });
-                            arr.put_index(global, u32::try_from(n).unwrap(), layout_name.transfer_to_js(global)?)?;
+                            arr.put_index(global, u32::try_from(n).expect("int cast"), layout_name.transfer_to_js(global)?)?;
                             n += 1;
                         }
                         let Some(p) = route.parent else { break };
@@ -2523,7 +2523,7 @@ impl DevServer {
             )
         }?;
 
-        self.server.as_ref().unwrap().on_saved_request(
+        self.server.as_ref().expect("infallible: server bound").on_saved_request(
             req,
             resp,
             server_request_callback,
@@ -3098,7 +3098,7 @@ impl DevServer {
     pub fn prepare_and_log_resolution_failures(&mut self) -> Result<(), bun_core::Error> {
         // Since resolution failures can be asynchronous, their logs are not inserted
         // until the very end.
-        let resolution_failures = &self.current_bundle.as_ref().unwrap().resolution_failure_entries;
+        let resolution_failures = &self.current_bundle.as_ref().expect("infallible: bundle active").resolution_failure_entries;
         if !resolution_failures.is_empty() {
             for (owner, log) in resolution_failures.keys().iter().zip(resolution_failures.values()) {
                 if log.has_errors() {
@@ -3368,7 +3368,7 @@ impl DevServer {
                 &buf[..written]
             };
             let s = OwnedString::new(BunString::clone_utf8(path));
-            arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
+            arr.put_index(global, u32::try_from(i).expect("int cast"), s.to_js(global)?)?;
         }
         Ok(arr)
     }
@@ -3443,7 +3443,7 @@ impl DevServer {
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
             let s = OwnedString::new(BunString::clone_utf8(self.relative_path(&mut *buf, &names[item.get() as usize])));
-            arr.put_index(global, u32::try_from(i).unwrap(), s.to_js(global)?)?;
+            arr.put_index(global, u32::try_from(i).expect("int cast"), s.to_js(global)?)?;
         }
         Ok(arr)
     }
@@ -3587,7 +3587,7 @@ pub fn finalize_bundle(
     // PORT NOTE: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
     // `current_bundle!()` macro (Zig freely re-aliased `dev.current_bundle.?`).
-    let current_bundle_ptr: *mut CurrentBundle = dev.current_bundle.as_mut().unwrap();
+    let current_bundle_ptr: *mut CurrentBundle = dev.current_bundle.as_mut().expect("infallible: bundle active");
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
@@ -3858,7 +3858,7 @@ pub fn finalize_bundle(
         html.script_injection_offset =
             Some(route_bundle::ByteOffset(*compile_result_offset));
 
-        chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).unwrap());
+        chunk.entry_point.set_entry_point_id(u32::try_from(route_bundle_index.get()).expect("int cast"));
     }
 
     // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
@@ -4089,7 +4089,7 @@ pub fn finalize_bundle(
             if bundle.active_viewers == 0 {
                 continue;
             }
-            w_int!(i32, i32::try_from(bundled_route_index).unwrap());
+            w_int!(i32, i32::try_from(bundled_route_index).expect("int cast"));
         }
     }
     w_int!(i32, -1);
@@ -4161,7 +4161,7 @@ pub fn finalize_bundle(
             // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
             // is still live; the two do not actually alias.
             let route_bundle: *mut RouteBundle =
-                dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).unwrap()));
+                dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).expect("int cast")));
             // SAFETY: `route_bundle` points into `dev.route_bundles`, which is not
             // resized inside this loop; `trace_all_route_imports` does not mutate
             // `route_bundles`.
@@ -4182,7 +4182,7 @@ pub fn finalize_bundle(
             if route_bundle.active_viewers == 0 || !will_hear_hot_update {
                 continue;
             }
-            w_int!(i32, i32::try_from(i).unwrap());
+            w_int!(i32, i32::try_from(i).expect("int cast"));
 
             // If no edges were changed, then it is impossible to
             // change the list of CSS files.
@@ -4192,7 +4192,7 @@ pub fn finalize_bundle(
                 dev.trace_all_route_imports(route_bundle, ctx.gts, TraceImportGoal::FindCss)?;
                 let css_ids = &dev.client_graph.current_css_files;
 
-                w_int!(i32, i32::try_from(css_ids.len()).unwrap());
+                w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
                 for css_id in css_ids {
                     let mut hex = [0u8; 16];
                     let n = bun_core::fmt::bytes_to_hex_lower(&css_id.to_ne_bytes(), &mut hex);
@@ -4210,7 +4210,7 @@ pub fn finalize_bundle(
         if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
             // Send CSS mutations
             let asset_values = dev.assets.files.values();
-            w_int!(u32, u32::try_from(css_chunks.len()).unwrap());
+            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
             use bun_bundler::Graph::InputFileListExt as _;
             let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks {
@@ -4227,7 +4227,7 @@ pub fn finalize_bundle(
                 .blob
                 .internal_blob()
                 .bytes;
-                w_int!(u32, u32::try_from(css_data.len()).unwrap());
+                w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }
 
@@ -4669,7 +4669,7 @@ impl DevServer {
             let idx = self.server_graph.insert_stale(abs_path, graph == bake::Graph::Ssr)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
-        let current_bundle = self.current_bundle.as_mut().unwrap();
+        let current_bundle = self.current_bundle.as_mut().expect("infallible: bundle active");
         let gop = current_bundle.resolution_failure_entries.get_or_put(owner)?;
         if !gop.found_existing {
             *gop.value_ptr = Log::init();
@@ -4708,7 +4708,7 @@ impl DevServer {
                     return Some(CacheEntry {
                         kind: g
                             .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).unwrap(),
+                                u32::try_from(index).expect("int cast"),
                             ))
                             .file_kind(),
                     });
@@ -4789,8 +4789,8 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         return;
     }
 
-    if dev.server.as_ref().unwrap().config().on_request.is_some() {
-        dev.server.as_mut().unwrap().on_request(req, resp);
+    if dev.server.as_ref().expect("infallible: server bound").config().on_request.is_some() {
+        dev.server.as_mut().expect("infallible: server bound").on_request(req, resp);
         return;
     }
 
@@ -4884,7 +4884,7 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        let bundle_index = route_bundle::Index::init(u32::try_from(self.route_bundles.len()).unwrap());
+        let bundle_index = route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
 
         self.route_bundles.reserve(1);
         // PERF(port): was assume_capacity
@@ -5395,7 +5395,7 @@ impl DevServer {
         {
             let keys = self.source_maps.entries.keys();
             let values = self.source_maps.entries.values();
-            payload.extend_from_slice(&u32::try_from(keys.len()).unwrap().to_le_bytes());
+            payload.extend_from_slice(&u32::try_from(keys.len()).expect("int cast").to_le_bytes());
             for (key, value) in keys.iter().zip(values) {
                 debug_assert!(value.ref_count > 0);
                 payload.extend_from_slice(&key.get().to_ne_bytes());
@@ -5425,13 +5425,13 @@ impl DevServer {
         macro_rules! emit_files {
             ($side:expr, $g:expr) => {{
                 let g = $g;
-                payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).unwrap().to_le_bytes());
+                payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).expect("int cast").to_le_bytes());
                 for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
                     // PORT NOTE: un-gated `incremental_graph::File` is unpacked already.
                     let file = v;
                     let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);
-                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
+                    payload.extend_from_slice(&u32::try_from(normalized_key.len()).expect("int cast").to_le_bytes());
                     if k.is_empty() { continue; }
                     payload.extend_from_slice(normalized_key);
                     payload.push((g.stale_files.is_set_allow_out_of_bound(i, true) || file.failed) as u8);
@@ -5459,7 +5459,7 @@ impl DevServer {
             ($g:expr) => {{
                 let g = $g;
                 let live = g.edges.len() - g.edges_free_list.len();
-                payload.extend_from_slice(&u32::try_from(live).unwrap().to_le_bytes());
+                payload.extend_from_slice(&u32::try_from(live).expect("int cast").to_le_bytes());
                 let mut emitted = 0usize;
                 for (i, edge) in g.edges.iter().enumerate() {
                     if g.edges_free_list
@@ -5904,7 +5904,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_
         debug_assert!(SIDE == safe.side());
         return incremental_graph::FileIndex::<SIDE>::init(safe.index());
     }
-    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).unwrap())
+    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).expect("int cast"))
 }
 
 impl DevServer {
@@ -6323,7 +6323,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         let route_bundle_index = self.route_bundle_index;
         match bundle_field {
             BundleQueueType::CurrentBundle => {
-                let cb = self.dev_mut().current_bundle.as_mut().unwrap();
+                let cb = self.dev_mut().current_bundle.as_mut().expect("infallible: bundle active");
                 if cb.promise.strong.has_value() {
                     cb.promise
                         .route_bundle_indices
@@ -6334,7 +6334,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
-                let cb = self.dev_mut().current_bundle.as_mut().unwrap();
+                let cb = self.dev_mut().current_bundle.as_mut().expect("infallible: bundle active");
                 cb.promise
                     .route_bundle_indices
                     .put(route_bundle_index, ())
@@ -6370,7 +6370,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     fn on_loaded(&mut self) -> JsResult<()> {
         let _ = self.ensure_promise();
         // SAFETY: p was set by ensure_promise
-        unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
+        unsafe { &mut *self.p.expect("infallible: promise bound") }.resolve(self.global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
         self.dev_mut().vm_mut().drain_microtasks();
         Ok(())
@@ -6408,7 +6408,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
     fn on_plugin_error(&mut self) -> JsResult<()> {
         let _ = self.ensure_promise();
         // SAFETY: p was set by ensure_promise
-        unsafe { &mut *self.p.unwrap() }
+        unsafe { &mut *self.p.expect("infallible: promise bound") }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
         self.dev_mut().vm_mut().drain_microtasks();
@@ -6530,7 +6530,7 @@ fn bundle_new_route_js_function_impl(
 
     debug_assert!(ctx.p.is_some());
     // SAFETY: p was set above
-    array.put_index(global, 1, unsafe { &*ctx.p.unwrap() }.to_js())?;
+    array.put_index(global, 1, unsafe { &*ctx.p.expect("infallible: promise bound") }.to_js())?;
 
     Ok(array)
 }
@@ -6614,7 +6614,7 @@ fn new_route_params_for_bundle_promise_for_js(
     let dev: &mut DevServer = unsafe { &mut *dev_ptr };
 
     let route_bundle_index =
-        route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).unwrap());
+        route_bundle::Index::init(u32::try_from(route_bundle_index_js.to_int32()).expect("int cast"));
 
     let url = OwnedString::new(url_js.to_bun_string(global)?);
     let url_utf8 = url.to_utf8();

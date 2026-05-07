@@ -259,7 +259,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
 
     pub fn print_with_reason<const REASON: Reason>(show_all_flags: bool) {
         let mut rand_state = bun_core::rand::DefaultPrng::init(
-            u64::try_from(bun_core::time::milli_timestamp().max(0)).unwrap(),
+            u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
         // Zig `random().uintAtMost(usize, n)` — DefaultPrng has no `random()`
         // accessor in the Rust port; sample `next_u64()` and reduce mod len.
@@ -721,7 +721,7 @@ pub mod command {
                 }
                 // SAFETY: Bun__WebView__hostMain is a noreturn extern that takes
                 // ownership of the IPC fd; `fd` validated above to fit i32.
-                unsafe { host_main(i32::try_from(fd).unwrap()) };
+                unsafe { host_main(i32::try_from(fd).expect("int cast")) };
             }
         }
 

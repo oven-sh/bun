@@ -406,15 +406,15 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             match c {
                 14..=127 => {
                     if let Some(j) =
-                        strings::index_of_newline_or_non_ascii(slice, u32::try_from(i).unwrap())
+                        strings::index_of_newline_or_non_ascii(slice, u32::try_from(i).expect("int cast"))
                     {
                         self.generated_column +=
-                            i32::try_from((j as usize - i) + 1).unwrap();
+                            i32::try_from((j as usize - i) + 1).expect("int cast");
                         i = j as usize;
                         continue;
                     } else {
                         self.generated_column +=
-                            i32::try_from(slice[i..].len()).unwrap() + 1;
+                            i32::try_from(slice[i..].len()).expect("int cast") + 1;
                         i = n;
                         break;
                     }
@@ -506,16 +506,16 @@ impl<T: SourceMapFormatCtx> NewBuilder<T> {
             use crate::line_offset_table::ListExt as _;
             LineOffsetTable::find_line(list.items_byte_offset_to_start_of_line(), loc)
         };
-        let line = list.get(usize::try_from(original_line.max(0)).unwrap());
+        let line = list.get(usize::try_from(original_line.max(0)).expect("int cast"));
 
         // Use the line to compute the column
         let mut original_column =
-            loc.start - i32::try_from(line.byte_offset_to_start_of_line).unwrap();
+            loc.start - i32::try_from(line.byte_offset_to_start_of_line).expect("int cast");
         if line.columns_for_non_ascii.slice().len() > 0
-            && original_column >= i32::try_from(line.byte_offset_to_first_non_ascii).unwrap()
+            && original_column >= i32::try_from(line.byte_offset_to_first_non_ascii).expect("int cast")
         {
             original_column = line.columns_for_non_ascii.slice()
-                [(u32::try_from(original_column).unwrap() - line.byte_offset_to_first_non_ascii)
+                [(u32::try_from(original_column).expect("int cast") - line.byte_offset_to_first_non_ascii)
                     as usize];
         }
 

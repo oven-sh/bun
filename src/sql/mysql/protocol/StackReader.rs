@@ -60,7 +60,7 @@ impl<'a> StackReader<'a> {
             return;
         }
 
-        let ucount: usize = usize::try_from(count).unwrap();
+        let ucount: usize = usize::try_from(count).expect("int cast");
         if self.offset.get() + ucount > self.buffer.len() {
             self.offset.set(self.buffer.len());
             return;
@@ -75,7 +75,7 @@ impl<'a> StackReader<'a> {
             return Err(AnyMySQLError::ShortRead);
         }
 
-        self.skip(isize::try_from(count).unwrap());
+        self.skip(isize::try_from(count).expect("int cast"));
         // Data::Temporary stores a raw fat pointer (see shared/Data.rs).
         Ok(Data::Temporary(
             &self.buffer[offset..self.offset.get()] as *const [u8],
@@ -86,7 +86,7 @@ impl<'a> StackReader<'a> {
         let remaining = self.peek();
         if let Some(zero) = strings::index_of_char(remaining, 0) {
             let zero = zero as usize;
-            self.skip(isize::try_from(zero + 1).unwrap());
+            self.skip(isize::try_from(zero + 1).expect("int cast"));
             return Ok(Data::Temporary(&remaining[0..zero] as *const [u8]));
         }
 

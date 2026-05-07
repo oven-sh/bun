@@ -246,13 +246,13 @@ impl Options {
 
         if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
-                options.cols = u16::try_from(n).unwrap();
+                options.cols = u16::try_from(n).expect("int cast");
             }
         }
 
         if let Some(n) = js_options.get_optional_i32(global_object, b"rows")? {
             if n > 0 && n <= 65535 {
-                options.rows = u16::try_from(n).unwrap();
+                options.rows = u16::try_from(n).expect("int cast");
             }
         }
 
@@ -392,12 +392,12 @@ impl Terminal {
             #[cfg(not(windows))]
             hpcon: (),
             cols: if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.cols)).unwrap()
+                u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
             } else {
                 options.cols
             },
             rows: if cfg!(windows) {
-                u16::try_from(clamp_to_coord(options.rows)).unwrap()
+                u16::try_from(clamp_to_coord(options.rows)).expect("int cast")
             } else {
                 options.rows
             },
@@ -1184,7 +1184,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
 /// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
 #[inline]
 fn clamp_to_coord(v: u16) -> i16 {
-    i16::try_from(v.min(u16::try_from(i16::MAX).unwrap())).unwrap()
+    i16::try_from(v.min(u16::try_from(i16::MAX).expect("int cast"))).unwrap()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -1352,16 +1352,16 @@ impl Terminal {
         let write_result = self.writer.write(bytes);
         match write_result {
             bun_io::WriteResult::Done(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).unwrap() as f64))
+                Ok(JSValue::js_number(i32::try_from(amt).expect("int cast") as f64))
             }
             bun_io::WriteResult::Wrote(amt) => {
-                Ok(JSValue::js_number(i32::try_from(amt).unwrap() as f64))
+                Ok(JSValue::js_number(i32::try_from(amt).expect("int cast") as f64))
             }
             // On Windows the streaming writer buffers and returns .pending=0; the
             // bytes were accepted, so report bytes.len to match POSIX semantics.
             bun_io::WriteResult::Pending(amt) => {
                 let n = if cfg!(windows) { bytes.len() } else { amt };
-                Ok(JSValue::js_number(i32::try_from(n).unwrap() as f64))
+                Ok(JSValue::js_number(i32::try_from(n).expect("int cast") as f64))
             }
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
@@ -1386,7 +1386,7 @@ impl Terminal {
             if args[0].is_number() {
                 let n = args[0].to_int32();
                 if n > 0 && n <= 65535 {
-                    break 'blk u16::try_from(n).unwrap();
+                    break 'blk u16::try_from(n).expect("int cast");
                 }
             }
             return Err(global_object.throw(format_args!("resize() requires valid cols argument")));
@@ -1396,7 +1396,7 @@ impl Terminal {
             if args[1].is_number() {
                 let n = args[1].to_int32();
                 if n > 0 && n <= 65535 {
-                    break 'blk u16::try_from(n).unwrap();
+                    break 'blk u16::try_from(n).expect("int cast");
                 }
             }
             return Err(global_object.throw(format_args!("resize() requires valid rows argument")));
@@ -1454,12 +1454,12 @@ impl Terminal {
         }
 
         self.cols = if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_cols)).unwrap()
+            u16::try_from(clamp_to_coord(new_cols)).expect("int cast")
         } else {
             new_cols
         };
         self.rows = if cfg!(windows) {
-            u16::try_from(clamp_to_coord(new_rows)).unwrap()
+            u16::try_from(clamp_to_coord(new_rows)).expect("int cast")
         } else {
             new_rows
         };

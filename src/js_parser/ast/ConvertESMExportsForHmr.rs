@@ -135,7 +135,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if new_len == 0 {
                     return Ok(());
                 }
-                st.decls.len = u32::try_from(new_len).unwrap();
+                st.decls.len = u32::try_from(new_len).expect("int cast");
 
                 break 'stmt stmt;
             }
@@ -151,13 +151,13 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         let Some(symbol) = f.func.name else {
                             break 'fast_refresh_edge_case;
                         };
-                        let name = p.symbols[symbol.ref_.unwrap().inner_index() as usize].original_name;
+                        let name = p.symbols[symbol.ref_.expect("infallible: ref bound").inner_index() as usize].original_name;
                         // SAFETY: arena-owned name slice valid for the parse.
                         if ReactRefresh::is_componentish_name(unsafe { &*name }) {
                             // Lower to a function statement, and reference the function in the export list.
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                                value: Some(Expr::init_identifier(symbol.ref_.unwrap(), stmt.loc)),
+                                value: Some(Expr::init_identifier(symbol.ref_.expect("infallible: ref bound"), stmt.loc)),
                                 ..Default::default()
                             });
                             break 'stmt *s;
@@ -172,7 +172,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         js_ast::StmtData::SClass(c) => {
                             c.class.can_be_moved()
                                 && (if let Some(name) = c.class.class_name {
-                                    p.symbols[name.ref_.unwrap().inner_index() as usize]
+                                    p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                         .use_count_estimate
                                         == 0
                                 } else {
@@ -181,7 +181,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         }
                         js_ast::StmtData::SFunction(f) => {
                             if let Some(name) = f.func.name {
-                                p.symbols[name.ref_.unwrap().inner_index() as usize]
+                                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
                                     .use_count_estimate
                                     == 0
                             } else {
@@ -254,10 +254,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             value: Some(Expr::init_identifier(
                                 match s.data {
                                     js_ast::StmtData::SClass(class) => {
-                                        class.class.class_name.unwrap().ref_.unwrap()
+                                        class.class.class_name.unwrap().ref_.expect("infallible: ref bound")
                                     }
                                     js_ast::StmtData::SFunction(func) => {
-                                        func.func.name.unwrap().ref_.unwrap()
+                                        func.func.name.unwrap().ref_.expect("infallible: ref bound")
                                     }
                                     _ => unreachable!(),
                                 },
@@ -275,7 +275,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     break 'stmt stmt;
                 }
 
-                let class_name_ref = st.class.class_name.unwrap().ref_.unwrap();
+                let class_name_ref = st.class.class_name.unwrap().ref_.expect("infallible: ref bound");
                 // Export as CommonJS
                 self.export_props.push(G::Property {
                     key: Some(Expr::init(
@@ -303,7 +303,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 self.visit_ref_to_export(
                     p,
-                    st.func.name.unwrap().ref_.unwrap(),
+                    st.func.name.unwrap().ref_.expect("infallible: ref bound"),
                     None,
                     stmt.loc,
                     false,
@@ -314,7 +314,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             js_ast::StmtData::SExportClause(st) => {
                 // SAFETY: arena-owned items slice valid for the parse.
                 for item in unsafe { (*st.items).iter() } {
-                    let ref_ = item.name.ref_.unwrap();
+                    let ref_ = item.name.ref_.expect("infallible: ref bound");
                     self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc, false)?;
                 }
 
@@ -332,7 +332,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 )?;
                 // SAFETY: arena-owned items slice valid for the parse.
                 for item in unsafe { (*st.items).iter_mut() } {
-                    let ref_ = item.name.ref_.unwrap();
+                    let ref_ = item.name.ref_.expect("infallible: ref bound");
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
                     // Always set the namespace alias using the deduplicated import
                     // record. When two `export { ... } from` statements reference
@@ -534,7 +534,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         ));
 
         *gop.value_ptr = ImportRef {
-            stmt_index: u32::try_from(self.stmts.len() - 1).unwrap(),
+            stmt_index: u32::try_from(self.stmts.len() - 1).expect("int cast"),
         };
         Ok(DeduplicatedImportResult { namespace_ref, import_record_index })
     }
@@ -788,7 +788,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // (Zig set `entries.len = 0` after `appendList`).
             part.tag = crate::PartTag::DeadDueToInlining;
             part.dependencies.clear_retaining_capacity();
-            part.dependencies.push(crate::Dependency { part_index: u32::try_from(last_idx).unwrap(), source_index: js_ast::Index { value: p.source.index.0 } });
+            part.dependencies.push(crate::Dependency { part_index: u32::try_from(last_idx).expect("int cast"), source_index: js_ast::Index { value: p.source.index.0 } });
         }
 
         self.last_part

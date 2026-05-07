@@ -628,7 +628,7 @@ impl InstallCompletionsCommand {
                 let input_size = end_pos.max(64 * 1024);
 
                 // defer dot_zshrc.close() — handled by Drop
-                let mut buf: Vec<u8> = vec![0u8; usize::try_from(input_size).unwrap() + completions_path.len() * 4 + 96];
+                let mut buf: Vec<u8> = vec![0u8; usize::try_from(input_size).expect("int cast") + completions_path.len() * 4 + 96];
 
                 let Ok(read) = dot_zshrc.pread_all(&mut buf, 0) else { break 'brk true };
 
@@ -658,7 +658,7 @@ impl InstallCompletionsCommand {
                     ),
                 );
 
-                if dot_zshrc.pwrite_all(extra, i64::try_from(read).unwrap()).is_err() {
+                if dot_zshrc.pwrite_all(extra, i64::try_from(read).expect("int cast")).is_err() {
                     break 'brk true;
                 }
 

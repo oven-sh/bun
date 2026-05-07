@@ -662,7 +662,7 @@ impl<T: VersionInt> VersionType<T> {
             }
         }
 
-        result.len = u32::try_from(i).unwrap();
+        result.len = u32::try_from(i).expect("int cast");
 
         result
     }

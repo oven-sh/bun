@@ -258,7 +258,7 @@ impl UUID5 {
         };
 
         // Take first 16 bytes of the hash
-        let mut bytes: [u8; 16] = hash[0..16].try_into().unwrap();
+        let mut bytes: [u8; 16] = hash[0..16].try_into().expect("infallible: size matches");
 
         // Set version to 5 (bits 12-15 of time_hi_and_version)
         bytes[6] = (bytes[6] & 0x0F) | 0x50;

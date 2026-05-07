@@ -865,7 +865,7 @@ abcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefghabcdefgh";
 
         debug_assert_eq!(sizes.len(), outcomes.len());
         for (s, e) in sizes.iter().zip(outcomes.iter()) {
-            let r = RapidHash::hash(RapidHash::RAPID_SEED, &BYTES[0..usize::try_from(*s).unwrap()]);
+            let r = RapidHash::hash(RapidHash::RAPID_SEED, &BYTES[0..usize::try_from(*s).expect("int cast")]);
             assert_eq!(*e, r);
         }
     }

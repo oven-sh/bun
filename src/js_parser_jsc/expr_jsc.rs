@@ -112,8 +112,8 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
         {
             return Err(ToJSError::CannotConvertArgumentTypeToJS);
         }
-        let key = data_to_js(&prop.key.as_ref().unwrap().data, global)?;
-        let value = expr_to_js(prop.value.as_ref().unwrap(), global)?;
+        let key = data_to_js(&prop.key.as_ref().expect("infallible: prop has key").data, global)?;
+        let value = expr_to_js(prop.value.as_ref().expect("infallible: prop has value"), global)?;
         JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
     }
 

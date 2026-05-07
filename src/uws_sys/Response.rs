@@ -265,7 +265,7 @@ impl<const SSL: bool> Response<SSL> {
             c::uws_res_override_write_offset(
                 Self::ssl_flag(),
                 self.downcast(),
-                u64::try_from(offset).unwrap(),
+                u64::try_from(offset).expect("int cast"),
             )
         }
     }

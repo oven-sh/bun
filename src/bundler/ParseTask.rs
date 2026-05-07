@@ -1095,7 +1095,7 @@ fn get_ast(
                         Vec::<u32>::init_capacity(import_records_len as usize)?;
                     unsafe { import_record_indices.set_len((import_records_len) as usize) };
                     for (index, import_record) in import_record_indices.slice_mut().iter_mut().enumerate() {
-                        *import_record = u32::try_from(index).unwrap();
+                        *import_record = u32::try_from(index).expect("int cast");
                     }
                     break 'brk2 import_record_indices;
                 },

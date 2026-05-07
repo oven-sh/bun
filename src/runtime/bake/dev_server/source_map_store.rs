@@ -320,8 +320,8 @@ impl Entry {
                     let source_index = i + 1;
                     let content: &packed_map::PackedMap = source_map.as_ref();
                     let start_state = SourceMapState {
-                        source_index: i32::try_from(source_index).unwrap(),
-                        generated_line: i32::try_from(lines_between).unwrap(),
+                        source_index: i32::try_from(source_index).expect("int cast"),
+                        generated_line: i32::try_from(lines_between).expect("int cast"),
                         generated_column: 0,
                         original_line: 0,
                         original_column: 0,
@@ -336,7 +336,7 @@ impl Entry {
                     )?;
 
                     prev_end_state = SourceMapState {
-                        source_index: i32::try_from(source_index).unwrap(),
+                        source_index: i32::try_from(source_index).expect("int cast"),
                         generated_line: 0,
                         generated_column: 0,
                         original_line: content.end_state.original_line,
@@ -417,7 +417,7 @@ impl WeakRef {
     #[inline]
     pub fn init(k: Key, count: u32, expire: i64) -> WeakRef {
         WeakRef {
-            key_top_bits: u32::try_from(k.get() >> 32).unwrap(),
+            key_top_bits: u32::try_from(k.get() >> 32).expect("int cast"),
             count,
             expire,
         }
@@ -738,7 +738,7 @@ impl SourceMapStore {
         match source_map::mapping::parse(
             &vlq_bytes,
             None,
-            i32::try_from(entry.paths.len()).unwrap(),
+            i32::try_from(entry.paths.len()).expect("int cast"),
             0, // unused
             Default::default(),
         ) {
@@ -750,7 +750,7 @@ impl SourceMapStore {
                 None
             }
             source_map::ParseResult::Success(psm) => Some(GetResult {
-                index: EntryIndex::init(u32::try_from(index).unwrap()),
+                index: EntryIndex::init(u32::try_from(index).expect("int cast")),
                 mappings: psm.mappings,
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

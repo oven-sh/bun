@@ -294,8 +294,8 @@ impl UnicodeRange {
         if question_marks > 0 {
             if text.is_empty() {
                 return Some(UnicodeRange {
-                    start: first_hex_value << u32::try_from(question_marks * 4).unwrap(),
-                    end: ((first_hex_value + 1) << u32::try_from(question_marks * 4).unwrap()) - 1,
+                    start: first_hex_value << u32::try_from(question_marks * 4).expect("int cast"),
+                    end: ((first_hex_value + 1) << u32::try_from(question_marks * 4).expect("int cast")) - 1,
                 });
             }
         } else if text.is_empty() {

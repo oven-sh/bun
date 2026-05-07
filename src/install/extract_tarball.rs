@@ -289,7 +289,7 @@ impl ExtractTarball {
                     // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
                     // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
                     let last_4_bytes: u32 = u32::from_ne_bytes(
-                        tgz_bytes[tgz_bytes.len() - 4..][..4].try_into().unwrap(),
+                        tgz_bytes[tgz_bytes.len() - 4..][..4].try_into().expect("infallible: size matches"),
                     );
                     if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
                         // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.

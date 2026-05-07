@@ -160,7 +160,7 @@ impl BlockList {
         let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Addr(address));
         this.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
+            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
         Ok(JSValue::UNDEFINED)
@@ -204,7 +204,7 @@ impl BlockList {
         let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Range { start, end });
         this.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
+            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
         Ok(JSValue::UNDEFINED)
@@ -245,7 +245,7 @@ impl BlockList {
         let _guard = this.mutex.lock_guard();
         this.da_rules.insert(0, Rule::Subnet { network, prefix });
         this.estimated_size.fetch_add(
-            u32::try_from(core::mem::size_of::<Rule>()).unwrap(),
+            u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
         );
         Ok(JSValue::UNDEFINED)

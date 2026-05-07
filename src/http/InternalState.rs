@@ -243,7 +243,7 @@ impl InternalState {
                     && buffer.len() < 1024 * 1024 * 1024
                 {
                     let estimated_size: u32 = u32::from_ne_bytes(
-                        buffer[buffer.len() - 4..][..4].try_into().unwrap(),
+                        buffer[buffer.len() - 4..][..4].try_into().expect("infallible: size matches"),
                     );
                     // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
                     if (estimated_size as usize) > deflater.shared_buffer.len()

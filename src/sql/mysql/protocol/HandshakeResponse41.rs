@@ -63,7 +63,7 @@ impl HandshakeResponse41 {
         if self.capability_flags.CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
             writer.write_length_encoded_string(auth_data)?;
         } else if self.capability_flags.CLIENT_SECURE_CONNECTION {
-            writer.int1(u8::try_from(auth_data.len()).unwrap())?;
+            writer.int1(u8::try_from(auth_data.len()).expect("int cast"))?;
             writer.write(auth_data)?;
         } else {
             writer.write_z(auth_data)?;

@@ -246,7 +246,7 @@ pub fn write_data_windowed(
     let mut consumed: usize = 0;
     loop {
         let window: usize =
-            usize::try_from(stream.send_window.min(session.conn_send_window).max(0)).unwrap();
+            usize::try_from(stream.send_window.min(session.conn_send_window).max(0)).expect("int cast");
         if !remaining.is_empty() && window == 0 {
             break;
         }
@@ -274,8 +274,8 @@ pub fn write_data_windowed(
             stream.id,
             &remaining[0..chunk_len],
         );
-        stream.send_window -= i32::try_from(chunk_len).unwrap();
-        session.conn_send_window -= i32::try_from(chunk_len).unwrap();
+        stream.send_window -= i32::try_from(chunk_len).expect("int cast");
+        session.conn_send_window -= i32::try_from(chunk_len).expect("int cast");
         consumed += chunk_len;
         remaining = &remaining[chunk_len..];
         if last {
@@ -409,7 +409,7 @@ pub fn encode_header(
 pub fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     if value < 31 {
         // PERF(port): was assume_capacity
-        encoded.push(0x20 | u8::try_from(value).unwrap());
+        encoded.push(0x20 | u8::try_from(value).expect("int cast"));
         return;
     }
     // PERF(port): was assume_capacity

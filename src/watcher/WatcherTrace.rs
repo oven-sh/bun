@@ -71,7 +71,7 @@ pub fn write_events(watchlist: &WatchList, events: &[WatchEvent], changed_files:
     // I/O set; revisit if a `bun_core::time` helper exists.
     let timestamp: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| i64::try_from(d.as_millis()).unwrap())
+        .map(|d| i64::try_from(d.as_millis()).expect("int cast"))
         .unwrap_or(0);
 
     // Write: { "timestamp": number, "files": { ... } }

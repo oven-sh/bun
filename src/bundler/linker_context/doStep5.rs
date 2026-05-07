@@ -275,7 +275,7 @@ impl LinkerContext<'_> {
                 for &other_part_index in other_parts {
                     let local = local_dependencies.get_or_put(other_part_index).expect("unreachable");
                     if !local.found_existing || (*local.value_ptr) as usize != part_index {
-                        *local.value_ptr = u32::try_from(part_index).unwrap();
+                        *local.value_ptr = u32::try_from(part_index).expect("int cast");
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies
                             .push(Dependency {
@@ -290,7 +290,7 @@ impl LinkerContext<'_> {
                 if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
                     existing
                         .local_parts_with_uses
-                        .push(u32::try_from(part_index).unwrap());
+                        .push(u32::try_from(part_index).expect("int cast"));
                 }
             }
         }

@@ -172,7 +172,7 @@ impl<'a> Shebang<'a> {
         Ok(Shebang {
             launcher,
             // TODO(@paperclover): what if this is invalid utf8?
-            utf16_len: u32::try_from(simdutf::length::utf16::from::utf8(launcher)).unwrap(),
+            utf16_len: u32::try_from(simdutf::length::utf16::from::utf8(launcher)).expect("int cast"),
             is_node_or_bun,
         })
     }
@@ -406,7 +406,7 @@ impl<'a> BinLinkingShim<'a> {
             // Zig wrote via `*align(1) u32` — use unaligned writes.
             unsafe {
                 (wbuf.as_mut_ptr().cast::<u32>())
-                    .write_unaligned(u32::try_from(self.bin_path.len() * 2).unwrap());
+                    .write_unaligned(u32::try_from(self.bin_path.len() * 2).expect("int cast"));
                 (wbuf.as_mut_ptr().add(2).cast::<u32>())
                     .write_unaligned((s.utf16_len) * 2 + 2); // include the spaces!
             }

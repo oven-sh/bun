@@ -734,8 +734,8 @@ fn from_bytes_typed_array<Elem: Copy>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
-    let dimensions_raw: types::int4 = u32::from_ne_bytes(bytes[0..4].try_into().unwrap());
-    let contains_nulls: types::int4 = u32::from_ne_bytes(bytes[4..8].try_into().unwrap());
+    let dimensions_raw: types::int4 = u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"));
+    let contains_nulls: types::int4 = u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
 
     let dimensions = dimensions_raw.swap_bytes();
     if dimensions > 1 {
@@ -773,7 +773,7 @@ fn from_bytes_typed_array<Elem: Copy>(
     if bytes.len() < 20 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
-    let array_len: i32 = i32::from_ne_bytes(bytes[12..16].try_into().unwrap()).swap_bytes();
+    let array_len: i32 = i32::from_ne_bytes(bytes[12..16].try_into().expect("infallible: size matches")).swap_bytes();
     if array_len < 0 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
@@ -781,7 +781,7 @@ fn from_bytes_typed_array<Elem: Copy>(
     // 4-byte length prefix + the 4-byte value for int4/float4).
     let element_stride: usize = size_of::<Elem>() * 2;
     let max_elements = (bytes.len() - 20) / element_stride;
-    if usize::try_from(array_len).unwrap() > max_elements {
+    if usize::try_from(array_len).expect("int cast") > max_elements {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
 
@@ -1041,7 +1041,7 @@ pub fn from_bytes(
             if binary {
                 if tag == T::time && bytes.len() == 8 {
                     // PostgreSQL sends time as microseconds since midnight in binary format
-                    let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes();
+                    let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
 
                     // Use C++ helper for formatting
                     let mut buffer = [0u8; 32];
@@ -1058,8 +1058,8 @@ pub fn from_bytes(
                     })
                 } else if tag == T::timetz && bytes.len() == 12 {
                     // PostgreSQL sends timetz as microseconds since midnight (8 bytes) + timezone offset in seconds (4 bytes)
-                    let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes();
-                    let tz_offset_seconds = i32::from_ne_bytes(bytes[8..12].try_into().unwrap()).swap_bytes();
+                    let microseconds = i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes();
+                    let tz_offset_seconds = i32::from_ne_bytes(bytes[8..12].try_into().expect("infallible: size matches")).swap_bytes();
 
                     // Use C++ helper for formatting with timezone
                     let mut buffer = [0u8; 48];
@@ -1222,7 +1222,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
             if cursor.len() < N {
                 return Err(err!("InvalidBuffer"));
             }
-            let v = <$ty>::from_be_bytes(cursor[..N].try_into().unwrap());
+            let v = <$ty>::from_be_bytes(cursor[..N].try_into().expect("infallible: size matches"));
             cursor = &cursor[N..];
             v
         }};
@@ -1278,7 +1278,7 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
 
         while idx <= weight as usize {
             // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
-            let digit: u16 = if i32::try_from(idx).unwrap() < i32::from(ndigits) { read_be!(u16) } else { 0 };
+            let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) { read_be!(u16) } else { 0 };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
             // TODO(port): std.fmt.printInt with width=4 fill='0'. NBASE=10000 so digit ∈ [0,9999].
             let digit_str: [u8; 4] = format_digit_4(digit);
@@ -1309,11 +1309,11 @@ fn parse_binary_numeric<'a>(input: &[u8], result: &'a mut Vec<u8>) -> Result<PGN
         // negative scale means we need to add zeros before the decimal point
         // greater than ndigits means we need to add zeros after the decimal point
         let mut idx: isize = scale_start as isize;
-        let end: usize = result.len() + usize::try_from(dscale).unwrap();
+        let end: usize = result.len() + usize::try_from(dscale).expect("int cast");
         while idx < dscale as isize {
             if idx >= 0 && idx < dscale as isize {
                 let digit: u16 = if cursor.len() >= 2 {
-                    let v = u16::from_be_bytes(cursor[..2].try_into().unwrap());
+                    let v = u16::from_be_bytes(cursor[..2].try_into().expect("infallible: size matches"));
                     cursor = &cursor[2..];
                     v
                 } else {
@@ -1360,15 +1360,15 @@ pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     if bytes.len() != 8 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
-    Ok(i64::from_ne_bytes(bytes[0..8].try_into().unwrap()).swap_bytes())
+    Ok(i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes())
 }
 
 pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i32),
-        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().unwrap())) as i32),
-        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().unwrap())) as i32),
+        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"))) as i32),
+        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"))) as i32),
         _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
@@ -1376,8 +1376,8 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
 pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     match bytes.len() {
         1 => Ok(bytes[0] as u32),
-        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().unwrap())) as u32),
-        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().unwrap()))),
+        2 => Ok(pg_ntoh16(u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"))) as u32),
+        4 => Ok(pg_ntoh32(u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches")))),
         _ => Err(AnyPostgresError::UnsupportedIntegerSize),
     }
 }
@@ -1389,7 +1389,7 @@ pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
         2 => {
             // PostgreSQL stores numbers in big-endian format, so we must read as big-endian
             // Read as raw 16-bit unsigned integer
-            let value: u16 = u16::from_ne_bytes(bytes[0..2].try_into().unwrap());
+            let value: u16 = u16::from_ne_bytes(bytes[0..2].try_into().expect("infallible: size matches"));
             // Convert from big-endian to native-endian (we always use little endian)
             Ok(value.swap_bytes() as i16) // Cast to signed 16-bit integer (i16)
         }

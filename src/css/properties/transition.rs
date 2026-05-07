@@ -457,7 +457,7 @@ fn expand_properties(
                     replace(allocator, rtl_props, rtl, i);
                 }
 
-                i += u32::try_from(ltr.len()).unwrap();
+                i += u32::try_from(ltr.len()).expect("int cast");
             }
             _ => {
                 // Expand vendor prefixes for targets.

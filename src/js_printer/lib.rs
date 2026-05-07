@@ -318,7 +318,7 @@ pub mod analyze_transpiled_module {
             }}; }
             macro_rules! eat_u32 { () => {{
                 let (o, _) = eat!(4);
-                u32::from_le_bytes(duped[o..o + 4].try_into().unwrap()) as usize
+                u32::from_le_bytes(duped[o..o + 4].try_into().expect("infallible: size matches")) as usize
             }}; }
 
             let record_kinds_len = eat_u32!();
@@ -675,7 +675,7 @@ fn format_unsigned_integer_between<const LEN: usize>(buf: &mut [u8; LEN], val: u
     let mut i = LEN;
     while i > 0 {
         i -= 1;
-        buf[i] = u8::try_from(remainder % 10).unwrap() + b'0';
+        buf[i] = u8::try_from(remainder % 10).expect("int cast") + b'0';
         remainder /= 10;
     }
     // PERF(port): was comptime `inline while` unrolling — profile in Phase B
@@ -974,10 +974,10 @@ where
                 i += width as usize;
 
                 if c <= 0xFF && !JSON {
-                    let k = usize::try_from(c).unwrap();
+                    let k = usize::try_from(c).expect("int cast");
                     writer.write_all(&[b'\\', b'x', HEX_CHARS[(k >> 4) & 0xF], HEX_CHARS[k & 0xF]])?;
                 } else if c <= 0xFFFF {
-                    let k = usize::try_from(c).unwrap();
+                    let k = usize::try_from(c).expect("int cast");
                     writer.write_all(&[
                         b'\\', b'u',
                         HEX_CHARS[(k >> 12) & 0xF],
@@ -986,7 +986,7 @@ where
                         HEX_CHARS[k & 0xF],
                     ])?;
                 } else {
-                    let k = usize::try_from(c - 0x10000).unwrap();
+                    let k = usize::try_from(c - 0x10000).expect("int cast");
                     let lo = FIRST_HIGH_SURROGATE as usize + ((k >> 10) & 0x3FF);
                     let hi = FIRST_LOW_SURROGATE as usize + (k & 0x3FF);
                     writer.write_all(&[
@@ -1869,7 +1869,7 @@ where
         if let Some(default) = &import.default_name {
             self.print_semicolon_if_needed();
             self.print(b"var ");
-            self.print_symbol(default.ref_.unwrap());
+            self.print_symbol(default.ref_.expect("infallible: ref bound"));
             match statement {
                 None => {
                     self.print_equals();
@@ -1922,7 +1922,7 @@ where
                     Some(s) => self.print(s),
                 }
             } else if let Some(name) = &import.default_name {
-                self.print_symbol(name.ref_.unwrap());
+                self.print_symbol(name.ref_.expect("infallible: ref bound"));
             } else {
                 self.print_symbol(import.namespace_ref);
             }
@@ -1936,19 +1936,19 @@ where
         if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
             if import.star_name_loc.is_some() {
                 let name = self.name_for_symbol(import.namespace_ref);
-                let mi = self.module_info().unwrap();
+                let mi = self.module_info().expect("infallible: module_info enabled");
                 let id = mi.str(name);
                 mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
             }
             if let Some(default) = &import.default_name {
-                let name = self.name_for_symbol(default.ref_.unwrap());
-                let mi = self.module_info().unwrap();
+                let name = self.name_for_symbol(default.ref_.expect("infallible: ref bound"));
+                let mi = self.module_info().expect("infallible: module_info enabled");
                 let id = mi.str(name);
                 mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
             }
             for item in slice_of(import.items).iter() {
-                let name = self.name_for_symbol(item.name.ref_.unwrap());
-                let mi = self.module_info().unwrap();
+                let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                let mi = self.module_info().expect("infallible: module_info enabled");
                 let id = mi.str(name);
                 mi.add_var(id, analyze_transpiled_module::VarKind::Declared);
             }
@@ -2367,7 +2367,7 @@ where
             match val {
                 0 => self.print(b"0"),
                 1..=9 => {
-                    let bytes = [b'0' + u8::try_from(val).unwrap()];
+                    let bytes = [b'0' + u8::try_from(val).expect("int cast")];
                     self.print(&bytes[..]);
                 }
                 10 => self.print(b"10"),
@@ -2818,7 +2818,7 @@ where
     }
 
     fn print_clause_item_as(&mut self, item: &js_ast::ClauseItem, as_: ClauseItemAs) {
-        let name = self.name_for_symbol(item.name.ref_.unwrap());
+        let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
 
         match as_ {
             ClauseItemAs::Import => {
@@ -2913,7 +2913,7 @@ where
 
                     match cursor.c as u32 {
                         0..=0xFFFF => {
-                            let c = usize::try_from(cursor.c).unwrap();
+                            let c = usize::try_from(cursor.c).expect("int cast");
                             self.print(&[
                                 b'\\', b'u',
                                 HEX_CHARS[c >> 12],
@@ -3095,7 +3095,7 @@ where
                 let mut found: Option<usize> = None;
                 if let Some(exports) = self.options.commonjs_named_exports {
                     for (idx, value) in exports.values().iter().enumerate() {
-                        if value.loc_ref.ref_.unwrap().eql(id.ref_) { found = Some(idx); break; }
+                        if value.loc_ref.ref_.expect("infallible: ref bound").eql(id.ref_) { found = Some(idx); break; }
                     }
                 }
                 if let Some(idx) = found {
@@ -3127,7 +3127,7 @@ where
                             self.print(b"]");
                         }
                     } else {
-                        self.print_symbol(value.loc_ref.ref_.unwrap());
+                        self.print_symbol(value.loc_ref.ref_.expect("infallible: ref bound"));
                     }
                 }
             }
@@ -4125,7 +4125,7 @@ where
 
                         match cursor.c as u32 {
                             0..=0xFFFF => {
-                                let c = usize::try_from(cursor.c).unwrap();
+                                let c = usize::try_from(cursor.c).expect("int cast");
                                 self.print(&[
                                     b'\\', b'u',
                                     HEX_CHARS[c >> 12], HEX_CHARS[(c >> 8) & 15],
@@ -4133,7 +4133,7 @@ where
                                 ][..]);
                             }
                             c => {
-                                let k = usize::try_from(c - 0x10000).unwrap();
+                                let k = usize::try_from(c - 0x10000).expect("int cast");
                                 let lo = (FIRST_HIGH_SURROGATE as usize) + ((k >> 10) & 0x3FF);
                                 let hi = (FIRST_LOW_SURROGATE as usize) + (k & 0x3FF);
                                 self.print(&[
@@ -4180,13 +4180,13 @@ where
         if !IS_JSON {
             if item.kind == G::PropertyKind::Spread {
                 self.print(b"...");
-                self.print_expr(item.value.unwrap(), Level::Comma, ExprFlag::none());
+                self.print_expr(item.value.expect("infallible: prop has value"), Level::Comma, ExprFlag::none());
                 return;
             }
 
             // Handle key syntax compression for cross-module constant inlining of enums
             if self.options.minify_syntax && item.flags.contains(js_ast::flags::Property::IsComputed) {
-                if let ExprData::EDot(dot) = &item.key.as_ref().unwrap().data {
+                if let ExprData::EDot(dot) = &item.key.as_ref().expect("infallible: prop has key").data {
                     if let Some(value) = self.try_to_get_imported_enum_value(dot.target, dot.name.slice()) {
                         match value {
                             js_ast::InlinedEnumValueDecoded::String(str) => {
@@ -4257,7 +4257,7 @@ where
             }
         }
 
-        let key = item.key.unwrap();
+        let key = item.key.expect("infallible: prop has key");
 
         if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {
             self.print(b"[");
@@ -4378,7 +4378,7 @@ where
 
         if item.kind != G::PropertyKind::Normal && item.kind != G::PropertyKind::AutoAccessor {
             if IS_JSON { unreachable!("item.kind must be normal in json"); }
-            if let ExprData::EFunction(func) = &item.value.as_ref().unwrap().data {
+            if let ExprData::EFunction(func) = &item.value.as_ref().expect("infallible: prop has value").data {
                 self.print_func(&func.func);
                 return;
             }
@@ -4662,7 +4662,7 @@ where
                 self.print_indent();
                 self.print_space_before_identifier();
                 self.add_source_mapping(stmt.loc);
-                let name_ref = s.class.class_name.as_ref().unwrap().ref_.unwrap();
+                let name_ref = s.class.class_name.as_ref().unwrap().ref_.expect("infallible: ref bound");
                 if s.is_export {
                     if !REWRITE_ESM_TO_CJS { self.print(b"export "); }
                 }
@@ -4741,7 +4741,7 @@ where
                                     self.maybe_print_space();
                                 }
 
-                                let func_name: Option<&[u8]> = func.func.name.as_ref().map(|name| self.name_for_symbol(name.ref_.unwrap()));
+                                let func_name: Option<&[u8]> = func.func.name.as_ref().map(|name| self.name_for_symbol(name.ref_.expect("infallible: ref bound")));
                                 if let Some(fn_name) = func_name {
                                     self.print_identifier(fn_name);
                                 }
@@ -4770,7 +4770,7 @@ where
                                 );
                                 if let Some(name) = &class.class.class_name {
                                     self.print(b"class ");
-                                    let n = self.name_for_symbol(name.ref_.unwrap());
+                                    let n = self.name_for_symbol(name.ref_.expect("infallible: ref bound"));
                                     self.print_identifier(n);
                                 } else {
                                     self.print(b"class");
@@ -4857,7 +4857,7 @@ where
                             let last = slice_of(s.items).len() - 1;
                             for (i, item) in slice_of(s.items).iter().enumerate() {
                                 // PORT NOTE: reshaped for borrowck — detach symbol from self.
-                                let symbol_ptr: *const Symbol = self.symbols().get_with_link_const(item.name.ref_.unwrap()).unwrap();
+                                let symbol_ptr: *const Symbol = self.symbols().get_with_link_const(item.name.ref_.expect("infallible: ref bound")).unwrap();
                                 // SAFETY: arena-backed symbol table outlives the print pass.
                                 let symbol = unsafe { &*symbol_ptr };
                                 let name = slice_of_const(symbol.original_name);
@@ -4922,14 +4922,14 @@ where
 
                         if !slice_of_const(item.original_name).is_empty() {
                             // PORT NOTE: reshaped for borrowck — detach symbol from self.
-                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.unwrap()).map(|s| s as *const _);
+                            let symbol_ptr: Option<*const Symbol> = self.symbols().get_const(item.name.ref_.expect("infallible: ref bound")).map(|s| s as *const _);
                             // SAFETY: arena-backed; symbol table outlives the print pass.
                             if let Some(symbol) = symbol_ptr.map(|p| unsafe { &*p }) {
                                 if let Some(namespace) = &symbol.namespace_alias {
                                     let import_record = self.import_record(namespace.import_record_index as usize);
                                     if namespace.was_originally_property_access {
                                         self.print(b"var ");
-                                        self.print_symbol(item.name.ref_.unwrap());
+                                        self.print_symbol(item.name.ref_.expect("infallible: ref bound"));
                                         self.print_equals();
                                         self.print_namespace_alias(import_record, namespace);
                                         self.print_semicolon_after_statement();
@@ -4977,7 +4977,7 @@ where
                         self.print_indent();
                     }
 
-                    let name = self.name_for_symbol(item.name.ref_.unwrap());
+                    let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
                     self.print_export_clause_item(item);
 
                     if Self::MAY_HAVE_MODULE_INFO {
@@ -5040,14 +5040,14 @@ where
                     // PORT NOTE: reshaped for borrowck — re-borrow module_info per item so
                     // `name_for_symbol` (which needs `&mut self`) can run between uses.
                     let irp_id = {
-                        let mi = self.module_info().unwrap();
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let id = mi.str(irp);
                         mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                         id
                     };
                     for item in slice_of(s.items).iter() {
-                        let name = self.name_for_symbol(item.name.ref_.unwrap());
-                        let mi = self.module_info().unwrap();
+                        let name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let alias_id = mi.str(slice_of_const(item.alias));
                         let name_id = mi.str(name);
                         mi.add_export_info_indirect(alias_id, name_id, irp_id);
@@ -5314,7 +5314,7 @@ where
                             self.print_space();
                             self.print(b"default:");
                             self.print_space();
-                            self.print_symbol(default_name.ref_.unwrap());
+                            self.print_symbol(default_name.ref_.expect("infallible: ref bound"));
 
                             if !slice_of(s.items).is_empty() {
                                 self.print_space();
@@ -5365,7 +5365,7 @@ where
 
                 if let Some(name) = &s.default_name {
                     self.print(b" ");
-                    self.print_symbol(name.ref_.unwrap());
+                    self.print_symbol(name.ref_.expect("infallible: ref bound"));
                     item_count += 1;
                 }
 
@@ -5453,7 +5453,7 @@ where
                     // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                     let import_record_path = &record.path.text;
                     let irp_id = {
-                        let mi = self.module_info().unwrap();
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let irp_id = mi.str(import_record_path);
                         use analyze_transpiled_module::FetchParameters as FP;
                         let fetch_parameters: FP = if IS_BUN_PLATFORM {
@@ -5488,8 +5488,8 @@ where
                     };
 
                     if let Some(name) = &s.default_name {
-                        let local_name = self.name_for_symbol(name.ref_.unwrap());
-                        let mi = self.module_info().unwrap();
+                        let local_name = self.name_for_symbol(name.ref_.expect("infallible: ref bound"));
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let local_name_id = mi.str(local_name);
                         mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                         let default_id = mi.str(b"default");
@@ -5497,8 +5497,8 @@ where
                     }
 
                     for item in slice_of(s.items).iter() {
-                        let local_name = self.name_for_symbol(item.name.ref_.unwrap());
-                        let mi = self.module_info().unwrap();
+                        let local_name = self.name_for_symbol(item.name.ref_.expect("infallible: ref bound"));
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let local_name_id = mi.str(local_name);
                         mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                         let alias_id = mi.str(slice_of_const(item.alias));
@@ -5507,7 +5507,7 @@ where
 
                     if record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) {
                         let local_name = self.name_for_symbol(s.namespace_ref);
-                        let mi = self.module_info().unwrap();
+                        let mi = self.module_info().expect("infallible: module_info enabled");
                         let local_name_id = mi.str(local_name);
                         mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
                         mi.add_import_info_namespace(irp_id, local_name_id);
@@ -5541,7 +5541,7 @@ where
                 self.print(b"break");
                 if let Some(label) = &s.label {
                     self.print(b" ");
-                    self.print_symbol(label.ref_.unwrap());
+                    self.print_symbol(label.ref_.expect("infallible: ref bound"));
                 }
                 self.print_semicolon_after_statement();
             }
@@ -5552,7 +5552,7 @@ where
                 self.print(b"continue");
                 if let Some(label) = &s.label {
                     self.print(b" ");
-                    self.print_symbol(label.ref_.unwrap());
+                    self.print_symbol(label.ref_.expect("infallible: ref bound"));
                 }
                 self.print_semicolon_after_statement();
             }
@@ -5643,7 +5643,7 @@ where
 
                     if let Some(default_name) = &s.default_name {
                         self.print(b", ");
-                        self.print_symbol(default_name.ref_.unwrap());
+                        self.print_symbol(default_name.ref_.expect("infallible: ref bound"));
                         self.print(b" = (($");
                         self.print_module_id(module_id);
                         self.print(b" && \"default\" in $");
@@ -5657,7 +5657,7 @@ where
                 } else {
                     if let Some(default_name) = &s.default_name {
                         self.print(b"var ");
-                        self.print_symbol(default_name.ref_.unwrap());
+                        self.print_symbol(default_name.ref_.expect("infallible: ref bound"));
                         self.print_equals();
                         self.print_disabled_import();
                     }
@@ -5673,7 +5673,7 @@ where
                 if let Some(default_name) = &s.default_name {
                     self.print(b",");
                     self.print_space();
-                    self.print_symbol(default_name.ref_.unwrap());
+                    self.print_symbol(default_name.ref_.expect("infallible: ref bound"));
                     self.print_equals();
 
                     if !IS_BUN_PLATFORM {
@@ -6039,7 +6039,7 @@ where
             if ASCII_ONLY && c > LAST_ASCII {
                 match c {
                     0..=0xFFFF => {
-                        let cu = usize::try_from(c).unwrap();
+                        let cu = usize::try_from(c).expect("int cast");
                         self.print(&[
                             b'\\', b'u',
                             HEX_CHARS[cu >> 12], HEX_CHARS[(cu >> 8) & 15],
@@ -6199,7 +6199,7 @@ where
         self.print_string_literal_utf8(source.path.pretty, false);
 
         let stmts = slice_of(part.stmts);
-        let func = &stmts[0].data.s_expr().unwrap().value.data.e_function().unwrap().func;
+        let func = &stmts[0].data.s_expr().unwrap().value.data.e_function().expect("infallible: variant checked").func;
 
         // Special-case lazy-export AST
         if ast.has_lazy_export {
@@ -6235,7 +6235,7 @@ where
                     let record = self.import_record(import.import_record_index as usize);
                     self.print_string_literal_utf8(&record.path.pretty, false);
 
-                    let item_count = u32::from(import.default_name.is_some()) + u32::try_from(slice_of(import.items).len()).unwrap();
+                    let item_count = u32::from(import.default_name.is_some()) + u32::try_from(slice_of(import.items).len()).expect("int cast");
                     let _ = self.fmt(format_args!(", {},", item_count));
                     if item_count == 0 {
                         // Add a comment explaining why the number could be zero
@@ -6455,13 +6455,13 @@ impl<C: WriterContext> Writer<C> {
 
     pub fn advance(&mut self, count: u64) {
         self.ctx.advance_by(count);
-        self.written += i32::try_from(count).unwrap();
+        self.written += i32::try_from(count).expect("int cast");
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, bun_core::Error> {
         let written = self.written.max(0);
         self.print_slice(bytes);
-        Ok(usize::try_from(self.written).unwrap() - usize::try_from(written).unwrap())
+        Ok(usize::try_from(self.written).expect("int cast") - usize::try_from(written).expect("int cast"))
     }
 
     #[inline]
@@ -6470,7 +6470,7 @@ impl<C: WriterContext> Writer<C> {
             Ok(n) => n,
             Err(err) => { self.orig_err = Some(err); 0 }
         };
-        self.written += i32::try_from(written).unwrap();
+        self.written += i32::try_from(written).expect("int cast");
         if written == 0 { self.err = Some(bun_core::err!("WriteFailed")); }
     }
 
@@ -6480,7 +6480,7 @@ impl<C: WriterContext> Writer<C> {
             Ok(n) => n,
             Err(err) => { self.orig_err = Some(err); 0 }
         };
-        self.written += i32::try_from(written).unwrap();
+        self.written += i32::try_from(written).expect("int cast");
         if written < s.len() {
             self.err = Some(if written == 0 { bun_core::err!("WriteFailed") } else { bun_core::err!("PartialWrite") });
         }
@@ -6616,13 +6616,13 @@ impl BufferWriter {
     pub fn get_last_last_byte(&self) -> u8 { self.last_bytes[0] }
 
     pub fn reserve_next(&mut self, count: u64) -> Result<*mut u8, bun_core::Error> {
-        self.buffer.grow_if_needed(usize::try_from(count).unwrap())?;
+        self.buffer.grow_if_needed(usize::try_from(count).expect("int cast"))?;
         // SAFETY: grow_if_needed ensured capacity; pointer to one-past-len is valid for write
         unsafe { Ok(self.buffer.list.as_mut_ptr().add(self.buffer.list.len())) }
     }
 
     pub fn advance_by(&mut self, count: u64) {
-        let count_usize = usize::try_from(count).unwrap();
+        let count_usize = usize::try_from(count).expect("int cast");
         if cfg!(debug_assertions) {
             debug_assert!(self.buffer.list.len() + count_usize <= self.buffer.list.capacity());
         }
@@ -6773,7 +6773,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
                     break 'brk bun_crash_handler::handle_oom::handle_oom(SourceMap::LineOffsetTable::generate(
                         // allocator dropped
                         &source.contents,
-                        i32::try_from(tree.approximate_newline_count).unwrap(),
+                        i32::try_from(tree.approximate_newline_count).expect("int cast"),
                     ));
                 }
                 break 'brk SourceMap::line_offset_table::List::EMPTY;
@@ -6984,7 +6984,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
+    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
 }
 
 pub fn print_json<W: WriterTrait>(
@@ -7028,7 +7028,7 @@ pub fn print_json<W: WriterTrait>(
     printer.writer.get_error()?;
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
+    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
@@ -7217,7 +7217,7 @@ pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERAT
 
     printer.writer.done()?;
 
-    Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
+    Ok(usize::try_from(printer.writer.written().max(0)).expect("int cast"))
 }
 
 /// Serializes ModuleInfo to an owned byte slice. Returns null on failure.

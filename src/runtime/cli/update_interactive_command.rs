@@ -1239,8 +1239,8 @@ impl UpdateInteractiveCommand {
                 // Reserve space for prompt + scroll indicators + buffer
                 let usable_height = if height > 6 { height - 4 } else { 20 };
                 return TerminalSize {
-                    height: usize::try_from(usable_height).unwrap(),
-                    width: usize::try_from(width).unwrap(),
+                    height: usize::try_from(usable_height).expect("int cast"),
+                    width: usize::try_from(width).expect("int cast"),
                 };
             }
         }
@@ -2570,7 +2570,7 @@ fn preserve_version_prefix(
                     return Ok(v.into_boxed_slice());
                 }
                 let mut v = Vec::new();
-                write!(&mut v, "{}={}", first_char as char, BStr::new(new_version)).unwrap();
+                write!(&mut v, "{}={}", first_char as char, BStr::new(new_version)).expect("infallible: in-memory write");
                 return Ok(v.into_boxed_slice());
             }
             if let Some(a) = alias {
@@ -2586,12 +2586,12 @@ fn preserve_version_prefix(
                 return Ok(v.into_boxed_slice());
             }
             let mut v = Vec::new();
-            write!(&mut v, "{}{}", first_char as char, BStr::new(new_version)).unwrap();
+            write!(&mut v, "{}{}", first_char as char, BStr::new(new_version)).expect("infallible: in-memory write");
             return Ok(v.into_boxed_slice());
         }
         if let Some(a) = alias {
             let mut v = Vec::new();
-            write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version)).unwrap();
+            write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version)).expect("infallible: in-memory write");
             return Ok(v.into_boxed_slice());
         }
     }

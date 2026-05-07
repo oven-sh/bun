@@ -363,7 +363,7 @@ impl<'a> TOML<'a> {
 
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
         let root = self.e(E::Object::default(), self.lexer.loc());
-        let mut head: *mut E::Object = root.data.e_object().unwrap().as_ptr();
+        let mut head: *mut E::Object = root.data.e_object().expect("infallible: variant checked").as_ptr();
         // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
         // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
 
@@ -400,7 +400,7 @@ impl<'a> TOML<'a> {
                         }
                         Err(e) => return Err(e.into()),
                     };
-                    head = parent_object.data.e_object().unwrap().as_ptr();
+                    head = parent_object.data.e_object().expect("infallible: variant checked").as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile in Phase B
                 }
                 // child table array
@@ -429,8 +429,8 @@ impl<'a> TOML<'a> {
                         Err(e) => return Err(e.into()),
                     };
                     let new_head = self.e(E::Object::default(), loc);
-                    array.data.e_array().unwrap().push(self.bump, new_head)?;
-                    head = new_head.data.e_object().unwrap().as_ptr();
+                    array.data.e_array().expect("infallible: variant checked").push(self.bump, new_head)?;
+                    head = new_head.data.e_object().expect("infallible: variant checked").as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile in Phase B
                 }
                 _ => {
@@ -467,7 +467,7 @@ impl<'a> TOML<'a> {
                 Err(SetError::Clobber) => {
                     let loc = rope.head.loc;
                     debug_assert!(loc.start > 0);
-                    let start: u32 = u32::try_from(loc.start).unwrap();
+                    let start: u32 = u32::try_from(loc.start).expect("int cast");
                     // std.ascii.whitespace = { ' ', '\t', '\n', '\r', 0x0B, 0x0C }
                     // PORT NOTE: reshaped for borrowck — `self.source()` returns
                     // `&'a Source` (independent of `&self`), so bind it before
@@ -547,7 +547,7 @@ impl<'a> TOML<'a> {
                 // profile in Phase B
                 let key_allocator = self.bump;
                 let expr = self.e(E::Object::default(), loc);
-                let obj: *mut E::Object = expr.data.e_object().unwrap().as_ptr();
+                let obj: *mut E::Object = expr.data.e_object().expect("infallible: variant checked").as_ptr();
                 // TODO(port): `obj` aliases into `expr.data`; raw pointer mirrors Zig.
 
                 while self.lexer.token != T::t_close_brace {
@@ -588,7 +588,7 @@ impl<'a> TOML<'a> {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let array_ = self.e(E::Array::default(), loc);
-                let array: *mut E::Array = array_.data.e_array().unwrap().as_ptr();
+                let array: *mut E::Array = array_.data.e_array().expect("infallible: variant checked").as_ptr();
                 // TODO(port): `array` aliases into `array_.data`; raw pointer mirrors Zig.
                 let bump = self.bump;
                 self.lexer.allow_double_bracket = false;

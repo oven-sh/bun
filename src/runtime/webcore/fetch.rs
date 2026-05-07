@@ -1670,7 +1670,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
 
                     let original_size = body.any_blob().blob().size;
-                    let stat_size = blob::SizeType::try_from(stat.st_size).unwrap();
+                    let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
                     let blob_size = if bun_sys::S::ISREG(stat.st_mode) {
                         stat_size
                     } else {

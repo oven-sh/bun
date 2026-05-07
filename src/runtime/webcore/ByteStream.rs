@@ -115,7 +115,7 @@ impl ByteStream {
         // #define LIBUS_RECV_BUFFER_LENGTH 524288
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        let page_size: blob::SizeType = blob::SizeType::try_from(bun_sys::page_size()).unwrap();
+        let page_size: blob::SizeType = blob::SizeType::try_from(bun_sys::page_size()).expect("int cast");
         streams::Start::ChunkSize((512 * 1024 + page_size).min(self.high_water_mark.max(page_size)))
     }
 

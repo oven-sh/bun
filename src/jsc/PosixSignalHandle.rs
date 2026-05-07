@@ -117,7 +117,7 @@ pub extern "C" fn Bun__onPosixSignal(number: i32) {
         // boxed ring buffer installed by `Bun__ensureSignalHandler` below.
         unsafe {
             if let Some(handler) = (*(*vm).event_loop()).signal_handler {
-                let _ = (*handler.as_ptr()).enqueue(u8::try_from(number).unwrap());
+                let _ = (*handler.as_ptr()).enqueue(u8::try_from(number).expect("int cast"));
             }
         }
     }

@@ -210,7 +210,7 @@ pub mod caching_sha2_password {
             let bio = unsafe {
                 boringssl::c::BIO_new_mem_buf(
                     public_key.as_ptr() as *const core::ffi::c_void,
-                    isize::try_from(public_key.len()).unwrap(),
+                    isize::try_from(public_key.len()).expect("int cast"),
                 )
             };
             if bio.is_null() {
@@ -279,7 +279,7 @@ pub mod caching_sha2_password {
                 return Err(err!("FailedToEncryptPassword"));
             }
             let encrypted_password_slice =
-                &encrypted_password[0..usize::try_from(encrypted_password_len).unwrap()];
+                &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
 
             let mut packet = writer.start(self.sequence_id)?;
             writer.write(encrypted_password_slice)?;

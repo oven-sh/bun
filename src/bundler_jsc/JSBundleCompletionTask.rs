@@ -423,7 +423,7 @@ impl<'a> JSBundleCompletionTask<'a> {
             && !strings::strings::has_suffix(&full_outfile_path, b".exe")
         {
             let mut v = Vec::with_capacity(full_outfile_path.len() + 4);
-            write!(&mut v, "{}.exe", bstr::BStr::new(&full_outfile_path)).unwrap();
+            write!(&mut v, "{}.exe", bstr::BStr::new(&full_outfile_path)).expect("infallible: in-memory write");
             full_outfile_path = v.into_boxed_slice();
         }
         // else: already owned (Zig: `bun.default_allocator.dupe(u8, ...)`)
@@ -572,7 +572,7 @@ impl<'a> JSBundleCompletionTask<'a> {
                         Box::from(bun_paths::basename(&output_files[i].dest_path))
                     } else {
                         let mut v = Vec::new();
-                        write!(&mut v, "{}.map", bstr::BStr::new(&full_outfile_path)).unwrap();
+                        write!(&mut v, "{}.map", bstr::BStr::new(&full_outfile_path)).expect("infallible: in-memory write");
                         Box::from(bun_paths::basename(&v))
                     };
 
@@ -823,7 +823,7 @@ impl<'a> JSBundleCompletionTask<'a> {
 
                     if let Err(err) = output_files_js.put_index(
                         global_this,
-                        u32::try_from(i).unwrap(),
+                        u32::try_from(i).expect("int cast"),
                         result,
                     ) {
                         return Ok(promise.reject(global_this, err));

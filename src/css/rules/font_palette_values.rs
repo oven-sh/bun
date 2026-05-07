@@ -150,7 +150,7 @@ impl OverrideColors {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
-        Ok(OverrideColors { index: u16::try_from(index).unwrap(), color })
+        Ok(OverrideColors { index: u16::try_from(index).expect("int cast"), color })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -192,7 +192,7 @@ impl BasePalette {
             if i < 0 {
                 return Err(input.new_custom_error(css::ParserError::invalid_value));
             }
-            return Ok(BasePalette::Integer(u16::try_from(i).unwrap()));
+            return Ok(BasePalette::Integer(u16::try_from(i).expect("int cast")));
         }
 
         let location = input.current_source_location();

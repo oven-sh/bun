@@ -144,7 +144,7 @@ impl Format {
         // scan the whole brand list and let a codec-specific brand win.
         if bytes.len() >= 16 && &bytes[4..8] == b"ftyp" {
             let box_: usize = bytes.len().min(
-                16usize.max(u32::from_be_bytes(bytes[0..4].try_into().unwrap()) as usize),
+                16usize.max(u32::from_be_bytes(bytes[0..4].try_into().expect("infallible: size matches")) as usize),
             );
             let mut miaf = false;
             let mut off: usize = 8;
@@ -347,8 +347,8 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             if bytes.len() < 24 {
                 return Err(Error::DecodeFailed);
             }
-            w = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
-            h = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+            w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
+            h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
         }
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
@@ -364,8 +364,8 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             if rw <= 0 || rh <= 0 {
                 return Err(Error::DecodeFailed);
             }
-            w = u32::try_from(rw).unwrap();
-            h = u32::try_from(rh).unwrap();
+            w = u32::try_from(rw).expect("int cast");
+            h = u32::try_from(rh).expect("int cast");
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -377,8 +377,8 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             {
                 return Err(Error::DecodeFailed);
             }
-            w = u32::try_from(cw).unwrap();
-            h = u32::try_from(ch).unwrap();
+            w = u32::try_from(cw).expect("int cast");
+            h = u32::try_from(ch).expect("int cast");
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
@@ -390,8 +390,8 @@ pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             if bytes.len() < 10 {
                 return Err(Error::DecodeFailed);
             }
-            w = u16::from_le_bytes(bytes[6..8].try_into().unwrap()) as u32;
-            h = u16::from_le_bytes(bytes[8..10].try_into().unwrap()) as u32;
+            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches")) as u32;
+            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches")) as u32;
         }
         Format::Tiff => {
             // IFD walk would be a full TIFF parser; defer to whoever
@@ -625,10 +625,10 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     // SAFETY: pure FFI query; all args are by-value ints, no pointers.
     let scratch_sz = unsafe {
         bun_image_resize_scratch_size(
-            i32::try_from(sw).unwrap(),
-            i32::try_from(sh).unwrap(),
-            i32::try_from(dw).unwrap(),
-            i32::try_from(dh).unwrap(),
+            i32::try_from(sw).expect("int cast"),
+            i32::try_from(sh).expect("int cast"),
+            i32::try_from(dw).expect("int cast"),
+            i32::try_from(dh).expect("int cast"),
             f as i32,
         )
     };
@@ -637,11 +637,11 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
-            i32::try_from(sw).unwrap(),
-            i32::try_from(sh).unwrap(),
+            i32::try_from(sw).expect("int cast"),
+            i32::try_from(sh).expect("int cast"),
             block.as_mut_ptr(),
-            i32::try_from(dw).unwrap(),
-            i32::try_from(dh).unwrap(),
+            i32::try_from(dw).expect("int cast"),
+            i32::try_from(dh).expect("int cast"),
             f as i32,
             block.as_mut_ptr().add(out_sz),
         )
@@ -673,10 +673,10 @@ pub fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded, Error
     unsafe {
         bun_image_rotate_rgba8(
             src.as_ptr(),
-            i32::try_from(w).unwrap(),
-            i32::try_from(h).unwrap(),
+            i32::try_from(w).expect("int cast"),
+            i32::try_from(h).expect("int cast"),
             out.as_mut_ptr(),
-            i32::try_from(degrees).unwrap(),
+            i32::try_from(degrees).expect("int cast"),
         )
     };
     Ok(Decoded { rgba: out, width: dw, height: dh, icc_profile: None })
@@ -697,8 +697,8 @@ pub fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Err
     unsafe {
         bun_image_flip_rgba8(
             src.as_ptr(),
-            i32::try_from(w).unwrap(),
-            i32::try_from(h).unwrap(),
+            i32::try_from(w).expect("int cast"),
+            i32::try_from(h).expect("int cast"),
             out.as_mut_ptr(),
             horizontal as i32,
         )

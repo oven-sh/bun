@@ -60,7 +60,7 @@ impl Socket {
                 payloads.as_ptr(),
                 lengths.as_ptr(),
                 addresses.as_ptr(),
-                c_int::try_from(payloads.len()).unwrap(),
+                c_int::try_from(payloads.len()).expect("int cast"),
             )
         }
     }
@@ -242,7 +242,7 @@ impl PacketBuffer {
         unsafe {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);
-            core::slice::from_raw_parts_mut(payload, usize::try_from(len).unwrap())
+            core::slice::from_raw_parts_mut(payload, usize::try_from(len).expect("int cast"))
         }
     }
 

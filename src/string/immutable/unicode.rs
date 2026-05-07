@@ -172,7 +172,7 @@ impl<'a, C: CodePointZero> NewCodePointIterator<'a, C> {
                 // SIMD found a potential candidate `pos` bytes ahead.
                 if pos > 0 {
                     // Jump the byte index to the start of the potential candidate.
-                    cursor.i = u32::try_from(next_scan_start_index + pos).unwrap();
+                    cursor.i = u32::try_from(next_scan_start_index + pos).expect("int cast");
                     // Reset width so next() decodes correctly from the jumped position.
                     cursor.width = 0;
                     // Loop will continue, starting the decode from the new cursor.i.
@@ -681,7 +681,7 @@ pub fn allocate_latin1_into_utf8_with_list(
                     // zig or LLVM doesn't do @ctz nicely with SIMD
                     if ASCII_VECTOR_SIZE >= 8 {
                         {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             let mask = bytes & 0x8080808080808080;
 
@@ -701,7 +701,7 @@ pub fn allocate_latin1_into_utf8_with_list(
                         }
 
                         if ASCII_VECTOR_SIZE >= 16 {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             let mask = bytes & 0x8080808080808080;
 
@@ -727,7 +727,7 @@ pub fn allocate_latin1_into_utf8_with_list(
             while latin1.len() >= 8 {
                 const SIZE: usize = core::mem::size_of::<u64>();
 
-                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                 // https://dotat.at/@/2022-06-27-tolower-swar.html
                 let mask = bytes & 0x8080808080808080;
 
@@ -922,7 +922,7 @@ pub fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
         1 => [bytes[0], 0, 0, 0],
         2 => [bytes[0], bytes[1], 0, 0],
         3 => [bytes[0], bytes[1], bytes[2], 0],
-        _ => bytes[..4].try_into().unwrap(),
+        _ => bytes[..4].try_into().expect("infallible: size matches"),
     };
     debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
@@ -970,7 +970,7 @@ pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
                         const SIZE: usize = core::mem::size_of::<u64>();
 
                         {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             let mask = bytes & 0x8080808080808080;
 
@@ -990,7 +990,7 @@ pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
                         }
 
                         if ASCII_VECTOR_SIZE >= 16 {
-                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                            let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                             // https://dotat.at/@/2022-06-27-tolower-swar.html
                             let mask = bytes & 0x8080808080808080;
 
@@ -1016,7 +1016,7 @@ pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
             {
                 const SIZE: usize = core::mem::size_of::<u64>();
                 while buf.len().min(latin1.len()) >= SIZE {
-                    let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().unwrap());
+                    let bytes = u64::from_ne_bytes(latin1[..SIZE].try_into().expect("infallible: size matches"));
                     buf[..SIZE].copy_from_slice(&bytes.to_ne_bytes());
 
                     // https://dotat.at/@/2022-06-27-tolower-swar.html
@@ -1222,7 +1222,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
         let mut idx = 0usize;
         // using the pointer instead of the length is super important for the codegen
         while idx < end_vector_len {
-            let buf = u64::from_ne_bytes(remain[idx * 8..idx * 8 + 8].try_into().unwrap());
+            let buf = u64::from_ne_bytes(remain[idx * 8..idx * 8 + 8].try_into().expect("infallible: size matches"));
             // this gets auto-vectorized
             const MASK: u64 = 0x7f7f7f7f7f7f7f7f;
             to[idx * 8..idx * 8 + 8].copy_from_slice(&(buf & MASK).to_ne_bytes());
@@ -1488,7 +1488,7 @@ pub fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
         match replacement.code_point {
             c @ 0..=0xffff => {
-                output.push(u16::try_from(c).unwrap());
+                output.push(u16::try_from(c).expect("int cast"));
             }
             c => {
                 output.extend_from_slice(&[u16_lead(c), u16_trail(c)]);
@@ -1517,7 +1517,7 @@ pub fn to_utf16_alloc<const FAIL_IF_INVALID: bool, const SENTINEL: bool>(
         //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
         match replacement.code_point {
             c @ 0..=0xffff => {
-                output.push(u16::try_from(c).unwrap());
+                output.push(u16::try_from(c).expect("int cast"));
             }
             c => {
                 output.extend_from_slice(&[u16_lead(c), u16_trail(c)]);
@@ -1619,7 +1619,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
             1 => [remaining[0], 0, 0, 0],
             2 => [remaining[0], remaining[1], 0, 0],
             3 => [remaining[0], remaining[1], remaining[2], 0],
-            _ => remaining[..4].try_into().unwrap(),
+            _ => remaining[..4].try_into().expect("infallible: size matches"),
         };
 
         let converted_length = non_ascii_sequence_length(sequence[0]);
@@ -1634,7 +1634,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
                     3 => [remaining[0], remaining[1], remaining[2]],
                     _ => unreachable!(),
                 };
-                return Ok(Some((output, buffered, u8::try_from(remaining.len()).unwrap())));
+                return Ok(Some((output, buffered, u8::try_from(remaining.len()).expect("int cast"))));
             }
         }
 
@@ -1649,7 +1649,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
 
         // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
         match converted.code_point {
-            c @ 0..=0xffff => output.push(u16::try_from(c).unwrap()), // PERF(port): was assume_capacity
+            c @ 0..=0xffff => output.push(u16::try_from(c).expect("int cast")), // PERF(port): was assume_capacity
             c => output.extend_from_slice(&[u16_lead(c), u16_trail(c)]), // PERF(port): was assume_capacity
         }
 
@@ -1829,13 +1829,13 @@ pub fn decode_check(state: u8, byte: u8) -> u8 {
 // #define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
 #[inline]
 pub fn u16_lead(supplementary: u32) -> u16 {
-    u16::try_from((supplementary >> 10) + 0xd7c0).unwrap()
+    u16::try_from((supplementary >> 10) + 0xd7c0).expect("int cast")
 }
 
 // #define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
 #[inline]
 pub fn u16_trail(supplementary: u32) -> u16 {
-    u16::try_from((supplementary & 0x3ff) | 0xdc00).unwrap()
+    u16::try_from((supplementary & 0x3ff) | 0xdc00).expect("int cast")
 }
 
 // #define U16_IS_TRAIL(c) (((c)&0xfffffc00)==0xdc00)
@@ -1976,7 +1976,7 @@ static CP1252_TO_UTF16_CONVERSION_TABLE: [u16; 256] = [
 
 pub fn latin1_to_codepoint_bytes_assume_not_ascii(char: u32) -> [u8; 2] {
     let mut bytes = [0u8; 4];
-    let _ = encode_wtf8_rune(&mut bytes, i32::try_from(char).unwrap());
+    let _ = encode_wtf8_rune(&mut bytes, i32::try_from(char).expect("int cast"));
     [bytes[0], bytes[1]]
 }
 
@@ -2281,14 +2281,14 @@ pub const fn encode_utf8_comptime<const CP: u32>() -> &'static [u8] {
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encode_wtf8_rune(p: &mut [u8; 4], r: i32) -> U3Fast {
-    encode_wtf8_rune_t::<u32>(p, u32::try_from(r).unwrap())
+    encode_wtf8_rune_t::<u32>(p, u32::try_from(r).expect("int cast"))
 }
 
 pub fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> U3Fast {
     let r: u32 = r.into();
     match r {
         0..=0x7F => {
-            p[0] = u8::try_from(r).unwrap();
+            p[0] = u8::try_from(r).expect("int cast");
             1
         }
         0x80..=0x7FF => {
@@ -2314,7 +2314,7 @@ pub fn encode_wtf8_rune_t<R: Into<u32> + Copy>(p: &mut [u8; 4], r: R) -> U3Fast 
 
 pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
     match code_point {
-        0..=0x7f => [u8::try_from(code_point).unwrap(), 0, 0, 0],
+        0..=0x7f => [u8::try_from(code_point).expect("int cast"), 0, 0, 0],
         0x80..=0x7ff => [
             (0xc0 | (code_point >> 6)) as u8,
             (0x80 | (code_point & 0x3f)) as u8,

@@ -53,7 +53,7 @@ impl Uint8Array {
         unsafe {
             core::mem::transmute::<[u32; 2], u64>([
                 slice.as_ptr() as usize as u32,
-                u32::try_from(slice.len()).unwrap(),
+                u32::try_from(slice.len()).expect("int cast"),
             ])
         }
     }
@@ -209,7 +209,7 @@ pub extern "C" fn bun_malloc(size: usize) -> u64 {
     unsafe {
         core::mem::transmute::<[u32; 2], u64>([
             ptr as usize as u32,
-            u32::try_from(size).unwrap(),
+            u32::try_from(size).expect("int cast"),
         ])
     }
 }
@@ -289,8 +289,8 @@ impl TestAnalyzer {
                             js_ast::ExprData::EString(str_) => {
                                 str_.to_utf8()?;
                                 let ptr = api::StringPointer {
-                                    offset: u32::try_from(self.string_buffer.len()).unwrap(),
-                                    length: u32::try_from(str_.data.len()).unwrap(),
+                                    offset: u32::try_from(self.string_buffer.len()).expect("int cast"),
+                                    length: u32::try_from(str_.data.len()).expect("int cast"),
                                 };
                                 self.string_buffer.extend_from_slice(&str_.data);
                                 self.items.push(api::TestResponseItem {
@@ -327,8 +327,8 @@ impl TestAnalyzer {
                                 js_ast::ExprData::EString(str_) => {
                                     str_.to_utf8()?;
                                     let ptr = api::StringPointer {
-                                        offset: u32::try_from(self.string_buffer.len()).unwrap(),
-                                        length: u32::try_from(str_.data.len()).unwrap(),
+                                        offset: u32::try_from(self.string_buffer.len()).expect("int cast"),
+                                        length: u32::try_from(str_.data.len()).expect("int cast"),
                                     };
                                     self.string_buffer.extend_from_slice(&str_.data);
                                     self.items.push(api::TestResponseItem {
@@ -503,11 +503,11 @@ impl TestAnalyzer {
                     for item in import.items {
                         let clause: &js_ast::ClauseItem = item;
                         if clause.alias == b"test" {
-                            parser.jest.test = clause.name.ref_.unwrap();
+                            parser.jest.test = clause.name.ref_.expect("infallible: ref bound");
                         } else if clause.alias == b"it" {
-                            parser.jest.it = clause.name.ref_.unwrap();
+                            parser.jest.it = clause.name.ref_.expect("infallible: ref bound");
                         } else if clause.alias == b"describe" {
-                            parser.jest.describe = clause.name.ref_.unwrap();
+                            parser.jest.describe = clause.name.ref_.expect("infallible: ref bound");
                         }
                     }
                 }
@@ -611,7 +611,7 @@ pub extern "C" fn getTests(opts_array: u64) -> u64 {
     unsafe {
         core::mem::transmute::<[u32; 2], u64>([
             ptr as usize as u32,
-            u32::try_from(len).unwrap(),
+            u32::try_from(len).expect("int cast"),
         ])
     }
 }
@@ -713,7 +713,7 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         // to JS and freed via bun_free's Box::<[u8]>::from_raw, so dealloc layout matches.
         core::mem::transmute::<[u32; 2], u64>([
             ptr as usize as u32,
-            u32::try_from(len).unwrap(),
+            u32::try_from(len).expect("int cast"),
         ])
     }
 }
@@ -794,7 +794,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         unsafe {
             core::mem::transmute::<[u32; 2], u64>([
                 ptr as usize as u32,
-                u32::try_from(len).unwrap(),
+                u32::try_from(len).expect("int cast"),
             ])
         }
     } else {
@@ -814,7 +814,7 @@ pub extern "C" fn scan(opts_array: u64) -> u64 {
         unsafe {
             core::mem::transmute::<[u32; 2], u64>([
                 ptr as usize as u32,
-                u32::try_from(len).unwrap(),
+                u32::try_from(len).expect("int cast"),
             ])
         }
     }

@@ -102,7 +102,7 @@ impl NativeZstd {
             task: WorkPoolTask { node: Default::default(), callback: unset_task_callback },
         });
         // SAFETY: mode_int is range-checked to 10..=11 above; NodeMode is #[repr(u8)].
-        ptr.stream.mode = unsafe { mem::transmute::<u8, NodeMode>(u8::try_from(mode_int).unwrap()) };
+        ptr.stream.mode = unsafe { mem::transmute::<u8, NodeMode>(u8::try_from(mode_int).expect("int cast")) };
         Ok(ptr)
     }
 
@@ -172,7 +172,7 @@ impl NativeZstd {
             if x == u32::MAX {
                 continue;
             }
-            let err_ = this.stream.set_params(c_uint::try_from(i).unwrap(), x);
+            let err_ = this.stream.set_params(c_uint::try_from(i).expect("int cast"), x);
             if err_.is_error() {
                 this.stream.close();
                 // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
@@ -373,8 +373,8 @@ impl Context {
     }
 
     pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-        *avail_in = u32::try_from(self.input.size - self.input.pos).unwrap();
-        *avail_out = u32::try_from(self.output.size - self.output.pos).unwrap();
+        *avail_in = u32::try_from(self.input.size - self.input.pos).expect("int cast");
+        *avail_out = u32::try_from(self.output.size - self.output.pos).expect("int cast");
     }
 
     pub fn get_error_info(&mut self) -> Error {

@@ -408,7 +408,7 @@ pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
         &Socket::Tcp(socket) => socket.write(encoded_data),
         Socket::None => 0,
     };
-    let pending = &encoded_data[usize::try_from(written).unwrap()..];
+    let pending = &encoded_data[usize::try_from(written).expect("int cast")..];
     if !pending.is_empty() {
         // lets flush when we are truly writable
         if write_buffer.write(pending).is_err() {
@@ -623,7 +623,7 @@ impl ProxyTunnel {
             let encoded_data = write_buffer.slice();
             if !encoded_data.is_empty() {
                 let written = socket.write(encoded_data);
-                let written = usize::try_from(written).unwrap();
+                let written = usize::try_from(written).expect("int cast");
                 if written == encoded_data.len() {
                     write_buffer.reset();
                 } else {

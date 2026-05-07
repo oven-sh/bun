@@ -292,11 +292,11 @@ impl EventLoopDelayMonitor {
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
             let expected_ns =
-                u64::try_from(self.resolution_ms).unwrap().saturating_mul(1_000_000);
+                u64::try_from(self.resolution_ms).expect("int cast").saturating_mul(1_000_000);
             let actual_ns = now_ns - self.last_fire_ns;
 
             if actual_ns > expected_ns {
-                let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).unwrap();
+                let delay_ns = i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
                 unsafe extern "C" {
                     fn JSNodePerformanceHooksHistogram_recordDelay(
                         histogram: JSValue,

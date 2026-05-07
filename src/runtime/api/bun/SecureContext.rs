@@ -91,7 +91,7 @@ impl SecureContext {
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
-        let key = u64::from_le_bytes(d[0..8].try_into().unwrap());
+        let key = u64::from_le_bytes(d[0..8].try_into().expect("infallible: size matches"));
 
         // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
         let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };

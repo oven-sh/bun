@@ -121,7 +121,7 @@ const fn compute_overflow(capacity: u64, shift: u8) -> u64 {
 /// Checked u64→usize narrowing for table indices (Zig indexes by u64 directly).
 #[inline]
 fn to_idx(x: u64) -> usize {
-    usize::try_from(x).unwrap()
+    usize::try_from(x).expect("int cast")
 }
 
 /// Total backing-array length for a `StaticHashMap` of the given capacity.
@@ -249,7 +249,7 @@ impl<
         let shift = compute_shift(capacity);
         let overflow = compute_overflow(capacity, shift);
 
-        let n = usize::try_from(capacity + overflow).unwrap();
+        let n = usize::try_from(capacity + overflow).expect("int cast");
         // Zig: gpa.alloc + @memset(.{})
         let entries = vec![Entry::<K, V>::empty(); n].into_boxed_slice();
 
@@ -276,7 +276,7 @@ impl<
     fn grow(&mut self) -> Result<(), AllocError> {
         let capacity = 1u64 << (63 - self.shift + 1);
         let overflow = compute_overflow(capacity, self.shift);
-        let end = usize::try_from(capacity + overflow).unwrap();
+        let end = usize::try_from(capacity + overflow).expect("int cast");
 
         let mut map = Self::init_capacity(capacity * 2)?;
 
@@ -359,7 +359,7 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         let overflow = compute_overflow(capacity, self.shift());
         debug_assert_eq!(
             self.storage_mut().len(),
-            usize::try_from(capacity + overflow).unwrap()
+            usize::try_from(capacity + overflow).expect("int cast")
         );
         self.storage_mut()
     }
@@ -628,7 +628,7 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
         let shift = compute_shift(capacity);
         let overflow = compute_overflow(capacity, shift);
 
-        let n = usize::try_from(capacity + overflow).unwrap();
+        let n = usize::try_from(capacity + overflow).expect("int cast");
         let entries = vec![SortedEntry::<V>::empty(); n].into_boxed_slice();
 
         Ok(Self { entries, len: 0, shift })
@@ -644,7 +644,7 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
     pub fn slice(&mut self) -> &mut [SortedEntry<V>] {
         let capacity = 1u64 << (63 - self.shift + 1);
         let overflow = compute_overflow(capacity, self.shift);
-        debug_assert_eq!(self.entries.len(), usize::try_from(capacity + overflow).unwrap());
+        debug_assert_eq!(self.entries.len(), usize::try_from(capacity + overflow).expect("int cast"));
         &mut self.entries[..]
     }
 
@@ -666,7 +666,7 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
     fn grow(&mut self) -> Result<(), AllocError> {
         let capacity = 1u64 << (63 - self.shift + 1);
         let overflow = compute_overflow(capacity, self.shift);
-        let end = usize::try_from(capacity + overflow).unwrap();
+        let end = usize::try_from(capacity + overflow).expect("int cast");
 
         let mut map = Self::init_capacity(capacity * 2)?;
 
@@ -807,8 +807,8 @@ impl<V: Copy + Default, const MAX_LOAD_PERCENTAGE: u64> SortedHashMap<V, MAX_LOA
 #[inline]
 fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
     // Zig: @bitCast(a[0..8].*) — native-endian load.
-    let msa = u64::from_ne_bytes(a[0..8].try_into().unwrap());
-    let msb = u64::from_ne_bytes(b[0..8].try_into().unwrap());
+    let msa = u64::from_ne_bytes(a[0..8].try_into().expect("infallible: size matches"));
+    let msb = u64::from_ne_bytes(b[0..8].try_into().expect("infallible: size matches"));
     if msa != msb {
         // Zig: mem.bigToNative(u64, msa) < mem.bigToNative(u64, msb)
         return if u64::from_be(msa) < u64::from_be(msb) { Ordering::Less } else { Ordering::Greater };
@@ -817,20 +817,20 @@ fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
         // should vectorize identically; profile in Phase B.
         return Ordering::Equal;
     } else {
-        match u64::from_be_bytes(a[8..16].try_into().unwrap())
-            .cmp(&u64::from_be_bytes(b[8..16].try_into().unwrap()))
+        match u64::from_be_bytes(a[8..16].try_into().expect("infallible: size matches"))
+            .cmp(&u64::from_be_bytes(b[8..16].try_into().expect("infallible: size matches")))
         {
             Ordering::Equal => {}
             o => return o,
         }
-        match u64::from_be_bytes(a[16..24].try_into().unwrap())
-            .cmp(&u64::from_be_bytes(b[16..24].try_into().unwrap()))
+        match u64::from_be_bytes(a[16..24].try_into().expect("infallible: size matches"))
+            .cmp(&u64::from_be_bytes(b[16..24].try_into().expect("infallible: size matches")))
         {
             Ordering::Equal => {}
             o => return o,
         }
-        u64::from_be_bytes(a[24..32].try_into().unwrap())
-            .cmp(&u64::from_be_bytes(b[24..32].try_into().unwrap()))
+        u64::from_be_bytes(a[24..32].try_into().expect("infallible: size matches"))
+            .cmp(&u64::from_be_bytes(b[24..32].try_into().expect("infallible: size matches")))
     }
 }
 
@@ -839,7 +839,7 @@ fn cmp(a: [u8; 32], b: [u8; 32]) -> Ordering {
 /// ascending order.
 #[inline]
 fn idx(a: [u8; 32], shift: u8) -> usize {
-    usize::try_from(u64::from_be_bytes(a[0..8].try_into().unwrap()) >> shift).unwrap()
+    usize::try_from(u64::from_be_bytes(a[0..8].try_into().expect("infallible: size matches")) >> shift).unwrap()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

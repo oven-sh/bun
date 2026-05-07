@@ -384,7 +384,7 @@ impl PEFile {
         }
 
         // 7. Precompute first_raw, last_file_end, last_va_end
-        let mut first_raw: u32 = u32::try_from(data.len()).unwrap();
+        let mut first_raw: u32 = u32::try_from(data.len()).expect("int cast");
         let mut last_file_end: u32 = 0;
         let mut last_va_end: u32 = 0;
 
@@ -544,9 +544,9 @@ impl PEFile {
         // Final folds + add length
         sum = (sum & 0xffff) + (sum >> 16);
         sum = (sum & 0xffff) + (sum >> 16);
-        sum += u64::try_from(data.len()).unwrap();
+        sum += u64::try_from(data.len()).expect("int cast");
         sum = (sum & 0xffff) + (sum >> 16);
-        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).unwrap();
+        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
@@ -602,10 +602,10 @@ impl PEFile {
         let new_headers_end =
             self.section_headers_offset + size_of::<SectionHeader>() * (self.num_sections as usize + 1);
         let new_size_of_headers =
-            align_up_u32(u32::try_from(new_headers_end).unwrap(), file_alignment)?;
+            align_up_u32(u32::try_from(new_headers_end).expect("int cast"), file_alignment)?;
 
         // Determine first_raw (min PointerToRawData among sections with raw data, else data.len)
-        let mut first_raw: u32 = u32::try_from(self.data.len()).unwrap();
+        let mut first_raw: u32 = u32::try_from(self.data.len()).expect("int cast");
         for section in section_headers {
             if section.size_of_raw_data > 0 {
                 if section.pointer_to_raw_data < first_raw {
@@ -640,7 +640,7 @@ impl PEFile {
         if data_to_embed.len() > (u32::MAX - 8) as usize {
             return Err(Error::Overflow);
         }
-        let payload_len = u32::try_from(data_to_embed.len() + 8).unwrap(); // 8 for LE length prefix
+        let payload_len = u32::try_from(data_to_embed.len() + 8).expect("int cast"); // 8 for LE length prefix
         let raw_size = align_up_u32(payload_len, file_alignment)?;
         let new_va = align_up_u32(last_va_end, section_alignment)?;
         let new_raw = align_up_u32(last_file_end, file_alignment)?;
@@ -744,7 +744,7 @@ impl PEFile {
 
                 let section_data = &self.data[section.pointer_to_raw_data as usize..]
                     [..section.size_of_raw_data as usize];
-                let data_size = u64::from_le_bytes(section_data[0..8].try_into().unwrap());
+                let data_size = u64::from_le_bytes(section_data[0..8].try_into().expect("infallible: size matches"));
 
                 if data_size + size_of::<u64>() as u64 > section.size_of_raw_data as u64 {
                     return Err(Error::InvalidBunSection);
@@ -774,7 +774,7 @@ impl PEFile {
                 }
 
                 let section_data = &self.data[section.pointer_to_raw_data as usize..];
-                return Ok(u64::from_le_bytes(section_data[0..8].try_into().unwrap()));
+                return Ok(u64::from_le_bytes(section_data[0..8].try_into().expect("infallible: size matches")));
             }
         }
         Err(Error::BunSectionNotFound)

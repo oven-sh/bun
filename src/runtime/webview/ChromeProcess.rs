@@ -408,7 +408,7 @@ fn spawn(
             // SAFETY: getpid is always safe.
             let pid: u32 = unsafe { libc::getpid() } as u32;
             let mut v = Vec::new();
-            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid).unwrap();
+            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid).expect("infallible: in-memory write");
             ZBox::from_vec(v)
         };
 

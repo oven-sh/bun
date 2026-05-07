@@ -361,7 +361,7 @@ impl MutableString {
 
     #[inline]
     pub fn len_i(&self) -> i32 {
-        i32::try_from(self.list.len()).unwrap()
+        i32::try_from(self.list.len()).expect("int cast")
     }
 
     pub fn take_slice(&mut self) -> Vec<u8> {

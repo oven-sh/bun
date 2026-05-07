@@ -252,7 +252,7 @@ impl ShellSubprocess {
             return Ok(());
         }
 
-        self.proc().kill(u8::try_from(sig).unwrap())
+        self.proc().kill(u8::try_from(sig).expect("int cast"))
     }
 
     // fn has_called_getter(self: &Subprocess, comptime getter: @Type(.enum_literal)) -> bool {
@@ -1500,7 +1500,7 @@ impl BufferedOutput {
                 }
                 let length = (array_buf_slice.len() - idx).min(bytes.len());
                 array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
-                *i += u32::try_from(length).unwrap();
+                *i += u32::try_from(length).expect("int cast");
             }
         }
     }

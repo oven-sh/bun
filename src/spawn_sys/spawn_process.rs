@@ -104,13 +104,13 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     {
         let mut temp: u64 = ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
-            usage_info.stime.sec = i64::try_from(temp / 10_000_000).unwrap();
-            usage_info.stime.usec = i64::try_from(temp % 1_000_000).unwrap();
+            usage_info.stime.sec = i64::try_from(temp / 10_000_000).expect("int cast");
+            usage_info.stime.usec = i64::try_from(temp % 1_000_000).expect("int cast");
         }
         temp = ((usertime.dwHighDateTime as u64) << 32) | usertime.dwLowDateTime as u64;
         if temp > 0 {
-            usage_info.utime.sec = i64::try_from(temp / 10_000_000).unwrap();
-            usage_info.utime.usec = i64::try_from(temp % 1_000_000).unwrap();
+            usage_info.utime.sec = i64::try_from(temp / 10_000_000).expect("int cast");
+            usage_info.utime.usec = i64::try_from(temp % 1_000_000).expect("int cast");
         }
     }
     let mut counters = IoCounters::default();

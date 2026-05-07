@@ -139,7 +139,7 @@ impl Scripts {
             {
                 script_index += 1;
                 if first_script_index == -1 {
-                    first_script_index = i8::try_from(script_index).unwrap();
+                    first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
                     Some(Box::<[u8]>::from(b"node-gyp rebuild".as_slice()));
@@ -150,7 +150,7 @@ impl Scripts {
             // missing install and preinstall, only need to check postinstall
             if !self.postinstall.is_empty() {
                 if first_script_index == -1 {
-                    first_script_index = i8::try_from(script_index).unwrap();
+                    first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
                     Some(Box::<[u8]>::from(self.preinstall.slice(lockfile_buf)));
@@ -163,7 +163,7 @@ impl Scripts {
             for script in install_scripts {
                 if !script.is_empty() {
                     if first_script_index == -1 {
-                        first_script_index = i8::try_from(script_index).unwrap();
+                        first_script_index = i8::try_from(script_index).expect("int cast");
                     }
                     scripts[script_index as usize] =
                         Some(Box::<[u8]>::from(script.slice(lockfile_buf)));
@@ -181,7 +181,7 @@ impl Scripts {
                 for script in prepare_scripts {
                     if !script.is_empty() {
                         if first_script_index == -1 {
-                            first_script_index = i8::try_from(script_index).unwrap();
+                            first_script_index = i8::try_from(script_index).expect("int cast");
                         }
                         scripts[script_index as usize] =
                             Some(Box::<[u8]>::from(script.slice(lockfile_buf)));
@@ -195,7 +195,7 @@ impl Scripts {
                 script_index += 1;
                 if !self.prepare.is_empty() {
                     if first_script_index == -1 {
-                        first_script_index = i8::try_from(script_index).unwrap();
+                        first_script_index = i8::try_from(script_index).expect("int cast");
                     }
                     scripts[script_index as usize] =
                         Some(Box::<[u8]>::from(self.prepare.slice(lockfile_buf)));
@@ -247,7 +247,7 @@ impl Scripts {
 
             return Some(List {
                 items: scripts,
-                first_index: u8::try_from(first_index).unwrap(),
+                first_index: u8::try_from(first_index).expect("int cast"),
                 total,
                 // Zig `allocator.dupeZ(u8, cwd)` — owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),

@@ -114,7 +114,7 @@ impl LineOffsetTable {
     pub fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
         debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).unwrap();
+        let loc_start = usize::try_from(loc.start).expect("int cast");
 
         {
             let mut count = byte_offsets_to_start_of_line.len();
@@ -132,13 +132,13 @@ impl LineOffsetTable {
             let _ = i;
         }
 
-        i32::try_from(original_line).unwrap() - 1
+        i32::try_from(original_line).expect("int cast") - 1
     }
 
     pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {
         debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).unwrap();
+        let loc_start = usize::try_from(loc.start).expect("int cast");
 
         let mut count = byte_offsets_to_start_of_line.len();
         let mut i: usize = 0;
@@ -175,7 +175,7 @@ impl LineOffsetTable {
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         let mut list = List::default();
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensure_unused_capacity(usize::try_from(approximate_line_count.max(1)).unwrap())?;
+        list.ensure_unused_capacity(usize::try_from(approximate_line_count.max(1)).expect("int cast"))?;
         let mut column: i32 = 0;
         let mut byte_offset_to_first_non_ascii: u32 = 0;
         let mut column_byte_offset: u32 = 0;
@@ -238,11 +238,11 @@ impl LineOffsetTable {
                             remaining,
                             len_ as u32,
                         ) {
-                            column += i32::try_from(j).unwrap();
+                            column += i32::try_from(j).expect("int cast");
                             remaining = &remaining[j as usize..];
                         } else {
                             // if there are no more lines, we are done!
-                            column += i32::try_from(remaining.len()).unwrap();
+                            column += i32::try_from(remaining.len()).expect("int cast");
                             remaining = &remaining[remaining.len()..];
                         }
 
@@ -297,11 +297,11 @@ impl LineOffsetTable {
 
         // Mark the start of the next line
         if column == 0 {
-            line_byte_offset = u32::try_from(contents.len()).unwrap();
+            line_byte_offset = u32::try_from(contents.len()).expect("int cast");
         }
 
         if !columns_for_non_ascii.is_empty() {
-            let line_bytes_so_far = u32::try_from(contents.len()).unwrap() - line_byte_offset;
+            let line_bytes_so_far = u32::try_from(contents.len()).expect("int cast") - line_byte_offset;
             columns_for_non_ascii.reserve(((line_bytes_so_far - column_byte_offset) + 1) as usize);
             while column_byte_offset <= line_bytes_so_far {
                 columns_for_non_ascii.push(column);

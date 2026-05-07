@@ -1350,7 +1350,7 @@ impl FFI {
                     let cb = new_runtime_function(
                         global_this,
                         &str,
-                        u32::try_from(function.arg_types.len()).unwrap(),
+                        u32::try_from(function.arg_types.len()).expect("int cast"),
                         compiled.ptr as *const c_void,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1712,7 +1712,7 @@ impl FFI {
                     let cb = new_runtime_function(
                         global,
                         &str,
-                        u32::try_from(function.arg_types.len()).unwrap(),
+                        u32::try_from(function.arg_types.len()).expect("int cast"),
                         compiled.ptr as *const c_void,
                         true,
                         function.symbol_from_dynamic_library,
@@ -1809,7 +1809,7 @@ impl FFI {
                     let cb = new_runtime_function(
                         global,
                         &name,
-                        u32::try_from(function.arg_types.len()).unwrap(),
+                        u32::try_from(function.arg_types.len()).expect("int cast"),
                         compiled.ptr as *const c_void,
                         true,
                         function.symbol_from_dynamic_library,

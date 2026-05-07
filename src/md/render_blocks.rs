@@ -170,12 +170,12 @@ impl Parser<'_> {
                     };
                     self.process_inline_content(
                         unescaped,
-                        vline.beg + OFF::try_from(cell_beg).unwrap(),
+                        vline.beg + OFF::try_from(cell_beg).expect("int cast"),
                     )?;
                 } else {
                     self.process_inline_content(
                         cell_content,
-                        vline.beg + OFF::try_from(cell_beg).unwrap(),
+                        vline.beg + OFF::try_from(cell_beg).expect("int cast"),
                     )?;
                 }
             }

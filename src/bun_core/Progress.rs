@@ -376,7 +376,7 @@ impl Progress {
 
     fn maybe_refresh_with_held_lock(&mut self, timer: Instant) {
         // Zig: timer.read() returns ns since start.
-        let now = u64::try_from(timer.elapsed().as_nanos()).unwrap();
+        let now = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
         if now < self.initial_delay_ns {
             return;
         }
@@ -588,7 +588,7 @@ impl Progress {
             self.terminal = None;
         }
         if let Some(timer) = self.timer {
-            self.prev_refresh_timestamp = u64::try_from(timer.elapsed().as_nanos()).unwrap();
+            self.prev_refresh_timestamp = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
         }
     }
 

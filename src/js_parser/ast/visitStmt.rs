@@ -173,14 +173,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.record_declared_symbol(data.namespace_ref);
 
         if let Some(default_name) = data.default_name {
-            p.record_declared_symbol(default_name.ref_.unwrap());
+            p.record_declared_symbol(default_name.ref_.expect("infallible: ref bound"));
         }
 
         // SAFETY: arena-owned slice; valid for 'a.
         let items = unsafe { &*data.items };
         if !items.is_empty() {
             for item in items.iter() {
-                p.record_declared_symbol(item.name.ref_.unwrap());
+                p.record_declared_symbol(item.name.ref_.expect("infallible: ref bound"));
             }
         }
 
@@ -219,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut any_replaced = false;
         if p.options.features.replace_exports.count() > 0 {
             for i in 0..items_len {
-                let name = p.load_name_from_ref(items[i].name.ref_.unwrap());
+                let name = p.load_name_from_ref(items[i].name.ref_.expect("infallible: ref bound"));
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
@@ -258,7 +258,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         } else {
             for i in 0..items_len {
-                let name = p.load_name_from_ref(items[i].name.ref_.unwrap());
+                let name = p.load_name_from_ref(items[i].name.ref_.expect("infallible: ref bound"));
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
@@ -324,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let mut j: usize = 0;
             // This is a re-export and the symbols created here are used to reference
             for i in 0..items.len() {
-                let old_ref = items[i].name.ref_.unwrap();
+                let old_ref = items[i].name.ref_.expect("infallible: ref bound");
 
                 // SAFETY: alias is arena-owned, valid for 'a.
                 let alias = unsafe { arena_str(items[i].alias) };
@@ -357,7 +357,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
-                let _name = p.load_name_from_ref(item.name.ref_.unwrap());
+                let _name = p.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
                 let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
                 p.cur_scope().generated.append(ref_).expect("oom");
                 p.record_declared_symbol(ref_);
@@ -441,7 +441,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let prev_decorator_class_name = p.decorator_class_name;
                 if was_anonymous_named_expr
                     && matches!(expr.data, js_ast::ExprData::EClass(_))
-                    && expr.data.e_class().unwrap().should_lower_standard_decorators
+                    && expr.data.e_class().expect("infallible: variant checked").should_lower_standard_decorators
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
@@ -482,7 +482,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                 }
 
-                if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
                     data.default_name = p.create_default_name(expr.loc).expect("unreachable");
                 }
 
@@ -535,7 +535,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     decls
                         .append(G::Decl {
                             binding: p.b(
-                                B::Identifier { r#ref: data.default_name.ref_.unwrap() },
+                                B::Identifier { r#ref: data.default_name.ref_.expect("infallible: ref bound") },
                                 data.default_name.loc,
                             ),
                             value: Some(*expr),
@@ -588,7 +588,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     StmtData::SFunction(mut func_ref) => {
                         let func: &mut S::Function = &mut *func_ref;
                         let name: &'a [u8] = if let Some(func_loc) = func.func.name {
-                            p.load_name_from_ref(func_loc.ref_.unwrap())
+                            p.load_name_from_ref(func_loc.ref_.expect("infallible: ref bound"))
                         } else {
                             func.func.name = Some(data.default_name);
                             js_ast::ClauseItem::DEFAULT_ALIAS
@@ -609,7 +609,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             return Ok(());
                         }
 
-                        if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                        if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
                             data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
@@ -708,7 +708,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     break 'emit_temp_var ref_to_use;
                                 }
                             } else {
-                                data.default_name.ref_.unwrap()
+                                data.default_name.ref_.expect("infallible: ref bound")
                             };
 
                             if p.options.features.server_components.wraps_exports() {
@@ -749,7 +749,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_.unwrap());
+                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_.expect("infallible: ref bound"));
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -775,7 +775,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             }
                         }
 
-                        if data.default_name.ref_.unwrap().is_source_contents_slice() {
+                        if data.default_name.ref_.expect("infallible: ref bound").is_source_contents_slice() {
                             data.default_name = p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
@@ -848,7 +848,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.func.flags.contains(flags::Function::IsExport)
             && p.options.features.replace_exports.count() > 0
-            && p.is_export_to_eliminate(data.func.name.unwrap().ref_.unwrap());
+            && p.is_export_to_eliminate(data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound"));
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -867,7 +867,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
 
-        let name_ref = data.func.name.unwrap().ref_.unwrap();
+        let name_ref = data.func.name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         // SAFETY: original_name is arena-owned, valid for 'a.
@@ -878,10 +878,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if data.func.flags.contains(flags::Function::IsExport) && p.enclosing_namespace_arg_ref.is_some() {
             data.func.flags.remove(flags::Function::IsExport);
 
-            let enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref.unwrap();
+            let enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref.expect("infallible: in namespace");
             stmts.reserve(3);
             stmts.push(*stmt); // PERF(port): was assume_capacity
-            let func_name = data.func.name.unwrap();
+            let func_name = data.func.name.expect("infallible: name checked");
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
@@ -892,7 +892,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     },
                     stmt.loc,
                 ),
-                Expr::init_identifier(func_name.ref_.unwrap(), func_name.loc),
+                Expr::init_identifier(func_name.ref_.expect("infallible: ref bound"), func_name.loc),
             )); // PERF(port): was assume_capacity
         } else if !mark_as_dead {
             if remove_overwritten {
@@ -906,7 +906,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 && data.func.flags.contains(flags::Function::IsExport)
             {
                 // Convert this into `export var <name> = registerClientReference(<func>, ...);`
-                let name = data.func.name.unwrap();
+                let name = data.func.name.expect("infallible: name checked");
                 // From the inner scope, have code reference the wrapped function.
                 data.func.name = None;
                 let func_expr =
@@ -937,7 +937,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let _ = p.inject_replacement_export(
                     stmts,
                     name_ref,
-                    data.func.name.unwrap().loc,
+                    data.func.name.expect("infallible: name checked").loc,
                     &replacement,
                 );
             }
@@ -983,7 +983,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
             && p.options.features.replace_exports.count() > 0
-            && p.is_export_to_eliminate(data.class.class_name.unwrap().ref_.unwrap());
+            && p.is_export_to_eliminate(data.class.class_name.expect("infallible: name checked").ref_.expect("infallible: ref bound"));
         let original_is_dead = p.is_control_flow_dead;
 
         if mark_as_dead {
@@ -1005,13 +1005,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // Lower class field syntax for browsers that don't support it
             stmts.extend_from_slice(lowered);
         } else {
-            let ref_ = data.class.class_name.unwrap().ref_.unwrap();
+            let ref_ = data.class.class_name.expect("infallible: name checked").ref_.expect("infallible: ref bound");
             let name = p.load_name_from_ref(ref_);
             if let Some(replacement) = p.options.features.replace_exports.get_ptr(name).cloned() {
                 if p.inject_replacement_export(
                     stmts,
                     ref_,
-                    data.class.class_name.unwrap().loc,
+                    data.class.class_name.expect("infallible: name checked").loc,
                     &replacement,
                 ) {
                     p.is_control_flow_dead = original_is_dead;
@@ -1021,14 +1021,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Handle exporting this class from a namespace
         if was_export_inside_namespace {
-            let class_name = data.class.class_name.unwrap();
-            let class_name_ref = class_name.ref_.unwrap();
+            let class_name = data.class.class_name.expect("infallible: name checked");
+            let class_name_ref = class_name.ref_.expect("infallible: ref bound");
             // SAFETY: original_name is arena-owned, valid for 'a.
             let original_name = unsafe { arena_str(p.symbols[class_name_ref.inner_index() as usize].original_name) };
             stmts.push(Stmt::assign(
                 p.new_expr(
                     E::Dot {
-                        target: Expr::init_identifier(p.enclosing_namespace_arg_ref.unwrap(), stmt.loc),
+                        target: Expr::init_identifier(p.enclosing_namespace_arg_ref.expect("infallible: in namespace"), stmt.loc),
                         name: original_name.into(),
                         name_loc: class_name.loc,
                         ..Default::default()
@@ -1075,7 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
             for d in data.decls.slice() {
                 if let Some(val) = d.value {
-                    p.record_usage(p.enclosing_namespace_arg_ref.unwrap());
+                    p.record_usage(p.enclosing_namespace_arg_ref.expect("infallible: in namespace"));
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
                     // PORT NOTE: ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
                     // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
@@ -1244,7 +1244,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn s_label(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Label) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc).expect("unreachable");
-        let name = p.load_name_from_ref(data.name.ref_.unwrap());
+        let name = p.load_name_from_ref(data.name.ref_.expect("infallible: ref bound"));
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name).expect("unreachable");
         data.name.ref_ = Some(ref_);
         p.cur_scope().label_ref = Some(ref_);
@@ -1900,10 +1900,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // maps. We are avoiding that to reduce memory usage, since
         // enum inlining already uses alot of hash maps.
         if core::ptr::eq(p.current_scope, p.module_scope) && p.options.bundle {
-            p.top_level_enums.push(data.name.ref_.unwrap());
+            p.top_level_enums.push(data.name.ref_.expect("infallible: ref bound"));
         }
 
-        p.record_declared_symbol(data.name.ref_.unwrap());
+        p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         // Zig: defer p.popScope(); — moved to end (no early returns).
         p.record_declared_symbol(data.arg);
@@ -2084,7 +2084,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             stmt.loc,
             data.is_export,
             data.name.loc,
-            data.name.ref_.unwrap(),
+            data.name.ref_.expect("infallible: ref bound"),
             data.arg,
             value_stmts.into_bump_slice_mut(),
             all_values_are_pure,
@@ -2094,7 +2094,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn s_namespace(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Namespace) -> Result<(), Error> {
-        p.record_declared_symbol(data.name.ref_.unwrap());
+        p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace
@@ -2127,7 +2127,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             stmt.loc,
             data.is_export,
             data.name.loc,
-            data.name.ref_.unwrap(),
+            data.name.ref_.expect("infallible: ref bound"),
             data.arg,
             prepend_list.into_bump_slice_mut(),
             false,

@@ -4887,7 +4887,7 @@ impl Resolver {
         let mut cache_name = Vec::new();
         {
             use std::io::Write;
-            write!(&mut cache_name, "{}|{}", bstr::BStr::new(addr_s), port).unwrap();
+            write!(&mut cache_name, "{}|{}", bstr::BStr::new(addr_s), port).expect("infallible: in-memory write");
         }
         let cache_name: Box<[u8]> = cache_name.into_boxed_slice();
 

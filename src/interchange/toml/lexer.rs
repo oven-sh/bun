@@ -255,7 +255,7 @@ impl<'a> Lexer<'a> {
                 // (matches Zig `slice.ptr[0..4]` which over-reads up to 4 bytes).
                 // TODO(port): verify bun_str signature; may take &[u8; 4] or *const u8.
                 unsafe { &*(slice.as_ptr() as *const [u8; 4]) },
-                u8::try_from(slice.len()).unwrap(), // @intCast to u3
+                u8::try_from(slice.len()).expect("int cast"), // @intCast to u3
                 strings::UNICODE_REPLACEMENT as CodePoint,
             ),
         };
@@ -583,7 +583,7 @@ impl<'a> Lexer<'a> {
                 // Parse a 32-bit integer (very fast path);
                 let mut number: u32 = 0;
                 for &c in text {
-                    number = number * 10 + u32::try_from(c - b'0').unwrap();
+                    number = number * 10 + u32::try_from(c - b'0').expect("int cast");
                 }
                 self.number = number as f64;
             } else {
@@ -1120,14 +1120,14 @@ impl<'a> Lexer<'a> {
                                 }
                             }
 
-                            iter.c = i32::try_from(value).unwrap();
+                            iter.c = i32::try_from(value).expect("int cast");
                             if is_bad {
                                 self.add_range_error(
                                     logger::Range {
                                         loc: logger::Loc {
-                                            start: i32::try_from(octal_start).unwrap(),
+                                            start: i32::try_from(octal_start).expect("int cast"),
                                         },
-                                        len: i32::try_from(iter.i as usize - octal_start).unwrap(),
+                                        len: i32::try_from(iter.i as usize - octal_start).expect("int cast"),
                                     },
                                     format_args!("Invalid legacy octal literal"),
                                 )
@@ -1255,7 +1255,7 @@ impl<'a> Lexer<'a> {
                                     self.add_range_error(
                                         logger::Range {
                                             loc: logger::Loc {
-                                                start: i32::try_from(start + hex_start).unwrap(),
+                                                start: i32::try_from(start + hex_start).expect("int cast"),
                                             },
                                             len: i32::try_from(iter.i as usize - hex_start)
                                                 .unwrap(),
@@ -1337,7 +1337,7 @@ impl<'a> Lexer<'a> {
             match iter.c {
                 -1 => return self.add_default_error(b"Unexpected end of file"),
                 0..=127 => {
-                    buf.push(u8::try_from(iter.c).unwrap());
+                    buf.push(u8::try_from(iter.c).expect("int cast"));
                 }
                 _ => {
                     let mut part: [u8; 4] = [0; 4];

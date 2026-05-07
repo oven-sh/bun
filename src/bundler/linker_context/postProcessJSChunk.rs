@@ -1090,7 +1090,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
-                                                ref_: export_item.name.ref_.unwrap(),
+                                                ref_: export_item.name.ref_.expect("infallible: ref bound"),
                                                 ..Default::default()
                                             },
                                             export_item.name.loc,

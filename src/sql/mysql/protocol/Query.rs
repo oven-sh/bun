@@ -58,7 +58,7 @@ impl<'a> Execute<'a> {
                     let mut cursor = std::io::Cursor::new(&mut param_name_buf[..]);
                     write!(&mut cursor, ":p{}", i)
                         .map_err(|_| bun_core::err!("TooManyParameters"))?;
-                    let len = usize::try_from(cursor.position()).unwrap();
+                    let len = usize::try_from(cursor.position()).expect("int cast");
                     &param_name_buf[..len]
                 };
                 writer.write_length_encoded_string(param_name)?;

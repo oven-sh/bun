@@ -204,7 +204,7 @@ impl CronExpression {
                     .gregorian_date_time_to_ms_utc(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, 0)?,
             );
 
-            if !bit_set(self.months, u32::try_from(dt.month).unwrap()) {
+            if !bit_set(self.months, u32::try_from(dt.month).expect("int cast")) {
                 dt.month += 1;
                 dt.day = 1;
                 dt.hour = 0;
@@ -213,8 +213,8 @@ impl CronExpression {
             }
             // POSIX: if both DOM and DOW are restricted (not `*`), either
             // matching is enough; otherwise the `*` field matches all anyway.
-            let day_ok = bit_set(self.days, u32::try_from(dt.day).unwrap());
-            let weekday_ok = bit_set(self.weekdays, u32::try_from(dt.weekday).unwrap());
+            let day_ok = bit_set(self.days, u32::try_from(dt.day).expect("int cast"));
+            let weekday_ok = bit_set(self.weekdays, u32::try_from(dt.weekday).expect("int cast"));
             let day_match = if !self.days_is_wildcard && !self.weekdays_is_wildcard {
                 day_ok || weekday_ok
             } else {
@@ -226,12 +226,12 @@ impl CronExpression {
                 dt.minute = 0;
                 continue;
             }
-            if !bit_set(self.hours, u32::try_from(dt.hour).unwrap()) {
+            if !bit_set(self.hours, u32::try_from(dt.hour).expect("int cast")) {
                 dt.hour += 1;
                 dt.minute = 0;
                 continue;
             }
-            if !bit_set(self.minutes, u32::try_from(dt.minute).unwrap()) {
+            if !bit_set(self.minutes, u32::try_from(dt.minute).expect("int cast")) {
                 dt.minute += 1;
                 continue;
             }
@@ -471,7 +471,7 @@ fn parse_u8_decimal(s: &[u8]) -> Option<u8> {
             return None;
         }
     }
-    Some(u8::try_from(val).unwrap())
+    Some(u8::try_from(val).expect("int cast"))
 }
 
 /// Trait bundling the integer ops needed for cron bitset fields (u8/u16/u32/u64).

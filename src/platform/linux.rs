@@ -120,7 +120,7 @@ pub fn ioctl_ficlone(dest_fd: Fd, srcfd: Fd) -> usize {
             dest_fd.native() as usize,
             libc::FICLONE as usize,
             // @intCast(srcfd.native()) — valid fds are non-negative
-            usize::try_from(srcfd.native()).unwrap(),
+            usize::try_from(srcfd.native()).expect("int cast"),
         )
     };
     // Callers switch on `getErrno(rc)` for XDEV/NOSYS/OPNOTSUPP — must preserve in-band -errno.

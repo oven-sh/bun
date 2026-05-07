@@ -305,7 +305,7 @@ impl<T: Copy> SSLWrapper<T> {
         // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
         let pending = unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) };
         if pending > 0 {
-            return usize::try_from(pending).unwrap();
+            return usize::try_from(pending).expect("int cast");
         }
         0
     }
@@ -358,7 +358,7 @@ impl<T: Copy> SSLWrapper<T> {
             boring_sys::BIO_write(
                 input.as_ptr(),
                 data.as_ptr().cast::<c_void>(),
-                c_int::try_from(data.len()).unwrap(),
+                c_int::try_from(data.len()).expect("int cast"),
             )
         };
         if written > -1 {
@@ -385,7 +385,7 @@ impl<T: Copy> SSLWrapper<T> {
             boring_sys::SSL_write(
                 ssl.as_ptr(),
                 data.as_ptr().cast::<c_void>(),
-                c_int::try_from(data.len()).unwrap(),
+                c_int::try_from(data.len()).expect("int cast"),
             )
         };
         if written <= 0 {
@@ -409,7 +409,7 @@ impl<T: Copy> SSLWrapper<T> {
             return Err(WriteDataError::ConnectionClosed);
         }
         self.handle_traffic();
-        Ok(usize::try_from(written).unwrap())
+        Ok(usize::try_from(written).expect("int cast"))
     }
 
     fn trigger_handshake_callback(&mut self, success: bool, result: us_bun_verify_error_t) {
@@ -564,7 +564,7 @@ impl<T: Copy> SSLWrapper<T> {
                 boring_sys::SSL_read(
                     ssl.as_ptr(),
                     available.as_mut_ptr().cast::<c_void>(),
-                    c_int::try_from(available.len()).unwrap(),
+                    c_int::try_from(available.len()).expect("int cast"),
                 )
             };
             bun_output::scoped_log!(SSLWrapper, "just read {}", just_read);
@@ -619,7 +619,7 @@ impl<T: Copy> SSLWrapper<T> {
 
             self.handle_end_of_renegotiation();
 
-            read += usize::try_from(just_read).unwrap();
+            read += usize::try_from(just_read).expect("int cast");
             if read == buffer.len() {
                 bun_output::scoped_log!(SSLWrapper, "triggering data callback (read {}) and resetting read buffer", read);
                 // we filled the buffer
@@ -657,11 +657,11 @@ impl<T: Copy> SSLWrapper<T> {
                 boring_sys::BIO_read(
                     output.as_ptr(),
                     available.as_mut_ptr().cast::<c_void>(),
-                    c_int::try_from(available.len()).unwrap(),
+                    c_int::try_from(available.len()).expect("int cast"),
                 )
             };
             if just_read > 0 {
-                read += usize::try_from(just_read).unwrap();
+                read += usize::try_from(just_read).expect("int cast");
                 if read == buffer.len() {
                     self.trigger_wanna_write_callback(&buffer[0..read]);
                     read = 0;

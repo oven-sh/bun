@@ -84,7 +84,7 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
         | (((31.5 + 31.5 * qc.dc).round() as u32) << 12)
         | (((31.0 * lc.scale).round() as u32) << 18)
         | ((has_alpha as u32) << 23);
-    let h16: u16 = u16::try_from(if land { ly } else { lx }).unwrap()
+    let h16: u16 = u16::try_from(if land { ly } else { lx }).expect("int cast")
         | (((63.0 * pc.scale).round() as u16) << 3)
         | (((63.0 * qc.scale).round() as u16) << 9)
         | ((land as u16) << 15);

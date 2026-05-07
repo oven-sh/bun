@@ -169,7 +169,7 @@ impl<'a> ScannerFinder<'a> {
         let root_deps = pkg_dependencies[root_pkg_id as usize];
 
         for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
             if dep_pkg_id == invalid_package_id {
@@ -203,7 +203,7 @@ impl<'a> ScannerFinder<'a> {
 
             let deps = pkg_deps[pkg_idx];
             for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
                 let dep = &self.manager.lockfile.buffers.dependencies[dep_id as usize];
 
                 if dep.name.slice(string_buf) == self.scanner_name {
@@ -507,7 +507,7 @@ impl<'a> PackageCollector<'a> {
 
         // collect all npm deps from the root package
         for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
             let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
             if dep_pkg_id == invalid_package_id {
@@ -540,14 +540,14 @@ impl<'a> PackageCollector<'a> {
 
         // and collect npm deps from workspace packages
         for pkg_idx in 0..pkgs.len() {
-            let pkg_id: PackageID = PackageID::try_from(pkg_idx).unwrap();
+            let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
             if pkg_resolutions[pkg_id as usize].tag != bun_install::resolution::Tag::Workspace {
                 continue;
             }
 
             let workspace_deps = pkg_dependencies[pkg_id as usize];
             for _dep_id in workspace_deps.begin()..workspace_deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
                 let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
                 if dep_pkg_id == invalid_package_id {
@@ -589,7 +589,7 @@ impl<'a> PackageCollector<'a> {
 
         for req in self.manager.update_requests.iter() {
             for _update_pkg_id in 0..pkgs.len() {
-                let update_pkg_id: PackageID = PackageID::try_from(_update_pkg_id).unwrap();
+                let update_pkg_id: PackageID = PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
                     continue;
                 }
@@ -601,7 +601,7 @@ impl<'a> PackageCollector<'a> {
                 let mut parent_pkg_id: PackageID = invalid_package_id;
 
                 'update_dep_id: for _pkg_id in 0..pkgs.len() {
-                    let pkg_id: PackageID = PackageID::try_from(_pkg_id).unwrap();
+                    let pkg_id: PackageID = PackageID::try_from(_pkg_id).expect("int cast");
                     let pkg_res = &pkg_resolutions[pkg_id as usize];
                     if pkg_res.tag != bun_install::resolution::Tag::Root
                         && pkg_res.tag != bun_install::resolution::Tag::Workspace
@@ -611,7 +611,7 @@ impl<'a> PackageCollector<'a> {
 
                     let pkg_deps = pkg_dependencies[pkg_id as usize];
                     for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                        let dep_id: DependencyID = DependencyID::try_from(_dep_id).unwrap();
+                        let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
                         let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
                         if dep_pkg_id == invalid_package_id {
                             continue;
@@ -678,7 +678,7 @@ impl<'a> PackageCollector<'a> {
 
             let pkg_deps = pkg_dependencies[pkg_id as usize];
             for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let next_dep_id: DependencyID = DependencyID::try_from(_next_dep_id).unwrap();
+                let next_dep_id: DependencyID = DependencyID::try_from(_next_dep_id).expect("int cast");
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
                 if next_pkg_id == invalid_package_id {
@@ -1890,7 +1890,7 @@ fn parse_security_advisories_from_expr(
 
         for (j, pkg_name) in pkg_names.iter().enumerate() {
             if pkg_name.slice(string_buf) == &*name_str {
-                let pkg_id: PackageID = PackageID::try_from(j).unwrap();
+                let pkg_id: PackageID = PackageID::try_from(j).expect("int cast");
                 if let Some(paths) = package_paths.get(&pkg_id) {
                     // Duplicate the path so it outlives the package_paths HashMap
                     pkg_path = Some(Box::from(&*paths.pkg_path));

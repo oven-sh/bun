@@ -805,7 +805,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).unwrap();
+        me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -924,7 +924,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).unwrap();
+        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice into self.body — profile in Phase B.
@@ -993,7 +993,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Proxy tunnel established
         log!("Proxy tunnel established");
 
-        let bytes_read = usize::try_from(response.bytes_read).unwrap();
+        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf before clearing self.body.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice — profile in Phase B.
@@ -1034,7 +1034,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).unwrap();
+        me.to_send_len = me.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
@@ -1216,7 +1216,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         };
 
-        let bytes_read = usize::try_from(response.bytes_read).unwrap();
+        let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice — profile in Phase B.
@@ -1712,7 +1712,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::deref(this) };
             return;
         }
-        let wrote = usize::try_from(wrote).unwrap();
+        let wrote = usize::try_from(wrote).expect("int cast");
         // SAFETY: short-lived `&mut` write.
         unsafe {
             let to_send_len = &mut (*this).to_send_len;
@@ -1912,7 +1912,7 @@ fn build_connect_request(
 
     // Proxy-Authorization if provided
     if let Some(auth) = proxy_authorization {
-        write!(&mut buf, "Proxy-Authorization: {}\r\n", bstr::BStr::new(auth)).unwrap();
+        write!(&mut buf, "Proxy-Authorization: {}\r\n", bstr::BStr::new(auth)).expect("infallible: in-memory write");
     }
 
     // Custom proxy headers
@@ -2052,7 +2052,7 @@ fn build_request_body(
     // Add Authorization header from URL credentials if user didn't provide one
     if !user_authorization {
         if let Some(auth) = target_authorization {
-            write!(&mut extra_headers_buf, "Authorization: {}\r\n", bstr::BStr::new(auth)).unwrap();
+            write!(&mut extra_headers_buf, "Authorization: {}\r\n", bstr::BStr::new(auth)).expect("infallible: in-memory write");
         }
     }
 

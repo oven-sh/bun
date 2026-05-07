@@ -9,12 +9,12 @@
 
 #[inline(always)]
 fn fetch32(b: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(b[offset..offset + 4].try_into().unwrap())
+    u32::from_le_bytes(b[offset..offset + 4].try_into().expect("infallible: size matches"))
 }
 
 #[inline(always)]
 fn fetch64(b: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(b[offset..offset + 8].try_into().unwrap())
+    u64::from_le_bytes(b[offset..offset + 8].try_into().expect("infallible: size matches"))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

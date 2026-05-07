@@ -100,7 +100,7 @@ impl ClientContext {
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // SAFETY: session was just allocated by ClientSession::new and is live.
         unsafe {
-            (*session).registry_index = u32::try_from(self.sessions.len()).unwrap();
+            (*session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
         }
         self.sessions.push(session);
         // SAFETY: session is live (just pushed into registry).
@@ -160,7 +160,7 @@ impl ClientContext {
         let _ = self.sessions.swap_remove(i);
         if i < self.sessions.len() {
             // SAFETY: the swapped-in element is a live registered session.
-            unsafe { (*self.sessions[i]).registry_index = u32::try_from(i).unwrap() };
+            unsafe { (*self.sessions[i]).registry_index = u32::try_from(i).expect("int cast") };
         }
         session.registry_index = u32::MAX;
     }

@@ -254,7 +254,7 @@ impl LineColumnOffset {
             debug_assert!(strings::index_of_char(remain, b'\r').is_none());
         }
 
-        this.columns = this.columns.add_scalar(i32::try_from(remain.len()).unwrap());
+        this.columns = this.columns.add_scalar(i32::try_from(remain.len()).expect("int cast"));
 
         *this_ptr = this;
     }
@@ -1232,7 +1232,7 @@ pub fn append_source_map_chunk(
     if start_state.generated_line != 0 {
         j.push_owned(
             bun_str::strings::repeating_alloc(
-                usize::try_from(start_state.generated_line).unwrap(),
+                usize::try_from(start_state.generated_line).expect("int cast"),
                 b';',
             )?,
         );

@@ -53,7 +53,7 @@ unsafe extern "C" {
 
 pub fn set_sampling_interval(interval: u32) {
     // SAFETY: FFI call with plain integer; no invariants beyond C++ side.
-    unsafe { Bun__setSamplingInterval(c_int::try_from(interval).unwrap()) };
+    unsafe { Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast")) };
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {
@@ -168,7 +168,7 @@ fn build_output_path(
                     .write_all(config.name)
                     .and_then(|_| cursor.write_all(ext))
                     .map_err(|_| ProfilerError::FilenameTooLong)?;
-                let len = usize::try_from(cursor.position()).unwrap();
+                let len = usize::try_from(cursor.position()).expect("int cast");
                 break 'blk &filename_buf[..len];
             } else {
                 break 'blk config.name;
@@ -217,6 +217,6 @@ fn generate_default_filename(
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
         .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).unwrap();
+    let len = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf[..len])
 }

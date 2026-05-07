@@ -430,7 +430,7 @@ mod wasm_impl {
         compile_error!("WASI target missing cpu feature 'atomics'");
 
         let to: i64 = match timeout {
-            Some(to) => i64::try_from(to).unwrap(),
+            Some(to) => i64::try_from(to).expect("int cast"),
             None => -1,
         };
         // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).

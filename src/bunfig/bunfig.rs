@@ -422,7 +422,7 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"define") {
             self.expect(&expr, ExprTag::EObject)?;
-            let obj = expr.data.e_object().unwrap();
+            let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
             let valid_count = properties
                 .iter()
@@ -431,10 +431,10 @@ impl<'a> Parser<'a> {
             let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
             let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
             for prop in properties {
-                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else {
+                let ExprData::EString(v) = &prop.value.as_ref().expect("infallible: prop has value").data else {
                     continue;
                 };
-                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else {
+                let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
                     continue;
                 };
                 keys.push(estring_to_owned(k, self.bump));
@@ -446,7 +446,7 @@ impl<'a> Parser<'a> {
         if let Some(expr) = expr_get(&json, b"origin") {
             self.expect_string(&expr)?;
             self.ctx.args.origin = Some(estring_to_owned(
-                expr.data.e_string().unwrap().get(),
+                expr.data.e_string().expect("infallible: variant checked").get(),
                 self.bump,
             ));
         }
@@ -459,7 +459,7 @@ impl<'a> Parser<'a> {
             if let Some(expr) = expr_get(&json, b"serve") {
                 if let Some(port) = expr_get(&expr, b"port") {
                     self.expect(&port, ExprTag::ENumber)?;
-                    let p = expr_as_number(&port).unwrap() as u16;
+                    let p = expr_as_number(&port).expect("infallible: type checked") as u16;
                     self.ctx.args.port = Some(if p == 0 { 3000 } else { p });
                 }
             }
@@ -470,7 +470,7 @@ impl<'a> Parser<'a> {
 
             if let Some(expr) = expr_get(&json, b"telemetry") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                bun_analytics::set_enabled(if expr_as_bool(&expr).unwrap() {
+                bun_analytics::set_enabled(if expr_as_bool(&expr).expect("infallible: type checked") {
                     bun_analytics::TriState::Yes
                 } else {
                     bun_analytics::TriState::No
@@ -481,7 +481,7 @@ impl<'a> Parser<'a> {
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = expr_get(&json, b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                self.ctx.runtime_options.smol = expr_as_bool(&expr).unwrap();
+                self.ctx.runtime_options.smol = expr_as_bool(&expr).expect("infallible: type checked");
             }
         }
 
@@ -498,17 +498,17 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = expr_get(&test_, b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.runtime_options.smol = expr_as_bool(&expr).unwrap();
+                    self.ctx.runtime_options.smol = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 if let Some(expr) = expr_get(&test_, b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.enabled = expr_as_bool(&expr).unwrap();
+                    self.ctx.test_options.coverage.enabled = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 if let Some(expr) = expr_get(&test_, b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.reporters.only_failures = expr_as_bool(&expr).unwrap();
+                    self.ctx.test_options.reporters.only_failures = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 if let Some(expr) = expr_get(&test_, b"reporter") {
@@ -527,7 +527,7 @@ impl<'a> Parser<'a> {
                         expr_get(&expr, b"dots").or_else(|| expr_get(&expr, b"dot"))
                     {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
-                        self.ctx.test_options.reporters.dots = expr_as_bool(&dots_expr).unwrap();
+                        self.ctx.test_options.reporters.dots = expr_as_bool(&dots_expr).expect("infallible: type checked");
                     }
                 }
 
@@ -556,7 +556,7 @@ impl<'a> Parser<'a> {
                         }
 
                         self.expect(&expr, ExprTag::EArray)?;
-                        let arr = expr.data.e_array().unwrap();
+                        let arr = expr.data.e_array().expect("infallible: variant checked");
                         let items = arr.items.slice();
                         for item in items {
                             self.expect_string(item)?;
@@ -581,7 +581,7 @@ impl<'a> Parser<'a> {
                 if let Some(expr) = expr_get(&test_, b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory =
-                        estring_to_owned(expr.data.e_string().unwrap().get(), self.bump);
+                        estring_to_owned(expr.data.e_string().expect("infallible: variant checked").get(), self.bump);
                 }
 
                 if let Some(expr) = expr_get(&test_, b"coverageThreshold") {
@@ -599,19 +599,19 @@ impl<'a> Parser<'a> {
                         if let Some(functions) = expr_get(&expr, b"functions") {
                             self.expect(&functions, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.functions =
-                                expr_as_number(&functions).unwrap();
+                                expr_as_number(&functions).expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                         if let Some(lines) = expr_get(&expr, b"lines") {
                             self.expect(&lines, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.lines =
-                                expr_as_number(&lines).unwrap();
+                                expr_as_number(&lines).expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                         if let Some(stmts) = expr_get(&expr, b"statements") {
                             self.expect(&stmts, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.stmts =
-                                expr_as_number(&stmts).unwrap();
+                                expr_as_number(&stmts).expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
                     }
@@ -620,12 +620,12 @@ impl<'a> Parser<'a> {
                 // This mostly exists for debugging.
                 if let Some(expr) = expr_get(&test_, b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.ignore_sourcemap = expr_as_bool(&expr).unwrap();
+                    self.ctx.test_options.coverage.ignore_sourcemap = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 if let Some(expr) = expr_get(&test_, b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.skip_test_files = expr_as_bool(&expr).unwrap();
+                    self.ctx.test_options.coverage.skip_test_files = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 let mut randomize_from_config: Option<bool> = None;
@@ -633,12 +633,12 @@ impl<'a> Parser<'a> {
                 if let Some(expr) = expr_get(&test_, b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr_as_bool(&expr);
-                    self.ctx.test_options.randomize = expr_as_bool(&expr).unwrap();
+                    self.ctx.test_options.randomize = expr_as_bool(&expr).expect("infallible: type checked");
                 }
 
                 if let Some(expr) = expr_get(&test_, b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    let seed_value = num_to_u32(expr_as_number(&expr).unwrap());
+                    let seed_value = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
 
                     // Validate that randomize is true when seed is specified
                     let has_randomize_true =
@@ -659,7 +659,7 @@ impl<'a> Parser<'a> {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
                         return Ok(());
                     }
-                    self.ctx.test_options.repeat_count = num_to_u32(expr_as_number(&expr).unwrap());
+                    self.ctx.test_options.repeat_count = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = expr_get(&test_, b"retry") {
@@ -668,7 +668,7 @@ impl<'a> Parser<'a> {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
                         return Ok(());
                     }
-                    self.ctx.test_options.retry = num_to_u32(expr_as_number(&expr).unwrap());
+                    self.ctx.test_options.retry = num_to_u32(expr_as_number(&expr).expect("infallible: type checked"));
                 }
 
                 if let Some(expr) = expr_get(&test_, b"concurrentTestGlob") {
@@ -946,7 +946,7 @@ impl<'a> Parser<'a> {
                 if let Some(dir) = expr_get(&_bun, b"outdir") {
                     self.expect_string(&dir)?;
                     self.ctx.args.output_dir = Some(estring_to_owned(
-                        dir.data.e_string().unwrap().get(),
+                        dir.data.e_string().expect("infallible: variant checked").get(),
                         self.bump,
                     ));
                 }
@@ -959,13 +959,13 @@ impl<'a> Parser<'a> {
 
                 if let Some(entry_points) = expr_get(&_bun, b"entryPoints") {
                     self.expect(&entry_points, ExprTag::EArray)?;
-                    let arr = entry_points.data.e_array().unwrap();
+                    let arr = entry_points.data.e_array().expect("infallible: variant checked");
                     let items = arr.items.slice();
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
                         names.push(estring_to_owned(
-                            item.data.e_string().unwrap().get(),
+                            item.data.e_string().expect("infallible: variant checked").get(),
                             self.bump,
                         ));
                     }
@@ -974,11 +974,11 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = expr_get(&_bun, b"packages") {
                     self.expect(&expr, ExprTag::EObject)?;
-                    let object = expr.data.e_object().unwrap();
+                    let object = expr.data.e_object().expect("infallible: variant checked");
                     let properties = object.properties.slice();
                     let mut valid_count: usize = 0;
                     for prop in properties {
-                        if !matches!(prop.value.as_ref().unwrap().data, ExprData::EBoolean(_)) {
+                        if !matches!(prop.value.as_ref().expect("infallible: prop has value").data, ExprData::EBoolean(_)) {
                             continue;
                         }
                         valid_count += 1;
@@ -988,10 +988,10 @@ impl<'a> Parser<'a> {
                     );
 
                     for prop in properties {
-                        let ExprData::EBoolean(b) = prop.value.as_ref().unwrap().data else {
+                        let ExprData::EBoolean(b) = prop.value.as_ref().expect("infallible: prop has value").data else {
                             continue;
                         };
-                        let key_expr = prop.key.as_ref().unwrap();
+                        let key_expr = prop.key.as_ref().expect("infallible: prop has key");
                         let ExprData::EString(k) = &key_expr.data else {
                             continue;
                         };
@@ -1126,13 +1126,13 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(&json, b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
-            let obj = expr.data.e_object().unwrap();
+            let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
             let mut loader_names: Vec<Box<[u8]>> = Vec::with_capacity(properties.len());
             let mut loader_values: Vec<api::Loader> = Vec::with_capacity(properties.len());
             for item in properties {
-                let key_expr = item.key.as_ref().unwrap();
-                let key = expr_as_string(key_expr, self.bump).unwrap();
+                let key_expr = item.key.as_ref().expect("infallible: prop has key");
+                let key = expr_as_string(key_expr, self.bump).expect("infallible: type checked");
                 if key.is_empty() {
                     continue;
                 }
@@ -1142,10 +1142,10 @@ impl<'a> Parser<'a> {
                         b"file extension for loader must start with a '.'",
                     )?;
                 }
-                let value = item.value.as_ref().unwrap();
+                let value = item.value.as_ref().expect("infallible: prop has value");
                 self.expect_string(value)?;
                 let Some(loader) = bun_bundler::options::Loader::from_string(
-                    expr_as_string(value, self.bump).unwrap(),
+                    expr_as_string(value, self.bump).expect("infallible: type checked"),
                 ) else {
                     self.add_error(value.loc, b"Invalid loader")?;
                     unreachable!();
@@ -1292,19 +1292,19 @@ impl<'a> Parser<'a> {
 
         if let Some(url) = obj.get(b"url") {
             self.expect_string(&url)?;
-            registry.url = expr_as_string(&url, self.bump).unwrap().into();
+            registry.url = expr_as_string(&url, self.bump).expect("infallible: type checked").into();
         }
         if let Some(username) = obj.get(b"username") {
             self.expect_string(&username)?;
-            registry.username = expr_as_string(&username, self.bump).unwrap().into();
+            registry.username = expr_as_string(&username, self.bump).expect("infallible: type checked").into();
         }
         if let Some(password) = obj.get(b"password") {
             self.expect_string(&password)?;
-            registry.password = expr_as_string(&password, self.bump).unwrap().into();
+            registry.password = expr_as_string(&password, self.bump).expect("infallible: type checked").into();
         }
         if let Some(token) = obj.get(b"token") {
             self.expect_string(&token)?;
-            registry.token = expr_as_string(&token, self.bump).unwrap().into();
+            registry.token = expr_as_string(&token, self.bump).expect("infallible: type checked").into();
         }
 
         Ok(registry)
@@ -1394,7 +1394,7 @@ impl<'a> Parser<'a> {
         if let Some(scopes) = expr_get(install_obj, b"scopes") {
             let mut registry_map = install.scoped.take().unwrap_or_default();
             self.expect(&scopes, ExprTag::EObject)?;
-            let obj = scopes.data.e_object().unwrap();
+            let obj = scopes.data.e_object().expect("infallible: variant checked");
             registry_map.scopes.reserve(obj.properties.slice().len());
             for prop in obj.properties.slice() {
                 let Some(name_) = prop.key.as_ref().and_then(|k| expr_as_string(k, self.bump))
@@ -1592,7 +1592,7 @@ impl<'a> Parser<'a> {
                     for p in raw {
                         self.expect_string(p)?;
                         list.push(estring_to_owned(
-                            p.data.e_string().unwrap().get(),
+                            p.data.e_string().expect("infallible: variant checked").get(),
                             self.bump,
                         ));
                     }
@@ -1646,13 +1646,13 @@ impl<'a> Parser<'a> {
                     for p in raw {
                         self.expect_string(p)?;
                         plugins.push(estring_to_owned(
-                            p.data.e_string().unwrap().get(),
+                            p.data.e_string().expect("infallible: variant checked").get(),
                             self.bump,
                         ));
                     }
                     break 'plugins Some(plugins);
                 } else {
-                    let s = config_plugins.data.e_string().unwrap();
+                    let s = config_plugins.data.e_string().expect("infallible: variant checked");
                     break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
                 }
             };
@@ -1691,15 +1691,15 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = expr_get(serve_obj, b"define") {
             self.expect(&expr, ExprTag::EObject)?;
-            let obj = expr.data.e_object().unwrap();
+            let obj = expr.data.e_object().expect("infallible: variant checked");
             let properties = obj.properties.slice();
             let mut keys: Vec<Box<[u8]>> = Vec::new();
             let mut values: Vec<Box<[u8]>> = Vec::new();
             for prop in properties {
-                let ExprData::EString(v) = &prop.value.as_ref().unwrap().data else {
+                let ExprData::EString(v) = &prop.value.as_ref().expect("infallible: prop has value").data else {
                     continue;
                 };
-                let ExprData::EString(k) = &prop.key.as_ref().unwrap().data else {
+                let ExprData::EString(k) = &prop.key.as_ref().expect("infallible: prop has key").data else {
                     continue;
                 };
                 keys.push(estring_to_owned(k, self.bump));

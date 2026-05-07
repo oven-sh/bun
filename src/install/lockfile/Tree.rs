@@ -95,12 +95,12 @@ impl Tree {
 
     pub fn to_tree(out: External) -> Tree {
         Tree {
-            id: u32::from_ne_bytes(out[0..4].try_into().unwrap()),
-            dependency_id: u32::from_ne_bytes(out[4..8].try_into().unwrap()),
-            parent: u32::from_ne_bytes(out[8..12].try_into().unwrap()),
+            id: u32::from_ne_bytes(out[0..4].try_into().expect("infallible: size matches")),
+            dependency_id: u32::from_ne_bytes(out[4..8].try_into().expect("infallible: size matches")),
+            parent: u32::from_ne_bytes(out[8..12].try_into().expect("infallible: size matches")),
             dependencies: DependencyIDSlice::new(
-                u32::from_ne_bytes(out[12..16].try_into().unwrap()),
-                u32::from_ne_bytes(out[16..20].try_into().unwrap()),
+                u32::from_ne_bytes(out[12..16].try_into().expect("infallible: size matches")),
+                u32::from_ne_bytes(out[16..20].try_into().expect("infallible: size matches")),
             ),
         }
     }
@@ -484,7 +484,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
             // `child` (Vec) drops at end of `slice` scope; explicit deinit removed.
 
-            let off: u32 = u32::try_from(dep_ids.len()).unwrap();
+            let off: u32 = u32::try_from(dep_ids.len()).expect("int cast");
             for &dep_id in child.iter() {
                 let pkg_id = self.resolutions[dep_id as usize];
                 if pkg_id == invalid_package_id {
@@ -495,7 +495,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                 // PERF(port): was assume_capacity
                 dep_ids.push(dep_id);
             }
-            let len: u32 = u32::try_from(dep_ids.len() - off as usize).unwrap();
+            let len: u32 = u32::try_from(dep_ids.len() - off as usize).expect("int cast");
 
             tree.dependencies.off = off;
             tree.dependencies.len = len;
@@ -701,7 +701,7 @@ impl Tree {
 
         for dep_id in resolution_list.begin()..resolution_list.end() {
             // PERF(port): was assume_capacity
-            builder.sort_buf.push(u32::try_from(dep_id).unwrap());
+            builder.sort_buf.push(u32::try_from(dep_id).expect("int cast"));
         }
 
         {

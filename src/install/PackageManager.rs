@@ -2134,7 +2134,7 @@ pub fn init(
             }
         }
 
-        (u64::try_from(bun_core::time::timestamp().max(0)).unwrap()) as u32 // @truncate
+        (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
     // SAFETY: singleton fully initialized. The HTTP thread is now live and may
     // project `&(*get()).field` concurrently, but `timestamp_for_manifest_cache_control`
@@ -2392,7 +2392,7 @@ pub fn init_with_runtime_once(
     }
 
     manager.timestamp_for_manifest_cache_control =
-        ((u64::try_from(bun_core::time::timestamp().max(0)).unwrap()) as u32)
+        ((u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32)
             // When using "bun install", we check for updates with a 300 second cache.
             // When using bun, we only do staleness checks once per day
             .saturating_sub(bun_core::time::S_PER_DAY);

@@ -158,7 +158,7 @@ impl Stdio {
 
             if !remain.is_empty() {
                 // Hint at the size of the file
-                let _ = sys::ftruncate(fd, i64::try_from(remain.len()).unwrap());
+                let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
             }
 
             // Dump all the bytes in there
@@ -183,7 +183,7 @@ impl Stdio {
                             fd.close();
                             return false;
                         }
-                        written += i64::try_from(result).unwrap();
+                        written += i64::try_from(result).expect("int cast");
                         remain = &remain[result..];
                     }
                 }

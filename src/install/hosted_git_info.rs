@@ -759,17 +759,17 @@ impl<'a> UrlProtocolPair<'a> {
 fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     let mut first_colon_idx: i32 = -1;
     if let Some(idx) = strings::index_of_char(npa_str, b':') {
-        first_colon_idx = i32::try_from(idx).unwrap();
+        first_colon_idx = i32::try_from(idx).expect("int cast");
     }
 
     // The cast here is safe -- first_colon_idx is guaranteed to be [-1, infty)
-    let proto_slice = &npa_str[0..usize::try_from(first_colon_idx + 1).unwrap()];
+    let proto_slice = &npa_str[0..usize::try_from(first_colon_idx + 1).expect("int cast")];
 
     if let Some(url_protocol) = WellDefinedProtocol::from_string_with_colon(proto_slice) {
         // We need to slice off the protocol from the string. Note there are two very annoying
         // cases -- one where the protocol string is foo://bar and one where it is foo:bar.
         let post_colon =
-            strings::substring(npa_str, Some(usize::try_from(first_colon_idx + 1).unwrap()), None);
+            strings::substring(npa_str, Some(usize::try_from(first_colon_idx + 1).expect("int cast")), None);
 
         return UrlProtocolPair {
             url: UrlProtocolPairUrl::Unmanaged(if post_colon.starts_with(b"//") {
@@ -787,7 +787,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         // We have an @ in the string
         if first_colon_idx != -1 {
             // We have a : in the string.
-            if i32::try_from(at_idx).unwrap() > first_colon_idx {
+            if i32::try_from(at_idx).expect("int cast") > first_colon_idx {
                 // The @ is after the :, so we have something like user:pass@host which is a valid
                 // URL. and should be promoted to git_plus_ssh. It's guaranteed that the issue is
                 // not that we have proto://user@host:path because we would've caught that above.
@@ -840,7 +840,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
     // it.
     let maybe_dup_slash_idx = strings::index_of(npa_str, b"//");
     if let Some(dup_slash_idx) = maybe_dup_slash_idx {
-        if i32::try_from(dup_slash_idx).unwrap() == first_colon_idx + 1 {
+        if i32::try_from(dup_slash_idx).expect("int cast") == first_colon_idx + 1 {
             return UrlProtocolPair {
                 url: UrlProtocolPairUrl::Unmanaged(strings::substring(
                     npa_str,
@@ -858,11 +858,11 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
         return UrlProtocolPair {
             url: UrlProtocolPairUrl::Unmanaged(strings::substring(
                 npa_str,
-                Some(usize::try_from(first_colon_idx + 1).unwrap()),
+                Some(usize::try_from(first_colon_idx + 1).expect("int cast")),
                 None,
             )),
             protocol: UrlProtocol::Custom(
-                &npa_str[0..usize::try_from(first_colon_idx + 1).unwrap()],
+                &npa_str[0..usize::try_from(first_colon_idx + 1).expect("int cast")],
             ),
         };
     }
@@ -882,21 +882,21 @@ pub fn correct_url<'a>(
 ) -> Result<UrlProtocolPair<'a>, AllocError> {
     let at_idx: isize =
         if let Some(idx) = strings::last_index_before_char(url_proto_pair.url_slice(), b'@', b'#') {
-            isize::try_from(idx).unwrap()
+            isize::try_from(idx).expect("int cast")
         } else {
             -1
         };
 
     let col_idx: isize =
         if let Some(idx) = strings::last_index_before_char(url_proto_pair.url_slice(), b':', b'#') {
-            isize::try_from(idx).unwrap()
+            isize::try_from(idx).expect("int cast")
         } else {
             -1
         };
 
     if col_idx > at_idx {
         let mut duped: Box<[u8]> = Box::from(url_proto_pair.url_slice());
-        duped[usize::try_from(col_idx).unwrap()] = b'/';
+        duped[usize::try_from(col_idx).expect("int cast")] = b'/';
 
         return Ok(UrlProtocolPair {
             url: UrlProtocolPairUrl::Managed(duped),

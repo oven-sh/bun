@@ -746,7 +746,7 @@ where
             return;
         }
 
-        let resp = ctx.resp.unwrap();
+        let resp = ctx.resp.expect("infallible: resp bound");
         // SAFETY: FFI handle, just checked Some
         let has_responded = unsafe { resp.has_responded() };
         if !has_responded {
@@ -1149,7 +1149,7 @@ where
 
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
-        let server = unsafe { &*this.server.unwrap() };
+        let server = unsafe { &*this.server.expect("infallible: server bound") };
         let vm = server.vm() as *const VirtualMachine as *mut VirtualMachine;
         let global_this = server.global_this();
         // This is a task in the event loop.
@@ -1198,7 +1198,7 @@ where
         this.detach_response();
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
-        let server = unsafe { &*this.server.unwrap() };
+        let server = unsafe { &*this.server.expect("infallible: server bound") };
         let vm = server.vm() as *const VirtualMachine as *mut VirtualMachine;
         let global_this = server.global_this();
         // Drop one ref on every exit path. Declared before the microtask drain
@@ -1267,7 +1267,7 @@ where
         self.blob.detach();
         debug_assert!(self.server.is_some());
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.unwrap()).global_this() };
+        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
 
         #[cfg(debug_assertions)]
         {
@@ -1439,8 +1439,8 @@ where
             return;
         }
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.unwrap()).global_this() };
-        let resp = self.resp.unwrap();
+        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
+        let resp = self.resp.expect("infallible: resp bound");
 
         self.blob = AnyBlob::Blob(blob);
         let crate::webcore::blob::store::Data::File(file) = &self.blob.store().unwrap().data else {
@@ -1648,7 +1648,7 @@ where
         self.flags.set_has_marked_pending(true);
 
         // SAFETY: BACKREF
-        let server = unsafe { &*self.server.unwrap() };
+        let server = unsafe { &*self.server.expect("infallible: server bound") };
         FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
@@ -1727,14 +1727,14 @@ where
         let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
         // SAFETY: BACKREF
-        let global_this = unsafe { (*this.server.unwrap()).global_this() };
+        let global_this = unsafe { (*this.server.expect("infallible: server bound")).global_this() };
 
         if this.is_aborted_or_ended() {
             stream.cancel(global_this);
             this.response_body_readable_stream_ref.deinit();
             return;
         }
-        let resp = this.resp.unwrap();
+        let resp = this.resp.expect("infallible: resp bound");
 
         stream.value.ensure_still_alive();
 
@@ -2027,7 +2027,7 @@ where
             // TODO: properly propagate exception upwards
             // SAFETY: BACKREF; see drain_microtasks() re: const→mut cast.
             unsafe {
-                let vm = (*self.server.unwrap()).vm() as *const VirtualMachine as *mut VirtualMachine;
+                let vm = (*self.server.expect("infallible: server bound")).vm() as *const VirtualMachine as *mut VirtualMachine;
                 (*vm).drain_microtasks();
             }
         }
@@ -2047,7 +2047,7 @@ where
             // but we received nothing or the connection was aborted
             if matches!(body, Body::Value::Locked(_)) {
                 // SAFETY: BACKREF
-                let global_this = unsafe { (*self.server.unwrap()).global_this() };
+                let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
                 body.to_error_instance(
                     Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed),
                     global_this,
@@ -2086,7 +2086,7 @@ where
             || self.flags.aborted()
             || self.server.is_none()
             // SAFETY: BACKREF, just checked Some
-            || unsafe { (*self.server.unwrap()).terminated() }
+            || unsafe { (*self.server.expect("infallible: server bound")).terminated() }
     }
 
     pub fn do_render_head_response_after_s3_size_resolved(
@@ -2150,7 +2150,7 @@ where
         this.flags.set_needs_content_length(false);
         // Always this.renderMetadata() before sending the content-length or transfer-encoding header so status is sent first
 
-        let resp = this.resp.unwrap();
+        let resp = this.resp.expect("infallible: resp bound");
         this.set_response(response);
         let Some(server) = this.server else {
             // server detached?
@@ -2465,7 +2465,7 @@ where
         if let Some(resp) = req.response_weakref.get() {
             debug_assert!(req.server.is_some());
             // SAFETY: BACKREF
-            let global_this = unsafe { (*req.server.unwrap()).global_this() };
+            let global_this = unsafe { (*req.server.expect("infallible: server bound")).global_this() };
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2650,7 +2650,7 @@ where
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
         value.to_blob_if_possible();
         // SAFETY: BACKREF
-        let global_this = unsafe { (*this.server.unwrap()).global_this() };
+        let global_this = unsafe { (*this.server.expect("infallible: server bound")).global_this() };
         match value {
             Body::Value::Error(err_ref) => {
                 let js_err = err_ref.to_js(global_this);
@@ -2744,7 +2744,7 @@ where
                                 this.response_body_readable_stream_ref.deinit();
                                 return;
                             }
-                            let resp = this.resp.unwrap();
+                            let resp = this.resp.expect("infallible: resp bound");
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk {
@@ -2843,7 +2843,7 @@ where
         if this.is_aborted_or_ended() {
             return;
         }
-        let resp = this.resp.unwrap();
+        let resp = this.resp.expect("infallible: resp bound");
 
         let chunk = stream.slice();
         // on failure, it will continue to allocate
@@ -2906,7 +2906,7 @@ where
         // borrows are disjoint at runtime; route through a raw ptr to express that.
         let response: *mut Response = self.response_weakref.get().unwrap();
         // SAFETY: BACKREF
-        let global_this = unsafe { (*self.server.unwrap()).global_this() };
+        let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
         // SAFETY: response_weakref keeps the Response alive for this frame.
         let owned_readable = unsafe { (*response).get_body_readable_stream(global_this) };
         // SAFETY: as above; body_value borrows the Response, disjoint from `self`.
@@ -3058,7 +3058,7 @@ where
     ) {
         debug_assert!(ctx.server.is_some());
         // SAFETY: BACKREF
-        let server = unsafe { &*ctx.server.unwrap() };
+        let server = unsafe { &*ctx.server.expect("infallible: server bound") };
         let vm = server.vm();
 
         match promise.unwrap(unsafe { (*vm.global).vm() }, jsc::PromiseUnwrapMode::MarkHandled) {
@@ -3122,7 +3122,7 @@ where
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
         // SAFETY: FFI handle, just checked is_some()
-        if self.resp.is_none() || unsafe { self.resp.unwrap().has_responded() } {
+        if self.resp.is_none() || unsafe { self.resp.expect("infallible: resp bound").has_responded() } {
             return;
         }
 
@@ -3189,13 +3189,13 @@ where
 
         if let Some(cookies) = self.cookies.take() {
             // SAFETY: BACKREF
-            let global_this = unsafe { (*self.server.unwrap()).global_this() };
+            let global_this = unsafe { (*self.server.expect("infallible: server bound")).global_this() };
             // SAFETY: cookies is a live opaque FFI handle; we held a ref.
             let r = unsafe {
                 (*cookies).write(
                     global_this,
                     Self::RESP_KIND,
-                    any_response_as_ptr(self.resp.unwrap()),
+                    any_response_as_ptr(self.resp.expect("infallible: resp bound")),
                 )
             };
             // SAFETY: release the ref we took in set_cookies.
@@ -3220,7 +3220,7 @@ where
         // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
-            if let Some(alt) = unsafe { (*self.server.unwrap()).h3_alt_svc() } {
+            if let Some(alt) = unsafe { (*self.server.expect("infallible: server bound")).h3_alt_svc() } {
                 resp.write_header(b"alt-svc", alt);
             }
         }
@@ -3396,7 +3396,7 @@ where
             return;
         }
         // SAFETY: BACKREF
-        let server = unsafe { &*this.server.unwrap() };
+        let server = unsafe { &*this.server.expect("infallible: server bound") };
         let vm = server.vm();
         let global_this = server.global_this();
 
@@ -3456,7 +3456,7 @@ where
             {
                 this.request_body_buf = Vec::new();
                 // SAFETY: FFI handle
-                unsafe { this.resp.unwrap().clear_on_data() };
+                unsafe { this.resp.expect("infallible: resp bound").clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
                 // SAFETY: event_loop() returns a live raw ptr.

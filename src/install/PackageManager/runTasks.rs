@@ -181,7 +181,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
-                let node = unsafe { &mut *manager.downloads_node.unwrap() };
+                let node = unsafe { &mut *manager.downloads_node.expect("infallible: progress active") };
                 if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
                     || has_updated_this_run
                 {
@@ -190,7 +190,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             // SAFETY: see above.
-            unsafe { &mut *manager.downloads_node.unwrap() }.activate();
+            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") }.activate();
             manager.progress.maybe_refresh();
         }
     };
@@ -373,7 +373,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -554,7 +554,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         );
 
                         if timestamp_this_tick.is_none() {
-                            let now = u64::try_from(bun_core::time::timestamp().max(0)).unwrap();
+                            let now = u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast");
                             timestamp_this_tick = Some((now as u32).saturating_add(300));
                         }
 
@@ -599,7 +599,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         }
 
                         let dependency_list_entry =
-                            manager.task_queue.get_mut(&task.task_id).unwrap();
+                            manager.task_queue.get_mut(&task.task_id).expect("infallible: task queued");
 
                         let dependency_list = core::mem::take(dependency_list_entry);
 
@@ -906,7 +906,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             extract.name.slice(),
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
@@ -1020,7 +1020,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
+                let dependency_list_entry = manager.task_queue.get_mut(&task.id).expect("infallible: task queued");
                 let dependency_list = core::mem::take(dependency_list_entry);
 
                 process_dependency_list_for_ctx::<C>(manager, dependency_list, extract_ctx, install_peer)?;
@@ -1028,7 +1028,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             manifest.name(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1269,7 +1269,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             alias,
                             ProgressStrings::EXTRACT_EMOJI.as_bytes(),
                             );
@@ -1404,7 +1404,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let resolved = crate::repository_real::Repository::find_commit(
                         // SAFETY: `env` is set during `PackageManager::init` and
                         // outlives all tasks.
-                        unsafe { manager.env.unwrap().as_mut() },
+                        unsafe { manager.env.expect("infallible: env loaded").as_mut() },
                         // SAFETY: `manager.log` is a non-null backref to the CLI log.
                         unsafe { &mut *manager.log },
                         bun_sys::Dir { fd: repo_fd },
@@ -1433,7 +1433,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     manager.task_batch.push(ThreadPoolBatch::from(queued));
                 } else {
                     // Resolving!
-                    let dependency_list_entry = manager.task_queue.get_mut(&task.id).unwrap();
+                    let dependency_list_entry = manager.task_queue.get_mut(&task.id).expect("infallible: task queued");
                     let dependency_list = core::mem::take(dependency_list_entry);
 
                     process_dependency_list_for_ctx::<C>(
@@ -1447,7 +1447,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             name,
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1592,7 +1592,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
                         manager.set_node_name::<true>(
-                            unsafe { &mut *manager.downloads_node.unwrap() },
+                            unsafe { &mut *manager.downloads_node.expect("infallible: progress active") },
                             alias.slice(),
                             ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                             );
@@ -1712,7 +1712,7 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
         + manager.patch_apply_batch.len
         + manager.patch_calc_hash_batch.len;
 
-    manager.increment_pending_tasks(u32::try_from(count).unwrap());
+    manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
     manager.thread_pool.schedule(core::mem::take(&mut manager.patch_apply_batch));
     manager.thread_pool.schedule(core::mem::take(&mut manager.patch_calc_hash_batch));
     manager.thread_pool.schedule(core::mem::take(&mut manager.task_batch));
@@ -1745,7 +1745,7 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
     let mut github_api_url: &[u8] = b"https://api.github.com";
     // SAFETY: `env` is set during `PackageManager::init` and outlives all tasks.
-    if let Some(url) = unsafe { this.env.unwrap().as_ref() }.get(b"GITHUB_API_URL") {
+    if let Some(url) = unsafe { this.env.expect("infallible: env loaded").as_ref() }.get(b"GITHUB_API_URL") {
         if !url.is_empty() {
             github_api_url = url;
         }

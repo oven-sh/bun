@@ -692,7 +692,7 @@ impl<'src> HtmlRenderer<'src> {
         }
         while v > 0 {
             i -= 1;
-            buf[i] = b'0' + u8::try_from(v % 10).unwrap();
+            buf[i] = b'0' + u8::try_from(v % 10).expect("int cast");
             v /= 10;
         }
         self.write(&buf[i..]);

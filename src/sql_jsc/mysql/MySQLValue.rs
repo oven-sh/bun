@@ -503,7 +503,7 @@ impl DateTime {
                 // Byte 3: [month]        (8-bit unsigned integer, 1-12)
                 // Byte 4: [day]          (8-bit unsigned integer, 1-31)
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().unwrap()),
+                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
                     month: val[2],
                     day: val[3],
                     ..Default::default()
@@ -518,7 +518,7 @@ impl DateTime {
                 // Byte 6: [minute]       (8-bit unsigned integer, 0-59)
                 // Byte 7: [second]       (8-bit unsigned integer, 0-59)
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().unwrap()),
+                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
                     month: val[2],
                     day: val[3],
                     hour: val[4],
@@ -537,13 +537,13 @@ impl DateTime {
                 // Byte 7:    [second]        (8-bit unsigned integer, 0-59)
                 // Byte 8-11: [microseconds]  (32-bit little-endian unsigned integer
                 DateTime {
-                    year: u16::from_le_bytes(val[0..2].try_into().unwrap()),
+                    year: u16::from_le_bytes(val[0..2].try_into().expect("infallible: size matches")),
                     month: val[2],
                     day: val[3],
                     hour: val[4],
                     minute: val[5],
                     second: val[6],
-                    microsecond: u32::from_le_bytes(val[7..11].try_into().unwrap()),
+                    microsecond: u32::from_le_bytes(val[7..11].try_into().expect("infallible: size matches")),
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
@@ -607,14 +607,14 @@ impl DateTime {
         let minute = ts.div_euclid(60);
         let second = ts.rem_euclid(60);
 
-        let date = gregorian_date(i32::try_from(days).unwrap());
+        let date = gregorian_date(i32::try_from(days).expect("int cast"));
         DateTime {
             year: date.year,
             month: date.month,
             day: date.day,
-            hour: u8::try_from(hour).unwrap(),
-            minute: u8::try_from(minute).unwrap(),
-            second: u8::try_from(second).unwrap(),
+            hour: u8::try_from(hour).expect("int cast"),
+            minute: u8::try_from(minute).expect("int cast"),
+            second: u8::try_from(second).expect("int cast"),
             microsecond: microseconds,
         }
     }
@@ -687,10 +687,10 @@ impl Time {
         let seconds = timestamp.rem_euclid(60);
         Time {
             negative: timestamp < 0,
-            days: u32::try_from(days).unwrap(),
-            hours: u8::try_from(hours).unwrap(),
-            minutes: u8::try_from(minutes).unwrap(),
-            seconds: u8::try_from(seconds).unwrap(),
+            days: u32::try_from(days).expect("int cast"),
+            hours: u8::try_from(hours).expect("int cast"),
+            minutes: u8::try_from(minutes).expect("int cast"),
+            seconds: u8::try_from(seconds).expect("int cast"),
             microseconds,
         }
     }
@@ -717,14 +717,14 @@ impl Time {
         let mut time = Time::default();
         if val.len() >= 8 {
             time.negative = val[0] != 0;
-            time.days = u32::from_le_bytes(val[1..5].try_into().unwrap());
+            time.days = u32::from_le_bytes(val[1..5].try_into().expect("infallible: size matches"));
             time.hours = val[5];
             time.minutes = val[6];
             time.seconds = val[7];
         }
 
         if val.len() > 8 {
-            time.microseconds = u32::from_le_bytes(val[8..12].try_into().unwrap());
+            time.microseconds = u32::from_le_bytes(val[8..12].try_into().expect("infallible: size matches"));
         }
 
         time
@@ -853,7 +853,7 @@ fn gregorian_date(days: i32) -> Date {
     Date {
         year: y,
         month: m,
-        day: u8::try_from(d + 1).unwrap(),
+        day: u8::try_from(d + 1).expect("int cast"),
     }
 }
 

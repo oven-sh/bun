@@ -388,14 +388,14 @@ impl<'a> UpgradedDuplex<'a> {
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         if let Some(wrapper) = &mut self.wrapper {
-            return i32::try_from(wrapper.write_data(data).unwrap_or(0)).unwrap();
+            return i32::try_from(wrapper.write_data(data).unwrap_or(0)).expect("int cast");
         }
         0
     }
 
     pub fn raw_write(&mut self, encoded_data: &[u8]) -> i32 {
         Self::internal_write(self as *mut Self, encoded_data);
-        i32::try_from(encoded_data.len()).unwrap()
+        i32::try_from(encoded_data.len()).expect("int cast")
     }
 
     pub fn close(&mut self) {

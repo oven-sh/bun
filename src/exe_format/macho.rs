@@ -150,7 +150,7 @@ impl MachoFile {
                                         segname: SEGNAME_BUN,
                                         addr: original_vmaddr,
                                         size: total_size,
-                                        offset: u32::try_from(original_fileoff).unwrap(),
+                                        offset: u32::try_from(original_fileoff).expect("int cast"),
                                         align: (blob_alignment as f64).log2() as u32,
                                         reloff: 0,
                                         nreloc: 0,
@@ -189,7 +189,7 @@ impl MachoFile {
 
         // Calculate how much larger/smaller the section will be compared to its current size
         let size_diff: i64 =
-            i64::try_from(aligned_size).unwrap() - i64::try_from(original_segsize).unwrap();
+            i64::try_from(aligned_size).expect("int cast") - i64::try_from(original_segsize).expect("int cast");
 
         // We assume that the section is page-aligned, so we can calculate the number of new pages
         debug_assert!(size_diff % PAGE_SIZE as i64 == 0);
@@ -200,7 +200,7 @@ impl MachoFile {
         // to write the complete signature, but reserving this up front avoids the
         // common reallocation.
         self.data
-            .reserve(usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).unwrap());
+            .reserve(usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"));
 
         let linkedit_seg_idx = match linkedit_seg_idx {
             Some(idx) => idx,
@@ -213,7 +213,7 @@ impl MachoFile {
         // are written below before being read (memmove + memset cover the whole range).
         let prev_len = self.data.len();
         unsafe {
-            self.data.set_len(prev_len + usize::try_from(size_diff).unwrap());
+            self.data.set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
         }
 
         // Binary is:
@@ -225,7 +225,7 @@ impl MachoFile {
             let after_bun_dst = self
                 .data
                 .as_mut_ptr()
-                .add((original_data_end as usize) + usize::try_from(size_diff).unwrap());
+                .add((original_data_end as usize) + usize::try_from(size_diff).expect("int cast"));
             let prev_after_bun_src = self
                 .data
                 .as_ptr()
@@ -265,8 +265,8 @@ impl MachoFile {
                     .add(linkedit_seg_idx)
                     .cast::<macho::segment_command_64>();
                 let mut v = core::ptr::read_unaligned(seg);
-                v.fileoff += usize::try_from(size_diff).unwrap() as u64;
-                v.vmaddr += usize::try_from(size_diff).unwrap() as u64;
+                v.fileoff += usize::try_from(size_diff).expect("int cast") as u64;
+                v.vmaddr += usize::try_from(size_diff).expect("int cast") as u64;
                 core::ptr::write_unaligned(seg, v);
             }
         }
@@ -294,7 +294,7 @@ impl MachoFile {
                         .cast::<macho::linkedit_data_command>();
                     let mut cs = core::ptr::read_unaligned(cs_ptr);
                     let new_sig_dataoff: u64 =
-                        cs.dataoff as u64 + u64::try_from(size_diff).unwrap();
+                        cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
                     let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
 
                     let seg_ptr = self
@@ -315,7 +315,7 @@ impl MachoFile {
 
                     // Stamp datasize directly so the `size_diff == 0` path — which skips
                     // `updateLoadCommandOffsets` below — still records the new size.
-                    cs.datasize = u32::try_from(new_sig_size).unwrap();
+                    cs.datasize = u32::try_from(new_sig_size).expect("int cast");
                     core::ptr::write_unaligned(cs_ptr, cs);
                     sig_size = new_sig_size;
                 }
@@ -335,7 +335,7 @@ impl MachoFile {
             };
             self.update_load_command_offsets(
                 original_fileoff,
-                u64::try_from(size_diff).unwrap(),
+                u64::try_from(size_diff).expect("int cast"),
                 le_fileoff,
                 le_filesize,
                 sig_size,
@@ -409,7 +409,7 @@ impl MachoFile {
                     // Special handling for code signature
                     if cmd.cmd == macho::LC::CODE_SIGNATURE {
                         // Update the size of the code signature to the newer signature size
-                        linkedit_cmd.datasize = u32::try_from(sig_size).unwrap();
+                        linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
                     }
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
@@ -775,14 +775,14 @@ pub mod utils {
         if data.len() < 4 {
             return false;
         }
-        u32::from_be_bytes(data[0..4].try_into().unwrap()) == 0x7f454c46
+        u32::from_be_bytes(data[0..4].try_into().expect("infallible: size matches")) == 0x7f454c46
     }
 
     pub fn is_macho(data: &[u8]) -> bool {
         if data.len() < 4 {
             return false;
         }
-        u32::from_le_bytes(data[0..4].try_into().unwrap()) == macho::MH_MAGIC_64
+        u32::from_le_bytes(data[0..4].try_into().expect("infallible: size matches")) == macho::MH_MAGIC_64
     }
 }
 

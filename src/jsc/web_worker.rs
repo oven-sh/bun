@@ -874,10 +874,10 @@ impl WebWorker {
         // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
         unsafe {
             let b = &mut (*vm).transpiler;
-            b.resolver.env_loader = b.env;
+            b.resolver.env_loader = NonNull::new(b.env);
 
             if let Some(graph) = parent.standalone_module_graph {
-                (hooks.apply_standalone_runtime_flags)(b, graph);
+                (hooks.apply_standalone_runtime_flags)(b as *mut _, graph);
             }
         }
 

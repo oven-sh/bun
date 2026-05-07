@@ -1221,15 +1221,9 @@ unsafe extern "C" {
 // bun_vm, take_exception, …) lives there; this block only adds the handful
 // of helpers that grew on the lib.rs side during the port.
 impl JSGlobalObject {
-    /// Raw `*mut JSGlobalObject` for FFI / storage. Preserves the mutable
-    /// provenance returned by `JSC__JSGlobalObject__vm` rather than narrowing
-    /// through `&VM`, so callers may pass it to FFI that mutates the VM
-    /// without a `&T → *mut T` cast.
-    #[inline]
-    pub fn vm_ptr(&self) -> *mut VM {
-        // SAFETY: FFI — `&self` is a valid `JSGlobalObject*`; returns the owning VM.
-        unsafe { JSC__JSGlobalObject__vm(self) }
-    }
+    // `vm_ptr()` lives in `JSGlobalObject.rs` (canonical impl block); the
+    // duplicate that grew here during the port has been removed to avoid
+    // E0034 multiple-applicable-items at every call site.
 
     /// Two-arg shim for mechanically-ported `throw("fmt", .{…})` call sites.
     /// Dispatches via [`ThrowFmtArgs`] so both `()` and `format_args!(..)`

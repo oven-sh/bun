@@ -91,6 +91,11 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
         debug_assert!(has_exception);
     }
 
+    // Zig: `defer scope.deinit()`. `ExceptionValidationScope` has no `Drop` impl
+    // (placement-constructed C++ TopExceptionScope), so destroy explicitly.
+    // SAFETY: `scope` was initialized via `init` above and is destroyed exactly once.
+    unsafe { ExceptionValidationScope::destroy(&mut scope) };
+
     if ok { Ok(out) } else { Err(JsError::Thrown) }
 }
 
@@ -374,10 +379,11 @@ pub mod unicode_testing_apis {
         };
 
         // PORT NOTE: Rust's `to_utf16_alloc_for_real(.., sentinel=true)` includes
-        // the trailing NUL **in** `result.len()` (Zig kept it past-the-end).
-        debug_assert!(result.last().copied() == Some(0));
+        // the trailing NUL **in** `result.len()` (Zig's `[:0]u16` kept it past-the-end),
+        // so slice it off before handing to JSC.
+        debug_assert_eq!(result.last().copied(), Some(0));
 
-        let out = String::clone_utf16(&result[..result.len().saturating_sub(1)]);
+        let out = String::clone_utf16(&result[..result.len() - 1]);
         let js = to_js(&out, global_this);
         out.deref();
         js

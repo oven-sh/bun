@@ -227,6 +227,7 @@ impl FSWatchTaskPosix {
     }
 }
 
+#[cfg(not(windows))]
 impl FSWatchTaskPosix {
     /// `FSWatchTaskPosix.deinit` (node_fs_watcher.zig:61). **Not** `impl Drop`:
     /// this is only ever called on heap clones produced by `enqueue()` (via the
@@ -1045,6 +1046,7 @@ impl FSWatcher {
     }
 }
 
+#[cfg(not(windows))]
 impl Default for FSWatchTaskPosix {
     fn default() -> Self {
         Self {

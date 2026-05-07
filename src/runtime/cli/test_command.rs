@@ -1863,13 +1863,20 @@ impl TestCommand {
 
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
-        // TODO(port): upstream `InitOptions` only carries {args, graph, smol, eval_mode,
-        // is_main_thread}; `log`/`env_loader`/`store_fd`/`debugger` are wired post-init
-        // until the full Options<'a> un-gates.
-        let _ = (&ctx.args, ctx.log, &mut *env_loader, &ctx.runtime_options.debugger);
+        // PORT NOTE (layering): `InitOptions` is the low-tier surface — it carries
+        // `log`/`env_loader`/`smol`/`is_main_thread`, but `args: api::TransformOptions`
+        // and `debugger: cli::Command::Debugger` live in forward-dep crates and are
+        // routed through `RuntimeHooks::{init_runtime_state,ensure_debugger}` instead
+        // (see VirtualMachine.rs `Options` PORT NOTE). `store_fd` is patched post-init
+        // (matches `init_with_module_graph`/`init_worker`).
+        let _ = (&ctx.args, &ctx.runtime_options.debugger);
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
+                log: core::ptr::NonNull::new(ctx.log),
+                env_loader: core::ptr::NonNull::new(
+                    (&mut *env_loader as *mut DotEnv::Loader<'_>).cast::<DotEnv::Loader<'static>>(),
+                ),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
@@ -1880,8 +1887,9 @@ impl TestCommand {
         //
         // in the future we should investigate if refactoring this to not
         // rely on the dir fd yields a performance improvement
-        // TODO(port): vm.argv / vm.preload — upstream VM struct lacks these fields.
-        let _ = (&ctx.passthrough, &ctx.preloads);
+        vm.transpiler.resolver.store_fd = true;
+        vm.argv = core::mem::take(&mut ctx.passthrough);
+        vm.preload = core::mem::take(&mut ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
         // SAFETY: set once at startup before the HTTP thread spawns; only read on that thread.
         unsafe {

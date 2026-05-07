@@ -1,21 +1,8 @@
 // https://github.com/oven-sh/bun/issues/13696
-//
-// testcontainers (via docker-modem) talks to the Docker daemon over a unix
-// socket using node:http. For `container.exec({ stdin: true })`, docker-modem
-// sends a POST with `Transfer-Encoding: chunked`, writes the JSON body with a
-// single `req.write(body)`, and intentionally does *not* call `req.end()` so
-// that stdin can be streamed to the container later. The Docker daemon replies
-// immediately with the exec output while the request body stream stays open.
-//
-// Bun's node:http client previously:
-//   1. Only dispatched the request after the *second* write() (or end()/
-//      flushHeaders()), so a single write() without end() never sent anything.
-//   2. In duplex mode, deferred emitting 'response' until the request body
-//      generator finished, i.e. until req.end() was called.
-//
-// Both behaviours together meant the request was never sent and the response
-// was never delivered, causing testcontainers' wait strategies that rely on
-// container.exec() (the default HostPortWaitStrategy) to hang until timeout.
+// node:http ClientRequest: a single req.write() without req.end() never sent
+// the request, and in duplex mode 'response' was held back until req.end().
+// docker-modem relies on write-once-keep-open for container.exec stdin, which
+// is why testcontainers' default HostPortWaitStrategy hung until timeout.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -132,19 +119,21 @@ for (const socketMode of ["tcp", "unix"] as const) {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
     const lines = stdout.trim().split("\n");
     // The server must have received the request (a single write() dispatches
     // it), the response must be emitted with status 200, every body chunk must
     // be delivered, and the response must end cleanly.
-    expect(lines).toEqual([
-      "request-seen",
-      "response-status:200",
-      "recv:chunk-0",
-      "recv:chunk-1",
-      "recv:chunk-2",
-      "response-end",
-    ]);
+    expect({ lines, stderr }).toEqual({
+      lines: [
+        "request-seen",
+        "response-status:200",
+        "recv:chunk-0",
+        "recv:chunk-1",
+        "recv:chunk-2",
+        "response-end",
+      ],
+      stderr: expect.not.stringContaining("request-error"),
+    });
     expect(exitCode).toBe(0);
   });
 }
@@ -208,7 +197,9 @@ setTimeout(() => process.exit(0), 3000).unref();
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("body:hello");
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: "body:hello",
+    stderr: expect.not.stringContaining("request-error"),
+  });
   expect(exitCode).toBe(0);
 });

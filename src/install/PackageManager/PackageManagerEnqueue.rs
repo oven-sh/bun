@@ -1718,37 +1718,41 @@ pub fn enqueue_git_checkout(
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
         *task = Task::Task {
-            package_manager: this,
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::GitCheckout,
-            request: crate::package_manager_task::Request::GitCheckout {
-                repo_dir: dir,
-                resolution,
-                dependency_id,
-                name: StringOrTinyString::init_append_if_needed(
-                    name,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                url: StringOrTinyString::init_append_if_needed(
-                    this.lockfile.str(&resolution.value.git.repo),
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                resolved: StringOrTinyString::init_append_if_needed(
-                    resolved,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
-                env: crate::repository::SharedEnv::get(unsafe { this.env.unwrap().as_mut() }),
+            request: crate::package_manager_task::Request {
+                git_checkout: ManuallyDrop::new(crate::package_manager_task::GitCheckoutRequest {
+                    repo_dir: dir,
+                    resolution,
+                    dependency_id,
+                    name: StringOrTinyString::init_append_if_needed(
+                        name,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    url: StringOrTinyString::init_append_if_needed(
+                        // SAFETY: `resolution.tag == Git` for the git-checkout path.
+                        this.lockfile.str(&resolution.value.git.repo),
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    resolved: StringOrTinyString::init_append_if_needed(
+                        resolved,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
+                    // SAFETY: `env` is set during `PackageManager::init()` and never null afterward.
+                    env: crate::repository::SharedEnv::get(this.env.unwrap().as_mut()),
+                }),
             },
             apply_patch_task: if let Some(h) = patch_name_and_version_hash {
-                let dep = this.lockfile.buffers.dependencies[dependency_id as usize];
+                let dep_name_hash =
+                    this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
                 let pkg_id = match this
                     .lockfile
                     .package_index
-                    .get(&dep.name_hash)
+                    .get(&dep_name_hash)
                     .unwrap_or_else(|| panic!("Package not found"))
                 {
                     PackageIndexEntry::Id(p) => *p,
@@ -1761,8 +1765,10 @@ pub fn enqueue_git_checkout(
                     .unwrap()
                     .patchfile_hash()
                     .unwrap();
-                let mut pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
-                pt.callback.apply_mut().task_id = task_id;
+                let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
+                // SAFETY: `pt` is fresh from `Box::into_raw`; reclaim ownership.
+                let mut pt = Box::from_raw(pt);
+                pt.callback.apply_mut().task_id = Some(task_id);
                 Some(pt)
             } else {
                 None
@@ -1805,9 +1811,8 @@ fn enqueue_local_tarball(
         // Construct an absolute path to the tarball.
         // Normally tarball paths are always relative to the root directory, but if a
         // workspace depends on a tarball path, it should be relative to the workspace.
-        let workspace_path = workspace_res
-            .value
-            .workspace
+        // SAFETY: `workspace_res.tag == Workspace` checked above.
+        let workspace_path = unsafe { workspace_res.value.workspace }
             .slice(this.lockfile.buffers.string_bytes.as_slice());
         break 'tarball_path (
             Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
@@ -1823,35 +1828,37 @@ fn enqueue_local_tarball(
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
         *task = Task::Task {
-            package_manager: this,
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::LocalTarball,
-            request: crate::package_manager_task::Request::LocalTarball {
-                tarball: ExtractTarball {
-                    package_manager: this,
-                    name: StringOrTinyString::init_append_if_needed(
-                        name,
+            request: crate::package_manager_task::Request {
+                local_tarball: ManuallyDrop::new(crate::package_manager_task::LocalTarballRequest {
+                    tarball: ExtractTarball {
+                        package_manager: pm_stub(),
+                        name: StringOrTinyString::init_append_if_needed(
+                            name,
+                            &mut crate::network_task::filename_store_appender(),
+                        )
+                        .expect("unreachable"),
+                        resolution,
+                        cache_dir: get_cache_directory(this),
+                        temp_dir: get_temporary_directory(this).handle,
+                        dependency_id,
+                        integrity,
+                        url: StringOrTinyString::init_append_if_needed(
+                            path,
+                            &mut crate::network_task::filename_store_appender(),
+                        )
+                        .expect("unreachable"),
+                        skip_verify: false,
+                    },
+                    tarball_path: StringOrTinyString::init_append_if_needed(
+                        tarball_path,
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    resolution,
-                    cache_dir: get_cache_directory(this),
-                    temp_dir: get_temporary_directory(this).handle,
-                    dependency_id,
-                    integrity,
-                    url: StringOrTinyString::init_append_if_needed(
-                        path,
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
-                    ..ExtractTarball::default()
-                },
-                tarball_path: StringOrTinyString::init_append_if_needed(
-                    tarball_path,
-                    &mut crate::network_task::filename_store_appender(),
-                )
-                .expect("unreachable"),
-                normalize,
+                    normalize,
+                }),
             },
             id: task_id,
             // TODO(port): `data: undefined`
@@ -1867,24 +1874,31 @@ fn update_name_and_name_hash_from_version_replacement(
     original_name_hash: PackageNameHash,
     new_version: dependency::Version,
 ) -> (SemverString, PackageNameHash) {
-    match new_version.tag {
-        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
-        dependency::version::Tag::DistTag => (
-            new_version.value.dist_tag.name,
-            Semver::string::Builder::string_hash(lockfile.str(&new_version.value.dist_tag.name)),
-        ),
-        dependency::version::Tag::Npm => (
-            new_version.value.npm.name,
-            Semver::string::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
-        ),
-        dependency::version::Tag::Git => (new_version.value.git.package_name, original_name_hash),
-        dependency::version::Tag::Github => {
-            (new_version.value.github.package_name, original_name_hash)
+    // SAFETY: each arm reads the union field discriminated by `new_version.tag`.
+    unsafe {
+        match new_version.tag {
+            // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+            dependency::version::Tag::DistTag => (
+                new_version.value.dist_tag.name,
+                Semver::string::Builder::string_hash(
+                    lockfile.str(&new_version.value.dist_tag.name),
+                ),
+            ),
+            dependency::version::Tag::Npm => (
+                new_version.value.npm.name,
+                Semver::string::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
+            ),
+            dependency::version::Tag::Git => {
+                (new_version.value.git.package_name, original_name_hash)
+            }
+            dependency::version::Tag::Github => {
+                (new_version.value.github.package_name, original_name_hash)
+            }
+            dependency::version::Tag::Tarball => {
+                (new_version.value.tarball.package_name, original_name_hash)
+            }
+            _ => (original_name, original_name_hash),
         }
-        dependency::version::Tag::Tarball => {
-            (new_version.value.tarball.package_name, original_name_hash)
-        }
-        _ => (original_name, original_name_hash),
     }
 }
 
@@ -1893,7 +1907,9 @@ pub enum ResolvedPackageTask {
     NetworkTask(*mut NetworkTask),
 
     /// Apply patch task or calc patch hash task
-    PatchTask(Box<PatchTask>),
+    // PORT NOTE: PatchTask carries a `&'a PackageManager` BACKREF; the singleton
+    // outlives every task, so callers route through `'static`.
+    PatchTask(*mut PatchTask<'static>),
 }
 
 pub struct ResolvedPackageResult {
@@ -1943,19 +1959,14 @@ fn get_or_put_resolved_package_with_find_result(
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update { None } else { Some(version) },
-        &Resolution {
-            tag: ResolutionTag::Npm,
-            value: ResolutionValue {
-                npm: ResolutionNpmValue {
-                    version: find_result.version,
-                    url: find_result.package.tarball_url.value,
-                },
-            },
-        },
+        &Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
+            version: find_result.version,
+            url: find_result.package.tarball_url.value,
+        })),
     ) {
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
-            package: this.lockfile.packages.get(id),
+            package: this.lockfile.packages.get(id as usize),
             is_first_time: false,
             task: None,
         }));
@@ -1964,10 +1975,17 @@ fn get_or_put_resolved_package_with_find_result(
     }
 
     // appendPackage sets the PackageID on the package
-    let package = this.lockfile.append_package(Package::from_npm(
-        this,
-        this.lockfile,
-        &mut this.log,
+    // PORT NOTE: reshaped for borrowck — `from_npm` takes both `&mut PackageManager`
+    // and `&mut Lockfile`, which alias through `this.lockfile`. Split via raw root
+    // (Zig passes both freely).
+    let this_ptr: *mut PackageManager = this;
+    // SAFETY: `from_npm` reads `pm` fields disjoint from `pm.lockfile` (options /
+    // updating_packages); the raw split mirrors Zig's aliased `*PackageManager`.
+    let package = unsafe { &mut *(*this_ptr).lockfile }.append_package(Package::from_npm(
+        unsafe { &mut *this_ptr },
+        unsafe { &mut *(*this_ptr).lockfile },
+        // SAFETY: `this.log` is non-null after `PackageManager::init()`.
+        unsafe { &mut *this.log },
         manifest,
         find_result.version,
         find_result.package,
@@ -1978,11 +1996,15 @@ fn get_or_put_resolved_package_with_find_result(
         debug_assert!(package.meta.id != invalid_package_id);
     }
     // PORT NOTE: Zig used `defer successFn(...)`. Use scopeguard so success_fn runs on every
-    // return below (including the `?` paths).
-    let guard = scopeguard::guard((this, package.meta.id), |(this, pkg_id)| {
-        success_fn(this, dependency_id, pkg_id);
+    // return below (including the `?` paths). The guard owns the raw pointer so the
+    // `this` reborrow below doesn't conflict with the closure capture.
+    let mut guard = scopeguard::guard((this_ptr, package.meta.id), |(this_ptr, pkg_id)| {
+        // SAFETY: `this_ptr` came from the live exclusive `this` borrow; the
+        // guard fires after all reborrows of `this` below have ended.
+        success_fn(unsafe { &mut *this_ptr }, dependency_id, pkg_id);
     });
-    let this: &mut PackageManager = &mut *guard.0;
+    // SAFETY: see above — sole live `&mut PackageManager` until scope exit.
+    let this: &mut PackageManager = unsafe { &mut *guard.0 };
     // PORT NOTE: Zig `defer` (not errdefer) — scopeguard runs on ALL exits, never disarmed.
 
     // non-null if the package is in "patchedDependencies"

@@ -268,6 +268,15 @@ impl bun_ptr::ThreadSafeRefCounted for Process {
     }
 }
 
+impl Drop for Process {
+    /// Zig `Process.deinit`: `this.poller.deinit(); bun.destroy(this)`. The
+    /// `bun.destroy` half is the `Box::from_raw` in `destructor` above; this
+    /// `Drop` body covers the `poller.deinit()` call.
+    fn drop(&mut self) {
+        self.poller.deinit();
+    }
+}
+
 impl Process {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -350,15 +359,15 @@ pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_aio::EventLoopCt
 impl Process {
     #[cfg(windows)]
     pub fn update_status_on_windows(&mut self) {
-        if let Poller::Uv(uv_proc) = &self.poller {
+        // Zig: `onExitUV(&this.poller.uv, 0, 0)` — uses @fieldParentPtr to
+        // recover `self`. In Rust the back-pointer lives in `uv.data`; obtain
+        // the raw `*mut uv_process_t` and forward.
+        if let Poller::Uv(uv_proc) = &mut self.poller {
             if !uv_proc.is_active() && matches!(self.status, Status::Running) {
-                Self::on_exit_uv(&mut self.poller_uv_mut_unchecked(), 0, 0);
-                // TODO(port): re-express on_exit_uv invocation; see below
+                let handle: *mut uv::uv_process_t = uv_proc as *mut uv::uv_process_t;
+                Self::on_exit_uv(handle, 0, 0);
             }
         }
-        // PORT NOTE: reshaped for borrowck — Zig calls onExitUV(&this.poller.uv, 0, 0)
-        // which uses @fieldParentPtr to recover `self`. In Rust we keep the
-        // extern "C" callback signature but here just call it via raw pointer.
     }
 
     #[cfg(unix)]
@@ -602,21 +611,23 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
-        // SAFETY: process points to PollerWindows.uv field inside Process.poller
-        let poller: *mut PollerWindows = unsafe {
-            (process as *mut u8).sub(offset_of!(PollerWindows, uv)).cast::<PollerWindows>()
-        };
-        // TODO(port): PollerWindows is a Rust enum (tagged union); @fieldParentPtr on
-        // a union(enum) payload doesn't map cleanly. Phase B: make PollerWindows a
-        // #[repr(C)] struct { tag, uv } so offset_of works, or store backref in uv.data.
-        let this: &mut Process = unsafe {
-            &mut *(poller as *mut u8).sub(offset_of!(Process, poller)).cast::<Process>()
-        };
+        // Zig recovers `*Process` via `@fieldParentPtr("uv", process)` →
+        // `@fieldParentPtr("poller", ..)`. A Rust default-repr `enum` has no
+        // stable variant-payload offset, so the back-pointer is stored in
+        // `uv_process_t.data` (set in `spawn_process_windows` immediately
+        // after the handle is zeroed).
+        // SAFETY: `data` was set to the owning `*mut Process` before
+        // `uv_spawn`; libuv never overwrites it.
+        let this: &mut Process = unsafe { &mut *(*process).data.cast::<Process>() };
         let exit_code: u8 = if exit_status >= 0 { (exit_status as u64) as u8 } else { 0 };
-        // Zig: `if (term_signal > 0) @enumFromInt(...)` on a non-exhaustive enum(u8).
-        // Carry the raw byte; `Status::signal_code()` does the range-checked mapping.
+        // Zig: `if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS))
+        //   @enumFromInt(term_signal) else null` — upper-bound exclusive of SIGSYS.
         let signal_code: Option<u8> =
-            if term_signal > 0 { Some(term_signal as u8) } else { None };
+            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
+                Some(term_signal as u8)
+            } else {
+                None
+            };
         let rusage = uv_getrusage(unsafe { &mut *process });
 
         bun_sys::windows::libuv::log!(
@@ -648,13 +659,8 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
-        // SAFETY: same @fieldParentPtr pattern as on_exit_uv
-        let poller: *mut Poller = unsafe {
-            (uv_handle as *mut u8).sub(offset_of!(Poller, uv)).cast::<Poller>()
-        };
-        let this: &mut Process = unsafe {
-            &mut *(poller as *mut u8).sub(offset_of!(Process, poller)).cast::<Process>()
-        };
+        // SAFETY: see `on_exit_uv` — `*mut Process` back-pointer in `data`.
+        let this: &mut Process = unsafe { &mut *(*uv_handle).data.cast::<Process>() };
         bun_sys::windows::libuv::log!("Process.onClose({})", unsafe { (*uv_handle).pid });
 
         if matches!(this.poller, Poller::Uv(_)) {
@@ -666,9 +672,6 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
-            // PORT NOTE: PollerPosix has Drop; match by &mut and disable in
-            // place, then assign Detached so the old value is dropped (which
-            // performs the same cleanup for Fd).
             match &mut self.poller {
                 Poller::Fd(poll) => {
                     // SAFETY: poll is a live hive slot; deinit returns it to the Store.
@@ -728,13 +731,6 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
-    fn deinit(this: *mut Process) {
-        // SAFETY: called by IntrusiveArc when refcount hits 0; Box::from_raw
-        // drops `poller` (whose Drop impl handles waiter.disable() / closed-assert).
-        unsafe {
-            drop(Box::from_raw(this));
-        }
-    }
 
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
@@ -916,14 +912,14 @@ pub enum PollerPosix {
 }
 
 #[cfg(unix)]
-impl Drop for PollerPosix {
-    fn drop(&mut self) {
+impl PollerPosix {
+    /// Zig `PollerPosix.deinit` (process.zig:689-695). NOT `impl Drop`: Zig
+    /// reassigns this union freely (`this.poller = .detached`, `.waiter_thread`,
+    /// etc.) without running cleanup at each assignment, and `close()` already
+    /// performs the same teardown explicitly. A `Drop` impl would double-free
+    /// the hive slot on those reassignments. Called only from `Process` drop.
+    pub fn deinit(&mut self) {
         match self {
-            // Zig `PollerPosix.deinit` (process.zig:689-695): `.fd => |fd| fd.deinit()`.
-            // Normally `Process::close()` runs first and flips this to `Detached`, but
-            // if `watch()`'s `fd.register()` fails (process.rs `watch` Err arm) the
-            // poller is left as `Fd(poll)` and the caller may release its ref without
-            // ever calling `close()`. Return the hive slot here so we don't leak it.
             PollerPosix::Fd(poll) => {
                 // SAFETY: poll is a live hive-allocated `FilePoll` slot, exclusive on
                 // the event-loop thread; `deinit()` returns it to the hive store.
@@ -935,13 +931,9 @@ impl Drop for PollerPosix {
             PollerPosix::Detached => {}
         }
     }
-}
 
-#[cfg(unix)]
-impl PollerPosix {
-    fn into_fd(mut self) -> Option<core::ptr::NonNull<FilePoll>> {
-        // PORT NOTE: reshaped for borrowck — Drop impl forbids partial move out of `self`.
-        match core::mem::replace(&mut self, PollerPosix::Detached) {
+    fn into_fd(self) -> Option<core::ptr::NonNull<FilePoll>> {
+        match self {
             PollerPosix::Fd(f) => Some(f),
             _ => None,
         }

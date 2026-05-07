@@ -69,21 +69,8 @@ impl<'a> ResolverContext for GitResolver<'a> {
         }))
     }
 
-    fn resolution<SemverIntType: VersionInt>(&self) -> &ResolutionType<SemverIntType> {
-        // The trait method is generic over `SemverIntType`, but
-        // `ResolutionType<S>` only has identical layout to `Resolution`
-        // (= `ResolutionType<u64>`) when `S == u64` — the `Value::npm` arm
-        // embeds `Version<S>`. Guard at compile time so a future `u32`
-        // instantiation can't silently produce a mis-sized reborrow.
-        const {
-            assert!(
-                core::mem::size_of::<ResolutionType<SemverIntType>>()
-                    == core::mem::size_of::<Resolution>()
-            )
-        };
-        // SAFETY: size/layout equality enforced above; callers gate on
-        // `IS_GIT_RESOLVER` so the npm arm is never read.
-        unsafe { &*(self.resolution as *const Resolution as *const ResolutionType<SemverIntType>) }
+    fn resolution(&self) -> &Resolution {
+        self.resolution
     }
     fn dep_id(&self) -> DependencyID {
         self.dep_id
@@ -335,10 +322,6 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
-                    // PORT NOTE: `bun_json` returns the T2 `bun_logger::js_ast::Expr`;
-                    // `Scripts::parse_*` are typed against `bun_js_parser::Expr`. The
-                    // logger AST has an `Into` lift (see js_parser/ast/Expr.rs).
-                    let json_root: bun_js_parser::Expr = json_root.into();
                     // PORT NOTE (spec parity): Zig writes
                     //   var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
                     // which COPIES the `Scripts` struct into a local; the
@@ -355,9 +338,9 @@ impl PackageManager {
                     let mut scripts: Scripts =
                         self.lockfile.packages.items_scripts()[*package_id as usize];
                     let mut builder = self.lockfile.string_builder();
-                    Scripts::parse_count(&mut builder, &json_root);
+                    Scripts::parse_count(&mut builder, json_root);
                     builder.allocate().expect("unreachable");
-                    scripts.parse_alloc(&mut builder, &json_root);
+                    scripts.parse_alloc(&mut builder, json_root);
                     scripts.filled = true;
                 }
 

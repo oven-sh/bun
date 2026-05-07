@@ -2745,6 +2745,7 @@ function generateRust(
     hasPendingActivity = false,
     structuredClone = false,
     getInternalProperties = false,
+    rustPath,
   } = {} as ClassDefinition,
 ) {
   proto = {
@@ -2757,118 +2758,87 @@ function generateRust(
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
   }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
 
-  // ── trait surface ────────────────────────────────────────────────────────
-  // Every user-facing hook gets a default \`unimplemented!()\` body so the
-  // crate type-checks before the real \`impl\` is ported. Overriding any
-  // method on the concrete type shadows the default.
-  const traitMethods: string[] = [];
-  const seenTrait = new Set<string>();
-  function trait(sig: string, body: string) {
-    if (seenTrait.has(sig)) return;
-    seenTrait.add(sig);
-    traitMethods.push(`    ${sig} { ${body} }`);
-  }
-  const todo = (what: string) => `unimplemented!("${typeName}::${what} not yet ported to Rust")`;
-
-  // ── exported #[no_mangle] thunks ────────────────────────────────────────
+  // ── exported #[no_mangle] thunks ─────────────────────────────────────────
+  // Direct dispatch: each thunk calls an *inherent* method on the user's real
+  // Rust struct (re-exported as `${typeName}` below). No trait, no opaque
+  // placeholder, no `unimplemented!()` — a missing method is a compile error,
+  // mirroring the Zig path's `@import("…").${T}.${fn}` behaviour.
   const thunks: string[] = [];
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
     symbols.push(sym);
     thunks.push(`#[unsafe(no_mangle)]\npub unsafe extern "C" fn ${sym}${sig} {\n${body}\n}`);
   }
+  const T = typeName;
 
   // memoryCost / estimatedSize / ZigStructSize
   if (memoryCost) {
-    trait(`fn memoryCost(this: &Self) -> usize`, todo("memoryCost"));
-    thunk(
-      symbolName(typeName, "memoryCost"),
-      `(this: *mut ${typeName}) -> usize`,
-      `    unsafe { <${typeName} as ${typeName}Impl>::memoryCost(&*this) }`,
-    );
+    thunk(symbolName(typeName, "memoryCost"), `(this: *mut ${T}) -> usize`, `    unsafe { ${T}::memory_cost(&*this) }`);
   }
   if (estimatedSize) {
-    trait(`fn estimatedSize(this: &Self) -> usize`, todo("estimatedSize"));
     thunk(
       symbolName(typeName, "estimatedSize"),
-      `(this: *mut ${typeName}) -> usize`,
-      `    unsafe { <${typeName} as ${typeName}Impl>::estimatedSize(&*this) }`,
+      `(this: *mut ${T}) -> usize`,
+      `    unsafe { ${T}::estimated_size(&*this) }`,
     );
   }
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
     thunks.push(
-      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${typeName}>();`,
+      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
     );
   }
 
   if (hasPendingActivity) {
-    trait(`fn hasPendingActivity(this: &Self) -> bool`, todo("hasPendingActivity"));
     thunk(
       symbolName(typeName, "hasPendingActivity"),
-      `(this: *mut ${typeName}) -> bool`,
-      `    unsafe { <${typeName} as ${typeName}Impl>::hasPendingActivity(&*this) }`,
+      `(this: *mut ${T}) -> bool`,
+      `    unsafe { ${T}::has_pending_activity(&*this) }`,
     );
   }
 
   if (finalize) {
-    trait(`fn finalize(this: &mut Self)`, todo("finalize"));
-    thunk(
-      classSymbolName(typeName, "finalize"),
-      `(this: *mut ${typeName})`,
-      `    unsafe { <${typeName} as ${typeName}Impl>::finalize(&mut *this) }`,
-    );
+    // `finalize` receives the raw `*mut Self` (not `&mut`) so the impl may
+    // `Box::from_raw` / `drop_in_place` without an outstanding mutable borrow.
+    thunk(classSymbolName(typeName, "finalize"), `(this: *mut ${T})`, `    unsafe { ${T}::finalize(this) }`);
   }
 
   if (construct && !noConstructor) {
     if (constructNeedsThis) {
-      trait(
-        `fn constructor(global: &JSGlobalObject, callframe: &CallFrame, this_value: JSValue) -> JsResult<*mut Self>`,
-        todo("constructor"),
-      );
       thunk(
         classSymbolName(typeName, "construct"),
         `(global: *mut JSGlobalObject, callframe: *mut CallFrame, this_value: JSValue) -> *mut c_void`,
         `    let global = unsafe { &*global };\n` +
           `    let callframe = unsafe { &*callframe };\n` +
-          `    bun_jsc::host_fn::host_construct_result(global, || <${typeName} as ${typeName}Impl>::constructor(global, callframe, this_value)).cast()`,
+          `    bun_jsc::host_fn::host_construct_result(global, || ${T}::constructor(global, callframe, this_value)).cast()`,
       );
     } else {
-      trait(
-        `fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Self>`,
-        todo("constructor"),
-      );
       thunk(
         classSymbolName(typeName, "construct"),
         `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut c_void`,
         `    let global = unsafe { &*global };\n` +
           `    let callframe = unsafe { &*callframe };\n` +
-          `    bun_jsc::host_fn::host_construct_result(global, || <${typeName} as ${typeName}Impl>::constructor(global, callframe)).cast()`,
+          `    bun_jsc::host_fn::host_construct_result(global, || ${T}::constructor(global, callframe)).cast()`,
       );
     }
   }
 
   if (call) {
-    trait(`fn call(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>`, todo("call"));
     thunk(
       classSymbolName(typeName, "call"),
       `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
       `    let global = unsafe { &*global };\n` +
         `    let callframe = unsafe { &*callframe };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || <${typeName} as ${typeName}Impl>::call(global, callframe))`,
+        `    bun_jsc::host_fn::host_fn_result(global, || ${T}::call(global, callframe))`,
     );
   }
 
   if (getInternalProperties) {
-    trait(
-      `fn getInternalProperties(this: &mut Self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue>`,
-      todo("getInternalProperties"),
-    );
     thunk(
       symbolName(typeName, "getInternalProperties"),
-      `(this: *mut ${typeName}, global: *mut JSGlobalObject, this_value: JSValue) -> JSValue`,
+      `(this: *mut ${T}, global: *mut JSGlobalObject, this_value: JSValue) -> JSValue`,
       `    let global = unsafe { &*global };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || unsafe { <${typeName} as ${typeName}Impl>::getInternalProperties(&mut *this, global, this_value) })`,
+        `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::get_internal_properties(&mut *this, global, this_value) })`,
     );
   }
 
@@ -2883,61 +2853,45 @@ function generateRust(
       const s = accessor ? accessor.setter : setter;
 
       if (names.getter) {
-        const id = rustIdent(g);
-        trait(
-          `fn ${id}(this: &mut Self, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JsResult<JSValue>`,
-          todo(g),
-        );
+        const id = rustSnakeIdent(g);
         thunk(
           names.getter,
-          `(this: *mut ${typeName}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject) -> JSValue`,
+          `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject) -> JSValue`,
           `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { <${typeName} as ${typeName}Impl>::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global) })`,
+            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global) })`,
         );
       }
 
       if (names.setter) {
-        const id = rustIdent(s);
-        trait(
-          `fn ${id}(this: &mut Self, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> JsResult<()>`,
-          todo(s),
-        );
+        const id = rustSnakeIdent(s);
         thunk(
           names.setter,
-          `(this: *mut ${typeName}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject, value: JSValue) -> bool`,
+          `(this: *mut ${T}, ${thisValue ? "this_value: JSValue, " : ""}global: *mut JSGlobalObject, value: JSValue) -> bool`,
           `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_setter_result(global, || unsafe { <${typeName} as ${typeName}Impl>::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global, value) })`,
+            `    bun_jsc::host_fn::host_setter_result(global, || unsafe { ${T}::${id}(&mut *this, ${thisValue ? "this_value, " : ""}global, value) })`,
         );
       }
 
       if (names.fn) {
-        const id = rustIdent(fn);
+        const id = rustSnakeIdent(fn);
         if (names.DOMJIT) {
           const { args } = DOMJIT;
           const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
           const argFwd = args.map((_, i) => `arg${i}`).join(", ");
-          const fastId = rustIdent(DOMJITName(fn));
-          trait(
-            `fn ${fastId}(this: &mut Self, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            todo(DOMJITName(fn)),
-          );
+          const fastId = rustSnakeIdent(DOMJITName(fn));
           thunk(
             names.DOMJIT,
-            `(this: *mut ${typeName}, global: *mut JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
+            `(this: *mut ${T}, global: *mut JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
             `    let global = unsafe { &*global };\n` +
-              `    unsafe { <${typeName} as ${typeName}Impl>::${fastId}(&mut *this, global${args.length ? ", " + argFwd : ""}) }`,
+              `    unsafe { ${T}::${fastId}(&mut *this, global${args.length ? ", " + argFwd : ""}) }`,
           );
         }
-        trait(
-          `fn ${id}(this: &mut Self, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JsResult<JSValue>`,
-          todo(fn),
-        );
         thunk(
           names.fn,
-          `(this: *mut ${typeName}, global: *mut JSGlobalObject, callframe: *mut CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
+          `(this: *mut ${T}, global: *mut JSGlobalObject, callframe: *mut CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           `    let global = unsafe { &*global };\n` +
             `    let callframe = unsafe { &*callframe };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { <${typeName} as ${typeName}Impl>::${id}(&mut *this, global, callframe${passThis ? ", js_this_value" : ""}) })`,
+            `    bun_jsc::host_fn::host_fn_result(global, || unsafe { ${T}::${id}(&mut *this, global, callframe${passThis ? ", js_this_value" : ""}) })`,
         );
       }
     }
@@ -2954,58 +2908,45 @@ function generateRust(
       const s = accessor ? accessor.setter : setter;
 
       if (names.getter) {
-        const id = rustIdent(g);
-        trait(
-          `fn ${id}(global: &JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JsResult<JSValue>`,
-          todo(g),
-        );
+        const id = rustSnakeIdent(g);
         thunk(
           names.getter,
           `(global: *mut JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
           `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || <${typeName} as ${typeName}Impl>::${id}(global, this_value, prop))`,
+            `    bun_jsc::host_fn::host_fn_result(global, || ${T}::${id}(global, this_value, prop))`,
         );
       }
 
       if (names.setter) {
-        const id = rustIdent(s);
-        trait(
-          `fn ${id}(global: &JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> JsResult<()>`,
-          todo(s),
-        );
+        const id = rustSnakeIdent(s);
         thunk(
           names.setter,
           `(global: *mut JSGlobalObject, this_value: JSValue, value: JSValue, prop: PropertyName) -> bool`,
           `    let global = unsafe { &*global };\n` +
-            `    bun_jsc::host_fn::host_setter_result(global, || <${typeName} as ${typeName}Impl>::${id}(global, this_value, value, prop))`,
+            `    bun_jsc::host_fn::host_setter_result(global, || ${T}::${id}(global, this_value, value, prop))`,
         );
       }
 
       if (names.fn) {
-        const id = rustIdent(fn);
+        const id = rustSnakeIdent(fn);
         if (names.DOMJIT) {
           const { args } = DOMJIT;
           const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
           const argFwd = args.map((_, i) => `arg${i}`).join(", ");
-          const fastId = rustIdent(DOMJITName(fn));
-          trait(
-            `fn ${fastId}(global: &JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            todo(DOMJITName(fn)),
-          );
+          const fastId = rustSnakeIdent(DOMJITName(fn));
           thunk(
             names.DOMJIT,
             `(global: *mut JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
             `    let global = unsafe { &*global };\n` +
-              `    <${typeName} as ${typeName}Impl>::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
+              `    ${T}::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
           );
         }
-        trait(`fn ${id}(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>`, todo(fn));
         thunk(
           names.fn,
           `(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue`,
           `    let global = unsafe { &*global };\n` +
             `    let callframe = unsafe { &*callframe };\n` +
-            `    bun_jsc::host_fn::host_fn_result(global, || <${typeName} as ${typeName}Impl>::${id}(global, callframe))`,
+            `    bun_jsc::host_fn::host_fn_result(global, || ${T}::${id}(global, callframe))`,
         );
       }
     }
@@ -3013,37 +2954,25 @@ function generateRust(
 
   // ── structuredClone ──────────────────────────────────────────────────────
   if (structuredClone) {
-    trait(
-      `fn onStructuredCloneSerialize(this: &mut Self, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-      todo("onStructuredCloneSerialize"),
-    );
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
-      `(this: *mut ${typeName}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
+      `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
       `    let global = unsafe { &*global };\n` +
-        `    unsafe { <${typeName} as ${typeName}Impl>::onStructuredCloneSerialize(&mut *this, global, ctx, write_bytes) }`,
+        `    unsafe { ${T}::on_structured_clone_serialize(&mut *this, global, ctx, write_bytes) }`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
-      trait(
-        `fn onStructuredCloneTransfer(this: &mut Self, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
-        todo("onStructuredCloneTransfer"),
-      );
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
-        `(this: *mut ${typeName}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
+        `(this: *mut ${T}, global: *mut JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn)`,
         `    let global = unsafe { &*global };\n` +
-          `    unsafe { <${typeName} as ${typeName}Impl>::onStructuredCloneTransfer(&mut *this, global, ctx, write_bytes) }`,
+          `    unsafe { ${T}::on_structured_clone_transfer(&mut *this, global, ctx, write_bytes) }`,
       );
     }
-    trait(
-      `fn onStructuredCloneDeserialize(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JsResult<JSValue>`,
-      todo("onStructuredCloneDeserialize"),
-    );
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: *mut JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
       `    let global = unsafe { &*global };\n` +
-        `    bun_jsc::host_fn::host_fn_result(global, || <${typeName} as ${typeName}Impl>::onStructuredCloneDeserialize(global, ptr, end))`,
+        `    bun_jsc::host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
     );
   }
 

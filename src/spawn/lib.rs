@@ -100,12 +100,27 @@ pub mod subprocess {
         }
 
         /// Zig: `Source.detach()` — drop the owned payload without writing it.
+        ///
+        /// PORT NOTE: the full `bun_runtime` `Source` is a tagged union over
+        /// `Blob`/`ArrayBuffer`/owned-bytes whose `detach` zeroes the active
+        /// variant in-place (the surrounding `StaticPipeWriter` is intrusively
+        /// ref-counted so the field is reached through `&self`). At this tier
+        /// only the owned-bytes variant exists; clearing it via interior
+        /// mutability matches the Zig `array_buffer.held.deinit(); self.* =
+        /// .detached;` semantics — the bytes are released immediately, and
+        /// subsequent `slice()` calls return `&[]`.
         #[inline]
         pub fn detach(&self) {
-            // TODO(port): blocked_on bun_runtime::api::bun::subprocess::Source —
-            // the real `detach` clears the active variant in-place (interior
-            // mutability via the pipe writer's refcount). Mid-tier callers only
-            // hit this on the error path; payload drops with `self`.
+            // SAFETY: `Source` is only ever reached through the single-thread
+            // `StaticPipeWriter` (intrusive `Rc` handle, `!Send`). No other
+            // borrow of `bytes` outlives this call — `slice()` is only used to
+            // seed the runtime writer's internal buffer at `start()`, never
+            // held across `detach()`.
+            unsafe {
+                let cell = &self.bytes as *const Option<Box<[u8]>> as *mut Option<Box<[u8]>>;
+                core::ptr::drop_in_place(cell);
+                core::ptr::write(cell, None);
+            }
         }
 
         #[inline]
@@ -114,29 +129,161 @@ pub mod subprocess {
         }
     }
 
+    /// Trait bound for the owning process type `P` of [`StaticPipeWriter`].
+    ///
+    /// MOVE_DOWN(b0) from `bun_runtime::api::bun::subprocess::StaticPipeWriter`:
+    /// Zig's `NewStaticPipeWriter(comptime ProcessType)` duck-types
+    /// `process.onCloseIO(.stdin)`; this trait is the cross-tier surface so
+    /// mid-tier parents (e.g. `SecurityScanSubprocess`) can be wired into the
+    /// runtime's `BufferedWriter` callback table without naming `bun_runtime`.
+    pub trait StaticPipeWriterProcess {
+        /// # Safety
+        /// `this` must point to a live `Self`.
+        unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
+    }
+
+    /// §Dispatch cold-path vtable — port of `jsc.Subprocess.NewStaticPipeWriter`'s
+    /// `create`/`start`/`deref` body. The real `BufferedWriter` + `FilePoll`
+    /// machinery lives in `bun_runtime` (depends on `bun_io`, `bun_aio`,
+    /// `bun_jsc`); that crate constructs a `&'static PipeWriterHooks` per
+    /// erased-parent shape and calls [`set_pipe_writer_hooks`] at startup.
+    ///
+    /// All fn-ptrs operate on the runtime's intrusively-refcounted allocation
+    /// (returned from `create` as an erased `*mut c_void`).
+    pub struct PipeWriterHooks {
+        /// Allocate the runtime writer (`Box::into_raw`), wire `on_close_io`
+        /// to the parent backref, and seed its buffer from `source`. Returns
+        /// the erased `IntrusiveRc<runtime::StaticPipeWriter<_>>` pointer.
+        pub create: unsafe fn(
+            event_loop: super::EventLoopHandle,
+            parent: *mut c_void,
+            on_close_io: unsafe fn(*mut c_void, StdioKind),
+            stdio_result: &StdioResult,
+            source: *const [u8],
+        ) -> *mut c_void,
+        /// `StaticPipeWriter.start()` — ref-bump + register the fd with the
+        /// event loop's `FilePoll`, kick the first write.
+        pub start: unsafe fn(inner: *mut c_void) -> bun_sys::Maybe<()>,
+        /// Drop one intrusive ref (matches Zig `WriterRefCount.deref`).
+        pub deref: unsafe fn(inner: *mut c_void),
+    }
+
+    static PIPE_WRITER_HOOKS: AtomicPtr<PipeWriterHooks> =
+        AtomicPtr::new(core::ptr::null_mut());
+
+    /// Called once from `bun_runtime::dispatch::install_dispatch_hooks()`.
+    pub fn set_pipe_writer_hooks(hooks: &'static PipeWriterHooks) {
+        PIPE_WRITER_HOOKS.store(
+            hooks as *const PipeWriterHooks as *mut PipeWriterHooks,
+            Ordering::Release,
+        );
+    }
+
+    #[inline]
+    fn pipe_writer_hooks() -> &'static PipeWriterHooks {
+        let p = PIPE_WRITER_HOOKS.load(Ordering::Acquire);
+        debug_assert!(
+            !p.is_null(),
+            "bun_spawn::subprocess::PIPE_WRITER_HOOKS not installed — \
+             bun_runtime must call set_pipe_writer_hooks() at startup",
+        );
+        // SAFETY: `p` was stored from a `&'static PipeWriterHooks` (see setter).
+        unsafe { &*p }
+    }
+
     /// Port of `jsc.Subprocess.NewStaticPipeWriter(ParentType)` — comptime-
     /// parameterized async writer that drains `source` into `stdio_result`.
-    /// The body depends on `bun_io::PipeWriter` + the JS event loop and is
-    /// registered by `bun_runtime` at startup; this stub owns only the fields
-    /// the mid-tier callers touch (`.source`, `.start()`).
+    ///
+    /// LAYERING: the body (`bun_io::BufferedWriter` + `FilePoll`) lives in
+    /// `bun_runtime` and is reached via [`PipeWriterHooks`]. This wrapper owns
+    /// the `Source` bytes (so mid-tier callers can `.source.detach()` on the
+    /// error path) and the erased runtime handle; `Drop` releases both.
     pub struct StaticPipeWriter<P: ?Sized> {
         pub source: Source,
         pub stdio_result: StdioResult,
+        /// Erased `IntrusiveRc<bun_runtime::…::StaticPipeWriter<ErasedParent>>`.
+        inner: *mut c_void,
         _parent: core::marker::PhantomData<*const P>,
     }
 
-    impl<P: ?Sized> StaticPipeWriter<P> {
+    impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
+        /// Port of `StaticPipeWriter.create` (subprocess/StaticPipeWriter.zig).
+        ///
+        /// PORT NOTE: Zig returned `*This` (intrusive refcount). The mid-tier
+        /// callers store the handle in `Option<Rc<_>>`, so `Rc<Self>` is the
+        /// owning wrapper here; the runtime's intrusive ref lives in `inner`
+        /// and is balanced by `Drop`.
         pub fn create(
-            _event_loop: impl Sized,
-            _parent: *const P,
-            _result: StdioResult,
-            _source: Source,
+            event_loop: super::EventLoopHandle,
+            parent: *const P,
+            result: StdioResult,
+            source: Source,
         ) -> std::rc::Rc<Self> {
-            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+            // Monomorphize the `on_close_io` callback per `P` so the runtime's
+            // type-erased writer can dispatch back without naming `P` (Zig:
+            // `process.onCloseIO(.stdin)` where `process: *ProcessType`).
+            unsafe fn on_close<Q: StaticPipeWriterProcess>(p: *mut c_void, kind: StdioKind) {
+                // SAFETY: `p` is the `parent` passed to `create` below; the
+                // runtime never outlives the parent (parent's `deinit` calls
+                // `writer.deref()` first).
+                unsafe { Q::on_close_io(p.cast::<Q>(), kind) }
+            }
+            let hooks = pipe_writer_hooks();
+            // Build the wrapper first so `source.slice()` has a stable address
+            // for the runtime to alias (the bytes live in `Rc<Self>` for the
+            // writer's lifetime).
+            let this = std::rc::Rc::new(Self {
+                source,
+                stdio_result: result,
+                inner: core::ptr::null_mut(),
+                _parent: core::marker::PhantomData,
+            });
+            // SAFETY: §Dispatch cold-path — `hooks.create` is the registered
+            // runtime ctor; `parent` is a live backref the caller keeps valid
+            // until `on_close_io` fires; `source` slice points into `this`
+            // which the returned `Rc` keeps alive past the runtime writer.
+            let inner = unsafe {
+                (hooks.create)(
+                    event_loop,
+                    parent as *mut c_void,
+                    on_close::<P>,
+                    &this.stdio_result,
+                    this.source.slice() as *const [u8],
+                )
+            };
+            // SAFETY: sole `Rc` owner — no other strong refs exist yet, so
+            // `get_mut` cannot fail; write `inner` in-place (the field is
+            // private and only read through `&self` after this point).
+            unsafe {
+                let slot = &this.inner as *const *mut c_void as *mut *mut c_void;
+                core::ptr::write(slot, inner);
+            }
+            this
         }
 
+        /// Port of `StaticPipeWriter.start` (subprocess/StaticPipeWriter.zig).
         pub fn start(&self) -> bun_sys::Maybe<()> {
-            todo!("blocked_on: bun_runtime::api::bun::subprocess::StaticPipeWriter dispatch (tier inversion)")
+            let hooks = pipe_writer_hooks();
+            // SAFETY: `inner` was returned by `hooks.create` and is live until
+            // `Drop` calls `hooks.deref`.
+            unsafe { (hooks.start)(self.inner) }
+        }
+    }
+
+    impl<P: ?Sized> Drop for StaticPipeWriter<P> {
+        fn drop(&mut self) {
+            if self.inner.is_null() {
+                return;
+            }
+            let p = PIPE_WRITER_HOOKS.load(Ordering::Acquire);
+            if p.is_null() {
+                // Unit-test / tool builds with no runtime tier linked — `inner`
+                // was never populated by a real allocator.
+                return;
+            }
+            // SAFETY: `p` is a `&'static PipeWriterHooks`; `inner` is the
+            // intrusive-rc handle returned by `hooks.create`. Zig `deref()`.
+            unsafe { ((*p).deref)(self.inner) };
         }
     }
 }

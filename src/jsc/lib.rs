@@ -1430,6 +1430,9 @@ unsafe extern "C" {
     fn SystemError__toErrorInstance(this: *const SystemError, global: *mut JSGlobalObject) -> JSValue;
 }
 impl SystemError {
+    /// Alias for `clone()` matching the Zig spec name (`SystemError.dupe`).
+    #[inline]
+    pub fn dupe(&self) -> Self { self.clone() }
     pub fn deref(&self) {
         self.code.deref();
         self.message.deref();

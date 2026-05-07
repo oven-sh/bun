@@ -431,8 +431,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             .fmt(self.lockfile.buffers.string_bytes.as_slice())
     }
 
-    pub fn package_version(&self, id: PackageID) -> crate::resolution::Formatter<'_> {
-        // TODO(port): MultiArrayList column accessor (`packages.items(.resolution)`).
+    pub fn package_version(&self, id: PackageID) -> crate::resolution::Formatter<'_, u64> {
         self.lockfile.packages.items_resolution()[id as usize].fmt(
             self.lockfile.buffers.string_bytes.as_slice(),
             bun_core::fmt::PathSep::Auto,

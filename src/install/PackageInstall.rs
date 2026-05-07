@@ -546,8 +546,15 @@ impl UninstallTask {
 
         let mut debug_timer = Output::DebugTimer::start();
         let _guard = scopeguard::guard((), |_| {
-            PackageManager::get().decrement_pending_tasks();
-            PackageManager::get().wake();
+            let pm = crate::package_manager::get();
+            // SAFETY: `pending_tasks` is `AtomicU32`; raw-pointer field projection
+            // avoids materializing `&mut PackageManager` from a worker thread (the
+            // main thread holds the install borrow). `wake_raw` is the documented
+            // thread-safe wake path that never forms `&mut PackageManager`.
+            unsafe {
+                (*pm).pending_tasks.fetch_sub(1, Ordering::Release);
+                PackageManager::wake_raw(pm);
+            }
         });
 
         let dirname =

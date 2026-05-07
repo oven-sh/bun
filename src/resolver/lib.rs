@@ -4550,21 +4550,35 @@ impl<'a> Resolver<'a> {
 
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
-    ///
-    /// A `&mut`-returning sibling is intentionally NOT provided: several
-    /// callers need `&mut Log` while simultaneously holding a disjoint
-    /// `&mut self.<field>` (e.g. `flush_debug_logs` borrows `self.debug_logs`,
-    /// `parse_tsconfig` borrows `self.caches.json`), which a `&mut self`
-    /// receiver would forbid. Those sites continue to narrow-retag through
-    /// the raw [`log()`] accessor.
     #[inline(always)]
     pub fn log_ref(&self) -> &logger::Log {
         // SAFETY: BACKREF — `self.log` is never null (set in `init1` /
         // `scoped_log`, owner-allocated, outlives the Resolver). Resolver
         // mutex serializes mutation; a Shared `&` here pushes no Unique tag
-        // and so cannot alias-UB with the narrow `&mut *self.log()` retags
-        // elsewhere (none are live across a `log_ref()` call).
+        // and so cannot alias-UB with the narrow `log_mut()` retags elsewhere
+        // (none are live across a `log_ref()` call).
         unsafe { &*self.log }
+    }
+
+    /// Unique-borrow of the resolver's `Log` for `add_*_fmt` / `add_msg`.
+    ///
+    /// Centralizes the per-site `unsafe { &mut *self.log() }` retag. `&mut
+    /// self` rules out two coexisting `&mut Log` from the SAME `Resolver`;
+    /// cross-clone aliasing (worker copies share the owner's `Log`) is
+    /// guarded by the resolver `mutex` — same invariant the open-coded sites
+    /// already relied on.
+    ///
+    /// Sites that need `&mut Log` while holding a disjoint `&mut self.<field>`
+    /// (`flush_debug_logs` ↔ `self.debug_logs`, `parse_tsconfig` ↔
+    /// `self.caches.json`) cannot route through `&mut self` and continue to
+    /// narrow-retag via the raw [`log()`](Self::log) accessor.
+    #[inline(always)]
+    pub fn log_mut(&mut self) -> &mut logger::Log {
+        // SAFETY: BACKREF — `self.log` is never null (set in `init1` /
+        // `scoped_log`); the pointee (owner-allocated `Log`, or a stack `Log`
+        // pinned by a live `ResolverLogScope`) outlives every borrow returned
+        // here. Resolver mutex serializes mutation across worker clones.
+        unsafe { &mut *self.log }
     }
 
     /// Port of Zig `r.dir_cache` deref.
@@ -6743,8 +6757,7 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
-                // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                let _ = unsafe { &mut *self.log() }.add_error_fmt(
+                let _ = self.log_mut().add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
@@ -7607,8 +7620,7 @@ impl<'a> Resolver<'a> {
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
                                     let pretty = queue_top_unsafe_path;
-                                    // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
+                                    let _ = self.log_mut().add_error_fmt(
                                         None,
                                         logger::Loc::default(),
                                         format_args!(
@@ -8609,8 +8621,7 @@ impl<'a> Resolver<'a> {
                     || e == bun_core::err!("ENOTDIR")
                     || e == bun_core::err!("NotDir") => {}
                 _ => {
-                    // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
+                    let _ = self.log_mut().add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -9130,11 +9141,9 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                            // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                            let _ = unsafe { &mut *self.log() }.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
+                            let _ = self.log_mut().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
-                            // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                            let _ = unsafe { &mut *self.log() }.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
+                            let _ = self.log_mut().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
                         }
                         None
                     }
@@ -9160,8 +9169,7 @@ impl<'a> Resolver<'a> {
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v.map(Box::into_raw),
                             Err(err) => {
-                                // SAFETY: BACKREF — `self.log` (see `log()` PORT NOTE); narrow `&mut` for this call.
-                                let _ = unsafe { &mut *self.log() }.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
+                                let _ = self.log_mut().add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
                                     bstr::BStr::new(err.name()),
                                     bun_core::fmt::quote(abs_path)

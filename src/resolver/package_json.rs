@@ -1328,24 +1328,22 @@ impl PackageJSON {
                     if let Some(pm) = r.package_manager {
                         // SAFETY: BACKREF — `pm` is the bun_install-owned PackageManager
                         // pointer; live for the resolver's lifetime once installed.
-                        let pm = unsafe { pm.as_ref() };
-                        let tag = install_stubs::Version::Tag::infer(&package_json.version);
+                        let pm: &dyn AutoInstaller = unsafe { pm.as_ref() };
+                        let tag = pm.infer_dependency_tag(&package_json.version);
 
-                        if tag == install_stubs::Version::Tag::Npm {
+                        if tag == DependencyVersionTag::Npm {
                             let sliced = Semver::SlicedString::init(&package_json.version, &package_json.version);
-                            if let Some(dependency_version) = Dependency::parse_with_tag(
+                            if let Some(dependency_version) = pm.parse_dependency_with_tag(
                                 SemverString::init(&package_json.name, &package_json.name),
                                 Semver::semver_string::Builder::string_hash(&package_json.name),
                                 &package_json.version,
-                                install_stubs::Version::Tag::Npm,
+                                DependencyVersionTag::Npm,
                                 &sliced,
                                 r.log,
-                                pm,
                             ) {
-                                if dependency_version.value.npm().version.is_exact() {
-                                    if let Some(resolved) = pm
-                                        .lockfile
-                                        .resolve_package_from_name_and_version(&package_json.name, &dependency_version)
+                                if pm.dependency_version_is_exact_npm(&dependency_version) {
+                                    if let Some(resolved) =
+                                        pm.lockfile_resolve(&package_json.name, &dependency_version)
                                     {
                                         package_json.package_manager_package_id = resolved;
                                         if resolved > 0 {
@@ -1437,15 +1435,21 @@ impl PackageJSON {
                                     let Some(version_str) = version_value.as_utf8_string_literal() else { continue };
                                     let sliced_str = Semver::SlicedString::init(version_str, version_str);
 
-                                    if let Some(dependency_version) = Dependency::parse(
+                                    // PORT NOTE: Zig threads `?*PackageManager`
+                                    // into `Dependency.parse` — the parser is
+                                    // install-tier. When no auto-installer is
+                                    // wired, the dependencies map is only ever
+                                    // read by the auto-install path itself, so
+                                    // skip filling it.
+                                    let Some(pm) = r.package_manager else { break };
+                                    // SAFETY: see BACKREF note above.
+                                    let pm: &dyn AutoInstaller = unsafe { pm.as_ref() };
+                                    if let Some(dependency_version) = pm.parse_dependency(
                                         name,
                                         Some(name_hash),
                                         version_str,
                                         &sliced_str,
                                         r.log,
-                                        r.package_manager
-                                            .map(|p| p.as_ptr() as *const PackageManager)
-                                            .unwrap_or(core::ptr::null()),
                                     ) {
                                         let dependency = Dependency {
                                             name,

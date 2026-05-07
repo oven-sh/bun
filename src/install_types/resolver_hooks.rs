@@ -853,6 +853,12 @@ pub trait AutoInstaller {
         sliced: &bun_semver::SlicedString,
         log: *mut bun_logger::Log,
     ) -> Option<DependencyVersion>;
+    /// Port of `dependency.zig` `Version.Tag.infer` — pure string
+    /// classification, but the table lives in `bun_install`.
+    fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
+    /// Port of `version.value.npm.version.isExact()` — the npm `Group` is
+    /// install-internal, so the resolver asks the installer to evaluate it.
+    fn dependency_version_is_exact_npm(&self, v: &DependencyVersion) -> bool;
 }
 
 /// Read-only view of `bun_resolver::PackageJSON` that

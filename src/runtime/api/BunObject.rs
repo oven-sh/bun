@@ -94,12 +94,12 @@ use std::io::Write as _;
 use bun_core::{Environment, Output};
 use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, WebCore, ZigString,
+    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, WebCore,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
-use bun_str::{self, strings, String as BunString};
+use bun_str::{self, strings, String as BunString, ZigString};
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_aio::{self as Async, KeepAlive};
 use bun_threading::work_pool::WorkPool;

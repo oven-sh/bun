@@ -55,8 +55,10 @@ impl SavedFile {
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
         // Bun-owned global; we hold a unique `&mut` only for this call.
         let mime_type = global_this.bun_vm().as_mut().mime_type(path);
+        // `Store::drop` frees `PathLike::String` via `deinit_owned`, so the
+        // backing buffer must be owned by the store, not borrowed from `path`.
         let store = BlobStore::init_file(
-            PathOrFileDescriptor::Path(PathLike::String(PathString::init(path))),
+            PathOrFileDescriptor::Path(PathLike::String(PathString::init_owned(path.to_vec()))),
             mime_type,
         )
         .expect("unreachable");
@@ -141,8 +143,12 @@ impl OutputFileJsc for OutputFile {
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text.as_ref());
 
+                // `Store::drop` frees a `PathLike::String` payload via
+                // `PathString::deinit_owned`, so the backing buffer must be
+                // owned by the store. `owned_pathname` is a borrow here (the
+                // caller drops its `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
-                    Some(p) => PathLike::String(PathString::init(p)),
+                    Some(p) => PathLike::String(PathString::init_owned(p.to_vec())),
                     None => dupe_path_like(self.src_path.text.as_ref()),
                 };
                 let file_blob = match BlobStore::init_file(
